@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 from database import init_db, create_user, verify_user
 from logic import get_financial_summary
-# تأخير استيراد views لتجنب المشاكل الدائرية
 import config
 from config import DEFAULT_COLORS, PRESET_THEMES, get_master_styles, APP_NAME, APP_ICON
 import time
@@ -29,6 +28,7 @@ cookie_manager = get_manager()
 # 4. نظام تسجيل الدخول
 def login_system():
     init_db()
+    # تأخير بسيط جداً لضمان تحميل الكوكيز
     time.sleep(0.1)
     cookie_user = cookie_manager.get(cookie="osoul_user")
     
@@ -89,10 +89,10 @@ if not login_system():
 if 'page' not in st.session_state:
     st.session_state['page'] = 'home'
 
-# عرض القائمة العلوية (Navbar) بدلاً من الجانبية
+# عرض القائمة العلوية (Navbar)
 views.render_navbar()
 
-# منطق تسجيل الخروج (يتم استدعاؤه من views.py)
+# منطق تسجيل الخروج
 if st.session_state.page == 'logout':
     cookie_manager.delete("osoul_user", key="del_cookie")
     st.session_state.clear()
