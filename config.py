@@ -44,8 +44,8 @@ def get_master_styles(C):
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap');
         
-        /* 1. تطبيق الخط العربي والاتجاه على العناصر الرئيسية فقط */
-        html, body, p, h1, h2, h3, h4, h5, h6, label, input, button, textarea, .stMarkdown {{
+        /* تطبيق الخط العربي */
+        html, body, p, h1, h2, h3, h4, h5, h6, label, input, button, textarea, .stMarkdown, .stSelectbox {{
             font-family: 'Cairo', sans-serif !important;
             color: {C['main_text']} !important; 
         }}
@@ -57,23 +57,13 @@ def get_master_styles(C):
 
         [data-testid="stHeader"] {{ background-color: {C['page_bg']} !important; }}
 
-        /* 2. إخفاء الخط الرصاصي (مقبض تغيير حجم القائمة) */
-        div[data-testid="stSidebar"] + div {{
-            display: none !important;
-            width: 0px !important;
-        }}
-        section[data-testid="stSidebar"] + div {{
-            display: none !important;
-            width: 0px !important;
-        }}
-
-        /* 3. إصلاح الأيقونات المتشابكة */
+        /* إصلاح الأيقونات المتشابكة */
         .material-icons, span.material-symbols-rounded {{
             direction: ltr !important; 
             font-family: 'Material Icons' !important;
         }}
 
-        /* 4. تحسين الحقول والأزرار */
+        /* تحسين الحقول والأزرار */
         input, .stTextInput input, .stNumberInput input, .stDateInput input, [data-baseweb="input"] {{
             background-color: #ffffff !important; 
             color: {C['main_text']} !important;
@@ -101,7 +91,7 @@ def get_master_styles(C):
             border: 1px solid {C['border']} !important;
         }}
 
-        /* 5. الجداول والبطاقات */
+        /* الجداول والبطاقات */
         .finance-table {{
             width: 100%; border-collapse: separate; border-spacing: 0;
             background-color: white; border: 1px solid {C['border']};
