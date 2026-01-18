@@ -13,7 +13,8 @@ import extra_streamlit_components as stx
 st.set_page_config(page_title=APP_NAME, layout="wide", page_icon=APP_ICON, initial_sidebar_state="collapsed")
 
 # --- إدارة الكوكيز (للتذكر) ---
-@st.cache_resource(experimental_allow_widgets=True)
+# تم التصحيح: حذفنا (experimental_allow_widgets=True) لأنها لم تعد مدعومة
+@st.cache_resource
 def get_manager():
     return stx.CookieManager()
 
@@ -24,7 +25,9 @@ def login_system():
     # تهيئة قاعدة البيانات
     init_db()
     
-    # 1. التحقق من الكوكيز أولاً (هل المستخدم طلب تذكره سابقاً؟)
+    # 1. التحقق من الكوكيز أولاً
+    # إضافة تأخير بسيط جداً لضمان تحميل الكوكيز
+    time.sleep(0.1)
     cookie_user = cookie_manager.get(cookie="osoul_user")
     
     if cookie_user:
@@ -36,7 +39,7 @@ def login_system():
     if st.session_state.get("logged_in", False):
         return True
 
-    # 3. عرض شاشة الدخول إذا لم يكن مسجلاً
+    # 3. عرض شاشة الدخول
     st.markdown(
         """
         <style>
@@ -63,7 +66,6 @@ def login_system():
                     st.session_state["logged_in"] = True
                     st.session_state["username"] = username_in
                     
-                    # إذا اختار تذكرني، نحفظ الكوكيز لمدة 30 يوم
                     if remember_me:
                         cookie_manager.set('osoul_user', username_in, expires_at=datetime.datetime.now() + datetime.timedelta(days=30))
                     
@@ -74,6 +76,7 @@ def login_system():
                     st.error("اسم المستخدم أو الرمز غير صحيح")
             
             st.markdown("---")
+            st.markdown("<div style='text-align: center; color: gray;'>أو الدخول السريع</div>", unsafe_allow_html=True)
             if st.button("G تسجيل الدخول عبر Google", use_container_width=True):
                 st.info("خدمة Google Login تتطلب إعدادات API خاصة. حالياً يرجى استخدام الدخول التقليدي.")
 
@@ -105,10 +108,10 @@ if not login_system():
 st.sidebar.success(f"مرحباً, {st.session_state.get('username', 'User')}")
 
 if st.sidebar.button("تسجيل الخروج"):
-    # حذف الكوكيز عند الخروج
     cookie_manager.delete("osoul_user")
     st.session_state["logged_in"] = False
-    del st.session_state["username"]
+    if "username" in st.session_state:
+        del st.session_state["username"]
     st.rerun()
 
 # 3. تهيئة المتغيرات الأساسية
