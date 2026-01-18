@@ -6,19 +6,37 @@ import views
 import charts 
 from config import DEFAULT_COLORS, PRESET_THEMES, get_master_styles, APP_NAME, APP_ICON
 import time
+import datetime
+import extra_streamlit_components as stx
 
 # 1. إعداد الصفحة
 st.set_page_config(page_title=APP_NAME, layout="wide", page_icon=APP_ICON, initial_sidebar_state="collapsed")
+
+# --- إدارة الكوكيز (للتذكر) ---
+@st.cache_resource(experimental_allow_widgets=True)
+def get_manager():
+    return stx.CookieManager()
+
+cookie_manager = get_manager()
 
 # --- نظام تسجيل الدخول الجديد ---
 def login_system():
     # تهيئة قاعدة البيانات
     init_db()
     
-    # التحقق هل المستخدم مسجل دخول بالفعل؟
+    # 1. التحقق من الكوكيز أولاً (هل المستخدم طلب تذكره سابقاً؟)
+    cookie_user = cookie_manager.get(cookie="osoul_user")
+    
+    if cookie_user:
+        st.session_state["logged_in"] = True
+        st.session_state["username"] = cookie_user
+        return True
+
+    # 2. التحقق من الجلسة الحالية
     if st.session_state.get("logged_in", False):
         return True
 
+    # 3. عرض شاشة الدخول إذا لم يكن مسجلاً
     st.markdown(
         """
         <style>
@@ -38,11 +56,17 @@ def login_system():
             st.markdown("##### الدخول للحساب الشخصي")
             username_in = st.text_input("اسم المستخدم", key="login_user")
             password_in = st.text_input("الرمز السري (PIN)", type="password", key="login_pass")
+            remember_me = st.checkbox("تذكرني (سيبقى الحساب مفتوحاً لمدة شهر)")
             
             if st.button("دخول", type="primary", use_container_width=True):
                 if verify_user(username_in, password_in):
                     st.session_state["logged_in"] = True
                     st.session_state["username"] = username_in
+                    
+                    # إذا اختار تذكرني، نحفظ الكوكيز لمدة 30 يوم
+                    if remember_me:
+                        cookie_manager.set('osoul_user', username_in, expires_at=datetime.datetime.now() + datetime.timedelta(days=30))
+                    
                     st.success("تم الدخول بنجاح! جاري التحميل...")
                     time.sleep(0.5)
                     st.rerun()
@@ -50,7 +74,6 @@ def login_system():
                     st.error("اسم المستخدم أو الرمز غير صحيح")
             
             st.markdown("---")
-            st.markdown("<div style='text-align: center; color: gray;'>أو الدخول السريع</div>", unsafe_allow_html=True)
             if st.button("G تسجيل الدخول عبر Google", use_container_width=True):
                 st.info("خدمة Google Login تتطلب إعدادات API خاصة. حالياً يرجى استخدام الدخول التقليدي.")
 
@@ -67,10 +90,6 @@ def login_system():
                         st.error("اسم المستخدم هذا موجود مسبقاً.")
                 else:
                     st.warning("الرجاء تعبئة جميع الحقول.")
-            
-            st.markdown("---")
-            if st.button("G إنشاء حساب عبر Google", use_container_width=True):
-                st.info("قريباً..")
 
     return False
 
@@ -82,13 +101,17 @@ if not login_system():
 # المحتوى المحمي (يعمل فقط بعد الدخول)
 # ---------------------------------------------------------
 
-# عرض ترحيب بالمستخدم
+# القائمة الجانبية وزر الخروج
 st.sidebar.success(f"مرحباً, {st.session_state.get('username', 'User')}")
+
 if st.sidebar.button("تسجيل الخروج"):
+    # حذف الكوكيز عند الخروج
+    cookie_manager.delete("osoul_user")
     st.session_state["logged_in"] = False
+    del st.session_state["username"]
     st.rerun()
 
-# 3. تهيئة المتغيرات الأساسية (هنا كان الخطأ وتم إصلاحه)
+# 3. تهيئة المتغيرات الأساسية
 if 'page' not in st.session_state:
     st.session_state['page'] = 'home'
 
