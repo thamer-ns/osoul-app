@@ -80,24 +80,20 @@ def get_master_styles(C):
         @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap');
         
         /* 1. توحيد الخط والاتجاه */
-        html, body, [class*="css"], p, h1, h2, h3, h4, span, div, label, button, input, textarea {{
+        html, body, [class*="css"], p, h1, h2, h3, h4, div, label, button, input, textarea {{
             font-family: 'Cairo', sans-serif !important;
             direction: rtl;
             color: {C['main_text']} !important;
         }}
         
         /* 2. إصلاح أيقونات الاكسباندر (الحل الجذري للنص الانجليزي) */
-        /* استثناء الأيقونات من خط كايرو لكي تظهر كرموز لا كنصوص */
-        div[data-testid="stExpander"] > details > summary svg {{
-            font-family: inherit !important;
-        }}
-        .material-icons, span[class*="material"], svg {{
+        /* نستثني عناصر الأيقونات من الخط العربي */
+        .material-icons, 
+        [data-testid="stExpanderToggleIcon"],
+        svg, 
+        span[class^="css-"] {{
+            font-family: sans-serif !important;
             direction: ltr !important;
-        }}
-        /* إصلاح خاص لأيقونات التوسيع في ستريم ليت */
-        [data-testid="stExpanderToggleIcon"] {{
-            font-family: "Source Sans Pro", sans-serif !important;
-            transform: rotate(180deg); /* تدوير السهم ليتناسب مع العربية */
         }}
         
         /* 3. إجبار الخلفية البيضاء */
