@@ -33,7 +33,7 @@ def fetch_batch_data(symbols_list):
     tickers_map = {s: get_ticker_symbol(s) for s in symbols_list}
     unique = list(set(tickers_map.values()))
     results = {}
-    batch_size = 10 # تقليل الحجم لضمان جلب البيانات بدقة
+    batch_size = 10 
     
     for i in range(0, len(unique), batch_size):
         batch = unique[i:i+batch_size]
@@ -43,7 +43,6 @@ def fetch_batch_data(symbols_list):
                 if yahoo_sym not in batch: continue
                 try:
                     t = tickers.tickers[yahoo_sym]
-                    # نستخدم info لجلب التوزيعات، قد يكون أبطأ قليلاً لكنه ضروري للميزة الجديدة
                     info = t.info 
                     price = info.get('currentPrice') or t.fast_info.last_price
                     
@@ -115,7 +114,6 @@ def process_trade_logic(df):
     df['daily_change'] = ((df['current_price'] - df['prev_close']) / df['prev_close'].replace(0, 1)) * 100
     df.loc[mask_close, 'daily_change'] = 0.0 
     
-    # حساب الدخل السنوي المتوقع من التوزيعات
     df['projected_annual_income'] = df['market_value'] * df['dividend_yield']
     
     total_val = df[df['status'] == 'Open']['market_value'].sum()
@@ -171,7 +169,6 @@ def get_financial_summary():
         market_val_open = open_trades['market_value'].sum() if not open_trades.empty else 0
         unrealized_pl = market_val_open - cost_open
         
-        # مجموع الدخل السنوي المتوقع من التوزيعات
         projected_dividend_income = open_trades['projected_annual_income'].sum() if not open_trades.empty else 0
         
         cost_closed = closed_trades['total_cost'].sum() if not closed_trades.empty else 0
@@ -214,7 +211,6 @@ def update_market_data_batch():
                 if row['symbol'] in market_data:
                     d = market_data[row['symbol']]
                     if d['price'] > 0:
-                        # تحديث التوزيعات أيضاً
                         conn.execute("""UPDATE Trades SET current_price = ?, prev_close = ?, year_high = ?, year_low = ?, dividend_yield = ? WHERE id = ?""", 
                                      (d['price'], d['prev_close'], d['year_high'], d['year_low'], d['dividend_yield'], row['id']))
             conn.commit()
