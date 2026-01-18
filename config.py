@@ -7,18 +7,18 @@ DB_PATH = Path("stocks.db")
 BACKUP_DIR = Path("backups")
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
-# --- الهوية البصرية (الوضع الفاتح - الكود الأصلي) ---
+# --- الهوية البصرية ---
 DEFAULT_COLORS = {
-    'page_bg': '#FFFFFF',          
-    'card_bg': '#F8F9FA',          
-    'main_text': '#000000',        
-    'sub_text': '#555555',         
-    'primary': '#0052CC',          
-    'success': '#008000',          
-    'danger': '#FF0000',           
-    'border': '#E0E0E0',           
+    'page_bg': '#F4F6F8',
+    'card_bg': '#FFFFFF',
+    'main_text': '#172B4D',
+    'sub_text': '#5E6C84',
+    'primary': '#0052CC',
+    'success': '#36B37E',
+    'danger': '#FF5630',
+    'border': '#DFE1E6',
     'input_bg': '#FFFFFF',
-    'header_bg': '#FFFFFF'
+    'header_bg': '#FAFBFC'
 }
 
 THEME = DEFAULT_COLORS
@@ -44,44 +44,56 @@ def get_master_styles(C):
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap');
         
-        /* 1. إعدادات الخط والاتجاه */
-        html, body, [class*="css"], p, h1, h2, h3, h4, span, div, label {{
+        html, body, [class*="css"], .stMarkdown, h1, h2, h3, h4, p, label, div, span, th, td, button, input {{
             font-family: 'Cairo', sans-serif !important;
-            direction: rtl;
+            direction: rtl; 
+            color: {C['main_text']} !important; 
+        }}
+
+        .stApp {{ background-color: {C['page_bg']} !important; }}
+        [data-testid="stHeader"] {{ background-color: {C['page_bg']} !important; }}
+
+        /* === إصلاح الحقول السوداء === */
+        input, .stTextInput input, .stNumberInput input, .stDateInput input, [data-baseweb="input"] {{
+            background-color: #ffffff !important; 
+            color: {C['main_text']} !important;
+            border-color: {C['border']} !important;
+            caret-color: {C['primary']} !important;
+        }}
+        div[data-baseweb="input"] > div {{
+            background-color: #ffffff !important;
             color: {C['main_text']} !important;
         }}
         
-        /* 2. إجبار المظهر الفاتح */
-        .stApp {{
-            background-color: #FFFFFF !important;
-            color: #000000 !important;
+        /* القوائم المنسدلة */
+        div[data-baseweb="select"] > div {{
+            background-color: #ffffff !important;
+            color: {C['main_text']} !important;
+            border: 1px solid {C['border']} !important;
+        }}
+        div[data-baseweb="popover"], div[data-baseweb="menu"], ul[role="listbox"] {{
+            background-color: #ffffff !important;
+        }}
+        li[role="option"] {{
+            color: {C['main_text']} !important;
+            background-color: #ffffff !important;
         }}
         
-        [data-testid="stSidebar"] {{
-            background-color: #F8F9FA !important;
-            border-left: 1px solid #E6E6E6;
+        [data-baseweb="select"] svg {{ fill: {C['sub_text']} !important; }}
+
+        /* الأزرار */
+        button, [kind="primary"], [kind="secondary"] {{
+            background-color: {C['card_bg']} !important;
+            color: {C['sub_text']} !important;
+            border: 1px solid {C['border']} !important;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.02) !important;
         }}
-        
-        /* 3. إخفاء الخط الرصاصي (مقبض تغيير الحجم) */
-        [data-testid="stSidebar"] + div {{
-            display: none !important;
-            width: 0 !important;
+        [data-testid="stFormSubmitButton"] > button {{
+            background-color: {C['primary']} !important;
+            color: white !important;
         }}
-        
-        /* 4. تنسيق الحقول والقوائم (أبيض نقي) */
-        input, .stTextInput input, .stNumberInput input, .stSelectbox, div[data-baseweb="select"] > div {{
-            background-color: #FFFFFF !important;
-            color: #000000 !important;
-            border-color: #E0E0E0 !important;
-            direction: rtl;
-        }}
-        
-        /* النصوص */
-        h1, h2, h3, h4, p, label, span {{
-            color: #000000 !important;
-        }}
-        
-        /* 5. الجداول والبطاقات */
+
+        /* الجداول */
         .finance-table {{
             width: 100%; border-collapse: separate; border-spacing: 0;
             background-color: white; border: 1px solid {C['border']};
@@ -91,13 +103,13 @@ def get_master_styles(C):
         .finance-table th {{ 
             color: {C['primary']} !important; padding: 12px; 
             text-align: center; border-bottom: 2px solid {C['border']}; font-weight: 800; 
-            background-color: #F9F9F9;
         }}
         .finance-table td {{ 
             padding: 10px; text-align: center; border-bottom: 1px solid {C['border']}; 
             color: {C['main_text']} !important; font-weight: 600;
         }}
 
+        /* بطاقات العرض */
         .kpi-box {{
             background-color: white;
             border: 1px solid {C['border']};
@@ -107,8 +119,8 @@ def get_master_styles(C):
             margin-bottom: 10px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.02);
         }}
-        .kpi-title {{ font-size: 0.85rem; color: #666 !important; margin-bottom: 5px; }}
-        .kpi-value {{ font-size: 1.3rem; font-weight: 800; color: #000 !important; direction: ltr; display: inline-block; }}
+        .kpi-title {{ font-size: 0.85rem; color: {C['sub_text']} !important; margin-bottom: 5px; }}
+        .kpi-value {{ font-size: 1.3rem; font-weight: 800; color: {C['main_text']} !important; direction: ltr; display: inline-block; }}
         
         .section-header {{
             color: {C['primary']} !important; font-weight: 800; font-size: 1.1rem; 
@@ -122,17 +134,10 @@ def get_master_styles(C):
             display: flex; justify-content: space-between; align-items: center;
         }}
         .tasi-box * {{ color: #ffffff !important; }}
-        
-        /* الأزرار */
-        button[kind="primary"] {{
-            background-color: {C['primary']} !important;
-            color: white !important;
-            border: none !important;
-        }}
     </style>
     """
 
-# قاعدة البيانات (قائمة الأسهم السعودية)
+# قاعدة البيانات (تأكد من نسخ هذا الجزء بالكامل)
 TADAWUL_DB = {
     '2222': {'name': 'أرامكو', 'sector': 'الطاقة'}, '2030': {'name': 'المصافي', 'sector': 'الطاقة'},
     '4030': {'name': 'البحري', 'sector': 'الطاقة'}, '4200': {'name': 'الدريس', 'sector': 'الطاقة'},
