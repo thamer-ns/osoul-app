@@ -5,3 +5,4 @@ yfinance
 plotly
 xlsxwriter
 extra-streamlit-components
+openpyxl
