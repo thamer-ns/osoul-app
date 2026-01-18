@@ -86,14 +86,18 @@ def get_master_styles(C):
             color: {C['main_text']} !important;
         }}
         
-        /* 2. إصلاح أيقونات الاكسباندر (لحل مشكلة keyboard_arrow_down) */
-        div[data-testid="stExpander"] > details > summary > span {{
-            font-family: sans-serif !important;
+        /* 2. إصلاح أيقونات الاكسباندر (الحل الجذري للنص الانجليزي) */
+        /* استثناء الأيقونات من خط كايرو لكي تظهر كرموز لا كنصوص */
+        div[data-testid="stExpander"] > details > summary svg {{
+            font-family: inherit !important;
+        }}
+        .material-icons, span[class*="material"], svg {{
             direction: ltr !important;
         }}
-        .material-icons {{
-            font-family: 'Material Icons' !important;
-            direction: ltr !important;
+        /* إصلاح خاص لأيقونات التوسيع في ستريم ليت */
+        [data-testid="stExpanderToggleIcon"] {{
+            font-family: "Source Sans Pro", sans-serif !important;
+            transform: rotate(180deg); /* تدوير السهم ليتناسب مع العربية */
         }}
         
         /* 3. إجبار الخلفية البيضاء */
