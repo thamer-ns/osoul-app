@@ -12,8 +12,18 @@ import extra_streamlit_components as stx
 # 1. إعداد الصفحة
 st.set_page_config(page_title=APP_NAME, layout="wide", page_icon=APP_ICON, initial_sidebar_state="collapsed")
 
+# --- هام: تحميل الألوان والخطوط (CSS) في البداية لتجنب الشاشة البيضاء ---
+if 'custom_colors' not in st.session_state:
+    st.session_state.custom_colors = DEFAULT_COLORS.copy()
+else:
+    for key, value in DEFAULT_COLORS.items():
+        if key not in st.session_state.custom_colors:
+            st.session_state.custom_colors[key] = value
+
+C = st.session_state.custom_colors
+st.markdown(get_master_styles(C), unsafe_allow_html=True)
+
 # --- إدارة الكوكيز (للتذكر) ---
-# تم الإصلاح: حذفنا @st.cache_resource لأن هذا المكون لا يجب تخزينه في الكاش
 def get_manager():
     return stx.CookieManager()
 
@@ -21,7 +31,6 @@ cookie_manager = get_manager()
 
 # --- نظام تسجيل الدخول الجديد ---
 def login_system():
-    # تهيئة قاعدة البيانات
     init_db()
     
     # 1. التحقق من الكوكيز أولاً
@@ -65,7 +74,6 @@ def login_system():
                     st.session_state["username"] = username_in
                     
                     if remember_me:
-                        # تعديل: تعيين الكوكيز مع مفتاح فريد لضمان العمل
                         cookie_manager.set('osoul_user', username_in, expires_at=datetime.datetime.now() + datetime.timedelta(days=30), key="set_cookie")
                     
                     st.success("تم الدخول بنجاح! جاري التحميل...")
@@ -116,19 +124,7 @@ if st.sidebar.button("تسجيل الخروج"):
 if 'page' not in st.session_state:
     st.session_state['page'] = 'home'
 
-if 'custom_colors' not in st.session_state:
-    st.session_state.custom_colors = DEFAULT_COLORS.copy()
-else:
-    for key, value in DEFAULT_COLORS.items():
-        if key not in st.session_state.custom_colors:
-            st.session_state.custom_colors[key] = value
-
-C = st.session_state.custom_colors
-
-# 4. CSS
-st.markdown(get_master_styles(C), unsafe_allow_html=True)
-
-# 5. التشغيل
+# 4. التشغيل
 views.render_navbar()
 
 # توجيه الصفحات
