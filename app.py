@@ -13,8 +13,7 @@ import extra_streamlit_components as stx
 st.set_page_config(page_title=APP_NAME, layout="wide", page_icon=APP_ICON, initial_sidebar_state="collapsed")
 
 # --- إدارة الكوكيز (للتذكر) ---
-# تم التصحيح: حذفنا (experimental_allow_widgets=True) لأنها لم تعد مدعومة
-@st.cache_resource
+# تم الإصلاح: حذفنا @st.cache_resource لأن هذا المكون لا يجب تخزينه في الكاش
 def get_manager():
     return stx.CookieManager()
 
@@ -26,7 +25,6 @@ def login_system():
     init_db()
     
     # 1. التحقق من الكوكيز أولاً
-    # إضافة تأخير بسيط جداً لضمان تحميل الكوكيز
     time.sleep(0.1)
     cookie_user = cookie_manager.get(cookie="osoul_user")
     
@@ -67,7 +65,8 @@ def login_system():
                     st.session_state["username"] = username_in
                     
                     if remember_me:
-                        cookie_manager.set('osoul_user', username_in, expires_at=datetime.datetime.now() + datetime.timedelta(days=30))
+                        # تعديل: تعيين الكوكيز مع مفتاح فريد لضمان العمل
+                        cookie_manager.set('osoul_user', username_in, expires_at=datetime.datetime.now() + datetime.timedelta(days=30), key="set_cookie")
                     
                     st.success("تم الدخول بنجاح! جاري التحميل...")
                     time.sleep(0.5)
@@ -76,7 +75,6 @@ def login_system():
                     st.error("اسم المستخدم أو الرمز غير صحيح")
             
             st.markdown("---")
-            st.markdown("<div style='text-align: center; color: gray;'>أو الدخول السريع</div>", unsafe_allow_html=True)
             if st.button("G تسجيل الدخول عبر Google", use_container_width=True):
                 st.info("خدمة Google Login تتطلب إعدادات API خاصة. حالياً يرجى استخدام الدخول التقليدي.")
 
@@ -108,7 +106,7 @@ if not login_system():
 st.sidebar.success(f"مرحباً, {st.session_state.get('username', 'User')}")
 
 if st.sidebar.button("تسجيل الخروج"):
-    cookie_manager.delete("osoul_user")
+    cookie_manager.delete("osoul_user", key="del_cookie")
     st.session_state["logged_in"] = False
     if "username" in st.session_state:
         del st.session_state["username"]
