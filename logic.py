@@ -218,7 +218,7 @@ def update_market_data_batch():
         st.cache_data.clear()
         return True
     except: return False
-    
+
 def get_sector_recommendations(fin):
     trades = fin['all_trades']
     if trades.empty: return []
