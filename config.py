@@ -7,7 +7,7 @@ DB_PATH = Path("stocks.db")
 BACKUP_DIR = Path("backups")
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
-# --- الهوية البصرية (الوضع الفاتح الأصلي) ---
+# --- الهوية البصرية (الوضع الفاتح - الكود الأصلي) ---
 DEFAULT_COLORS = {
     'page_bg': '#FFFFFF',          
     'card_bg': '#F8F9FA',          
@@ -44,47 +44,44 @@ def get_master_styles(C):
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap');
         
+        /* 1. إعدادات الخط والاتجاه */
         html, body, [class*="css"], p, h1, h2, h3, h4, span, div, label {{
             font-family: 'Cairo', sans-serif !important;
             direction: rtl;
             color: {C['main_text']} !important;
         }}
         
+        /* 2. إجبار المظهر الفاتح */
         .stApp {{
-            background-color: {C['page_bg']} !important;
+            background-color: #FFFFFF !important;
+            color: #000000 !important;
         }}
         
-        [data-testid="stHeader"] {{
-            background-color: {C['page_bg']} !important;
-        }}
-        
-        /* إخفاء الخط الرصاصي (مقبض القائمة) */
         [data-testid="stSidebar"] {{
-            background-color: {C['card_bg']} !important;
-            border-left: 1px solid {C['border']};
+            background-color: #F8F9FA !important;
+            border-left: 1px solid #E6E6E6;
         }}
+        
+        /* 3. إخفاء الخط الرصاصي (مقبض تغيير الحجم) */
         [data-testid="stSidebar"] + div {{
             display: none !important;
             width: 0 !important;
         }}
         
-        /* تنسيق الحقول والقوائم (أبيض) */
+        /* 4. تنسيق الحقول والقوائم (أبيض نقي) */
         input, .stTextInput input, .stNumberInput input, .stSelectbox, div[data-baseweb="select"] > div {{
             background-color: #FFFFFF !important;
             color: #000000 !important;
-            border-color: {C['border']} !important;
+            border-color: #E0E0E0 !important;
             direction: rtl;
         }}
         
-        /* القوائم المنسدلة */
-        ul[data-baseweb="menu"] {{
-            background-color: #FFFFFF !important;
-        }}
-        li[role="option"] {{
+        /* النصوص */
+        h1, h2, h3, h4, p, label, span {{
             color: #000000 !important;
         }}
-
-        /* الجداول */
+        
+        /* 5. الجداول والبطاقات */
         .finance-table {{
             width: 100%; border-collapse: separate; border-spacing: 0;
             background-color: white; border: 1px solid {C['border']};
@@ -101,7 +98,6 @@ def get_master_styles(C):
             color: {C['main_text']} !important; font-weight: 600;
         }}
 
-        /* البطاقات */
         .kpi-box {{
             background-color: white;
             border: 1px solid {C['border']};
@@ -111,17 +107,15 @@ def get_master_styles(C):
             margin-bottom: 10px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.02);
         }}
-        .kpi-title {{ font-size: 0.85rem; color: {C['sub_text']} !important; margin-bottom: 5px; }}
-        .kpi-value {{ font-size: 1.3rem; font-weight: 800; color: {C['main_text']} !important; direction: ltr; display: inline-block; }}
+        .kpi-title {{ font-size: 0.85rem; color: #666 !important; margin-bottom: 5px; }}
+        .kpi-value {{ font-size: 1.3rem; font-weight: 800; color: #000 !important; direction: ltr; display: inline-block; }}
         
-        /* العناوين */
         .section-header {{
             color: {C['primary']} !important; font-weight: 800; font-size: 1.1rem; 
             margin-top: 25px; margin-bottom: 15px; border-bottom: 2px solid {C['border']}; 
             padding-bottom: 5px;
         }}
         
-        /* مربع المؤشر */
         .tasi-box {{
             background: linear-gradient(135deg, {C['primary']} 0%, #091E42 100%) !important;
             padding: 30px; border-radius: 20px; margin-bottom: 30px; 
@@ -138,6 +132,7 @@ def get_master_styles(C):
     </style>
     """
 
+# قاعدة البيانات (قائمة الأسهم السعودية)
 TADAWUL_DB = {
     '2222': {'name': 'أرامكو', 'sector': 'الطاقة'}, '2030': {'name': 'المصافي', 'sector': 'الطاقة'},
     '4030': {'name': 'البحري', 'sector': 'الطاقة'}, '4200': {'name': 'الدريس', 'sector': 'الطاقة'},
