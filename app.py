@@ -12,7 +12,7 @@ st.set_page_config(page_title=APP_NAME, layout="wide", page_icon=APP_ICON, initi
 
 # --- نظام تسجيل الدخول الجديد ---
 def login_system():
-    # تهيئة قاعدة البيانات للتأكد من وجود جدول المستخدمين
+    # تهيئة قاعدة البيانات
     init_db()
     
     # التحقق هل المستخدم مسجل دخول بالفعل؟
@@ -32,7 +32,6 @@ def login_system():
     with c2:
         st.markdown(f"<h1 style='text-align: center; color: #0052CC;'>{APP_ICON} {APP_NAME}</h1>", unsafe_allow_html=True)
         
-        # تبويبات الدخول / التسجيل
         tab_login, tab_register = st.tabs(["🔑 تسجيل الدخول", "👤 إنشاء حساب جديد"])
         
         with tab_login:
@@ -89,7 +88,10 @@ if st.sidebar.button("تسجيل الخروج"):
     st.session_state["logged_in"] = False
     st.rerun()
 
-# 3. تهيئة الألوان
+# 3. تهيئة المتغيرات الأساسية (هنا كان الخطأ وتم إصلاحه)
+if 'page' not in st.session_state:
+    st.session_state['page'] = 'home'
+
 if 'custom_colors' not in st.session_state:
     st.session_state.custom_colors = DEFAULT_COLORS.copy()
 else:
@@ -105,6 +107,7 @@ st.markdown(get_master_styles(C), unsafe_allow_html=True)
 # 5. التشغيل
 views.render_navbar()
 
+# توجيه الصفحات
 page = st.session_state.page
 fin_data = get_financial_summary()
 
