@@ -1,9 +1,9 @@
 streamlit
 pandas
 numpy
-plotly
 yfinance
+plotly
 xlsxwriter
 extra-streamlit-components
-bcrypt
 openpyxl
+bcrypt
