@@ -3,7 +3,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
 from market_data import get_chart_history
-from analytics import calculate_rsi
+from analytics import calculate_rsi  # الآن ستعمل لأننا أضفناها في الملف السابق
 
 def view_advanced_chart(fin):
     C = st.session_state.custom_colors
@@ -28,6 +28,8 @@ def view_advanced_chart(fin):
             if df is not None and not df.empty:
                 df['MA20'] = df['Close'].rolling(20).mean()
                 df['MA50'] = df['Close'].rolling(50).mean()
+                
+                # حساب RSI
                 df['RSI'] = calculate_rsi(df)
                 
                 fig = make_subplots(rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.6, 0.2, 0.2])
@@ -42,9 +44,10 @@ def view_advanced_chart(fin):
                 fig.add_trace(go.Bar(x=df.index, y=df['Volume'], marker_color=colors, name='الحجم'), row=2, col=1)
                 
                 # RSI
-                fig.add_trace(go.Scatter(x=df.index, y=df['RSI'], line=dict(color='#A855F7', width=1.5), name='RSI'), row=3, col=1)
-                fig.add_hline(y=70, line_dash="dot", line_color="red", row=3, col=1)
-                fig.add_hline(y=30, line_dash="dot", line_color="green", row=3, col=1)
+                if 'RSI' in df.columns:
+                    fig.add_trace(go.Scatter(x=df.index, y=df['RSI'], line=dict(color='#A855F7', width=1.5), name='RSI'), row=3, col=1)
+                    fig.add_hline(y=70, line_dash="dot", line_color="red", row=3, col=1)
+                    fig.add_hline(y=30, line_dash="dot", line_color="green", row=3, col=1)
                 
                 fig.update_layout(height=700, xaxis_rangeslider_visible=False, paper_bgcolor=C['card_bg'], plot_bgcolor=C['card_bg'], 
                                   font=dict(color=C['main_text'], family="Cairo"), margin=dict(l=10, r=10, t=10, b=10), showlegend=False)
@@ -52,4 +55,4 @@ def view_advanced_chart(fin):
                 fig.update_yaxes(showgrid=True, gridcolor=C['border'])
                 
                 st.plotly_chart(fig, use_container_width=True)
-            else: st.warning("لا توجد بيانات")
+            else: st.warning("لا توجد بيانات متاحة لهذا السهم")
