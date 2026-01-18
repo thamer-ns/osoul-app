@@ -14,26 +14,27 @@ def render_navbar():
     C = st.session_state.custom_colors
     username = st.session_state.get('username', 'مستخدم')
 
-    # الهيدر العلوي
+    # الهيدر العلوي (تصميم نظيف)
     st.markdown(f"""
-    <div style="background-color: {C.get('card_bg')}; padding: 15px 25px; border-bottom: 1px solid {C.get('border')}; margin-bottom: 30px; display: flex; align-items: center; justify-content: space-between;">
+    <div style="background-color: {C.get('card_bg')}; padding: 20px; border-radius: 16px; border: 1px solid {C.get('border')}; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 4px 15px rgba(0,0,0,0.03);">
         <div style="display: flex; align-items: center; gap: 15px;">
-            <div style="font-size: 2.2rem;">{APP_ICON}</div>
+            <div style="font-size: 2.5rem; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.1));">{APP_ICON}</div>
             <div>
-                <h2 style="margin: 0; color: {C['primary']} !important; font-weight: 900; line-height: 1.2;">{APP_NAME}</h2>
-                <span style="font-size: 0.8rem; color: {C.get('sub_text')}; font-weight: 600;">لوحة البيانات المالية</span>
+                <h2 style="margin: 0; color: {C['primary']} !important; font-weight: 900; font-size: 1.6rem; letter-spacing: -0.5px;">{APP_NAME}</h2>
+                <span style="font-size: 0.85rem; color: {C.get('sub_text')}; font-weight: 600;">لوحة البيانات المالية الذكية</span>
             </div>
         </div>
-        <div style="text-align: left;">
-            <div style="color: {C['primary']}; font-weight: bold; font-size: 0.95rem;">مرحباً، {username} 👋</div>
-            <div style="font-weight: bold; color: {C.get('main_text')}; direction: ltr;">{date.today().strftime('%Y-%m-%d')}</div>
+        <div style="text-align: left; background-color: {C['page_bg']}; padding: 8px 15px; border-radius: 12px;">
+            <div style="color: {C['primary']}; font-weight: 800; font-size: 0.9rem;">مرحباً، {username}</div>
+            <div style="font-weight: 700; color: {C.get('sub_text')}; font-size: 0.8rem; direction: ltr;">{date.today().strftime('%Y-%m-%d')}</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # القائمة العلوية
+    # القائمة العلوية (متجاوبة مع الجوال)
+    # استخدام columns للتصميم المكتبي، وعلى الجوال CSS سيتكفل بالباقي
     cols = st.columns(9, gap="small")
-    labels = ['الرئيسية', 'مضاربة', 'استثمار', 'السيولة', 'التحليل', 'إضافة صفقة', 'الإعدادات', 'تحديث', 'خروج']
+    labels = ['الرئيسية', 'مضاربة', 'استثمار', 'السيولة', 'التحليل', 'إضافة', 'الإعدادات', 'تحديث', 'خروج']
     keys = ['home', 'spec', 'invest', 'cash', 'analysis', 'add', 'settings', 'update', 'logout']
     
     for col, label, key in zip(cols, labels, keys):
@@ -46,13 +47,15 @@ def render_navbar():
         
         elif key == 'update':
             if col.button("تحديث 🔄", key=f"nav_{key}", use_container_width=True, type="secondary"):
-                with st.spinner("جاري التحديث..."):
+                with st.spinner("جاري تحديث الأسعار..."):
                     update_market_data_batch()
                     time.sleep(0.5)
                     st.rerun()
         
         else:
+            # تمييز الزر النشط
             btn_type = "primary" if is_active else "secondary"
+            # إذا كان الزر إضافة صفقة نختصره للجوال في التسمية (اختياري) لكن هنا نعتمد التسمية الكاملة
             if col.button(label, key=f"nav_{key}", use_container_width=True, type=btn_type):
                 st.session_state.page = key
                 if 'editing_id' in st.session_state: del st.session_state['editing_id']
@@ -76,9 +79,9 @@ def render_kpi(label, value, color_condition=None):
 def render_recommendation_card(title, suggestions, reason):
     C = st.session_state.custom_colors
     st.markdown(f"""
-    <div style="background-color: {C['card_bg']}; border-right: 5px solid {C['primary']}; padding: 15px; border-radius: 10px; margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); border: 1px solid {C['border']};">
+    <div style="background-color: {C['card_bg']}; border-right: 5px solid {C['primary']}; padding: 15px; border-radius: 12px; margin-bottom: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.03); border: 1px solid {C['border']};">
         <div style="color: {C['primary']}; font-weight: 800; font-size: 1.1rem; margin-bottom: 5px;">📍 قطاع مقترح: {title}</div>
-        <div style="color: {C['main_text']}; font-size: 0.95rem; margin-bottom: 5px;"><b>شركات مقترحة:</b> {suggestions}</div>
+        <div style="color: {C['main_text']}; font-size: 0.95rem; margin-bottom: 5px; line-height: 1.5;"><b>شركات مقترحة:</b> {suggestions}</div>
         <div style="color: {C['sub_text']}; font-size: 0.85rem; font-style: italic;">{reason}</div>
     </div>
     """, unsafe_allow_html=True)
@@ -89,14 +92,14 @@ def view_smart_insights(fin):
     market_val = fin.get('market_val_open', 1)
     yield_pct = (projected_income / market_val * 100) if market_val > 0 else 0
     
-    st.markdown(f"<h3 style='color: {C['primary']}'>💰 الدخل السلبي (توقعات التوزيعات)</h3>", unsafe_allow_html=True)
+    st.markdown(f"<h3 style='color: {C['primary']}; font-weight:800; margin-bottom:15px;'>💰 الدخل السلبي (التوزيعات)</h3>", unsafe_allow_html=True)
     c_div1, c_div2 = st.columns(2)
     with c_div1: render_kpi("الدخل السنوي المتوقع", f"{projected_income:,.2f}", "blue")
     with c_div2: render_kpi("نسبة العائد (Yield)", f"{yield_pct:.2f}%", yield_pct)
     st.caption("ملاحظة: هذه التوقعات مبنية على آخر توزيعات معلنة للشركات وقد تتغير.")
     st.markdown("---")
 
-    st.markdown(f"<h3 style='color: {C['primary']}'>💡 تحسين المحفظة</h3>", unsafe_allow_html=True)
+    st.markdown(f"<h3 style='color: {C['primary']}; font-weight:800; margin-bottom:15px;'>💡 تحسين المحفظة</h3>", unsafe_allow_html=True)
     recs = get_sector_recommendations(fin)
     
     if not recs:
@@ -127,9 +130,9 @@ def render_finance_table(df, cols_def):
             elif col_key == 'status':
                 is_open = (str(val).lower() in ['open', 'مفتوحة'])
                 display_val = "مفتوحة" if is_open else "مغلقة"
-                bg = "#E3FCEF" if is_open else "#DFE1E6"
-                fg = C.get('success') if is_open else C.get('sub_text')
-                display_val = f"<span style='background:{bg}; color:{fg}; padding:4px 10px; border-radius:12px; font-size:0.8rem;'>{display_val}</span>"
+                bg = "#DCFCE7" if is_open else "#F3F4F6"
+                fg = "#166534" if is_open else "#4B5563"
+                display_val = f"<span style='background:{bg}; color:{fg}; padding:4px 12px; border-radius:20px; font-size:0.8rem; font-weight:800;'>{display_val}</span>"
             elif col_key in ['date', 'exit_date']:
                 display_val = str(val)[:10] if val else "-"
             elif isinstance(val, (int, float)) and not isinstance(val, bool):
@@ -148,7 +151,7 @@ def render_finance_table(df, cols_def):
 
 def render_edit_page(row, table_name, return_key):
     C = st.session_state.custom_colors
-    st.markdown(f"""<div style="background:{C.get('card_bg')}; padding:20px; border-radius:10px; border:1px solid {C.get('border')}; margin-bottom:20px;"><h3 style="color: {C.get('primary')}; margin-bottom: 10px;">🛠 تعديل التفاصيل</h3><div style="color: {C.get('sub_text')};">المعرف: {row['id']}</div></div>""", unsafe_allow_html=True)
+    st.markdown(f"""<div style="background:{C.get('card_bg')}; padding:25px; border-radius:16px; border:1px solid {C.get('border')}; margin-bottom:20px; box-shadow:0 4px 6px rgba(0,0,0,0.03);"><h3 style="color: {C.get('primary')}; margin-bottom: 10px;">🛠 تعديل التفاصيل</h3><div style="color: {C.get('sub_text')};">المعرف: {row['id']}</div></div>""", unsafe_allow_html=True)
     with st.container():
         current_date = pd.to_datetime(row['date']).date() if row['date'] else date.today()
         new_date = st.date_input("التاريخ", current_date)
@@ -419,7 +422,7 @@ def view_settings():
     
     # --- قسم استيراد البيانات (تم إصلاحه ليدعم السيولة والأعمدة المختلفة) ---
     with st.expander("📥 استيراد بيانات سابقة (من ملف Excel)"):
-        st.warning("تحذير: هذا الخيار سيضيف البيانات للموجودة حالياً. استخدم خيار المسح أدناه لتجنب التكرار.")
+        st.warning("تحذير: هذا الخيار سيضيف البيانات للموجودة حالياً.")
         
         # خيار لحذف البيانات القديمة قبل الاستيراد (لحل مشكلة التكرار)
         clear_data = st.checkbox("مسح البيانات الحالية قبل الاستيراد (هام لإصلاح التكرار)", value=True)
