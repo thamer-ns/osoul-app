@@ -7,24 +7,24 @@ DB_PATH = Path("stocks.db")
 BACKUP_DIR = Path("backups")
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
-# --- الهوية البصرية (الوضع الفاتح - الكود الأصلي) ---
+# --- الهوية البصرية (التصميم الفاتح الأصلي) ---
 DEFAULT_COLORS = {
-    'page_bg': '#FFFFFF',          
-    'card_bg': '#F0F2F6',          
-    'main_text': '#000000',        
-    'sub_text': '#555555',         
-    'primary': '#0052CC',          
-    'success': '#008000',          
-    'danger': '#FF0000',           
-    'border': '#E0E0E0',           
-    'input_bg': '#FFFFFF',
+    'page_bg': '#FFFFFF',          # خلفية بيضاء
+    'card_bg': '#F8F9FA',          # رمادي فاتح جداً للبطاقات
+    'main_text': '#000000',        # نص أسود
+    'sub_text': '#555555',         # نص رمادي للعناوين الفرعية
+    'primary': '#0052CC',          # أزرق رسمي
+    'success': '#008000',          # أخضر للأرباح
+    'danger': '#FF0000',           # أحمر للخسائر
+    'border': '#E0E0E0',           # حدود ناعمة
+    'input_bg': '#FFFFFF',         # خلفية الحقول بيضاء
     'header_bg': '#FFFFFF'
 }
 
 THEME = DEFAULT_COLORS
 PRESET_THEMES = { "أصولي (الافتراضي)": DEFAULT_COLORS }
 
-# --- الأوزان المستهدفة للقطاعات ---
+# --- الأوزان المستهدفة ---
 SECTOR_TARGETS = {
     'المواد الأساسية': 30.0,
     'البنوك': 17.0,
@@ -40,46 +40,54 @@ SECTOR_TARGETS = {
 }
 
 def get_master_styles(C):
+    # استخدام Double Braces {{ }} للـ CSS لتجنب مشاكل التنسيق
     return f"""
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap');
         
-        /* 1. إعدادات الخط والاتجاه */
-        html, body, [class*="css"] {{
+        /* 1. توحيد الخط والاتجاه */
+        html, body, [class*="css"], p, h1, h2, h3, h4, span, div, label {{
             font-family: 'Cairo', sans-serif !important;
             direction: rtl;
+            color: {C['main_text']} !important;
         }}
         
-        /* 2. إجبار المظهر الفاتح */
+        /* 2. إجبار الخلفية البيضاء */
         .stApp {{
-            background-color: #FFFFFF !important;
-            color: #000000 !important;
+            background-color: {C['page_bg']} !important;
         }}
         
+        [data-testid="stHeader"] {{
+            background-color: {C['page_bg']} !important;
+        }}
+        
+        /* 3. إخفاء الخط الرصاصي (مقبض القائمة) */
         [data-testid="stSidebar"] {{
-            background-color: #F8F9FA !important;
-            border-left: 1px solid #E6E6E6;
+            background-color: {C['card_bg']} !important;
+            border-left: 1px solid {C['border']};
         }}
-        
-        /* 3. إخفاء الخط الرصاصي (مقبض تغيير الحجم) */
         [data-testid="stSidebar"] + div {{
             display: none !important;
             width: 0 !important;
         }}
         
-        /* 4. تنسيق الحقول والقوائم (أبيض نقي) */
+        /* 4. تنسيق الحقول والقوائم (أبيض ونظيف) */
         input, .stTextInput input, .stNumberInput input, .stSelectbox, div[data-baseweb="select"] > div {{
             background-color: #FFFFFF !important;
             color: #000000 !important;
-            border-color: #E0E0E0 !important;
+            border-color: {C['border']} !important;
+            direction: rtl;
         }}
         
-        /* النصوص */
-        h1, h2, h3, h4, p, label, span {{
+        /* القوائم المنسدلة */
+        ul[data-baseweb="menu"] {{
+            background-color: #FFFFFF !important;
+        }}
+        li[role="option"] {{
             color: #000000 !important;
         }}
-        
-        /* 5. الجداول والبطاقات */
+
+        /* 5. الجداول */
         .finance-table {{
             width: 100%; border-collapse: separate; border-spacing: 0;
             background-color: white; border: 1px solid {C['border']};
@@ -96,6 +104,7 @@ def get_master_styles(C):
             color: {C['main_text']} !important; font-weight: 600;
         }}
 
+        /* 6. البطاقات (KPIs) */
         .kpi-box {{
             background-color: white;
             border: 1px solid {C['border']};
@@ -105,15 +114,17 @@ def get_master_styles(C):
             margin-bottom: 10px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.02);
         }}
-        .kpi-title {{ font-size: 0.85rem; color: #666 !important; margin-bottom: 5px; }}
-        .kpi-value {{ font-size: 1.3rem; font-weight: 800; color: #000 !important; direction: ltr; display: inline-block; }}
+        .kpi-title {{ font-size: 0.85rem; color: {C['sub_text']} !important; margin-bottom: 5px; }}
+        .kpi-value {{ font-size: 1.3rem; font-weight: 800; color: {C['main_text']} !important; direction: ltr; display: inline-block; }}
         
+        /* 7. العناوين */
         .section-header {{
             color: {C['primary']} !important; font-weight: 800; font-size: 1.1rem; 
             margin-top: 25px; margin-bottom: 15px; border-bottom: 2px solid {C['border']}; 
             padding-bottom: 5px;
         }}
         
+        /* 8. مربع المؤشر */
         .tasi-box {{
             background: linear-gradient(135deg, {C['primary']} 0%, #091E42 100%) !important;
             padding: 30px; border-radius: 20px; margin-bottom: 30px; 
@@ -121,7 +132,7 @@ def get_master_styles(C):
         }}
         .tasi-box * {{ color: #ffffff !important; }}
         
-        /* الأزرار */
+        /* 9. الأزرار */
         button[kind="primary"] {{
             background-color: {C['primary']} !important;
             color: white !important;
@@ -130,6 +141,7 @@ def get_master_styles(C):
     </style>
     """
 
+# قاعدة البيانات (قائمة الشركات)
 TADAWUL_DB = {
     '2222': {'name': 'أرامكو', 'sector': 'الطاقة'}, '2030': {'name': 'المصافي', 'sector': 'الطاقة'},
     '4030': {'name': 'البحري', 'sector': 'الطاقة'}, '4200': {'name': 'الدريس', 'sector': 'الطاقة'},
