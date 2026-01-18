@@ -18,7 +18,7 @@ def render_navbar():
         <div style="display: flex; align-items: center; gap: 15px;">
             <div style="font-size: 2.2rem;">{APP_ICON}</div>
             <div>
-                <h2 style="margin: 0; background: linear-gradient(135deg, {C.get('primary')}, {C.get('success')}); -webkit-background-clip: text; -webkit-text-fill-color: transparent; font-weight: 900; line-height: 1.2; letter-spacing: -1px;">{APP_NAME}</h2>
+                <h2 style=\"margin: 0; color: {C['primary']} !important; font-weight: 900; line-height: 1.2;\">{APP_NAME}</h2>
                 <span style="font-size: 0.8rem; color: {C.get('sub_text')}; font-weight: 600;">لوحة البيانات المالية</span>
             </div>
         </div>
