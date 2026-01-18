@@ -2,17 +2,17 @@ import streamlit as st
 import pandas as pd
 from database import init_db, create_user, verify_user
 from logic import get_financial_summary
-import views
+# تم تأخير استيراد views لتجنب الخطأ الدائري في حال حدوثه
 import charts 
 from config import DEFAULT_COLORS, PRESET_THEMES, get_master_styles, APP_NAME, APP_ICON
 import time
 import datetime
 import extra_streamlit_components as stx
 
-# 1. إعداد الصفحة
+# 1. إعداد الصفحة (يجب أن يكون أول أمر)
 st.set_page_config(page_title=APP_NAME, layout="wide", page_icon=APP_ICON, initial_sidebar_state="collapsed")
 
-# تطبيق الثيم الفاتح فوراً
+# 2. تحميل الألوان والخطوط (CSS) فوراً لتجنب الشاشة البيضاء
 if 'custom_colors' not in st.session_state:
     st.session_state.custom_colors = DEFAULT_COLORS.copy()
 else:
@@ -23,31 +23,35 @@ else:
 C = st.session_state.custom_colors
 st.markdown(get_master_styles(C), unsafe_allow_html=True)
 
-# --- إدارة الكوكيز ---
+# 3. إدارة الكوكيز
 def get_manager():
     return stx.CookieManager(key="cookie_manager_app")
 
 cookie_manager = get_manager()
 
-# --- نظام تسجيل الدخول ---
+# 4. نظام تسجيل الدخول
 def login_system():
     init_db()
+    
+    # تأخير بسيط جداً لتحميل الكوكيز
     time.sleep(0.1)
     cookie_user = cookie_manager.get(cookie="osoul_user")
     
+    # إذا وجدنا كوكيز، نسجل الدخول
     if cookie_user:
         st.session_state["logged_in"] = True
         st.session_state["username"] = cookie_user
         return True
 
+    # إذا كان مسجلاً من الجلسة الحالية
     if st.session_state.get("logged_in", False):
         return True
 
+    # --- شاشة الدخول ---
     st.markdown(
         """
         <style>
         .stTextInput input { text-align: center; }
-        .auth-container { max-width: 400px; margin: 0 auto; padding: 20px; border-radius: 10px; background-color: #f0f2f6; }
         </style>
         """, unsafe_allow_html=True
     )
@@ -89,10 +93,18 @@ def login_system():
 
     return False
 
+# تنفيذ الحماية (توقف هنا إذا لم ينجح الدخول)
 if not login_system():
     st.stop()
 
-# --- بعد الدخول ---
+# ---------------------------------------------------------
+# المنطقة المحمية (التطبيق الرئيسي)
+# ---------------------------------------------------------
+
+# استيراد views هنا لضمان عدم حدوث مشاكل قبل الدخول
+import views
+
+# القائمة الجانبية
 st.sidebar.success(f"مرحباً, {st.session_state.get('username', 'User')}")
 if st.sidebar.button("تسجيل الخروج"):
     cookie_manager.delete("osoul_user", key="del_cookie")
@@ -100,6 +112,7 @@ if st.sidebar.button("تسجيل الخروج"):
     if "username" in st.session_state: del st.session_state["username"]
     st.rerun()
 
+# تهيئة الصفحة الافتراضية
 if 'page' not in st.session_state:
     st.session_state['page'] = 'home'
 
