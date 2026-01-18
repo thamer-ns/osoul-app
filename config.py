@@ -7,16 +7,16 @@ DB_PATH = Path("stocks.db")
 BACKUP_DIR = Path("backups")
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
-# --- الهوية البصرية (الوضع الفاتح - الكود الأصلي) ---
+# --- الهوية البصرية (الوضع الفاتح - التصميم الأصلي) ---
 DEFAULT_COLORS = {
-    'page_bg': '#FFFFFF',          
-    'card_bg': '#F0F2F6',          
+    'page_bg': '#FFFFFF',           
+    'card_bg': '#F8F9FA',           
     'main_text': '#000000',        
     'sub_text': '#555555',         
-    'primary': '#0052CC',          
-    'success': '#008000',          
-    'danger': '#FF0000',           
-    'border': '#E0E0E0',           
+    'primary': '#0052CC',           
+    'success': '#008000',           
+    'danger': '#FF0000',            
+    'border': '#E0E0E0',            
     'input_bg': '#FFFFFF',
     'header_bg': '#FFFFFF'
 }
@@ -52,8 +52,8 @@ def get_master_styles(C):
         
         /* 2. إجبار المظهر الفاتح */
         .stApp {{
-            background-color: #FFFFFF !important;
-            color: #000000 !important;
+            background-color: {C['page_bg']} !important;
+            color: {C['main_text']} !important;
         }}
         
         [data-testid="stSidebar"] {{
@@ -76,7 +76,7 @@ def get_master_styles(C):
         
         /* النصوص */
         h1, h2, h3, h4, p, label, span {{
-            color: #000000 !important;
+            color: {C['main_text']} !important;
         }}
         
         /* 5. الجداول والبطاقات */
@@ -130,6 +130,7 @@ def get_master_styles(C):
     </style>
     """
 
+# قاعدة البيانات (قائمة الأسهم السعودية كما هي)
 TADAWUL_DB = {
     '2222': {'name': 'أرامكو', 'sector': 'الطاقة'}, '2030': {'name': 'المصافي', 'sector': 'الطاقة'},
     '4030': {'name': 'البحري', 'sector': 'الطاقة'}, '4200': {'name': 'الدريس', 'sector': 'الطاقة'},
