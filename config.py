@@ -44,8 +44,8 @@ def get_master_styles(C):
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap');
         
-        /* 1. تطبيق الخط العربي والاتجاه */
-        html, body, p, h1, h2, h3, h4, h5, h6, span, div, label, input, button, textarea {{
+        /* 1. تطبيق الخط العربي والاتجاه على العناصر الرئيسية فقط */
+        html, body, p, h1, h2, h3, h4, h5, h6, label, input, button, textarea, .stMarkdown {{
             font-family: 'Cairo', sans-serif !important;
             color: {C['main_text']} !important; 
         }}
@@ -57,28 +57,20 @@ def get_master_styles(C):
 
         [data-testid="stHeader"] {{ background-color: {C['page_bg']} !important; }}
 
-        /* 2. إصلاح مشكلة الكلمات الإنجليزية المتشابكة (keyboard_arrow) */
-        /* نعيد الخط الافتراضي للأيقونات وعناصر التحكم الخاصة بـ Streamlit */
-        [data-testid="stExpander"] {{
-            border: 1px solid {C['border']} !important;
-            border-radius: 8px !important;
-            background-color: {C['card_bg']} !important;
+        /* 2. إخفاء الخط الرصاصي (مقبض تغيير حجم القائمة) */
+        div[data-testid="stSidebar"] + div {{
+            display: none !important;
+            width: 0px !important;
         }}
-        
-        /* هذا السطر يمنع ظهور اسم الأيقونة كنص */
-        .material-icons, span[class^="css-"] {{
-            font-family: sans-serif !important;
+        section[data-testid="stSidebar"] + div {{
+            display: none !important;
+            width: 0px !important;
         }}
 
-        /* 3. إصلاح الخط الرصاصي (إخفاء مقبض تغيير حجم القائمة الجانبية) */
-        [data-testid="stSidebar"] + div {{
-            display: none !important;
-        }}
-        
-        /* تحسين القائمة الجانبية */
-        section[data-testid="stSidebar"] {{
-            background-color: {C['header_bg']} !important;
-            border-left: 1px solid {C['border']};
+        /* 3. إصلاح الأيقونات المتشابكة */
+        .material-icons, span.material-symbols-rounded {{
+            direction: ltr !important; 
+            font-family: 'Material Icons' !important;
         }}
 
         /* 4. تحسين الحقول والأزرار */
@@ -90,7 +82,6 @@ def get_master_styles(C):
             direction: rtl;
         }}
         
-        /* القوائم المنسدلة */
         div[data-baseweb="select"] > div {{
             background-color: #ffffff !important;
             color: {C['main_text']} !important;
