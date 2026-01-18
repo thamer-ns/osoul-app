@@ -2,56 +2,28 @@ import streamlit as st
 import pandas as pd
 from database import init_db, create_user, verify_user
 from logic import get_financial_summary
-# تم تأخير استيراد views لتجنب الخطأ الدائري في حال حدوثه
+import views
 import charts 
 from config import DEFAULT_COLORS, PRESET_THEMES, get_master_styles, APP_NAME, APP_ICON
 import time
-import datetime
-import extra_streamlit_components as stx
 
-# 1. إعداد الصفحة (يجب أن يكون أول أمر)
+# 1. إعداد الصفحة
 st.set_page_config(page_title=APP_NAME, layout="wide", page_icon=APP_ICON, initial_sidebar_state="collapsed")
 
-# 2. تحميل الألوان والخطوط (CSS) فوراً لتجنب الشاشة البيضاء
-if 'custom_colors' not in st.session_state:
-    st.session_state.custom_colors = DEFAULT_COLORS.copy()
-else:
-    for key, value in DEFAULT_COLORS.items():
-        if key not in st.session_state.custom_colors:
-            st.session_state.custom_colors[key] = value
-
-C = st.session_state.custom_colors
-st.markdown(get_master_styles(C), unsafe_allow_html=True)
-
-# 3. إدارة الكوكيز
-def get_manager():
-    return stx.CookieManager(key="cookie_manager_app")
-
-cookie_manager = get_manager()
-
-# 4. نظام تسجيل الدخول
+# --- نظام تسجيل الدخول الجديد ---
 def login_system():
+    # تهيئة قاعدة البيانات
     init_db()
     
-    # تأخير بسيط جداً لتحميل الكوكيز
-    time.sleep(0.1)
-    cookie_user = cookie_manager.get(cookie="osoul_user")
-    
-    # إذا وجدنا كوكيز، نسجل الدخول
-    if cookie_user:
-        st.session_state["logged_in"] = True
-        st.session_state["username"] = cookie_user
-        return True
-
-    # إذا كان مسجلاً من الجلسة الحالية
+    # التحقق هل المستخدم مسجل دخول بالفعل؟
     if st.session_state.get("logged_in", False):
         return True
 
-    # --- شاشة الدخول ---
     st.markdown(
         """
         <style>
         .stTextInput input { text-align: center; }
+        .auth-container { max-width: 400px; margin: 0 auto; padding: 20px; border-radius: 10px; background-color: #f0f2f6; }
         </style>
         """, unsafe_allow_html=True
     )
@@ -66,57 +38,76 @@ def login_system():
             st.markdown("##### الدخول للحساب الشخصي")
             username_in = st.text_input("اسم المستخدم", key="login_user")
             password_in = st.text_input("الرمز السري (PIN)", type="password", key="login_pass")
-            remember_me = st.checkbox("تذكرني")
             
             if st.button("دخول", type="primary", use_container_width=True):
                 if verify_user(username_in, password_in):
                     st.session_state["logged_in"] = True
                     st.session_state["username"] = username_in
-                    if remember_me:
-                        cookie_manager.set('osoul_user', username_in, expires_at=datetime.datetime.now() + datetime.timedelta(days=30), key="set_cookie")
-                    st.success("تم الدخول بنجاح!"); time.sleep(0.5); st.rerun()
+                    st.success("تم الدخول بنجاح! جاري التحميل...")
+                    time.sleep(0.5)
+                    st.rerun()
                 else:
-                    st.error("بيانات غير صحيحة")
+                    st.error("اسم المستخدم أو الرمز غير صحيح")
+            
+            st.markdown("---")
+            st.markdown("<div style='text-align: center; color: gray;'>أو الدخول السريع</div>", unsafe_allow_html=True)
+            if st.button("G تسجيل الدخول عبر Google", use_container_width=True):
+                st.info("خدمة Google Login تتطلب إعدادات API خاصة. حالياً يرجى استخدام الدخول التقليدي.")
 
         with tab_register:
             st.markdown("##### إنشاء حساب جديد")
             new_user = st.text_input("اختر اسم مستخدم", key="reg_user")
             new_pass = st.text_input("اختر رمزاً سرياً", type="password", key="reg_pass")
+            
             if st.button("إنشاء الحساب", type="primary", use_container_width=True):
                 if new_user and new_pass:
                     if create_user(new_user, new_pass):
-                        st.success("تم إنشاء الحساب! سجل دخولك الآن.")
+                        st.success("تم إنشاء الحساب بنجاح! يمكنك الآن تسجيل الدخول.")
                     else:
-                        st.error("اسم المستخدم موجود مسبقاً.")
+                        st.error("اسم المستخدم هذا موجود مسبقاً.")
                 else:
-                    st.warning("الرجاء تعبئة الحقول.")
+                    st.warning("الرجاء تعبئة جميع الحقول.")
+            
+            st.markdown("---")
+            if st.button("G إنشاء حساب عبر Google", use_container_width=True):
+                st.info("قريباً..")
 
     return False
 
-# تنفيذ الحماية (توقف هنا إذا لم ينجح الدخول)
+# 2. تنفيذ الحماية
 if not login_system():
     st.stop()
 
 # ---------------------------------------------------------
-# المنطقة المحمية (التطبيق الرئيسي)
+# المحتوى المحمي (يعمل فقط بعد الدخول)
 # ---------------------------------------------------------
 
-# استيراد views هنا لضمان عدم حدوث مشاكل قبل الدخول
-import views
-
-# القائمة الجانبية
+# عرض ترحيب بالمستخدم
 st.sidebar.success(f"مرحباً, {st.session_state.get('username', 'User')}")
 if st.sidebar.button("تسجيل الخروج"):
-    cookie_manager.delete("osoul_user", key="del_cookie")
     st.session_state["logged_in"] = False
-    if "username" in st.session_state: del st.session_state["username"]
     st.rerun()
 
-# تهيئة الصفحة الافتراضية
+# 3. تهيئة المتغيرات الأساسية (هنا كان الخطأ وتم إصلاحه)
 if 'page' not in st.session_state:
     st.session_state['page'] = 'home'
 
+if 'custom_colors' not in st.session_state:
+    st.session_state.custom_colors = DEFAULT_COLORS.copy()
+else:
+    for key, value in DEFAULT_COLORS.items():
+        if key not in st.session_state.custom_colors:
+            st.session_state.custom_colors[key] = value
+
+C = st.session_state.custom_colors
+
+# 4. CSS
+st.markdown(get_master_styles(C), unsafe_allow_html=True)
+
+# 5. التشغيل
 views.render_navbar()
+
+# توجيه الصفحات
 page = st.session_state.page
 fin_data = get_financial_summary()
 
