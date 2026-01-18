@@ -86,7 +86,17 @@ def get_master_styles(C):
             color: {C['main_text']} !important;
         }}
         
-        /* 2. إجبار الخلفية البيضاء */
+        /* 2. إصلاح أيقونات الاكسباندر (لحل مشكلة keyboard_arrow_down) */
+        div[data-testid="stExpander"] > details > summary > span {{
+            font-family: sans-serif !important;
+            direction: ltr !important;
+        }}
+        .material-icons {{
+            font-family: 'Material Icons' !important;
+            direction: ltr !important;
+        }}
+        
+        /* 3. إجبار الخلفية البيضاء */
         .stApp, [data-testid="stAppViewContainer"] {{
             background-color: {C['page_bg']} !important;
         }}
@@ -94,13 +104,13 @@ def get_master_styles(C):
             background-color: {C['page_bg']} !important;
         }}
         
-        /* 3. إخفاء القائمة الجانبية تماماً لمنع الشريط الرمادي */
+        /* 4. إخفاء القائمة الجانبية تماماً */
         [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"] {{
             display: none !important;
             width: 0 !important;
         }}
         
-        /* 4. تنسيق الحقول والقوائم (أبيض ونظيف) */
+        /* 5. تنسيق الحقول والقوائم */
         input, .stTextInput input, .stNumberInput input, .stSelectbox, div[data-baseweb="select"] > div {{
             background-color: #FFFFFF !important;
             color: #000000 !important;
@@ -108,7 +118,7 @@ def get_master_styles(C):
             direction: rtl;
         }}
         
-        /* 5. الجداول */
+        /* 6. الجداول */
         .finance-table {{
             width: 100%; border-collapse: separate; border-spacing: 0;
             background-color: white; border: 1px solid {C['border']};
@@ -125,7 +135,7 @@ def get_master_styles(C):
             color: {C['main_text']} !important; font-weight: 600;
         }}
 
-        /* 6. البطاقات (KPIs) */
+        /* 7. البطاقات (KPIs) */
         .kpi-box {{
             background-color: white;
             border: 1px solid {C['border']};
@@ -138,7 +148,7 @@ def get_master_styles(C):
         .kpi-title {{ font-size: 0.85rem; color: {C['sub_text']} !important; margin-bottom: 5px; }}
         .kpi-value {{ font-size: 1.3rem; font-weight: 800; color: {C['main_text']} !important; direction: ltr; display: inline-block; }}
         
-        /* 7. الأزرار */
+        /* 8. الأزرار */
         div.stButton > button:first-child {{
             border-radius: 8px; border: 1px solid {C['border']};
         }}
