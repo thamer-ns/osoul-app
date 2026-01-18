@@ -13,11 +13,10 @@ def calculate_portfolio_metrics():
     ret = fetch_table("ReturnsGrants")
 
     if not trades.empty:
-        # --- [إصلاح هام] تنظيف البيانات لمنع التداخل ---
+        # تنظيف استراتيجية الاستثمار
         if 'strategy' in trades.columns:
-            # إزالة المسافات الزائدة وتوحيد النص
             trades['strategy'] = trades['strategy'].astype(str).str.strip()
-        
+            
         trades['date'] = pd.to_datetime(trades['date'], errors='coerce')
         
         # التأكد من الأعمدة الرقمية
@@ -32,11 +31,13 @@ def calculate_portfolio_metrics():
         trades['status'] = trades['status'].astype(str).str.strip()
         is_closed = trades['status'].str.lower().isin(['close', 'sold', 'مغلقة', 'مباعة'])
         
+        # منطق السعر
         trades.loc[is_closed, 'current_price'] = trades.loc[is_closed, 'exit_price']
         trades['market_value'] = trades['quantity'] * trades['current_price']
         trades['gain'] = trades['market_value'] - trades['total_cost']
         trades['gain_pct'] = (trades['gain'] / trades['total_cost'].replace(0, 1)) * 100
         
+        # التغير اليومي
         trades['daily_change'] = ((trades['current_price'] - trades['prev_close']) / trades['prev_close'].replace(0, 1)) * 100
         trades.loc[is_closed, 'daily_change'] = 0.0
         
@@ -59,7 +60,6 @@ def calculate_portfolio_metrics():
     total_wit = wit['amount'].sum() if not wit.empty else 0
     total_ret = ret['amount'].sum() if not ret.empty else 0
     
-    # فصل البيانات مع التأكد من الحالة
     open_trades = trades[~trades['status'].str.lower().isin(['close', 'sold', 'مغلقة', 'مباعة'])] if not trades.empty else pd.DataFrame()
     closed_trades = trades[trades['status'].str.lower().isin(['close', 'sold', 'مغلقة', 'مباعة'])] if not trades.empty else pd.DataFrame()
     
@@ -115,3 +115,12 @@ def create_smart_backup():
                 df.to_excel(writer, sheet_name=t, index=False)
         return True
     except: return False
+
+# --- هذه الدالة كانت مفقودة وتسبب الخطأ ---
+def calculate_rsi(data, window=14):
+    if 'Close' not in data.columns: return None
+    delta = data['Close'].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
