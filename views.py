@@ -70,7 +70,6 @@ def render_recommendation_card(title, suggestions, reason):
 def view_smart_insights(fin):
     C = st.session_state.custom_colors
     
-    # --- الميزة الجديدة: قسم توقعات التوزيعات ---
     projected_income = fin.get('projected_dividend_income', 0)
     market_val = fin.get('market_val_open', 1)
     yield_pct = (projected_income / market_val * 100) if market_val > 0 else 0
@@ -82,7 +81,6 @@ def view_smart_insights(fin):
     st.caption("ملاحظة: هذه التوقعات مبنية على آخر توزيعات معلنة للشركات وقد تتغير.")
     st.markdown("---")
 
-    # --- التوصيات الذكية ---
     st.markdown(f"<h3 style='color: {C['primary']}'>💡 تحسين المحفظة</h3>", unsafe_allow_html=True)
     recs = get_sector_recommendations(fin)
     
@@ -105,13 +103,11 @@ def render_finance_table(df, cols_def):
             val = row.get(col_key, "-")
             display_val = val
             
-            # --- تم التعديل: حذف الإشارات (+/-) والاعتماد على اللون ---
             if col_key == 'daily_change':
                 if is_closed_trade:
                      display_val = "<span style='color:#999'>-</span>"
                 else:
                     color = C.get('success') if val >= 0 else C.get('danger')
-                    # نستخدم abs() لإزالة الإشارة السالبة، ولا نضع +
                     display_val = f"<span style='color:{color}; direction:ltr; font-weight:bold;'>{abs(val):.2f}%</span>"
             elif col_key == 'status':
                 is_open = (str(val).lower() in ['open', 'مفتوحة'])
@@ -128,7 +124,6 @@ def render_finance_table(df, cols_def):
                 
                 if col_key in ['gain', 'gain_pct', 'unrealized_pl', 'realized_pl', 'remaining_to_target']:
                     color = C.get('success') if val >= 0 else C.get('danger')
-                    # نستخدم abs() لإزالة الإشارات تماماً كما طلبت
                     display_val = f"<span style='color:{color}; direction:ltr; font-weight:bold;'>{abs(val):,.2f}</span>"
                     if 'pct' in col_key: display_val += "%"
             
@@ -332,7 +327,6 @@ def view_dashboard(fin):
     with c_ret2: render_kpi("صافي قيمة الأصول (Equity)", f"{fin['equity']:,.2f}", "blue")
 
     st.markdown("---")
-    # تم تفعيل المزايا الإضافية هنا
     view_smart_insights(fin)
     
     c_chart, c_watch = st.columns([2, 1])
@@ -409,6 +403,35 @@ def view_settings():
     st.header("⚙️ الإعدادات")
     C = st.session_state.custom_colors
     
+    # --- قسم استيراد البيانات (جديد) ---
+    with st.expander("📥 استيراد بيانات سابقة (من ملف Excel)"):
+        st.warning("تحذير: هذا الخيار سيضيف البيانات للموجودة حالياً. يفضل استخدامه ومحفظة البرنامج فارغة.")
+        uploaded_file = st.file_uploader("اختر ملف النسخة الاحتياطية (Excel)", type=['xlsx'])
+        
+        if uploaded_file is not None:
+            if st.button("بدء الاستيراد"):
+                try:
+                    xls = pd.ExcelFile(uploaded_file)
+                    with get_db() as conn:
+                        # استيراد الصفقات
+                        if 'Trades' in xls.sheet_names:
+                            df_t = pd.read_excel(xls, 'Trades')
+                            # تنظيف البيانات لتناسب القاعدة
+                            df_t.to_sql('Trades', conn, if_exists='append', index=False)
+                            st.success(f"تم استيراد {len(df_t)} صفقة.")
+                        
+                        # استيراد العمليات المالية الأخرى
+                        for sheet in ['Deposits', 'Withdrawals', 'ReturnsGrants']:
+                            if sheet in xls.sheet_names:
+                                df_x = pd.read_excel(xls, sheet)
+                                df_x.to_sql(sheet, conn, if_exists='append', index=False)
+                                st.success(f"تم استيراد بيانات {sheet}.")
+                                
+                    st.success("✅ تم الاستيراد بنجاح! قم بتحديث الصفحة."); st.cache_data.clear()
+                except Exception as e:
+                    st.error(f"حدث خطأ أثناء الاستيراد: {e}")
+
+    # --- باقي الإعدادات ---
     st.markdown(f"<h3 style='color: {C['main_text']}'>🎨 تخصيص المظهر والألوان</h3>", unsafe_allow_html=True)
     selected_theme = st.selectbox("اختر نمط الألوان الجاهز:", list(PRESET_THEMES.keys()))
     if st.button("تطبيق الثيم"):
