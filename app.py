@@ -12,7 +12,7 @@ import extra_streamlit_components as stx
 # 1. إعداد الصفحة
 st.set_page_config(page_title=APP_NAME, layout="wide", page_icon=APP_ICON, initial_sidebar_state="collapsed")
 
-# --- هام: تحميل الألوان والخطوط (CSS) في البداية لتجنب الشاشة البيضاء ---
+# --- تحميل الألوان أولاً (لتجنب الوميض) ---
 if 'custom_colors' not in st.session_state:
     st.session_state.custom_colors = DEFAULT_COLORS.copy()
 else:
@@ -24,8 +24,9 @@ C = st.session_state.custom_colors
 st.markdown(get_master_styles(C), unsafe_allow_html=True)
 
 # --- إدارة الكوكيز (للتذكر) ---
+# إضافة key لضمان عدم تعارض الودجت
 def get_manager():
-    return stx.CookieManager()
+    return stx.CookieManager(key="cookie_manager_main")
 
 cookie_manager = get_manager()
 
