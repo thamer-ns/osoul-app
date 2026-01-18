@@ -44,25 +44,50 @@ def get_master_styles(C):
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap');
         
-        html, body, [class*="css"], .stMarkdown, h1, h2, h3, h4, p, label, div, span, th, td, button, input {{
+        /* 1. تطبيق الخط العربي والاتجاه */
+        html, body, p, h1, h2, h3, h4, h5, h6, span, div, label, input, button, textarea {{
             font-family: 'Cairo', sans-serif !important;
-            direction: rtl; 
             color: {C['main_text']} !important; 
         }}
+        
+        .stApp {{
+            direction: rtl;
+            background-color: {C['page_bg']} !important;
+        }}
 
-        .stApp {{ background-color: {C['page_bg']} !important; }}
         [data-testid="stHeader"] {{ background-color: {C['page_bg']} !important; }}
 
-        /* === إصلاح الحقول السوداء === */
+        /* 2. إصلاح مشكلة الكلمات الإنجليزية المتشابكة (keyboard_arrow) */
+        /* نعيد الخط الافتراضي للأيقونات وعناصر التحكم الخاصة بـ Streamlit */
+        [data-testid="stExpander"] {{
+            border: 1px solid {C['border']} !important;
+            border-radius: 8px !important;
+            background-color: {C['card_bg']} !important;
+        }}
+        
+        /* هذا السطر يمنع ظهور اسم الأيقونة كنص */
+        .material-icons, span[class^="css-"] {{
+            font-family: sans-serif !important;
+        }}
+
+        /* 3. إصلاح الخط الرصاصي (إخفاء مقبض تغيير حجم القائمة الجانبية) */
+        [data-testid="stSidebar"] + div {{
+            display: none !important;
+        }}
+        
+        /* تحسين القائمة الجانبية */
+        section[data-testid="stSidebar"] {{
+            background-color: {C['header_bg']} !important;
+            border-left: 1px solid {C['border']};
+        }}
+
+        /* 4. تحسين الحقول والأزرار */
         input, .stTextInput input, .stNumberInput input, .stDateInput input, [data-baseweb="input"] {{
             background-color: #ffffff !important; 
             color: {C['main_text']} !important;
             border-color: {C['border']} !important;
             caret-color: {C['primary']} !important;
-        }}
-        div[data-baseweb="input"] > div {{
-            background-color: #ffffff !important;
-            color: {C['main_text']} !important;
+            direction: rtl;
         }}
         
         /* القوائم المنسدلة */
@@ -70,30 +95,22 @@ def get_master_styles(C):
             background-color: #ffffff !important;
             color: {C['main_text']} !important;
             border: 1px solid {C['border']} !important;
-        }}
-        div[data-baseweb="popover"], div[data-baseweb="menu"], ul[role="listbox"] {{
-            background-color: #ffffff !important;
-        }}
-        li[role="option"] {{
-            color: {C['main_text']} !important;
-            background-color: #ffffff !important;
+            direction: rtl;
         }}
         
-        [data-baseweb="select"] svg {{ fill: {C['sub_text']} !important; }}
-
         /* الأزرار */
-        button, [kind="primary"], [kind="secondary"] {{
-            background-color: {C['card_bg']} !important;
-            color: {C['sub_text']} !important;
-            border: 1px solid {C['border']} !important;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.02) !important;
-        }}
-        [data-testid="stFormSubmitButton"] > button {{
+        button[kind="primary"] {{
             background-color: {C['primary']} !important;
             color: white !important;
+            border: none !important;
+        }}
+        button[kind="secondary"] {{
+            background-color: white !important;
+            color: {C['main_text']} !important;
+            border: 1px solid {C['border']} !important;
         }}
 
-        /* الجداول */
+        /* 5. الجداول والبطاقات */
         .finance-table {{
             width: 100%; border-collapse: separate; border-spacing: 0;
             background-color: white; border: 1px solid {C['border']};
@@ -109,7 +126,6 @@ def get_master_styles(C):
             color: {C['main_text']} !important; font-weight: 600;
         }}
 
-        /* بطاقات العرض */
         .kpi-box {{
             background-color: white;
             border: 1px solid {C['border']};
@@ -137,7 +153,7 @@ def get_master_styles(C):
     </style>
     """
 
-# قاعدة البيانات (تأكد من نسخ هذا الجزء بالكامل)
+# قاعدة البيانات
 TADAWUL_DB = {
     '2222': {'name': 'أرامكو', 'sector': 'الطاقة'}, '2030': {'name': 'المصافي', 'sector': 'الطاقة'},
     '4030': {'name': 'البحري', 'sector': 'الطاقة'}, '4200': {'name': 'الدريس', 'sector': 'الطاقة'},
