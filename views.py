@@ -31,7 +31,7 @@ def render_navbar():
     </div>
     """, unsafe_allow_html=True)
 
-    # القائمة العلوية (تم زيادة الأعمدة إلى 9 لدمج زر التحديث)
+    # القائمة العلوية (تم دمج زر التحديث والخروج)
     cols = st.columns(9, gap="small")
     labels = ['الرئيسية', 'مضاربة', 'استثمار', 'السيولة', 'التحليل', 'إضافة صفقة', 'الإعدادات', 'تحديث', 'خروج']
     keys = ['home', 'spec', 'invest', 'cash', 'analysis', 'add', 'settings', 'update', 'logout']
@@ -45,9 +45,9 @@ def render_navbar():
                 st.rerun()
         
         elif key == 'update':
-            # زر التحديث (مميز بلون مختلف قليلاً إذا أردت، أو نفس النسق)
+            # زر التحديث
             if col.button("تحديث 🔄", key=f"nav_{key}", use_container_width=True, type="secondary"):
-                with st.spinner("جاري تحديث أسعار السوق..."):
+                with st.spinner("جاري تحديث الأسعار..."):
                     update_market_data_batch()
                     time.sleep(0.5)
                     st.rerun()
@@ -418,7 +418,7 @@ def view_settings():
     st.header("⚙️ الإعدادات")
     C = st.session_state.custom_colors
     
-    # --- قسم استيراد البيانات (تم تحديثه لإصلاح مشكلة السيولة) ---
+    # --- قسم استيراد البيانات (تم إصلاحه ليدعم السيولة والأعمدة المختلفة) ---
     with st.expander("📥 استيراد بيانات سابقة (من ملف Excel)"):
         st.warning("تحذير: هذا الخيار سيضيف البيانات للموجودة حالياً.")
         uploaded_file = st.file_uploader("اختر ملف النسخة الاحتياطية (Excel)", type=['xlsx'])
@@ -428,31 +428,72 @@ def view_settings():
                 try:
                     xls = pd.ExcelFile(uploaded_file)
                     imported_count = 0
+                    
                     with get_db() as conn:
-                        # 1. استيراد الصفقات
+                        # 1. استيراد الصفقات (Trades)
                         if 'Trades' in xls.sheet_names:
                             df_t = pd.read_excel(xls, 'Trades')
+                            # تنظيف: حذف عمود id لأنه سيتعارض، وحذف الأعمدة الفارغة
+                            if 'id' in df_t.columns: df_t = df_t.drop(columns=['id'])
+                            
+                            # اختيار الأعمدة التي نحتاجها فقط (لتجنب الأخطاء)
+                            valid_cols = ['symbol', 'company_name', 'sector', 'date', 'quantity', 'entry_price', 
+                                          'strategy', 'status', 'exit_date', 'exit_price', 'current_price', 
+                                          'prev_close', 'year_high', 'year_low']
+                            df_t = df_t[[c for c in df_t.columns if c in valid_cols]]
+                            
                             df_t.to_sql('Trades', conn, if_exists='append', index=False)
-                            st.write(f"✅ تم استيراد الصفقات: {len(df_t)} صفقة.")
+                            st.success(f"✅ تم استيراد الصفقات: {len(df_t)} صفقة.")
                             imported_count += 1
                         
-                        # 2. استيراد السيولة (إيداع/سحب/عوائد)
-                        # ملاحظة: نتأكد من أسماء الصفحات
-                        liq_sheets = ['Deposits', 'Withdrawals', 'ReturnsGrants']
-                        for sheet in liq_sheets:
-                            if sheet in xls.sheet_names:
-                                df_x = pd.read_excel(xls, sheet)
-                                df_x.to_sql(sheet, conn, if_exists='append', index=False)
-                                st.write(f"✅ تم استيراد {sheet} ({len(df_x)} سجل).")
-                                imported_count += 1
-                        
+                        # 2. استيراد الإيداعات (Deposits)
+                        if 'Deposits' in xls.sheet_names:
+                            df_d = pd.read_excel(xls, 'Deposits')
+                            if 'id' in df_d.columns: df_d = df_d.drop(columns=['id'])
+                            # في ملفك العمود اسمه source ونحن نحتاجه note
+                            if 'source' in df_d.columns: df_d.rename(columns={'source': 'note'}, inplace=True)
+                            
+                            valid_cols = ['date', 'amount', 'note']
+                            df_d = df_d[[c for c in df_d.columns if c in valid_cols]]
+                            
+                            df_d.to_sql('Deposits', conn, if_exists='append', index=False)
+                            st.success(f"✅ تم استيراد الإيداعات: {len(df_d)} عملية.")
+                            imported_count += 1
+
+                        # 3. استيراد السحوبات (Withdrawals)
+                        if 'Withdrawals' in xls.sheet_names:
+                            df_w = pd.read_excel(xls, 'Withdrawals')
+                            if 'id' in df_w.columns: df_w = df_w.drop(columns=['id'])
+                            # في ملفك العمود اسمه reason ونحن نحتاجه note
+                            if 'reason' in df_w.columns: df_w.rename(columns={'reason': 'note'}, inplace=True)
+                            
+                            valid_cols = ['date', 'amount', 'note']
+                            df_w = df_w[[c for c in df_w.columns if c in valid_cols]]
+                            
+                            df_w.to_sql('Withdrawals', conn, if_exists='append', index=False)
+                            st.success(f"✅ تم استيراد السحوبات: {len(df_w)} عملية.")
+                            imported_count += 1
+
+                        # 4. استيراد العوائد (ReturnsGrants)
+                        if 'ReturnsGrants' in xls.sheet_names:
+                            df_r = pd.read_excel(xls, 'ReturnsGrants')
+                            if 'id' in df_r.columns: df_r = df_r.drop(columns=['id'])
+                            
+                            valid_cols = ['date', 'symbol', 'company_name', 'amount']
+                            df_r = df_r[[c for c in df_r.columns if c in valid_cols]]
+                            
+                            df_r.to_sql('ReturnsGrants', conn, if_exists='append', index=False)
+                            st.success(f"✅ تم استيراد العوائد: {len(df_r)} عملية.")
+                            imported_count += 1
+                            
                         conn.commit()
                         
                     if imported_count > 0:
+                        st.balloons()
                         st.success("تمت عملية الاستيراد بنجاح! يرجى تحديث الصفحة.")
                         st.cache_data.clear()
                     else:
-                        st.warning("لم يتم العثور على صفحات مطابقة (Trades, Deposits, Withdrawals...) في الملف.")
+                        st.warning("لم يتم العثور على صفحات مطابقة في الملف.")
                         
                 except Exception as e:
                     st.error(f"حدث خطأ أثناء الاستيراد: {e}")
