@@ -12,7 +12,6 @@ logger = logging.getLogger(__name__)
 def get_db():
     conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
     conn.row_factory = sqlite3.Row
-    # تفعيل وضع WAL لمنع مشاكل القفل عند التحديث السريع
     conn.execute("PRAGMA journal_mode=WAL;")
     try: yield conn
     finally: conn.close()
@@ -36,6 +35,9 @@ def fix_dates():
 
 def init_db():
     with get_db() as conn:
+        # --- جدول المستخدمين الجديد ---
+        conn.execute("CREATE TABLE IF NOT EXISTS Users (username TEXT PRIMARY KEY, password TEXT, created_at TEXT)")
+        
         conn.execute('''CREATE TABLE IF NOT EXISTS Trades (
             id INTEGER PRIMARY KEY AUTOINCREMENT, symbol TEXT, company_name TEXT, sector TEXT, 
             date TEXT, quantity REAL, entry_price REAL, strategy TEXT, status TEXT, 
@@ -52,13 +54,28 @@ def init_db():
             except: pass
     fix_dates()
 
+# --- دوال إدارة المستخدمين ---
+def create_user(username, password):
+    try:
+        with get_db() as conn:
+            conn.execute("INSERT INTO Users (username, password, created_at) VALUES (?, ?, datetime('now'))", (username, password))
+            conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False # المستخدم موجود مسبقاً
+
+def verify_user(username, password):
+    with get_db() as conn:
+        user = conn.execute("SELECT * FROM Users WHERE username = ? AND password = ?", (username, password)).fetchone()
+        return user is not None
+
 def create_smart_backup():
     try:
         latest = BACKUP_DIR / "backup_latest.xlsx"
         if latest.exists(): shutil.copy(latest, BACKUP_DIR / "backup_previous.xlsx")
         with pd.ExcelWriter(latest, engine='xlsxwriter') as writer:
             with get_db() as conn:
-                for t in ['Trades', 'Deposits', 'Withdrawals', 'ReturnsGrants', 'Watchlist']:
+                for t in ['Trades', 'Deposits', 'Withdrawals', 'ReturnsGrants', 'Watchlist', 'Users']:
                     try: pd.read_sql(f"SELECT * FROM {t}", conn).to_excel(writer, sheet_name=t, index=False)
                     except: pass
         return True
