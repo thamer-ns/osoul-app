@@ -18,7 +18,7 @@ def render_navbar():
         <div style="display: flex; align-items: center; gap: 15px;">
             <div style="font-size: 2.2rem;">{APP_ICON}</div>
             <div>
-                <h2 style=\"margin: 0; color: {C['primary']} !important; font-weight: 900; line-height: 1.2;\">{APP_NAME}</h2>
+                <h2 style="margin: 0; color: {C['primary']} !important; font-weight: 900; line-height: 1.2;">{APP_NAME}</h2>
                 <span style="font-size: 0.8rem; color: {C.get('sub_text')}; font-weight: 600;">لوحة البيانات المالية</span>
             </div>
         </div>
@@ -183,9 +183,7 @@ def render_edit_page(row, table_name, return_key):
         if c_back.button("عودة", use_container_width=True):
             del st.session_state['editing_id']; st.rerun()
 
-PORTFOLIO_COLS = [('company_name', 'الشركة'), ('symbol', 'الرمز'), ('sector', 'القطاع'), ('status', 'الحالة'), ('quantity', 'الكمية'), ('entry_price', 'شراء'), ('total_cost', 'التكلفة'), ('current_price', 'سعر السوق/البيع'), ('market_value', 'القيمة'), ('gain', 'الربح/الخسارة'), ('gain_pct', 'النسبة %'), ('weight', 'الوزن'), ('daily_change', 'تغير يومي'), ('date', 'التاريخ')]
-
-def view_portfolio(fin, strat):
+PORTFOLIO_COLS = [('company_name', 'الشركة'), ('symbol', 'الرمز'), ('sector', 'القطاع'), ('status', 'الحالة'), ('quantity', 'الكمية'), ('entry_price', 'شراء'), ('total_cost', 'التكلفة'), ('current_price', 'سعر السوق/البيع'), ('market_value', 'القيمة'), ('gain', 'الربح/الخسارة'), ('gain_pct', 'النسبة %'), ('weight', 'الوزن'), ('daily_change', 'تغير يومي'), ('date', 'التاريخ')]def view_portfolio(fin, strat):
     if 'editing_id' in st.session_state and st.session_state.get('edit_type') == 'Trades':
         target = fin['all_trades'][fin['all_trades']['id'] == st.session_state['editing_id']]
         if not target.empty: render_edit_page(target.iloc[0], "Trades", strat); return
@@ -237,9 +235,7 @@ def view_portfolio(fin, strat):
             st.session_state['editing_id'] = sel_id
             st.session_state['edit_type'] = 'Trades'
             st.rerun()
-    else: st.info(f"لا توجد صفقات في {strat}")
-
-def view_liquidity():
+    else: st.info(f"لا توجد صفقات في {strat}")def view_liquidity():
     if 'editing_id' in st.session_state and st.session_state.get('edit_type') in ['Deposits', 'Withdrawals', 'ReturnsGrants']:
         t_name = st.session_state['edit_type']
         with get_db() as conn:
@@ -277,9 +273,7 @@ def view_liquidity():
     with tab3:
         st.markdown(f"الإجمالي: {fin['returns']['amount'].sum():,.2f}")
         if not fin['returns'].empty: fin['returns'] = enrich_data_frame(fin['returns'])
-        handle_liq_tab(fin['returns'], "ReturnsGrants", [('symbol', 'الرمز'), ('company_name', 'الشركة'), ('date', 'التاريخ'), ('amount', 'المبلغ')], "r")
-
-def view_dashboard(fin):
+        handle_liq_tab(fin['returns'], "ReturnsGrants", [('symbol', 'الرمز'), ('company_name', 'الشركة'), ('date', 'التاريخ'), ('amount', 'المبلغ')], "r")def view_dashboard(fin):
     try: tasi_price, tasi_change = get_tasi_data()
     except: tasi_price, tasi_change = 0, 0
     C = st.session_state.custom_colors
