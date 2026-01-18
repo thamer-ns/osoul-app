@@ -31,32 +31,34 @@ def render_navbar():
     </div>
     """, unsafe_allow_html=True)
 
-    # القائمة العلوية (تم دمج زر الخروج هنا)
-    c_nav, c_refresh = st.columns([8, 1])
-    with c_nav:
-        cols = st.columns(8, gap="small")
-        labels = ['الرئيسية', 'مضاربة', 'استثمار', 'السيولة', 'التحليل', 'إضافة صفقة', 'الإعدادات', 'خروج']
-        keys = ['home', 'spec', 'invest', 'cash', 'analysis', 'add', 'settings', 'logout']
-        
-        for col, label, key in zip(cols, labels, keys):
-            is_active = (st.session_state.get('page') == key)
-            
-            if key == 'logout':
-                if col.button(label, key=f"nav_{key}", use_container_width=True, type="secondary"):
-                    st.session_state.page = key
-                    st.rerun()
-            else:
-                btn_type = "primary" if is_active else "secondary"
-                if col.button(label, key=f"nav_{key}", use_container_width=True, type=btn_type):
-                    st.session_state.page = key
-                    if 'editing_id' in st.session_state: del st.session_state['editing_id']
-                    st.rerun()
+    # القائمة العلوية (تم زيادة الأعمدة إلى 9 لدمج زر التحديث)
+    cols = st.columns(9, gap="small")
+    labels = ['الرئيسية', 'مضاربة', 'استثمار', 'السيولة', 'التحليل', 'إضافة صفقة', 'الإعدادات', 'تحديث', 'خروج']
+    keys = ['home', 'spec', 'invest', 'cash', 'analysis', 'add', 'settings', 'update', 'logout']
     
-    with c_refresh:
-        st.markdown("<div style='margin-bottom: 2px;'></div>", unsafe_allow_html=True)
-        if st.button("تحديث 🔄", use_container_width=True):
-            with st.spinner("جاري التحديث..."):
-                update_market_data_batch(); time.sleep(0.5); st.rerun()
+    for col, label, key in zip(cols, labels, keys):
+        is_active = (st.session_state.get('page') == key)
+        
+        if key == 'logout':
+            if col.button(label, key=f"nav_{key}", use_container_width=True, type="secondary"):
+                st.session_state.page = key
+                st.rerun()
+        
+        elif key == 'update':
+            # زر التحديث (مميز بلون مختلف قليلاً إذا أردت، أو نفس النسق)
+            if col.button("تحديث 🔄", key=f"nav_{key}", use_container_width=True, type="secondary"):
+                with st.spinner("جاري تحديث أسعار السوق..."):
+                    update_market_data_batch()
+                    time.sleep(0.5)
+                    st.rerun()
+        
+        else:
+            btn_type = "primary" if is_active else "secondary"
+            if col.button(label, key=f"nav_{key}", use_container_width=True, type=btn_type):
+                st.session_state.page = key
+                if 'editing_id' in st.session_state: del st.session_state['editing_id']
+                st.rerun()
+    
     st.markdown("---")
 
 def render_kpi(label, value, color_condition=None):
@@ -416,30 +418,42 @@ def view_settings():
     st.header("⚙️ الإعدادات")
     C = st.session_state.custom_colors
     
-    # --- قسم استيراد البيانات (جديد) ---
+    # --- قسم استيراد البيانات (تم تحديثه لإصلاح مشكلة السيولة) ---
     with st.expander("📥 استيراد بيانات سابقة (من ملف Excel)"):
-        st.warning("تحذير: هذا الخيار سيضيف البيانات للموجودة حالياً. يفضل استخدامه ومحفظة البرنامج فارغة.")
+        st.warning("تحذير: هذا الخيار سيضيف البيانات للموجودة حالياً.")
         uploaded_file = st.file_uploader("اختر ملف النسخة الاحتياطية (Excel)", type=['xlsx'])
         
         if uploaded_file is not None:
             if st.button("بدء الاستيراد"):
                 try:
                     xls = pd.ExcelFile(uploaded_file)
+                    imported_count = 0
                     with get_db() as conn:
-                        # استيراد الصفقات
+                        # 1. استيراد الصفقات
                         if 'Trades' in xls.sheet_names:
                             df_t = pd.read_excel(xls, 'Trades')
                             df_t.to_sql('Trades', conn, if_exists='append', index=False)
-                            st.success(f"تم استيراد {len(df_t)} صفقة.")
+                            st.write(f"✅ تم استيراد الصفقات: {len(df_t)} صفقة.")
+                            imported_count += 1
                         
-                        # استيراد العمليات الأخرى
-                        for sheet in ['Deposits', 'Withdrawals', 'ReturnsGrants']:
+                        # 2. استيراد السيولة (إيداع/سحب/عوائد)
+                        # ملاحظة: نتأكد من أسماء الصفحات
+                        liq_sheets = ['Deposits', 'Withdrawals', 'ReturnsGrants']
+                        for sheet in liq_sheets:
                             if sheet in xls.sheet_names:
                                 df_x = pd.read_excel(xls, sheet)
                                 df_x.to_sql(sheet, conn, if_exists='append', index=False)
-                                st.success(f"تم استيراد بيانات {sheet}.")
-                                
-                    st.success("✅ تم الاستيراد بنجاح! قم بتحديث الصفحة."); st.cache_data.clear()
+                                st.write(f"✅ تم استيراد {sheet} ({len(df_x)} سجل).")
+                                imported_count += 1
+                        
+                        conn.commit()
+                        
+                    if imported_count > 0:
+                        st.success("تمت عملية الاستيراد بنجاح! يرجى تحديث الصفحة.")
+                        st.cache_data.clear()
+                    else:
+                        st.warning("لم يتم العثور على صفحات مطابقة (Trades, Deposits, Withdrawals...) في الملف.")
+                        
                 except Exception as e:
                     st.error(f"حدث خطأ أثناء الاستيراد: {e}")
 
