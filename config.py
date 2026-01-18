@@ -44,54 +44,55 @@ def get_master_styles(C):
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap');
         
-        /* تطبيق الخط العربي */
-        html, body, p, h1, h2, h3, h4, h5, h6, label, input, button, textarea, .stMarkdown, .stSelectbox {{
+        /* 1. توحيد الخط والاتجاه */
+        html, body, [class*="css"] {{
             font-family: 'Cairo', sans-serif !important;
-            color: {C['main_text']} !important; 
-        }}
-        
-        .stApp {{
-            direction: rtl;
-            background-color: {C['page_bg']} !important;
-        }}
-
-        [data-testid="stHeader"] {{ background-color: {C['page_bg']} !important; }}
-
-        /* إصلاح الأيقونات المتشابكة */
-        .material-icons, span.material-symbols-rounded {{
-            direction: ltr !important; 
-            font-family: 'Material Icons' !important;
-        }}
-
-        /* تحسين الحقول والأزرار */
-        input, .stTextInput input, .stNumberInput input, .stDateInput input, [data-baseweb="input"] {{
-            background-color: #ffffff !important; 
-            color: {C['main_text']} !important;
-            border-color: {C['border']} !important;
-            caret-color: {C['primary']} !important;
             direction: rtl;
         }}
         
+        /* 2. إخفاء الخط الرصاصي (مقبض تكبير القائمة) نهائياً */
+        [data-testid="stSidebar"] {{
+            border-left: 1px solid {C['border']};
+        }}
+        [data-testid="stSidebar"] + div {{
+            display: none !important;
+            width: 0 !important;
+        }}
+        
+        /* 3. استعادة ألوان القوائم والحقول للون الأبيض (التصميم الأصلي) */
+        .stTextInput input, .stNumberInput input, .stDateInput input, .stSelectbox, [data-baseweb="select"] {{
+            color: #000000 !important;
+            background-color: #ffffff !important;
+        }}
+        
+        /* خلفية القوائم المنسدلة */
         div[data-baseweb="select"] > div {{
             background-color: #ffffff !important;
-            color: {C['main_text']} !important;
-            border: 1px solid {C['border']} !important;
-            direction: rtl;
+            color: #000000 !important;
+            border-color: {C['border']} !important;
         }}
         
-        /* الأزرار */
-        button[kind="primary"] {{
-            background-color: {C['primary']} !important;
-            color: white !important;
-            border: none !important;
+        /* القائمة المنسدلة عند الفتح */
+        ul[data-baseweb="menu"] {{
+            background-color: #ffffff !important;
         }}
-        button[kind="secondary"] {{
-            background-color: white !important;
-            color: {C['main_text']} !important;
-            border: 1px solid {C['border']} !important;
+        li[data-baseweb="option"] {{
+            color: #000000 !important;
         }}
 
-        /* الجداول والبطاقات */
+        /* مربع رفع الملفات (Expander & File Uploader) */
+        [data-testid="stExpander"], [data-testid="stFileUploader"] {{
+            background-color: #ffffff !important;
+            color: #000000 !important;
+            border: 1px solid {C['border']} !important;
+        }}
+        
+        /* النصوص العامة */
+        h1, h2, h3, h4, p, label, div, span {{
+            color: {C['main_text']};
+        }}
+        
+        /* 4. الجداول والبطاقات */
         .finance-table {{
             width: 100%; border-collapse: separate; border-spacing: 0;
             background-color: white; border: 1px solid {C['border']};
@@ -131,10 +132,17 @@ def get_master_styles(C):
             display: flex; justify-content: space-between; align-items: center;
         }}
         .tasi-box * {{ color: #ffffff !important; }}
+        
+        /* الأزرار */
+        button[kind="primary"] {{
+            background-color: {C['primary']} !important;
+            color: white !important;
+            border: none !important;
+        }}
     </style>
     """
 
-# قاعدة البيانات
+# قاعدة البيانات (كما هي)
 TADAWUL_DB = {
     '2222': {'name': 'أرامكو', 'sector': 'الطاقة'}, '2030': {'name': 'المصافي', 'sector': 'الطاقة'},
     '4030': {'name': 'البحري', 'sector': 'الطاقة'}, '4200': {'name': 'الدريس', 'sector': 'الطاقة'},
