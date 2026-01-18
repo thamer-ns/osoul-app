@@ -7,18 +7,18 @@ DB_PATH = Path("stocks.db")
 BACKUP_DIR = Path("backups")
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
-# --- الهوية البصرية ---
+# --- الهوية البصرية (الوضع الفاتح) ---
 DEFAULT_COLORS = {
-    'page_bg': '#F4F6F8',
-    'card_bg': '#FFFFFF',
-    'main_text': '#172B4D',
-    'sub_text': '#5E6C84',
-    'primary': '#0052CC',
-    'success': '#36B37E',
-    'danger': '#FF5630',
-    'border': '#DFE1E6',
+    'page_bg': '#FFFFFF',          # خلفية بيضاء بالكامل
+    'card_bg': '#F0F2F6',          # خلفية رمادية فاتحة جداً للبطاقات
+    'main_text': '#000000',        # نص أسود
+    'sub_text': '#555555',         # نص رمادي غامق
+    'primary': '#0052CC',          # أزرق
+    'success': '#008000',          # أخضر
+    'danger': '#FF0000',           # أحمر
+    'border': '#E0E0E0',           # حدود رمادية فاتحة
     'input_bg': '#FFFFFF',
-    'header_bg': '#FAFBFC'
+    'header_bg': '#FFFFFF'
 }
 
 THEME = DEFAULT_COLORS
@@ -44,55 +44,42 @@ def get_master_styles(C):
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap');
         
-        /* 1. توحيد الخط والاتجاه */
+        /* 1. إعدادات الخط والاتجاه */
         html, body, [class*="css"] {{
             font-family: 'Cairo', sans-serif !important;
             direction: rtl;
         }}
         
-        /* 2. إخفاء الخط الرصاصي (مقبض تكبير القائمة) نهائياً */
-        [data-testid="stSidebar"] {{
-            border-left: 1px solid {C['border']};
+        /* 2. إجبار المظهر الفاتح (Light Mode Override) */
+        .stApp {{
+            background-color: #FFFFFF !important;
+            color: #000000 !important;
         }}
+        
+        [data-testid="stSidebar"] {{
+            background-color: #F8F9FA !important;
+            border-left: 1px solid #E6E6E6;
+        }}
+        
+        /* 3. إخفاء الخط الرصاصي (مقبض تغيير الحجم) */
         [data-testid="stSidebar"] + div {{
             display: none !important;
             width: 0 !important;
         }}
         
-        /* 3. استعادة ألوان القوائم والحقول للون الأبيض (التصميم الأصلي) */
-        .stTextInput input, .stNumberInput input, .stDateInput input, .stSelectbox, [data-baseweb="select"] {{
+        /* 4. تنسيق الحقول والقوائم (أبيض نقي) */
+        input, .stTextInput input, .stNumberInput input, .stSelectbox, div[data-baseweb="select"] > div {{
+            background-color: #FFFFFF !important;
             color: #000000 !important;
-            background-color: #ffffff !important;
+            border-color: #E0E0E0 !important;
         }}
         
-        /* خلفية القوائم المنسدلة */
-        div[data-baseweb="select"] > div {{
-            background-color: #ffffff !important;
-            color: #000000 !important;
-            border-color: {C['border']} !important;
-        }}
-        
-        /* القائمة المنسدلة عند الفتح */
-        ul[data-baseweb="menu"] {{
-            background-color: #ffffff !important;
-        }}
-        li[data-baseweb="option"] {{
+        /* النصوص */
+        h1, h2, h3, h4, p, label, span {{
             color: #000000 !important;
         }}
-
-        /* مربع رفع الملفات (Expander & File Uploader) */
-        [data-testid="stExpander"], [data-testid="stFileUploader"] {{
-            background-color: #ffffff !important;
-            color: #000000 !important;
-            border: 1px solid {C['border']} !important;
-        }}
         
-        /* النصوص العامة */
-        h1, h2, h3, h4, p, label, div, span {{
-            color: {C['main_text']};
-        }}
-        
-        /* 4. الجداول والبطاقات */
+        /* 5. الجداول والبطاقات */
         .finance-table {{
             width: 100%; border-collapse: separate; border-spacing: 0;
             background-color: white; border: 1px solid {C['border']};
@@ -102,6 +89,7 @@ def get_master_styles(C):
         .finance-table th {{ 
             color: {C['primary']} !important; padding: 12px; 
             text-align: center; border-bottom: 2px solid {C['border']}; font-weight: 800; 
+            background-color: #F9F9F9;
         }}
         .finance-table td {{ 
             padding: 10px; text-align: center; border-bottom: 1px solid {C['border']}; 
@@ -117,8 +105,8 @@ def get_master_styles(C):
             margin-bottom: 10px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.02);
         }}
-        .kpi-title {{ font-size: 0.85rem; color: {C['sub_text']} !important; margin-bottom: 5px; }}
-        .kpi-value {{ font-size: 1.3rem; font-weight: 800; color: {C['main_text']} !important; direction: ltr; display: inline-block; }}
+        .kpi-title {{ font-size: 0.85rem; color: #666 !important; margin-bottom: 5px; }}
+        .kpi-value {{ font-size: 1.3rem; font-weight: 800; color: #000 !important; direction: ltr; display: inline-block; }}
         
         .section-header {{
             color: {C['primary']} !important; font-weight: 800; font-size: 1.1rem; 
