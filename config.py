@@ -7,17 +7,17 @@ DB_PATH = Path("stocks.db")
 BACKUP_DIR = Path("backups")
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
-# --- الهوية البصرية (الوضع الفاتح - الأصلي) ---
+# --- الهوية البصرية (تصميم نظيف وعصري) ---
 DEFAULT_COLORS = {
-    'page_bg': '#FFFFFF',          
-    'card_bg': '#F8F9FA',          
-    'main_text': '#000000',        
-    'sub_text': '#555555',         
-    'primary': '#0052CC',          
-    'success': '#008000',          
-    'danger': '#FF0000',           
-    'border': '#E0E0E0',           
-    'input_bg': '#FFFFFF',
+    'page_bg': '#F5F7FA',          # رمادي فاتح جداً للخلفية (أريح للعين من الأبيض الناصع)
+    'card_bg': '#FFFFFF',          # أبيض للبطاقات
+    'main_text': '#1F2937',        # أسود فحمي (أوضح للقراءة)
+    'sub_text': '#6B7280',         # رمادي متوسط
+    'primary': '#2563EB',          # أزرق ملكي (لون تطبيقات حديث)
+    'success': '#10B981',          # أخضر زاهي
+    'danger': '#EF4444',           # أحمر واضح
+    'border': '#E5E7EB',           # حدود ناعمة
+    'input_bg': '#F9FAFB',         # خلفية الحقول رمادي خفيف جداً
     'header_bg': '#FFFFFF'
 }
 
@@ -79,86 +79,125 @@ def get_master_styles(C):
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap');
         
-        /* 1. توحيد الخط والاتجاه */
+        /* === 1. الإعدادات العامة (تحسين الخطوط والاتجاه) === */
         html, body, [class*="css"], p, h1, h2, h3, h4, div, label, button, input, textarea {{
             font-family: 'Cairo', sans-serif !important;
             direction: rtl;
             color: {C['main_text']} !important;
         }}
         
-        /* 2. إصلاح أيقونات الاكسباندر (الحل الجذري للنص الانجليزي) */
-        /* نستثني عناصر الأيقونات من الخط العربي */
-        .material-icons, 
-        [data-testid="stExpanderToggleIcon"],
-        svg, 
-        span[class^="css-"] {{
+        /* === 2. إصلاح أيقونات الجوال والاكسباندر === */
+        .material-icons, [data-testid="stExpanderToggleIcon"], svg, span[class^="css-"] {{
             font-family: sans-serif !important;
             direction: ltr !important;
         }}
         
-        /* 3. إجبار الخلفية البيضاء */
+        /* === 3. خلفية التطبيق النظيفة === */
         .stApp, [data-testid="stAppViewContainer"] {{
             background-color: {C['page_bg']} !important;
         }}
         [data-testid="stHeader"] {{
-            background-color: {C['page_bg']} !important;
+            background-color: transparent !important;
         }}
         
-        /* 4. إخفاء القائمة الجانبية تماماً */
+        /* === 4. إخفاء القوائم الجانبية تماماً === */
         [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"] {{
             display: none !important;
             width: 0 !important;
         }}
         
-        /* 5. تنسيق الحقول والقوائم */
+        /* === 5. تحسين حقول الإدخال (تصميم يشبه الآيفون) === */
         input, .stTextInput input, .stNumberInput input, .stSelectbox, div[data-baseweb="select"] > div {{
-            background-color: #FFFFFF !important;
-            color: #000000 !important;
-            border-color: {C['border']} !important;
+            background-color: {C['input_bg']} !important;
+            color: {C['main_text']} !important;
+            border: 1px solid {C['border']} !important;
+            border-radius: 12px !important; /* زوايا دائرية */
+            padding: 10px !important;
             direction: rtl;
+            font-weight: 600;
+        }}
+        div[data-baseweb="select"] > div:hover, input:hover {{
+            border-color: {C['primary']} !important;
         }}
         
-        /* 6. الجداول */
+        /* === 6. الجداول (بطاقات نظيفة) === */
         .finance-table {{
             width: 100%; border-collapse: separate; border-spacing: 0;
-            background-color: white; border: 1px solid {C['border']};
-            border-radius: 12px; overflow: hidden; margin-bottom: 20px;
-            font-size: 0.95rem;
+            background-color: {C['card_bg']}; 
+            border: 1px solid {C['border']};
+            border-radius: 16px; /* زوايا ناعمة */
+            overflow: hidden; 
+            margin-bottom: 25px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.02); /* ظل خفيف */
         }}
         .finance-table th {{ 
-            color: {C['primary']} !important; padding: 12px; 
-            text-align: center; border-bottom: 2px solid {C['border']}; font-weight: 800; 
-            background-color: #F9F9F9;
+            color: {C['sub_text']} !important; padding: 15px; 
+            text-align: center; border-bottom: 1px solid {C['border']}; 
+            font-weight: 800; font-size: 0.9rem;
+            background-color: #F9FAFB;
         }}
         .finance-table td {{ 
-            padding: 10px; text-align: center; border-bottom: 1px solid {C['border']}; 
-            color: {C['main_text']} !important; font-weight: 600;
+            padding: 12px; text-align: center; border-bottom: 1px solid {C['border']}; 
+            color: {C['main_text']} !important; font-weight: 700;
         }}
 
-        /* 7. البطاقات (KPIs) */
+        /* === 7. البطاقات (KPIs) - تصميم التطبيقات === */
         .kpi-box {{
-            background-color: white;
+            background-color: {C['card_bg']};
             border: 1px solid {C['border']};
-            border-radius: 12px;
-            padding: 15px;
+            border-radius: 16px;
+            padding: 20px;
             text-align: right;
-            margin-bottom: 10px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+            margin-bottom: 15px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.03); /* ظل جميل */
+            transition: transform 0.2s; /* حركة عند اللمس */
         }}
-        .kpi-title {{ font-size: 0.85rem; color: {C['sub_text']} !important; margin-bottom: 5px; }}
-        .kpi-value {{ font-size: 1.3rem; font-weight: 800; color: {C['main_text']} !important; direction: ltr; display: inline-block; }}
+        .kpi-box:hover {{
+            transform: translateY(-2px);
+        }}
+        .kpi-title {{ font-size: 0.9rem; color: {C['sub_text']} !important; margin-bottom: 8px; font-weight: 600; }}
+        .kpi-value {{ font-size: 1.6rem; font-weight: 900; color: {C['main_text']} !important; direction: ltr; display: inline-block; }}
         
-        /* 8. الأزرار */
+        /* === 8. الأزرار (كبيرة ومريحة للمس) === */
         div.stButton > button:first-child {{
-            border-radius: 8px; border: 1px solid {C['border']};
+            border-radius: 12px; 
+            border: 1px solid {C['border']};
+            padding: 0.6rem 1rem;
+            font-weight: 700;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            transition: all 0.2s;
+        }}
+        div.stButton > button:hover {{
+            border-color: {C['primary']};
+            color: {C['primary']};
+            transform: scale(1.02);
         }}
         button[kind="primary"] {{
             background-color: {C['primary']} !important;
-            color: white !important; border: none !important;
+            color: white !important; 
+            border: none !important;
+            box-shadow: 0 4px 10px rgba(37, 99, 235, 0.2) !important; /* ظل ملون للزر الأساسي */
         }}
         
+        /* === 9. إعدادات خاصة للجوال (Mobile Responsive) === */
+        @media only screen and (max-width: 600px) {{
+            /* تكبير النصوص في الجوال */
+            html, body {{ font-size: 16px !important; }}
+            
+            /* جعل الأزرار العلوية قابلة للسحب أفقياً بدلاً من التكدس */
+            [data-testid="column"] {{
+                min-width: 25% !important; /* عرض مناسب للزر */
+                flex: 1 1 auto !important;
+            }}
+            
+            /* تحسين الهوامش */
+            .block-container {{ padding-top: 1rem !important; padding-left: 1rem !important; padding-right: 1rem !important; }}
+            
+            /* تكبير الأرقام */
+            .kpi-value {{ font-size: 1.4rem !important; }}
+        }}
+
         /* إخفاء الهوامش الزائدة */
-        .block-container {{ padding-top: 2rem !important; }}
         #MainMenu, footer {{ visibility: hidden; }}
     </style>
     """
