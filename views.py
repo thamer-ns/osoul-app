@@ -31,7 +31,7 @@ def render_navbar():
     </div>
     """, unsafe_allow_html=True)
 
-    # القائمة العلوية (تم دمج زر التحديث والخروج)
+    # القائمة العلوية
     cols = st.columns(9, gap="small")
     labels = ['الرئيسية', 'مضاربة', 'استثمار', 'السيولة', 'التحليل', 'إضافة صفقة', 'الإعدادات', 'تحديث', 'خروج']
     keys = ['home', 'spec', 'invest', 'cash', 'analysis', 'add', 'settings', 'update', 'logout']
@@ -45,9 +45,8 @@ def render_navbar():
                 st.rerun()
         
         elif key == 'update':
-            # زر التحديث
             if col.button("تحديث 🔄", key=f"nav_{key}", use_container_width=True, type="secondary"):
-                with st.spinner("جاري تحديث الأسعار..."):
+                with st.spinner("جاري التحديث..."):
                     update_market_data_batch()
                     time.sleep(0.5)
                     st.rerun()
@@ -420,7 +419,11 @@ def view_settings():
     
     # --- قسم استيراد البيانات (تم إصلاحه ليدعم السيولة والأعمدة المختلفة) ---
     with st.expander("📥 استيراد بيانات سابقة (من ملف Excel)"):
-        st.warning("تحذير: هذا الخيار سيضيف البيانات للموجودة حالياً.")
+        st.warning("تحذير: هذا الخيار سيضيف البيانات للموجودة حالياً. استخدم خيار المسح أدناه لتجنب التكرار.")
+        
+        # خيار لحذف البيانات القديمة قبل الاستيراد (لحل مشكلة التكرار)
+        clear_data = st.checkbox("مسح البيانات الحالية قبل الاستيراد (هام لإصلاح التكرار)", value=True)
+        
         uploaded_file = st.file_uploader("اختر ملف النسخة الاحتياطية (Excel)", type=['xlsx'])
         
         if uploaded_file is not None:
@@ -430,6 +433,16 @@ def view_settings():
                     imported_count = 0
                     
                     with get_db() as conn:
+                        # تنفيذ المسح إذا تم اختياره
+                        if clear_data:
+                            conn.execute("DELETE FROM Trades")
+                            conn.execute("DELETE FROM Deposits")
+                            conn.execute("DELETE FROM Withdrawals")
+                            conn.execute("DELETE FROM ReturnsGrants")
+                            conn.execute("DELETE FROM Watchlist")
+                            # حذف الترقيم التلقائي لتبدأ المعرفات من جديد
+                            conn.execute("DELETE FROM sqlite_sequence")
+                        
                         # 1. استيراد الصفقات (Trades)
                         if 'Trades' in xls.sheet_names:
                             df_t = pd.read_excel(xls, 'Trades')
@@ -443,7 +456,7 @@ def view_settings():
                             df_t = df_t[[c for c in df_t.columns if c in valid_cols]]
                             
                             df_t.to_sql('Trades', conn, if_exists='append', index=False)
-                            st.success(f"✅ تم استيراد الصفقات: {len(df_t)} صفقة.")
+                            st.write(f"✅ تم استيراد الصفقات: {len(df_t)} صفقة.")
                             imported_count += 1
                         
                         # 2. استيراد الإيداعات (Deposits)
@@ -457,7 +470,7 @@ def view_settings():
                             df_d = df_d[[c for c in df_d.columns if c in valid_cols]]
                             
                             df_d.to_sql('Deposits', conn, if_exists='append', index=False)
-                            st.success(f"✅ تم استيراد الإيداعات: {len(df_d)} عملية.")
+                            st.write(f"✅ تم استيراد الإيداعات: {len(df_d)} عملية.")
                             imported_count += 1
 
                         # 3. استيراد السحوبات (Withdrawals)
@@ -471,7 +484,7 @@ def view_settings():
                             df_w = df_w[[c for c in df_w.columns if c in valid_cols]]
                             
                             df_w.to_sql('Withdrawals', conn, if_exists='append', index=False)
-                            st.success(f"✅ تم استيراد السحوبات: {len(df_w)} عملية.")
+                            st.write(f"✅ تم استيراد السحوبات: {len(df_w)} عملية.")
                             imported_count += 1
 
                         # 4. استيراد العوائد (ReturnsGrants)
@@ -483,7 +496,7 @@ def view_settings():
                             df_r = df_r[[c for c in df_r.columns if c in valid_cols]]
                             
                             df_r.to_sql('ReturnsGrants', conn, if_exists='append', index=False)
-                            st.success(f"✅ تم استيراد العوائد: {len(df_r)} عملية.")
+                            st.write(f"✅ تم استيراد العوائد: {len(df_r)} عملية.")
                             imported_count += 1
                             
                         conn.commit()
