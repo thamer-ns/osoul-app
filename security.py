@@ -5,8 +5,8 @@ import time
 from database import init_db, db_verify_user, db_create_user
 from config import APP_NAME, APP_ICON
 
-# تم التعديل هنا: إزالة (experimental_allow_widgets=True) لأنها لم تعد مدعومة
-@st.cache_resource
+# --- التعديل هنا: تم إزالة @st.cache_resource نهائياً ---
+# لأن مدير الكوكيز يجب أن يتم تحميله مع كل تحديث للصفحة لضمان الاتصال
 def get_manager():
     return stx.CookieManager(key="cookie_manager_app")
 
@@ -15,6 +15,7 @@ def login_system():
     # تأخير بسيط جداً لضمان تحميل المكونات
     time.sleep(0.1)
     
+    # استدعاء المدير مباشرة بدون كاش
     cookie_manager = get_manager()
     
     # التحقق مما إذا كان المستخدم مسجل دخول بالفعل في الجلسة
