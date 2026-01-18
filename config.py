@@ -32,33 +32,77 @@ SECTOR_TARGETS = {
 }
 
 # --- قاعدة بيانات تداول (مختصرة) ---
-# يمكنك إضافة المزيد من الشركات هنا
 TADAWUL_DB = {
     '2222': {'name': 'أرامكو', 'sector': 'الطاقة'},
     '1120': {'name': 'الراجحي', 'sector': 'البنوك'},
     '1180': {'name': 'الأهلي', 'sector': 'البنوك'},
     '2010': {'name': 'سابك', 'sector': 'المواد الأساسية'},
     '7010': {'name': 'STC', 'sector': 'الأتصالات'},
-    # ... (يمكنك نسخ بقية القائمة من الكود القديم هنا)
 }
 
 def get_master_styles(C):
     return f"""
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap');
-        html, body, [class*="css"], .stMarkdown, h1, h2, h3, h4, p, label, div, span, th, td, button, input {{
-            font-family: 'Cairo', sans-serif !important; direction: rtl; color: {C['main_text']} !important;
+        
+        /* إجبار الخط والاتجاه على كافة العناصر */
+        html, body, [class*="css"], [data-testid="stAppViewContainer"], [data-testid="stSidebar"], button, input, select, textarea, div {{
+            font-family: 'Cairo', sans-serif !important;
+            direction: rtl !important;
         }}
-        .stApp {{ background-color: {C['page_bg']} !important; }}
+        
+        /* خلفية التطبيق */
+        [data-testid="stAppViewContainer"] {{
+            background-color: {C['page_bg']} !important;
+        }}
+        [data-testid="stHeader"] {{
+            background-color: {C['page_bg']} !important;
+        }}
+
+        /* إصلاح الأزرار في الناف بار */
+        div.stButton > button:first-child {{
+            width: 100%;
+            border-radius: 8px;
+            font-weight: bold;
+            border: 1px solid {C['border']};
+            background-color: {C['card_bg']};
+            color: {C['sub_text']};
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        }}
+        
+        /* تمييز الزر النشط (Primary) */
+        div.stButton > button[kind="primary"] {{
+            background-color: {C['primary']} !important;
+            color: white !important;
+            border: none !important;
+        }}
+
+        /* إصلاح الحقول البيضاء */
         input, .stTextInput input, .stNumberInput input, .stDateInput input {{
-            background-color: #ffffff !important; color: {C['main_text']} !important; border-color: {C['border']} !important;
+            background-color: #ffffff !important;
+            color: {C['main_text']} !important;
+            border-color: {C['border']} !important;
+            text-align: right !important;
         }}
+        
+        /* تنسيق الجداول والبطاقات */
         .kpi-box {{
-            background-color: white; border: 1px solid {C['border']}; border-radius: 12px;
-            padding: 15px; text-align: right; margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+            background-color: white;
+            border: 1px solid {C['border']};
+            border-radius: 12px;
+            padding: 15px;
+            text-align: right;
+            margin-bottom: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.02);
         }}
-        .finance-table {{ width: 100%; border-collapse: separate; border-spacing: 0; background-color: white; border-radius: 12px; overflow: hidden; margin-bottom: 20px; }}
-        .finance-table th {{ background-color: {C['header_bg']}; color: {C['primary']}; padding: 12px; font-weight: 800; }}
-        .finance-table td {{ padding: 10px; border-bottom: 1px solid {C['border']}; }}
+        
+        /* إخفاء القوائم المزعجة الافتراضية */
+        #MainMenu {{visibility: hidden;}}
+        footer {{visibility: hidden;}}
+        
+        /* إصلاح تباعد الأعمدة */
+        [data-testid="column"] {{
+            padding: 0 5px !important;
+        }}
     </style>
     """
