@@ -42,11 +42,24 @@ def view_analysis(fin):
                 colors = np.where(df['Close'] >= df['Open'], C['success'], C['danger'])
                 fig.add_trace(go.Bar(x=df.index, y=df['Volume'], marker_color=colors, name='الحجم'), row=2, col=1)
                 
-                # --- تعديل: إزالة showlegend ---
-                fig.update_layout(height=600, xaxis_rangeslider_visible=False, paper_bgcolor=C['card_bg'], plot_bgcolor=C['card_bg'], font=dict(color=C['main_text'], family="Cairo"), margin=dict(l=10, r=10, t=10, b=10), showlegend=False, hovermode='x unified')
+                # إعدادات التخطيط العامة
+                fig.update_layout(
+                    height=600, 
+                    xaxis_rangeslider_visible=False, 
+                    paper_bgcolor=C['card_bg'], 
+                    plot_bgcolor=C['card_bg'], 
+                    font=dict(color=C['main_text'], family="Cairo"), 
+                    margin=dict(l=10, r=10, t=10, b=10), 
+                    showlegend=False, 
+                    hovermode='x unified'
+                )
+
                 grid_color = C['border']
-                fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor=grid_color)
-                fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor=grid_color)
+                
+                # --- التعديل هنا: إضافة showspikes=False لإلغاء الخطوط عند التحويم ---
+                fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor=grid_color, showspikes=False)
+                fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor=grid_color, showspikes=False)
+                
                 st.plotly_chart(fig, use_container_width=True)
             else: st.warning("لا توجد بيانات")
     elif not HAS_YF: st.error("مكتبة yfinance غير مثبتة")
