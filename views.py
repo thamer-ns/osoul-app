@@ -64,11 +64,14 @@ def view_dashboard(fin):
     st.markdown("### الملخص المالي")
     c1, c2, c3, c4 = st.columns(4)
     net_deposit = fin['total_deposited'] - fin['total_withdrawn']
-    with c1: render_kpi("الكاش المتوفر", f"{fin['cash']:,.2f}")
-    with c2: render_kpi("رأس المال (الصافي)", f"{net_deposit:,.2f}")
-    with c3: render_kpi("القيمة السوقية", f"{fin['market_val_open']:,.2f}", "blue")
+    
+    # إضافة تلميحات (Tooltips)
+    with c1: render_kpi("الكاش المتوفر", f"{fin['cash']:,.2f}", help_text="النقد المتاح حالياً في المحفظة للشراء (إيداعات + مبيعات - مشتريات - سحوبات)")
+    with c2: render_kpi("رأس المال (الصافي)", f"{net_deposit:,.2f}", help_text="إجمالي ما قمت بإيداعه من جيبك ناقص ما قمت بسحبه")
+    with c3: render_kpi("القيمة السوقية", f"{fin['market_val_open']:,.2f}", "blue", help_text="قيمة الأسهم التي تمتلكها الآن حسب سعر السوق الحالي")
+    
     total_pl = fin['unrealized_pl'] + fin['realized_pl'] + fin['total_returns']
-    with c4: render_kpi("صافي الربح/الخسارة", f"{total_pl:,.2f}", total_pl)
+    with c4: render_kpi("صافي الربح/الخسارة", f"{total_pl:,.2f}", total_pl, help_text="الربح الشامل: (أرباح الأسهم المباعة + أرباح الأسهم الحالية العائمة + التوزيعات النقدية)")
 
 def view_portfolio(fin, page_key):
     if page_key == 'spec':
@@ -143,9 +146,10 @@ def view_portfolio(fin, page_key):
             total_val = df_open['market_value'].sum()
             df_open['local_weight'] = (df_open['market_value'] / total_val * 100) if total_val > 0 else 0
             
+            # إضافة تلميحات للمقاييس الداخلية
             c1, c2, c3 = st.columns(3)
-            with c1: st.metric("القيمة السوقية", f"{total_val:,.2f}")
-            with c2: st.metric("الربح/الخسارة", f"{df_open['gain'].sum():,.2f}")
+            with c1: st.metric("القيمة السوقية", f"{total_val:,.2f}", help="قيمة محفظة هذا القسم فقط حالياً")
+            with c2: st.metric("الربح/الخسارة", f"{df_open['gain'].sum():,.2f}", help="الربح العائم (غير المحقق) لهذه الأسهم")
             with c3: st.metric("عدد الشركات", len(df_open))
 
             cols_open = [
@@ -189,10 +193,11 @@ def view_portfolio(fin, page_key):
 def view_liquidity():
     fin = calculate_portfolio_metrics()
     
+    # إضافة تلميحات لصفحة السيولة
     c1, c2, c3 = st.columns(3)
-    with c1: render_kpi("إجمالي الإيداعات", f"{fin['total_deposited']:,.2f}", "blue")
-    with c2: render_kpi("إجمالي السحوبات", f"{fin['total_withdrawn']:,.2f}", -1)
-    with c3: render_kpi("إجمالي العوائد", f"{fin['total_returns']:,.2f}", "success")
+    with c1: render_kpi("إجمالي الإيداعات", f"{fin['total_deposited']:,.2f}", "blue", help_text="كل المبالغ التي قمت بتحويلها للمحفظة")
+    with c2: render_kpi("إجمالي السحوبات", f"{fin['total_withdrawn']:,.2f}", -1, help_text="المبالغ التي سحبتها من المحفظة لحسابك الجاري")
+    with c3: render_kpi("إجمالي العوائد", f"{fin['total_returns']:,.2f}", "success", help_text="التوزيعات النقدية المستلمة من الشركات")
     
     st.markdown("---")
     
