@@ -6,10 +6,8 @@ from market_data import get_ticker_symbol
 @st.cache_data(ttl=3600*12)
 def get_fundamental_ratios(symbol):
     """
-    محرك تحليل مالي ذكي:
-    1. يصر على جلب السعر من التاريخ إذا فشل المباشر.
-    2. يحسب المؤشرات (P/E, P/B) يدوياً من القوائم المالية.
-    3. يعطي تقييماً ورأياً آلياً.
+    الإصدار الذهبي: يعتمد على البيانات التاريخية المضمونة (مثل Google Finance)
+    لحساب المؤشرات يدوياً وتجنب الأصفار.
     """
     ticker_sym = get_ticker_symbol(symbol)
     
@@ -24,135 +22,134 @@ def get_fundamental_ratios(symbol):
     try:
         t = yf.Ticker(ticker_sym)
         
-        # === 1. معركة البحث عن السعر (الأهم) ===
+        # === 1. الحصول على السعر (استراتيجية Google Finance) ===
+        # نعتمد على سعر الإغلاق "المثبت" بدلاً من اللحظي المتقلب
         price = 0.0
-        # محاولة 1: السعر اللحظي
-        if hasattr(t, 'fast_info') and t.fast_info.last_price:
-            price = float(t.fast_info.last_price)
         
-        # محاولة 2: السعر من المعلومات العامة
+        # الطريقة الأضمن: سجل آخر 5 أيام (تضمن وجود بيانات حتى لو السوق مغلق)
+        hist = t.history(period="5d")
+        if not hist.empty:
+            price = float(hist['Close'].iloc[-1]) # آخر سعر إغلاق
+        
+        # محاولة احتياطية فقط
         if price == 0:
-            price = t.info.get('currentPrice') or t.info.get('regularMarketPrice') or 0.0
-            
-        # محاولة 3: السجل التاريخي (الورقة الرابحة)
-        if price == 0:
-            # نجلب بيانات شهر كامل لنضمن وجود تداول
-            hist = t.history(period="1mo")
-            if not hist.empty:
-                price = float(hist['Close'].iloc[-1]) # آخر سعر إغلاق متاح
+            if hasattr(t, 'fast_info') and t.fast_info.last_price:
+                price = float(t.fast_info.last_price)
+            else:
+                price = t.info.get('currentPrice') or t.info.get('regularMarketPrice') or 0.0
         
         data["Current_Price"] = price
 
-        # إذا لم نجد سعراً حتى الآن، نتوقف (الشركة قد تكون غير مدرجة أو الرمز خطأ)
+        # إذا لم نجد سعراً، فلا يمكن التحليل
         if price == 0: return None
 
-        # === 2. جلب البيانات المالية الخام ===
+        # === 2. جلب البيانات المالية الخام (وليس المؤشرات الجاهزة) ===
         info = t.info if t.info else {}
         
-        # نحاول استخدام القيم الجاهزة أولاً
-        eps = info.get('trailingEps')
-        bv = info.get('bookValue')
-        pe = info.get('trailingPE')
-        pb = info.get('priceToBook')
-        roe = info.get('returnOnEquity')
+        # نجلب عدد الأسهم (ضروري للحسابات)
+        shares = info.get('sharesOutstanding')
+        if not shares:
+            try: shares = t.get_shares_full(start="2024-01-01").iloc[-1]
+            except: shares = 0
+
+        # === 3. الحساب اليدوي "الإجباري" للمؤشرات ===
+        # (لا نعتمد على ياهو في الحساب، نحسب بأنفسنا)
+        
+        # أ) حساب EPS ومكرر الربح (P/E)
+        net_income = 0
+        try:
+            # محاولة جلب صافي الدخل من القوائم
+            if not t.financials.empty:
+                # نبحث عن أي مسمى لصافي الدخل
+                for key in ['Net Income', 'Net Income Common Stockholders']:
+                    if key in t.financials.index:
+                        net_income = t.financials.loc[key].iloc[0] # السنة الأخيرة
+                        break
+        except: pass
+
+        # إذا وجدنا الدخل والأسهم، نحسب EPS بأنفسنا
+        if net_income > 0 and shares > 0:
+            data["EPS"] = net_income / shares
+        elif info.get('trailingEps'): # بديل جاهز
+            data["EPS"] = float(info['trailingEps'])
+
+        # حساب P/E
+        if data["EPS"] > 0:
+            data["P/E"] = price / data["EPS"]
+        elif info.get('trailingPE'):
+            data["P/E"] = float(info['trailingPE'])
+
+        # ب) حساب القيمة الدفترية ومكررها (P/B)
+        total_equity = 0
+        try:
+            if not t.balance_sheet.empty:
+                if 'Stockholders Equity' in t.balance_sheet.index:
+                    total_equity = t.balance_sheet.loc['Stockholders Equity'].iloc[0]
+                elif 'Total Assets' in t.balance_sheet.index:
+                    total_equity = t.balance_sheet.loc['Total Assets'].iloc[0] - t.balance_sheet.loc['Total Liabilities Net Minority Interest'].iloc[0]
+        except: pass
+
+        if total_equity > 0 and shares > 0:
+            data["Book_Value"] = total_equity / shares
+        elif info.get('bookValue'):
+            data["Book_Value"] = float(info['bookValue'])
+
+        # حساب P/B
+        if data["Book_Value"] > 0:
+            data["P/B"] = price / data["Book_Value"]
+        elif info.get('priceToBook'):
+            data["P/B"] = float(info['priceToBook'])
+
+        # ج) باقي المؤشرات
+        if total_equity > 0 and net_income > 0:
+            data["ROE"] = (net_income / total_equity) * 100
+        elif info.get('returnOnEquity'):
+            data["ROE"] = float(info['returnOnEquity']) * 100
+
         div_yield = info.get('dividendYield')
-        debt_eq = info.get('debtToEquity')
-        
-        # === 3. الحساب اليدوي (الخطة ب) ===
-        # إذا كانت القيم الجاهزة مفقودة، نحسبها بأنفسنا
-        
-        # حساب EPS ومكرر الربح
-        if not eps or eps == 0:
-            # نحاول جلب صافي الدخل وعدد الأسهم
-            try:
-                financials = t.financials
-                if not financials.empty:
-                    net_income = financials.loc['Net Income'].iloc[0] if 'Net Income' in financials.index else 0
-                    shares = info.get('sharesOutstanding')
-                    if not shares: shares = t.get_shares_full(start="2024-01-01").iloc[-1]
-                    
-                    if shares and shares > 0:
-                        eps = net_income / shares
-            except: pass
-            
-        # إعادة حساب P/E بناءً على السعر الجديد و EPS
-        if (not pe or pe == 0) and (eps and eps > 0):
-            pe = price / eps
-
-        # حساب القيمة الدفترية ومكررها
-        if not bv or bv == 0:
-            try:
-                balance = t.balance_sheet
-                if not balance.empty:
-                    # حقوق المساهمين
-                    equity = balance.loc['Stockholders Equity'].iloc[0] if 'Stockholders Equity' in balance.index else 0
-                    shares = info.get('sharesOutstanding')
-                    if equity > 0 and shares:
-                        bv = equity / shares
-            except: pass
-            
-        if (not pb or pb == 0) and (bv and bv > 0):
-            pb = price / bv
-
-        # تعبئة البيانات النهائية
-        data["P/E"] = float(pe) if pe else 0.0
-        data["P/B"] = float(pb) if pb else 0.0
-        data["EPS"] = float(eps) if eps else 0.0
-        data["Book_Value"] = float(bv) if bv else 0.0
-        data["ROE"] = float(roe * 100) if roe else 0.0
         data["Dividend_Yield"] = float(div_yield * 100) if div_yield else 0.0
-        data["Debt_to_Equity"] = float(debt_eq) if debt_eq else 0.0
         
-        # هامش الربح
-        if info.get('profitMargins'):
-            data["Profit_Margin"] = float(info['profitMargins'] * 100)
+        debt = info.get('debtToEquity')
+        data["Debt_to_Equity"] = float(debt) if debt else 0.0
+        
+        margins = info.get('profitMargins')
+        data["Profit_Margin"] = float(margins * 100) if margins else 0.0
 
-        # === 4. القيمة العادلة (Graham) ===
+        # === 4. القيمة العادلة والتقييم ===
         if data["EPS"] > 0 and data["Book_Value"] > 0:
             data["Fair_Value"] = (22.5 * data["EPS"] * data["Book_Value"]) ** 0.5
 
-        # === 5. الذكاء الاصطناعي البسيط (التقييم) ===
+        # نظام التقييم (Score)
         score = 0
         opinions = []
         
-        # تقييم مكرر الربح
-        if 0 < data["P/E"] <= 15:
-            score += 2; opinions.append("✅ السهم مغري جداً (مكرر أرباح منخفض < 15)")
-        elif 15 < data["P/E"] <= 25:
-            score += 1; opinions.append("ℹ️ سعر السهم عادل (مكرر أرباح متوسط)")
-        elif data["P/E"] > 25:
-            score -= 1; opinions.append("⚠️ السهم قد يكون متضخماً (مكرر أرباح مرتفع)")
-            
-        # تقييم القيمة الدفترية
-        if 0 < data["P/B"] <= 1.5:
-            score += 1; opinions.append("✅ السهم يتداول قرب قيمته الدفترية")
-            
-        # تقييم العائد
-        if data["ROE"] > 15:
-            score += 2; opinions.append("🔥 إدارة الشركة ممتازة في توليد الأرباح (ROE > 15%)")
-            
-        # تقييم التوزيعات
-        if data["Dividend_Yield"] > 4:
-            score += 1; opinions.append(f"💰 الشركة توزع أرباحاً مجزية ({data['Dividend_Yield']:.1f}%)")
-            
-        # تقييم القيمة العادلة
+        # P/E Evaluation
+        if 0 < data["P/E"] <= 15: score += 2; opinions.append("✅ مكرر ربحية ممتاز (< 15)")
+        elif 15 < data["P/E"] <= 25: score += 1; opinions.append("ℹ️ مكرر ربحية متوسط")
+        elif data["P/E"] > 25: score -= 1; opinions.append("⚠️ مكرر ربحية مرتفع")
+        elif data["P/E"] == 0: opinions.append("⚪ الشركة لا تحقق أرباحاً حالياً")
+
+        # P/B Evaluation
+        if 0 < data["P/B"] <= 2: score += 1; opinions.append("✅ تتداول قرب القيمة الدفترية")
+        
+        # Fair Value Evaluation
         if data["Fair_Value"] > 0:
             if price < data["Fair_Value"]:
-                score += 2; opinions.append(f"💎 السهم يتداول بأقل من قيمته العادلة بـ {((data['Fair_Value']-price)/data['Fair_Value']*100):.1f}%")
+                diff = ((data['Fair_Value'] - price) / data['Fair_Value']) * 100
+                score += 2; opinions.append(f"💎 أقل من القيمة العادلة بـ {diff:.1f}%")
             else:
-                opinions.append("📉 السعر الحالي أعلى من القيمة العادلة (غراهام)")
+                opinions.append("📉 السعر أعلى من القيمة العادلة")
 
-        # النتيجة النهائية
-        data["Score"] = max(0, min(10, 5 + score)) # نضمن النتيجة بين 0 و 10
-        
+        # Final Score
+        data["Score"] = max(0, min(10, 5 + score))
         if data["Score"] >= 8: data["Rating"] = "شراء قوي ⭐"
-        elif data["Score"] >= 6: data["Rating"] = "شراء / احتفاظ ✅"
-        elif data["Score"] >= 4: data["Rating"] = "محايد 😐"
-        else: data["Rating"] = "بيع / حذر ❌"
+        elif data["Score"] >= 6: data["Rating"] = "شراء ✅"
+        elif data["Score"] >= 4: data["Rating"] = "احتفاظ 😐"
+        else: data["Rating"] = "حذر ❌"
         
         data["Opinions"] = opinions
-        
         return data
 
     except Exception as e:
-        return None
+        # إرجاع البيانات المحسوبة حتى اللحظة بدلاً من الفشل الكامل
+        return data
