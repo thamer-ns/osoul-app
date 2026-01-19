@@ -164,27 +164,18 @@ def get_comprehensive_performance(trades_df, returns_df):
     return sector_perf, stock_perf
 
 def get_rebalancing_advice(df_open, targets_df, total_portfolio_value):
-    """
-    تحسب نصائح إعادة التوازن بناءً على الأوزان
-    """
     if df_open.empty or targets_df.empty or total_portfolio_value == 0:
         return pd.DataFrame()
 
-    # تجميع القيم الحالية للقطاعات
     current = df_open.groupby('sector')['market_value'].sum().reset_index()
-    
-    # دمج مع الأهداف
     merged = pd.merge(current, targets_df, on='sector', how='outer').fillna(0)
     
-    # حساب القيمة المستهدفة بالريال
     merged['target_value'] = (merged['target_percentage'] / 100) * total_portfolio_value
     merged['diff'] = merged['target_value'] - merged['market_value']
     
-    # نصيحة الشراء/البيع
     merged['action'] = merged['diff'].apply(lambda x: 'شراء (زيادة)' if x > 0 else 'بيع (تقليص)')
     merged['suggested_amount'] = merged['diff'].abs().round(2)
     
-    # فلترة القطاعات التي تحتاج تحرك (أكثر من 1% فرق)
     threshold = total_portfolio_value * 0.01 
     advice_df = merged[merged['suggested_amount'] > threshold].copy()
     
@@ -205,21 +196,15 @@ def get_dividends_calendar(returns_df):
         'symbol': lambda x: ', '.join(x.unique())
     }).reset_index().sort_values('year_month', ascending=False)
     
-    calendar.rename(columns={'year_month': 'الشهر', 'amount': 'إجمالي التوزيعات', 'symbol': 'الشركات الموزعة'}, inplace=True)
+    # حذفنا إعادة التسمية هنا لنتحكم بها في العرض (Render Table)
     return calendar
 
 def generate_equity_curve(trades_df):
-    """
-    توليد بيانات لمنحنى نمو الاستثمار (تراكمي التكلفة)
-    """
     if trades_df.empty: return pd.DataFrame()
     
-    # ترتيب العمليات زمنياً
     df = trades_df[['date', 'total_cost']].copy()
     df['date'] = pd.to_datetime(df['date'])
     df = df.sort_values('date')
-    
-    # التكلفة التراكمية (كم ضخيت أموال مع الوقت)
     df['cumulative_invested'] = df['total_cost'].cumsum()
     
     return df
