@@ -47,7 +47,7 @@ def view_dashboard(fin):
         st.plotly_chart(fig, use_container_width=True)
 
 def view_portfolio(fin, page_key):
-    # الفلترة حسب الصفحة (استثمار أو مضاربة)
+    # تحديد الاستراتيجية بناءً على الصفحة
     target_strat = "مضاربة" if page_key == 'spec' else "استثمار"
     
     st.header(f"محفظة {target_strat}")
@@ -55,7 +55,7 @@ def view_portfolio(fin, page_key):
     
     if all_data.empty: st.info("لا توجد بيانات"); return
     
-    # نستبعد الصكوك من هنا لأن لها صفحة خاصة، ونفلتر حسب الاستراتيجية
+    # استبعاد الصكوك وفلترة الاستراتيجية
     df_strat = all_data[(all_data['strategy'] == target_strat) & (all_data['asset_type'] != 'Sukuk')].copy()
     
     if df_strat.empty: st.warning(f"محفظة {target_strat} فارغة"); return
@@ -83,7 +83,8 @@ def view_portfolio(fin, page_key):
             
             st.markdown("---")
             st.markdown("#### التفاصيل")
-            cols_op = [('company_name', 'الشركة'), ('symbol', 'الرمز'), ('asset_type', 'النوع'), ('quantity', 'الكمية'), ('entry_price', 'شراء'), ('current_price', 'سعر'), ('market_value', 'قيمة'), ('gain', 'ربح'), ('gain_pct', '%'), ('date', 'تاريخ')]
+            # === التعديل هنا: حذفنا النوع وأرجعنا الحالة ===
+            cols_op = [('company_name', 'الشركة'), ('symbol', 'الرمز'), ('status', 'الحالة'), ('quantity', 'الكمية'), ('entry_price', 'شراء'), ('current_price', 'سعر'), ('market_value', 'قيمة'), ('gain', 'ربح'), ('gain_pct', '%'), ('date', 'تاريخ')]
             render_table(apply_sorting(open_df, cols_op, f"{page_key}_o"), cols_op)
         else: st.info("فارغة")
 
@@ -112,14 +113,12 @@ def view_sukuk_portfolio(fin):
     
     if all_data.empty: st.info("لا توجد بيانات"); return
 
-    # فلترة الصكوك فقط
     sukuk_df = all_data[all_data['asset_type'] == 'Sukuk'].copy()
     
     if sukuk_df.empty:
-        st.warning("لم تقم بإضافة أي صكوك بعد. اذهب لصفحة 'إضافة' واختر نوع الأصل 'Sukuk'.")
+        st.warning("لم تقم بإضافة أي صكوك بعد.")
         return
 
-    # حساب الملخص
     total_cost = sukuk_df['total_cost'].sum()
     current_val = sukuk_df['market_value'].sum()
     gain = sukuk_df['gain'].sum()
@@ -270,7 +269,7 @@ def router():
     
     if pg == 'home': view_dashboard(fin)
     elif pg in ['spec', 'invest']: view_portfolio(fin, pg)
-    elif pg == 'sukuk': view_sukuk_portfolio(fin) # الصفحة الجديدة
+    elif pg == 'sukuk': view_sukuk_portfolio(fin)
     elif pg == 'cash': view_liquidity()
     elif pg == 'analysis': view_analysis(fin)
     elif pg == 'tools': view_tools()
