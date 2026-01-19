@@ -9,25 +9,27 @@ def render_navbar():
     C = st.session_state.custom_colors
     u = st.session_state.get('username', 'المستثمر')
     
+    # تحسين الهيدر العلوي
     st.markdown(f"""
-    <div style="background: white; padding: 15px; border-radius: 12px; border: 1px solid #E5E7EB; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center;">
-        <div style="display: flex; align-items: center; gap: 10px;">
-            <div style="font-size: 1.8rem;">{APP_ICON}</div>
-            <div style="font-weight: 900; font-size: 1.4rem; color: #0e6ba8;">{APP_NAME}</div>
+    <div style="background: white; padding: 10px 15px; border-radius: 12px; border: 1px solid #E5E7EB; margin-bottom: 15px; display: flex; justify-content: space-between; align-items: center;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+            <div style="font-size: 1.5rem;">{APP_ICON}</div>
+            <div style="font-weight: 900; font-size: 1.2rem; color: #0e6ba8;">{APP_NAME}</div>
         </div>
-        <div style="font-weight: 700; color: #6B7280; font-size: 0.9rem;">
-            {date.today().strftime('%Y-%m-%d')} | {u}
+        <div style="font-weight: 700; color: #6B7280; font-size: 0.8rem;">
+            {date.today().strftime('%Y-%m-%d')}
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # تم إضافة "أدوات" للقائمة
+    # القائمة (CSS في config.py سيتولى جعلها متجاوبة)
     cols = st.columns(10, gap="small")
     labels = ['الرئيسية', 'مضاربة', 'استثمار', 'السيولة', 'التحليل', 'أدوات', 'إضافة', 'الإعدادات', 'تحديث', 'خروج']
     keys = ['home', 'spec', 'invest', 'cash', 'analysis', 'tools', 'add', 'settings', 'update', 'logout']
     
     for col, label, key in zip(cols, labels, keys):
         active = (st.session_state.get('page') == key)
+        # استخدام use_container_width=True لملء العمود
         if col.button(label, key=f"nav_{key}", type="primary" if active else "secondary", use_container_width=True):
             st.session_state.page = key
             st.rerun()
@@ -45,8 +47,8 @@ def render_kpi(label, value, color_condition=None, help_text=None):
             
     st.markdown(f"""
     <div class="kpi-box" {tooltip_attr} style="{cursor_style}">
-        <div style="color:#6B7280; font-size:0.8rem; font-weight:700; margin-bottom:5px;">{label}</div>
-        <div class="kpi-value" style="color: {val_c} !important; direction:ltr;">{value}</div>
+        <div style="color:#6B7280; font-size:0.75rem; font-weight:700; margin-bottom:4px;">{label}</div>
+        <div class="kpi-value" style="color: {val_c} !important; direction:ltr; font-size: 1.1rem;">{value}</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -76,21 +78,16 @@ def render_table(df, cols_def):
                     bg, fg, txt = ("#F3F4F6", "#4B5563", "مغلقة")
                 else:
                     bg, fg, txt = ("#DCFCE7", "#166534", "مفتوحة") 
-                disp = f"<span style='background:{bg}; color:{fg}; padding:5px 15px; border-radius:20px; font-size:0.8rem; font-weight:800;'>{txt}</span>"
+                disp = f"<span style='background:{bg}; color:{fg}; padding:4px 10px; border-radius:15px; font-size:0.7rem; font-weight:800;'>{txt}</span>"
             
-            # منطق الألوان للأوزان (أخضر إذا تحقق الهدف، أحمر إذا انحرف)
             elif k == 'current_weight':
                 try:
                     curr = float(val)
                     target = float(row.get('target_percentage', 0))
-                    # هامش بسيط 1.5%
                     if target > 0:
-                        if abs(curr - target) <= 1.5:
-                            color = "#10B981" # أخضر (متحقق)
-                        else:
-                            color = "#EF4444" # أحمر (منحرف)
-                    else:
-                        color = "#0e6ba8"
+                        if abs(curr - target) <= 1.5: color = "#10B981" 
+                        else: color = "#EF4444" 
+                    else: color = "#0e6ba8"
                     disp = f"<span style='color:{color}; font-weight:bold;'>{curr:.2f}%</span>"
                 except: disp = "-"
             
