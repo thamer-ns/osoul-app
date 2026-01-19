@@ -15,20 +15,15 @@ def render_navbar():
         with c_logo:
             st.markdown(f"""
             <div style="display: flex; align-items: center; gap: 8px; padding-top: 5px;">
-                <div style="font-size: 2rem;">{APP_ICON}</div>
-                <div>
-                    <div class="logo-text">{APP_NAME}</div>
-                </div>
+                <div class="app-logo-box">{APP_ICON}</div>
+                <div><div class="logo-text">{APP_NAME}</div></div>
             </div>
             """, unsafe_allow_html=True)
 
         with c_nav:
             cols = st.columns(6, gap="small")
-            nav_items = [
-                ("الرئيسة", "home"), ("مضاربة", "spec"), 
-                ("استثمار", "invest"), ("صكوك", "sukuk"), 
-                ("تحليل", "analysis"), ("سيولة", "cash")
-            ]
+            nav_items = [("الرئيسة", "home"), ("مضاربة", "spec"), ("استثمار", "invest"), 
+                         ("صكوك", "sukuk"), ("تحليل", "analysis"), ("سيولة", "cash")]
             for col, (label, key) in zip(cols, nav_items):
                 is_active = (st.session_state.get('page') == key)
                 with col:
@@ -37,25 +32,17 @@ def render_navbar():
                         st.rerun()
 
         with c_user:
-            # === التعديل هنا: إزالة الرمز التعبيري بجانب الاسم ===
-            # كان f"👤 {current_user}" وأصبح current_user فقط
             with st.popover(current_user, use_container_width=True):
                 st.markdown(f"<div style='text-align:center; color:#9CA3AF; font-size:0.8rem; margin-bottom:10px;'>الملف الشخصي</div>", unsafe_allow_html=True)
-                
                 if st.button("⚙️  الإعدادات", key="u_set", use_container_width=True):
-                    st.session_state.page = "settings"
-                    st.rerun()
+                    st.session_state.page = "settings"; st.rerun()
                 if st.button("📥  إضافة عملية", key="u_add", use_container_width=True):
-                    st.session_state.page = "add"
-                    st.rerun()
+                    st.session_state.page = "add"; st.rerun()
                 if st.button("🛠️  الأدوات", key="u_tools", use_container_width=True):
-                    st.session_state.page = "tools"
-                    st.rerun()
+                    st.session_state.page = "tools"; st.rerun()
                 st.markdown("---")
                 if st.button("تسجيل الخروج", key="u_out", type="primary", use_container_width=True):
-                    st.session_state.page = "logout"
-                    st.rerun()
-
+                    st.session_state.page = "logout"; st.rerun()
     st.markdown("---")
 
 def render_kpi(label, value, color_condition=None, help_text=None):
@@ -71,40 +58,68 @@ def render_kpi(label, value, color_condition=None, help_text=None):
     <div class="kpi-box" {tooltip}>
         <div style="color:{C['sub_text']}; font-size:0.8rem; font-weight:700; margin-bottom:5px;">{label}</div>
         <div class="kpi-value" style="color: {val_c} !important; direction:ltr;">{value}</div>
-    </div>
-    """, unsafe_allow_html=True)
+    </div>""", unsafe_allow_html=True)
 
 def render_table(df, cols_def):
     if df.empty: st.info("لا توجد بيانات"); return
     headers = "".join([f"<th>{label}</th>" for _, label in cols_def])
     rows_html = ""
+    
     for _, row in df.iterrows():
         cells = ""
         is_closed = str(row.get('status', '')).lower() in ['close', 'sold', 'مغلقة', 'مباعة']
+        
         for k, _ in cols_def:
             val = row.get(k, "-")
             disp = val
+            
+            # --- معالجة التواريخ ---
             if 'date' in k and val: disp = str(val)[:10]
+            
+            # --- معالجة الحالة ---
             elif k == 'status':
                 bg, fg, txt = ("#F3F4F6", "#4B5563", "مغلقة") if is_closed else ("#DCFCE7", "#166534", "مفتوحة")
                 disp = f"<span style='background:{bg}; color:{fg}; padding:2px 10px; border-radius:12px; font-size:0.7rem; font-weight:800;'>{txt}</span>"
-            elif k in ['gain', 'gain_pct', 'net_profit', 'roi_pct', 'daily_change', 'remaining', 'current_weight', 'target_percentage']:
-                if is_closed and k == 'daily_change': disp = "<span style='color:#9CA3AF'>-</span>"
-                else:
-                    try:
-                        num = float(val)
-                        # تلوين خاص للأوزان
-                        if k in ['current_weight', 'target_percentage']:
-                            c = "#0284c7" # أزرق للأوزان
-                            suffix = "%"
+            
+            # --- معالجة الأرقام والنسب والألوان ---
+            elif isinstance(val, (int, float)) or (isinstance(val, str) and val.replace('.','',1).isdigit()):
+                try:
+                    num = float(val)
+                    formatted_num = "{:,.2f}".format(num) # إجبار التقريب لمنزلتين
+                    
+                    # 1. تلوين الوزن الحالي مقارنة بالهدف (هامش 1%)
+                    if k == 'current_weight':
+                        target = float(row.get('target_percentage', 0))
+                        diff = abs(num - target)
+                        # أخضر إذا كان الفرق ضمن 1%، أحمر إذا تجاوز
+                        color = "#10B981" if diff <= 1.0 else "#EF4444"
+                        disp = f"<span style='color:{color}; font-weight:bold;'>{formatted_num}%</span>"
+                    
+                    # 2. تلوين المبلغ المتبقي (remaining)
+                    elif k == 'remaining':
+                        # موجب (شراء) أخضر، سالب (بيع) أحمر
+                        color = "#10B981" if num >= 0 else "#EF4444"
+                        disp = f"<span style='color:{color}; font-weight:bold; direction:ltr;'>{formatted_num}</span>"
+
+                    # 3. الأرباح والخسائر والنسب
+                    elif k in ['gain', 'gain_pct', 'net_profit', 'roi_pct', 'daily_change']:
+                        if is_closed and k == 'daily_change': 
+                            disp = "<span style='color:#9CA3AF'>-</span>"
                         else:
-                            c = "#10B981" if num >= 0 else "#EF4444"
+                            color = "#10B981" if num >= 0 else "#EF4444"
                             suffix = "%" if 'pct' in k or 'change' in k else ""
-                        disp = f"<span style='color:{c}; direction:ltr; font-weight:bold;'>{num:,.2f}{suffix}</span>"
-                    except: disp = val
-            elif k in ['market_value', 'total_cost', 'entry_price', 'current_price']:
-                try: disp = "{:,.2f}".format(float(val))
+                            disp = f"<span style='color:{color}; direction:ltr; font-weight:bold;'>{formatted_num}{suffix}</span>"
+                    
+                    # 4. باقي الأرقام المالية (بدون تلوين)
+                    elif k in ['market_value', 'total_cost', 'entry_price', 'current_price', 'target_percentage']:
+                        suffix = "%" if 'percentage' in k else ""
+                        disp = f"{formatted_num}{suffix}"
+                    
+                    else:
+                        disp = formatted_num
                 except: disp = val
+            
             cells += f"<td>{disp}</td>"
         rows_html += f"<tr>{cells}</tr>"
+        
     st.markdown(f"""<div style="overflow-x: auto;"><table class="finance-table"><thead><tr>{headers}</tr></thead><tbody>{rows_html}</tbody></table></div>""", unsafe_allow_html=True)
