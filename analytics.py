@@ -80,23 +80,12 @@ def calculate_portfolio_metrics():
     vals['unrealized_pl'] = vals['market_val_open'] - vals['cost_open']
     vals['realized_pl'] = vals['sales_closed'] - vals['cost_closed']
     
-    # حساب الكاش وصافي الأصول
-    # الكاش = (إيداع - سحب + عوائد + مبيعات) - (تكلفة شراء المفتوح)
-    # ملاحظة: sales_closed تتضمن التكلفة + الربح للصفقات المغلقة
-    net_funding = total_dep - total_wit
-    vals['cash'] = (net_funding + total_ret + vals['sales_closed']) - vals['cost_closed'] - vals['cost_open']
-    # معادلة ابسط للكاش: المتوفر = (كل ما دخل المحفظة) - (كل ما خرج منها أو مجمد في أسهم)
-    # ولكن المعادلة الدقيقة محاسبياً:
-    vals['cash'] = (total_dep - total_wit + total_ret + vals['sales_closed']) - (vals['cost_open'] + vals['cost_closed']) 
-    # تصحيح المعادلة للكاش: الكاش هو المبلغ غير المستثمر حالياً.
-    # الكاش = (الايداعات - السحوبات + العوائد + مبيعات المغلق) - (مشتريات المفتوح)
-    # لكن cost_closed خرجت ورجعت كـ sales_closed، لذا نطرح cost_open فقط من السيولة المتوفرة
-    vals['cash'] = (total_dep - total_wit + total_ret + vals['sales_closed'] - vals['cost_closed']) - vals['cost_open'] + vals['cost_closed'] 
-    # المعادلة الأصح والابسط:
-    # الكاش = (صافي الايداع) + (الربح المحقق) + (العوائد) - (التكلفة الحالية للمفتوح)
-    vals['cash'] = (total_dep - total_wit) + vals['realized_pl'] + total_ret + vals['cost_closed'] - (vals['cost_open'] + vals['cost_closed'])
-    vals['cash'] = (total_dep - total_wit) + vals['realized_pl'] + total_ret - vals['cost_open']
-
+    # معادلة الكاش: (الإيداع - السحب) + (الربح المحقق) + (العوائد) + (رأس المال العائد من المغلق) - (التكلفة الحالية للمفتوح)
+    # الطريقة الأبسط: الكاش = (كل ما دخل) - (كل ما خرج أو مجمد)
+    # Net Invested (Pocket) = total_dep - total_wit
+    # Available Cash = Net Invested + Total Returns + Sales Closed - Cost Open
+    net_invested = total_dep - total_wit
+    vals['cash'] = (net_invested + total_ret + vals['sales_closed']) - vals['cost_open']
 
     vals['equity'] = vals['cash'] + vals['market_val_open']
     vals['projected_income'] = (open_trades['market_value'] * open_trades['dividend_yield']).sum() if not open_trades.empty and 'dividend_yield' in open_trades else 0
