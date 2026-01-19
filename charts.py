@@ -7,6 +7,9 @@ from market_data import get_chart_history
 def calculate_technical_indicators(df):
     if df is None or df.empty: return df
     
+    # حماية من الأعمدة المكررة
+    df = df.loc[:, ~df.columns.duplicated()]
+    
     # RSI
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
@@ -18,8 +21,9 @@ def calculate_technical_indicators(df):
     # MA & BB
     df['MA20'] = df['Close'].rolling(20).mean()
     df['MA50'] = df['Close'].rolling(50).mean()
-    df['BB_Upper'] = df['MA20'] + (df['Close'].rolling(20).std() * 2)
-    df['BB_Lower'] = df['MA20'] - (df['Close'].rolling(20).std() * 2)
+    std = df['Close'].rolling(20).std()
+    df['BB_Upper'] = df['MA20'] + (std * 2)
+    df['BB_Lower'] = df['MA20'] - (std * 2)
     
     # MACD
     exp12 = df['Close'].ewm(span=12, adjust=False).mean()
@@ -27,8 +31,7 @@ def calculate_technical_indicators(df):
     df['MACD'] = exp12 - exp26
     df['Signal_Line'] = df['MACD'].ewm(span=9, adjust=False).mean()
     
-    df.dropna(inplace=True)
-    return df
+    return df.dropna()
 
 def render_technical_chart(symbol, period, interval):
     if 'custom_colors' not in st.session_state:
@@ -36,43 +39,34 @@ def render_technical_chart(symbol, period, interval):
         C = DEFAULT_COLORS
     else: C = st.session_state.custom_colors
 
-    with st.spinner("جاري تحميل الرسم البياني..."):
-        df = get_chart_history(symbol, period, interval)
+    df = get_chart_history(symbol, period, interval)
     
     if df is None or df.empty:
-        st.warning("لا توجد بيانات متاحة")
+        st.warning("لا توجد بيانات فنية متاحة")
         return
 
-    df = calculate_technical_indicators(df)
+    try:
+        df = calculate_technical_indicators(df)
+        
+        fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.5, 0.15, 0.15, 0.2], subplot_titles=("السعر", "الحجم", "RSI", "MACD"))
 
-    fig = make_subplots(
-        rows=4, cols=1, 
-        shared_xaxes=True, 
-        vertical_spacing=0.03, 
-        row_heights=[0.5, 0.15, 0.15, 0.2],
-        subplot_titles=("حركة السعر والبولنجر", "أحجام التداول", "RSI", "MACD")
-    )
+        fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='السعر'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=df['BB_Upper'], line=dict(color='gray', width=1, dash='dot'), name='BB Upper'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=df['BB_Lower'], line=dict(color='gray', width=1, dash='dot'), fill='tonexty', name='BB Lower'), row=1, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=df['MA50'], line=dict(color=C['primary'], width=1.5), name='MA 50'), row=1, col=1)
 
-    # 1. Price
-    fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='السعر'), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df['BB_Upper'], line=dict(color='gray', width=1, dash='dot'), name='BB Upper'), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df['BB_Lower'], line=dict(color='gray', width=1, dash='dot'), fill='tonexty', name='BB Lower'), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df['MA50'], line=dict(color=C['primary'], width=1.5), name='MA 50'), row=1, col=1)
+        colors = np.where(df['Close'] >= df['Open'], C['success'], C['danger'])
+        fig.add_trace(go.Bar(x=df.index, y=df['Volume'], marker_color=colors, name='الحجم'), row=2, col=1)
 
-    # 2. Volume
-    colors = np.where(df['Close'] >= df['Open'], C['success'], C['danger'])
-    fig.add_trace(go.Bar(x=df.index, y=df['Volume'], marker_color=colors, name='الحجم'), row=2, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=df['RSI'], line=dict(color='#A855F7', width=1.5), name='RSI'), row=3, col=1)
+        fig.add_hline(y=70, line_dash="dot", line_color="red", row=3, col=1)
+        fig.add_hline(y=30, line_dash="dot", line_color="green", row=3, col=1)
 
-    # 3. RSI
-    fig.add_trace(go.Scatter(x=df.index, y=df['RSI'], line=dict(color='#A855F7', width=1.5), name='RSI'), row=3, col=1)
-    fig.add_hline(y=70, line_dash="dot", line_color="red", row=3, col=1)
-    fig.add_hline(y=30, line_dash="dot", line_color="green", row=3, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=df['MACD'], line=dict(color='#2563EB', width=1.5), name='MACD'), row=4, col=1)
+        fig.add_trace(go.Scatter(x=df.index, y=df['Signal_Line'], line=dict(color='#F59E0B', width=1.5), name='Signal'), row=4, col=1)
+        fig.add_trace(go.Bar(x=df.index, y=(df['MACD'] - df['Signal_Line']), name='Hist', marker_color='gray'), row=4, col=1)
 
-    # 4. MACD
-    fig.add_trace(go.Scatter(x=df.index, y=df['MACD'], line=dict(color='#2563EB', width=1.5), name='MACD'), row=4, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df['Signal_Line'], line=dict(color='#F59E0B', width=1.5), name='Signal'), row=4, col=1)
-    # التصحيح هنا: استخدام go.Bar بدلاً من add_bar المباشرة
-    fig.add_trace(go.Bar(x=df.index, y=(df['MACD'] - df['Signal_Line']), name='Hist', marker_color='gray'), row=4, col=1)
-
-    fig.update_layout(height=900, xaxis_rangeslider_visible=False, paper_bgcolor=C['card_bg'], plot_bgcolor=C['card_bg'], font=dict(family="Cairo", color=C['main_text']), margin=dict(l=10, r=10, t=30, b=10), showlegend=False)
-    st.plotly_chart(fig, use_container_width=True)
+        fig.update_layout(height=900, xaxis_rangeslider_visible=False, paper_bgcolor=C['card_bg'], plot_bgcolor=C['card_bg'], font=dict(family="Cairo", color=C['main_text']), showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
+    except Exception as e:
+        st.error(f"حدث خطأ أثناء الرسم: {e}")
