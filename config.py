@@ -54,30 +54,39 @@ def get_css(C):
         
         .stApp {{ background-color: {C['page_bg']} !important; }}
         
-        /* تنسيق الجدول المحسن (مضغوط وبدون التفاف) */
+        /* تحسين العناوين */
+        h2, h3 {{
+            color: #1F2937 !important;
+            border-right: 5px solid {C['primary']};
+            padding-right: 15px;
+            margin-bottom: 20px !important;
+            font-weight: 800 !important;
+        }}
+
+        /* تنسيق الجدول المحسن */
         .finance-table {{ width: 100%; border-collapse: separate; border-spacing: 0 4px; margin-top: 5px; }}
         
         .finance-table th {{ 
             color: #0e6ba8 !important;
             font-weight: 800 !important;
-            font-size: 0.85rem !important; /* تصغير الخط قليلاً */
-            padding: 10px 5px !important;  /* تقليل الحواف */
+            font-size: 0.85rem !important;
+            padding: 10px 5px !important;
             text-align: center;
             background-color: transparent;
             border-bottom: 2px solid #F3F4F6;
-            white-space: nowrap !important; /* منع التفاف النص */
+            white-space: nowrap !important;
         }}
         
         .finance-table td {{ 
             background-color: white;
-            padding: 8px 5px !important;   /* تقليل الحواف لتوفير المساحة */
+            padding: 8px 5px !important;
             text-align: center;
             color: #374151;
             font-weight: 600;
-            font-size: 0.82rem !important; /* تصغير خط البيانات */
+            font-size: 0.82rem !important;
             border-top: 1px solid #F3F4F6;
             border-bottom: 1px solid #F3F4F6;
-            white-space: nowrap !important; /* منع التفاف النص في البيانات */
+            white-space: nowrap !important;
         }}
         
         .finance-table tr:hover td {{ background-color: #F9FAFB; }}
@@ -98,8 +107,16 @@ def get_css(C):
         
         [data-testid="stSidebar"] {{ display: none !important; }}
         
-        /* تحسين عرض التبويبات */
+        /* تحسين التبويبات وقوائم الفرز */
         .stTabs [data-baseweb="tab-list"] {{ gap: 10px; }}
         .stTabs [data-baseweb="tab"] {{ height: 40px; white-space: nowrap; }}
+        
+        /* تنسيق Expander الفرز */
+        div[data-testid="stExpander"] {{
+            background-color: white;
+            border-radius: 8px;
+            border: 1px solid #E5E7EB;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        }}
     </style>
     """
