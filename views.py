@@ -25,7 +25,7 @@ def view_dashboard(fin):
     st.markdown("---")
 
     # --- 2. العمليات المنفذة & الأهداف ---
-    st.markdown("### ✅ العمليات المنفذة (المغلقة)")
+    st.markdown(f"### ✅ العمليات المنفذة (الهدف الاستثماري حتى {date.today().year}-12-31)")
     
     # حسابات الهدف (افتراض 10% كما في طلبك)
     target_pct = 10.0
@@ -34,18 +34,17 @@ def view_dashboard(fin):
     total_realized_gains = fin['realized_pl'] + fin['total_returns']
     remaining_to_target = target_amount - total_realized_gains
     pct_achieved = (total_realized_gains / target_amount * 100) if target_amount != 0 else 0
-    remaining_pct = 100 - pct_achieved
-
+    
     col_exec1, col_exec2, col_exec3, col_exec4 = st.columns(4)
     with col_exec1:
         st.metric("التكلفة/المبلغ الأساسي", f"SAR {fin['cost_closed']:,.2f}")
         st.metric("نسبة الهدف الاستثماري", f"{target_pct}%")
     with col_exec2:
-        st.metric("الأرباح المحققة", f"SAR {fin['realized_pl']:,.2f}", delta=f"{fin['realized_pl']:,.2f}")
-        st.metric("الهدف الاستثماري (قيمة)", f"SAR {target_amount:,.2f}")
+        st.metric("الخسائر/الأرباح المحققة", f"SAR {fin['realized_pl']:,.2f}", delta=f"{fin['realized_pl']:,.2f}")
+        st.metric("قيمة الهدف الاستثماري", f"SAR {target_amount:,.2f}")
     with col_exec3:
         st.metric("المبلغ بعد البيع", f"SAR {fin['sales_closed']:,.2f}")
-        st.metric("المتبقي للهدف", f"SAR {remaining_to_target:,.2f}")
+        st.metric("المتبقي للوصول للهدف", f"SAR {remaining_to_target:,.2f}")
     with col_exec4:
         st.metric("اجمالي العوائد", f"SAR {fin['total_returns']:,.2f}")
         st.metric("نسبة المحقق من الهدف", f"{pct_achieved:.2f}%")
@@ -58,7 +57,7 @@ def view_dashboard(fin):
     col_op1, col_op2, col_op3, col_op4 = st.columns(4)
     
     with col_op1: st.metric("التكلفة الحالية", f"SAR {fin['cost_open']:,.2f}")
-    with col_op2: st.metric("القيمة السوقية", f"SAR {fin['market_val_open']:,.2f}")
+    with col_op2: st.metric("القيمة السوقية (سعر السوق)", f"SAR {fin['market_val_open']:,.2f}")
     with col_op3: st.metric("الربح/الخسارة", f"SAR {fin['unrealized_pl']:,.2f}", delta=f"{fin['unrealized_pl']:,.2f}")
     
     unrealized_pct = (fin['unrealized_pl'] / fin['cost_open'] * 100) if fin['cost_open'] > 0 else 0
@@ -137,11 +136,17 @@ def view_portfolio(fin, strategy):
             ('daily_change', 'يومي %')
         ]
         
+        # عرض إجمالي هذه المحفظة فقط
+        total_g = df['gain'].sum()
+        total_v = df['market_value'].sum()
+        c1, c2 = st.columns(2)
+        with c1: st.metric("قيمة المحفظة", f"{total_v:,.2f}")
+        with c2: st.metric("إجمالي الربح/الخسارة", f"{total_g:,.2f}", delta=f"{total_g:,.2f}")
+        
         render_table(df, cols)
     else: 
         st.warning(f"لا توجد صفقات مسجلة تحت تصنيف '{strat_key}'. تأكد من اختيار التصنيف الصحيح عند إضافة الصفقة.")
 
-# --- باقي الدوال تبقى كما هي ---
 def view_liquidity():
     st.header("💵 سجلات السيولة")
     fin = calculate_portfolio_metrics()
