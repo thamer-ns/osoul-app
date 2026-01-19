@@ -3,7 +3,6 @@ from datetime import date
 from config import APP_NAME, APP_ICON
 
 def render_navbar():
-    # التأكد من وجود الألوان في الجلسة
     if 'custom_colors' not in st.session_state:
         from config import DEFAULT_COLORS
         st.session_state.custom_colors = DEFAULT_COLORS.copy()
@@ -72,12 +71,12 @@ def render_table(df, cols_def):
             val = row.get(k, "-")
             disp = val
             
-            # 1. معالجة تاريخ البيع: يظهر فقط للمغلقة
+            # 1. التاريخ: يظهر فقط للمغلقة في عمود تاريخ البيع
             if k == 'exit_date':
                 if not is_closed: disp = "-"
                 elif val: disp = str(val)[:10]
 
-            # 2. تنسيق الحالة
+            # 2. الحالة
             elif k == 'status':
                 if is_closed:
                     bg, fg, txt = ("#F3F4F6", "#4B5563", "مغلقة")
@@ -85,7 +84,7 @@ def render_table(df, cols_def):
                     bg, fg, txt = ("#DCFCE7", "#166534", "مفتوحة")
                 disp = f"<span style='background:{bg}; color:{fg}; padding:4px 10px; border-radius:12px; font-size:0.75rem; font-weight:800;'>{txt}</span>"
             
-            # 3. تنسيق النسب والأرقام الملونة
+            # 3. النسب والأرباح
             elif k in ['gain', 'gain_pct', 'daily_change']:
                 if is_closed and k == 'daily_change':
                     disp = "<span style='color:#9CA3AF'>-</span>"
@@ -98,12 +97,12 @@ def render_table(df, cols_def):
                         disp = f"<span style='color:{c}; direction:ltr; font-weight:bold;'>{fmt}{suffix}</span>"
                     except: disp = val
 
-            # 4. تنسيق الأسعار
+            # 4. الأسعار والقيم
             elif k in ['market_value', 'total_cost', 'entry_price', 'current_price', 'year_high', 'year_low']:
                 try: disp = "{:,.2f}".format(float(val))
                 except: disp = val
             
-            # 5. تنسيق الوزن النسبي (مهم جداً للعمود الجديد)
+            # 5. الوزن النسبي
             elif k == 'local_weight':
                 try:
                     num = float(val)
@@ -111,12 +110,12 @@ def render_table(df, cols_def):
                     else: disp = f"{num:.2f}%"
                 except: disp = "-"
                 
-            # 6. تنسيق الكميات (رقم صحيح)
+            # 6. الكمية
             elif k in ['quantity']:
                 try: disp = "{:,.0f}".format(float(val))
                 except: disp = val
                 
-            # 7. تنسيق التاريخ
+            # 7. التواريخ العامة
             elif 'date' in k and val:
                 disp = str(val)[:10]
 
