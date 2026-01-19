@@ -84,20 +84,12 @@ def render_table(df, cols_def):
                 try:
                     curr = float(val)
                     target = float(row.get('target_percentage', 0))
-                    
-                    # هامش السماح +/- 1.5%
                     margin = 1.5
-                    
                     if target > 0:
                         diff = curr - target
-                        # إذا كان الفرق ضمن الهامش -> أخضر (ممتاز)
-                        if abs(diff) <= margin:
-                            color = "#10B981" # أخضر
-                        else:
-                            color = "#EF4444" # أحمر (بعيد عن الهدف)
-                    else:
-                        color = "#0e6ba8" # أزرق عادي إذا لم يكن هناك هدف
-
+                        if abs(diff) <= margin: color = "#10B981" 
+                        else: color = "#EF4444" 
+                    else: color = "#0e6ba8"
                     disp = f"<span style='color:{color}; font-weight:bold;'>{curr:.2f}%</span>"
                 except: disp = "-"
             
@@ -118,7 +110,8 @@ def render_table(df, cols_def):
                         disp = f"<span style='color:{c}; direction:ltr; font-weight:bold;'>{fmt}{suffix}</span>"
                     except: disp = val
             
-            elif k in ['market_value', 'total_cost', 'entry_price', 'current_price', 'exit_price', 'total_dividends', 'suggested_amount']:
+            # تم إضافة 'amount' هنا ليظهر بتنسيق العملة في التقويم
+            elif k in ['market_value', 'total_cost', 'entry_price', 'current_price', 'exit_price', 'total_dividends', 'suggested_amount', 'amount']:
                 try: disp = "{:,.2f}".format(float(val))
                 except: disp = val
                 
