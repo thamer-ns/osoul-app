@@ -1,4 +1,6 @@
+# config.py
 from pathlib import Path
+from data_source import TADAWUL_DB  # <--- هذا هو الربط السحري!
 
 # --- إعدادات الهوية ---
 APP_NAME = "أصولي"
@@ -20,115 +22,78 @@ DEFAULT_COLORS = {
 }
 
 def get_css(C):
+    # ... (نفس كود CSS السابق تماماً) ...
+    # (انسخ دالة get_css من ردي السابق في data_source.py وضعها هنا)
     return f"""
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap');
+        
         html, body, [class*="css"], p, div, label, input, textarea, th, td, h1, h2, h3, button {{
-            font-family: 'Cairo', sans-serif !important; direction: rtl;
+            font-family: 'Cairo', sans-serif !important; 
+            direction: rtl;
         }}
+        
         .stApp {{ background-color: {C['page_bg']} !important; }}
+        
+        /* تصميم اللوقو الجديد (مربع أيقونة التطبيق) */
         .app-logo-box {{
             background: linear-gradient(135deg, {C['primary']}, #0284c7);
-            width: 48px; height: 48px; border-radius: 12px;
-            display: flex; align-items: center; justify-content: center;
-            font-size: 1.8rem; color: white; margin-left: 10px;
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.8rem;
+            color: white;
+            box-shadow: 0 4px 6px -1px rgba(14, 107, 168, 0.3);
+            margin-left: 10px;
         }}
-        .logo-text {{ font-size: 1.6rem; font-weight: 900; color: {C['primary']}; }}
+        
+        .logo-text {{
+            font-size: 1.6rem;
+            font-weight: 900;
+            color: {C['primary']};
+            letter-spacing: -0.5px;
+        }}
+        
+        /* تحسينات عامة */
+        div[data-testid="stHorizontalBlock"] button {{
+            border-radius: 8px !important;
+            font-weight: 700 !important;
+            border: 1px solid transparent;
+        }}
+        div[data-testid="stHorizontalBlock"] button:hover {{
+            background-color: white !important;
+            border-color: {C['border']} !important;
+            color: {C['primary']} !important;
+        }}
+        
+        /* الكروت والجداول */
         .kpi-box {{
-            background-color: {C['card_bg']}; border: 1px solid {C['border']};
-            border-radius: 12px; padding: 15px; text-align: right; margin-bottom: 10px;
+            background-color: {C['card_bg']}; 
+            border: 1px solid {C['border']}; 
+            border-radius: 12px;
+            padding: 15px; 
+            text-align: right; 
+            margin-bottom: 10px;
         }}
         .kpi-value {{ font-size: 1.3rem; font-weight: 800; color: {C['main_text']}; }}
+        
         .finance-table {{ width: 100%; border-collapse: separate; border-spacing: 0 4px; margin-top: 5px; }}
         .finance-table th {{ 
-            color: {C['sub_text']}; font-weight: 700; padding: 10px; border-bottom: 2px solid {C['border']};
+            color: {C['sub_text']} !important; font-weight: 700 !important; font-size: 0.85rem !important;
+            padding: 10px !important; text-align: center; border-bottom: 2px solid {C['border']};
         }}
         .finance-table td {{ 
-            background-color: white; padding: 10px; font-weight: 600;
+            background-color: white; padding: 10px !important; text-align: center;
+            color: {C['main_text']}; font-weight: 600; font-size: 0.85rem !important;
             border-top: 1px solid {C['border']}; border-bottom: 1px solid {C['border']};
         }}
+        
         [data-testid="stSidebar"] {{ display: none !important; }}
         .stTabs [data-baseweb="tab-list"] {{ gap: 10px; }}
         .stTabs [data-baseweb="tab"] {{ height: 40px; border-radius: 6px; }}
         .stTabs [aria-selected="true"] {{ background-color: {C['primary']} !important; color: white !important; }}
     </style>
     """
-
-# --- قاعدة بيانات تداول الموسعة ---
-TADAWUL_DB = {
-    # الطاقة
-    '2222': {'name': 'أرامكو', 'sector': 'الطاقة'},
-    '2030': {'name': 'المصافي', 'sector': 'الطاقة'},
-    '4030': {'name': 'البحري', 'sector': 'الطاقة'},
-    '2380': {'name': 'بترو رابغ', 'sector': 'الطاقة'},
-    '2381': {'name': 'الحفر العربية', 'sector': 'الطاقة'},
-    '2382': {'name': 'أديس', 'sector': 'الطاقة'},
-    # المواد الأساسية
-    '2010': {'name': 'سابك', 'sector': 'المواد الأساسية'},
-    '2020': {'name': 'سابك للمغذيات', 'sector': 'المواد الأساسية'},
-    '2060': {'name': 'التصنيع', 'sector': 'المواد الأساسية'},
-    '2310': {'name': 'سبكيم', 'sector': 'المواد الأساسية'},
-    '2330': {'name': 'المتقدمة', 'sector': 'المواد الأساسية'},
-    '2002': {'name': 'بتروكيم', 'sector': 'المواد الأساسية'},
-    '2290': {'name': 'ينساب', 'sector': 'المواد الأساسية'},
-    '1211': {'name': 'معادن', 'sector': 'المواد الأساسية'},
-    # البنوك
-    '1120': {'name': 'الراجحي', 'sector': 'البنوك'},
-    '1180': {'name': 'الأهلي', 'sector': 'البنوك'},
-    '1010': {'name': 'الرياض', 'sector': 'البنوك'},
-    '1150': {'name': 'الإنماء', 'sector': 'البنوك'},
-    '1140': {'name': 'البلاد', 'sector': 'البنوك'},
-    '1060': {'name': 'ساب', 'sector': 'البنوك'},
-    '1030': {'name': 'الاستثمار', 'sector': 'البنوك'},
-    '1020': {'name': 'الجزيرة', 'sector': 'البنوك'},
-    '1080': {'name': 'العربي', 'sector': 'البنوك'},
-    # الاتصالات
-    '7010': {'name': 'STC', 'sector': 'الأتصالات'},
-    '7020': {'name': 'موبايلي', 'sector': 'الأتصالات'},
-    '7030': {'name': 'زين', 'sector': 'الأتصالات'},
-    '7202': {'name': 'سلوشنز', 'sector': 'التقنية'},
-    '7203': {'name': 'علم', 'sector': 'التقنية'},
-    # الأسمنتات
-    '3030': {'name': 'أسمنت السعودية', 'sector': 'الأسمنت'},
-    '3040': {'name': 'أسمنت القصيم', 'sector': 'الأسمنت'},
-    '3050': {'name': 'أسمنت الجنوبية', 'sector': 'الأسمنت'},
-    '3060': {'name': 'أسمنت ينبع', 'sector': 'الأسمنت'},
-    '3010': {'name': 'أسمنت العربية', 'sector': 'الأسمنت'},
-    '3020': {'name': 'أسمنت اليمامة', 'sector': 'الأسمنت'},
-    '3080': {'name': 'أسمنت الشرقية', 'sector': 'الأسمنت'},
-    '3090': {'name': 'أسمنت تبوك', 'sector': 'الأسمنت'},
-    '3091': {'name': 'أسمنت الجوف', 'sector': 'الأسمنت'},
-    '3003': {'name': 'أسمنت المدينة', 'sector': 'الأسمنت'},
-    '3004': {'name': 'أسمنت الشمالية', 'sector': 'الأسمنت'},
-    '3005': {'name': 'أسمنت أم القرى', 'sector': 'الأسمنت'},
-    # التجزئة والأغذية
-    '2280': {'name': 'المراعي', 'sector': 'إنتاج الأغذية'},
-    '2270': {'name': 'سدافكو', 'sector': 'إنتاج الأغذية'},
-    '4001': {'name': 'العثيم', 'sector': 'تجزئة الأغذية'},
-    '4190': {'name': 'جرير', 'sector': 'السلع الكمالية'},
-    '4164': {'name': 'النهدي', 'sector': 'تجزئة الأغذية والأدوية'},
-    '4002': {'name': 'المواساة', 'sector': 'الرعاية الصحية'},
-    '4004': {'name': 'دله', 'sector': 'الرعاية الصحية'},
-    '4007': {'name': 'الحمادي', 'sector': 'الرعاية الصحية'},
-    '4013': {'name': 'سليمان الحبيب', 'sector': 'الرعاية الصحية'},
-    # المرافق
-    '5110': {'name': 'الكهرباء', 'sector': 'المرافق العامة'},
-    '2080': {'name': 'الغاز', 'sector': 'المرافق العامة'},
-    '2081': {'name': 'الخريف', 'sector': 'المرافق العامة'},
-    '2082': {'name': 'أكوا باور', 'sector': 'المرافق العامة'},
-    '2083': {'name': 'مرافق', 'sector': 'المرافق العامة'},
-    # النقل
-    '4031': {'name': 'الخدمات الأرضية', 'sector': 'النقل'},
-    '4040': {'name': 'الجماعي', 'sector': 'النقل'},
-    '4260': {'name': 'بدجت', 'sector': 'النقل'},
-    '4261': {'name': 'ذيب', 'sector': 'النقل'},
-    '4262': {'name': 'لومي', 'sector': 'النقل'},
-    '4263': {'name': 'سال', 'sector': 'النقل'},
-    # أخرى شائعة
-    '4090': {'name': 'طيبة', 'sector': 'إدارة وتطوير العقارات'},
-    '4100': {'name': 'مكة', 'sector': 'إدارة وتطوير العقارات'},
-    '4150': {'name': 'التعمير', 'sector': 'إدارة وتطوير العقارات'},
-    '4250': {'name': 'جبل عمر', 'sector': 'إدارة وتطوير العقارات'},
-    '4300': {'name': 'دار الأركان', 'sector': 'إدارة وتطوير العقارات'},
-    '4321': {'name': 'المراكز', 'sector': 'إدارة وتطوير العقارات'},
-}
