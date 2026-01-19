@@ -29,7 +29,10 @@ def init_db():
         conn.execute("CREATE TABLE IF NOT EXISTS ReturnsGrants (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT, symbol TEXT, company_name TEXT, amount REAL)")
         conn.execute("CREATE TABLE IF NOT EXISTS Watchlist (symbol TEXT PRIMARY KEY)")
         
-        # التحديثات للأعمدة الجديدة
+        # --- الجديد: جدول الأوزان المستهدفة للقطاعات ---
+        conn.execute("CREATE TABLE IF NOT EXISTS SectorTargets (sector TEXT PRIMARY KEY, target_percentage REAL)")
+        
+        # التحديثات للأعمدة الجديدة (للمستخدمين القدامى)
         updates = [("ReturnsGrants", "amount", "REAL"), ("ReturnsGrants", "company_name", "TEXT"), ("Deposits", "note", "TEXT"), ("Withdrawals", "note", "TEXT")]
         for tbl, col, typ in updates:
             try: conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {typ}")
@@ -57,7 +60,6 @@ def db_verify_user(username, password):
                 return str(user['password']) == password
         return False
 
-# عمليات الاستعلام العامة
 def fetch_table(table_name):
     with get_db() as conn:
         try: return pd.read_sql(f"SELECT * FROM {table_name}", conn)
