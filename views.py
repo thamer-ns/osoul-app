@@ -9,7 +9,8 @@ from components import render_kpi, render_table, render_navbar
 from charts import view_advanced_chart
 from market_data import get_static_info, get_tasi_data
 from database import execute_query, fetch_table, get_db
-from config import BACKUP_DIR
+# --- الإصلاح هنا: استيراد APP_NAME ---
+from config import BACKUP_DIR, APP_NAME
 
 def apply_sorting(df, cols_definition, key_suffix):
     if df.empty: return df
@@ -110,7 +111,6 @@ def view_portfolio(fin, page_key):
         
         st.markdown("---")
         
-        # --- قسم المخاطر والتراجع (الجديد) ---
         st.markdown("### 📉 تحليل المخاطر (Drawdown Analysis)")
         if not df_open.empty:
             with st.spinner("جاري حساب المخاطر التاريخية..."):
@@ -152,13 +152,18 @@ def view_liquidity():
     with c1: render_kpi("إجمالي الإيداعات", f"{fin['total_deposited']:,.2f}", "blue")
     with c2: render_kpi("إجمالي السحوبات", f"{fin['total_withdrawn']:,.2f}", -1)
     with c3: render_kpi("إجمالي العوائد", f"{fin['total_returns']:,.2f}", "success")
+    
     st.markdown("---")
+    
+    # --- إصلاح شكل تقويم التوزيعات ليطابق الجداول ---
     st.markdown("### 📅 تقويم التوزيعات النقدية")
     div_cal = get_dividends_calendar(fin['returns'])
     if not div_cal.empty:
+        # تعريف الأعمدة لعرضها بـ render_table المنسق
         cols_cal = [('year_month', 'الشهر'), ('amount', 'إجمالي التوزيعات'), ('symbol', 'الشركات الموزعة')]
         render_table(div_cal, cols_cal)
     else: st.info("لا توجد توزيعات.")
+    
     st.markdown("---")
     cols_dep = [('date', 'التاريخ'), ('amount', 'المبلغ'), ('note', 'ملاحظات')]
     cols_wit = [('date', 'التاريخ'), ('amount', 'المبلغ'), ('note', 'ملاحظات')]
@@ -168,36 +173,32 @@ def view_liquidity():
     with t2: render_table(apply_sorting(fin['withdrawals'], cols_wit, "liq_wit"), cols_wit)
     with t3: render_table(apply_sorting(fin['returns'], cols_ret, "liq_ret"), cols_ret)
 
-# --- صفحة الأدوات الجديدة ---
 def view_tools():
     st.header("🛠️ الأدوات المالية")
     
     tab1, tab2 = st.tabs(["🧮 حاسبة الزكاة", "📄 التقارير"])
-    
     fin = calculate_portfolio_metrics()
     
     with tab1:
         st.markdown("### حاسبة زكاة المحفظة التقديرية")
-        st.info("حسب المعيار الشرعي، زكاة الأسهم للمضارب تكون 2.5% من القيمة السوقية الكاملة + الكاش. للمستثمر تكون على الأصول الزكوية فقط (هنا نحسبها أحوطياً كزكاة تجارة).")
-        
+        st.info("حسب المعيار الشرعي، زكاة الأسهم للمضارب تكون 2.5% من القيمة السوقية الكاملة + الكاش.")
         col_z1, col_z2 = st.columns(2)
         with col_z1:
             market_val = st.number_input("القيمة السوقية للأسهم", value=float(fin['market_val_open']), disabled=True)
             cash_val = st.number_input("النقد المتوفر", value=float(fin['cash']), disabled=True)
         with col_z2:
-            fixed_assets_deduction = st.number_input("خصم أصول ثابتة (إن وجد)", value=0.0, help="المبلغ غير الخاضع للزكاة")
-            zakat_pct = st.number_input("نسبة الزكاة %", value=2.5775, help="2.5% للسنة الميلادية، 2.5775% للسنة الهجرية")
+            fixed_assets_deduction = st.number_input("خصم أصول ثابتة (إن وجد)", value=0.0)
+            zakat_pct = st.number_input("نسبة الزكاة %", value=2.5775)
             
         zakat_base = market_val + cash_val - fixed_assets_deduction
         zakat_amount = zakat_base * (zakat_pct / 100)
-        
         st.markdown("---")
         st.metric("مبلغ الزكاة المستحق (تقديري)", f"{zakat_amount:,.2f} ريال", help=f"وعاء الزكاة: {zakat_base:,.2f}")
 
     with tab2:
         st.markdown("### إصدار التقارير")
-        st.write("يمكنك تحميل تقرير شامل بصيغة HTML يحتوي على جميع جداول المحفظة، ويمكن طباعته كملف PDF.")
-        
+        st.write("تحميل تقرير شامل:")
+        # استخدام APP_NAME المستورد بشكل صحيح
         report_html = f"""
         <html>
         <head>
@@ -207,35 +208,18 @@ def view_tools():
                 th, td {{ border: 1px solid #ddd; padding: 8px; text-align: center; }}
                 th {{ background-color: #f2f2f2; }}
                 h1, h2 {{ color: #0e6ba8; }}
-                .summary {{ background: #f9f9f9; padding: 15px; border-radius: 10px; margin-bottom: 20px; }}
             </style>
         </head>
         <body>
             <h1>تقرير محفظة {APP_NAME}</h1>
-            <p>تاريخ التقرير: {date.today()}</p>
-            
-            <div class="summary">
-                <h2>الملخص المالي</h2>
-                <p><strong>القيمة السوقية:</strong> {fin['market_val_open']:,.2f}</p>
-                <p><strong>الكاش المتوفر:</strong> {fin['cash']:,.2f}</p>
-                <p><strong>صافي الربح/الخسارة:</strong> {(fin['unrealized_pl'] + fin['realized_pl']):,.2f}</p>
-            </div>
-            
-            <h2>الصفقات المفتوحة</h2>
-            {fin['all_trades'][fin['all_trades']['status']=='Open'].to_html(index=False, classes='table') if not fin['all_trades'].empty else "<p>لا توجد بيانات</p>"}
-            
-            <h2>سجل العمليات المغلقة</h2>
-            {fin['all_trades'][fin['all_trades']['status']=='Close'].to_html(index=False, classes='table') if not fin['all_trades'].empty else "<p>لا توجد بيانات</p>"}
+            <p>تاريخ: {date.today()}</p>
+            <h2>الملخص</h2>
+            <p>القيمة السوقية: {fin['market_val_open']:,.2f}</p>
+            <p>صافي الربح: {(fin['unrealized_pl'] + fin['realized_pl']):,.2f}</p>
         </body>
         </html>
         """
-        
-        st.download_button(
-            label="📥 تحميل التقرير (HTML)",
-            data=report_html,
-            file_name=f"Portfolio_Report_{date.today()}.html",
-            mime="text/html"
-        )
+        st.download_button("📥 تحميل التقرير (HTML)", report_html, file_name=f"Report_{date.today()}.html", mime="text/html")
 
 def view_add_trade():
     st.header("إضافة صفقة جديدة")
