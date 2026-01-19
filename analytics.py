@@ -7,53 +7,50 @@ from config import BACKUP_DIR, SECTOR_TARGETS
 import streamlit as st
 
 def calculate_portfolio_metrics():
+    # جلب البيانات
     trades = fetch_table("Trades")
     dep = fetch_table("Deposits")
     wit = fetch_table("Withdrawals")
     ret = fetch_table("ReturnsGrants")
 
-    # تهيئة DataFrames فارغة
     if trades.empty:
         trades = pd.DataFrame(columns=['symbol', 'strategy', 'status', 'market_value', 'total_cost', 'gain', 'sector'])
 
     if not trades.empty:
-        # 1. تنظيف النصوص (إزالة المسافات تماماً)
+        # --- [الإصلاح الجذري] تنظيف عمود الاستراتيجية من المسافات المخفية ---
         if 'strategy' in trades.columns:
+            # تحويل النص وتنظيفه من الجهتين
             trades['strategy'] = trades['strategy'].astype(str).str.strip()
         
+        # التأكد من التواريخ
         trades['date'] = pd.to_datetime(trades['date'], errors='coerce')
         if 'exit_date' in trades.columns:
             trades['exit_date'] = pd.to_datetime(trades['exit_date'], errors='coerce')
         
-        # 2. التأكد من الأرقام
+        # التأكد من الأرقام وتحويلها
         cols = ['quantity', 'entry_price', 'exit_price', 'current_price', 'prev_close', 'dividend_yield', 'year_high', 'year_low']
         for c in cols:
             if c not in trades.columns: trades[c] = 0.0
             trades[c] = pd.to_numeric(trades[c], errors='coerce').fillna(0.0)
 
-        # 3. الحسابات الأساسية
         trades['total_cost'] = trades['quantity'] * trades['entry_price']
         
-        # تحديد الحالة
+        # تنظيف الحالة أيضاً (Status)
         trades['status'] = trades['status'].astype(str).str.strip()
-        # نستخدم lower() و strip() لضمان المطابقة
         is_closed = trades['status'].str.lower().isin(['close', 'sold', 'مغلقة', 'مباعة'])
         
-        # منطق السعر (للمغلقة سعر البيع، للمفتوحة سعر السوق)
+        # حساب السعر الحالي (للمغلقة سعر البيع، للمفتوحة سعر السوق)
         trades.loc[is_closed, 'current_price'] = trades.loc[is_closed, 'exit_price']
         
-        # القيمة السوقية (كما طلبت: عدد الأسهم * السعر الحالي)
         trades['market_value'] = trades['quantity'] * trades['current_price']
-        
-        # الربح والخسارة
         trades['gain'] = trades['market_value'] - trades['total_cost']
         trades['gain_pct'] = (trades['gain'] / trades['total_cost'].replace(0, 1)) * 100
         
-        # التغير اليومي (للصفقات المفتوحة فقط)
+        # التغير اليومي
         trades['daily_change'] = ((trades['current_price'] - trades['prev_close']) / trades['prev_close'].replace(0, 1)) * 100
         trades.loc[is_closed, 'daily_change'] = 0.0
         
-        # تعبئة البيانات الناقصة
+        # تعبئة البيانات المفقودة
         for idx, row in trades.iterrows():
             n, s = get_static_info(row['symbol'])
             if pd.isna(row['company_name']) or str(row['company_name']).strip() == "":
@@ -66,7 +63,7 @@ def calculate_portfolio_metrics():
     total_wit = wit['amount'].sum() if not wit.empty else 0
     total_ret = ret['amount'].sum() if not ret.empty else 0
     
-    # فصل البيانات
+    # تقسيم المحافظ
     open_trades = trades[~trades['status'].str.lower().isin(['close', 'sold', 'مغلقة', 'مباعة'])] if not trades.empty else pd.DataFrame()
     closed_trades = trades[trades['status'].str.lower().isin(['close', 'sold', 'مغلقة', 'مباعة'])] if not trades.empty else pd.DataFrame()
     
@@ -85,11 +82,7 @@ def calculate_portfolio_metrics():
     vals['realized_pl'] = vals['sales_closed'] - vals['cost_closed']
     
     # معادلة الكاش الدقيقة
-    net_invested = total_dep - total_wit
-    vals['cash'] = (net_invested + total_ret + vals['realized_pl']) - (vals['cost_open'] - vals['cost_closed'] if vals['cost_open'] < 0 else 0) 
-    # التبسيط: الكاش = الصافي المستثمر + العوائد + مبيعات المغلق - تكلفة المفتوح
     vals['cash'] = (total_dep - total_wit) + total_ret + vals['sales_closed'] - vals['cost_open']
-
     vals['equity'] = vals['cash'] + vals['market_val_open']
     vals['projected_income'] = (open_trades['market_value'] * open_trades['dividend_yield']).sum() if not open_trades.empty and 'dividend_yield' in open_trades else 0
     
