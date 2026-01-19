@@ -4,6 +4,7 @@ yfinance
 plotly
 beautifulsoup4
 requests
+lxml
 xlsxwriter
 extra-streamlit-components
 openpyxl
