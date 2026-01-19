@@ -28,32 +28,16 @@ def apply_sorting(df, cols_definition, key_suffix):
 def view_dashboard(fin):
     try: t_price, t_change = get_tasi_data()
     except: t_price, t_change = 0, 0
-    
     C = st.session_state.custom_colors
     arrow = "🔼" if t_change >= 0 else "🔽"
     color = "#10B981" if t_change >= 0 else "#EF4444"
-    
-    st.markdown(f"""
-    <div class="tasi-box">
-        <div>
-            <div style="font-size:0.9rem; color:#6B7280; font-weight:bold;">المؤشر العام (TASI)</div>
-            <div style="font-size:2rem; font-weight:900; color:#1F2937;">{t_price:,.2f}</div>
-        </div>
-        <div>
-            <div style="background:{color}15; color:{color}; padding:8px 20px; border-radius:10px; font-size:1.1rem; font-weight:bold; direction:ltr;">
-                {arrow} {t_change:+.2f}%
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-    
+    st.markdown(f"""<div class="tasi-box"><div><div style="font-size:0.9rem;color:#6B7280;font-weight:bold;">المؤشر العام (TASI)</div><div style="font-size:2rem;font-weight:900;color:#1F2937;">{t_price:,.2f}</div></div><div><div style="background:{color}15;color:{color};padding:8px 20px;border-radius:10px;font-size:1.1rem;font-weight:bold;direction:ltr;">{arrow} {t_change:+.2f}%</div></div></div>""", unsafe_allow_html=True)
     st.markdown("### الملخص المالي")
     c1, c2, c3, c4 = st.columns(4)
     with c1: render_kpi("الكاش المتوفر", f"{fin['cash']:,.2f}")
     with c2: render_kpi("رأس المال", f"{(fin['total_deposited']-fin['total_withdrawn']):,.2f}")
     with c3: render_kpi("القيمة السوقية", f"{fin['market_val_open']:,.2f}", "blue")
     with c4: render_kpi("صافي الربح", f"{(fin['unrealized_pl']+fin['realized_pl']+fin['total_returns']):,.2f}", (fin['unrealized_pl']+fin['realized_pl']))
-    
     st.markdown("---")
     st.markdown("### 📈 منحنى النمو")
     curve = generate_equity_curve(fin['all_trades'])
@@ -66,7 +50,6 @@ def view_portfolio(fin, page_key):
     target_strat = "مضاربة" if page_key == 'spec' else "استثمار"
     st.header(f"محفظة {target_strat}")
     all_data = fin['all_trades']
-    
     if all_data.empty: st.info("لا توجد بيانات"); return
     df_strat = all_data[(all_data['strategy'] == target_strat) & (all_data['asset_type'] != 'Sukuk')].copy()
     if df_strat.empty: st.warning(f"محفظة {target_strat} فارغة"); return
@@ -78,12 +61,10 @@ def view_portfolio(fin, page_key):
     
     with t1:
         if not open_df.empty:
-            # === استعادة جدول القطاعات مع الأوزان ===
             st.markdown("#### توزيع القطاعات")
             sec_sum = open_df.groupby('sector').agg({'symbol':'count','total_cost':'sum','market_value':'sum'}).reset_index()
             total_mv = sec_sum['market_value'].sum()
             sec_sum['current_weight'] = (sec_sum['market_value']/total_mv*100).fillna(0)
-            
             targets = fetch_table("SectorTargets")
             if not targets.empty:
                 sec_sum = pd.merge(sec_sum, targets, on='sector', how='left')
@@ -91,13 +72,11 @@ def view_portfolio(fin, page_key):
             else: sec_sum['target_percentage'] = 0.0
             sec_sum['remaining'] = (total_mv * sec_sum['target_percentage']/100) - sec_sum['market_value']
             
-            # الأعمدة الكاملة للقطاعات
             cols_sec = [('sector', 'القطاع'), ('symbol', 'عدد'), ('total_cost', 'التكلفة'), ('current_weight', 'الوزن %'), ('target_percentage', 'الهدف %'), ('remaining', 'المتبقي')]
             render_table(apply_sorting(sec_sum, cols_sec, f"{page_key}_s"), cols_sec)
             
             st.markdown("---")
             st.markdown("#### تفاصيل الأسهم")
-            # الأعمدة الكاملة للأسهم
             cols_op = [('company_name', 'الشركة'), ('symbol', 'الرمز'), ('status', 'الحالة'), ('quantity', 'الكمية'), ('entry_price', 'ت.شراء'), ('current_price', 'سعر'), ('daily_change', 'يومي %'), ('market_value', 'قيمة'), ('gain', 'ربح'), ('gain_pct', '%'), ('date', 'تاريخ')]
             render_table(apply_sorting(open_df, cols_op, f"{page_key}_o"), cols_op)
         else: st.info("فارغة")
@@ -108,7 +87,6 @@ def view_portfolio(fin, page_key):
         if not sec_p.empty:
             cols_sp = [('sector', 'القطاع'), ('gain', 'رأسمالي'), ('total_dividends', 'توزيعات'), ('net_profit', 'صافي'), ('roi_pct', 'عائد %')]
             render_table(sec_p.sort_values('net_profit', ascending=False), cols_sp)
-        
         st.markdown("### المخاطر والتراجع")
         if not open_df.empty:
             dd = calculate_historical_drawdown(open_df)
@@ -126,19 +104,15 @@ def view_sukuk_portfolio(fin):
     st.header("📜 محفظة الصكوك")
     all_data = fin['all_trades']
     if all_data.empty: st.info("لا توجد بيانات"); return
-    
     sukuk_df = all_data[all_data['asset_type'] == 'Sukuk'].copy()
     if sukuk_df.empty: st.warning("لم تقم بإضافة أي صكوك بعد."); return
-    
     total_cost = sukuk_df['total_cost'].sum()
     current_val = sukuk_df['market_value'].sum()
     gain = sukuk_df['gain'].sum()
-    
     c1, c2, c3 = st.columns(3)
     c1.metric("إجمالي الصكوك", f"{total_cost:,.2f}")
     c2.metric("القيمة الحالية", f"{current_val:,.2f}")
     c3.metric("الربح الرأسمالي", f"{gain:,.2f}", delta_color="normal")
-    
     st.markdown("### قائمة الصكوك")
     cols = [('company_name', 'اسم الصك'), ('symbol', 'الرمز'), ('quantity', 'العدد'), ('entry_price', 'سعر الشراء'), ('current_price', 'السعر الحالي'), ('market_value', 'القيمة السوقية'), ('gain_pct', 'النمو %')]
     render_table(sukuk_df, cols)
@@ -150,12 +124,10 @@ def view_liquidity():
     with c2: render_kpi("سحوبات", f"{fin['total_withdrawn']:,.2f}", -1)
     with c3: render_kpi("عوائد", f"{fin['total_returns']:,.2f}", "success")
     st.markdown("---")
-    
     cal = get_dividends_calendar(fin['returns'])
     if not cal.empty:
         st.markdown("### سجل التوزيعات")
         render_table(cal, [('year_month', 'الشهر'), ('amount', 'القيمة'), ('symbol', 'الشركات')])
-    
     st.markdown("---")
     t1, t2, t3 = st.tabs(["إيداع", "سحب", "عوائد"])
     with t1: render_table(apply_sorting(fin['deposits'], [('date','تاريخ'),('amount','مبلغ'),('note','ملاحظة')], "ld"), [('date','تاريخ'),('amount','مبلغ'),('note','ملاحظة')])
@@ -211,7 +183,6 @@ def view_settings():
     with st.expander("إدارة البيانات"):
         if st.button("نسخ احتياطي"): create_smart_backup(); st.success("تم النسخ")
 
-# === دالة التحليل المالي والفني (التي كانت تعمل تمام) ===
 def view_analysis(fin):
     st.header("🔍 التحليل الشامل (مالي وفني)")
     trades = fin['all_trades']
@@ -233,8 +204,7 @@ def view_analysis(fin):
         with st.spinner("جاري جلب البيانات..."): 
             ratios = get_fundamental_ratios(symbol)
             
-        if ratios:
-            # عرض البطاقة المالية
+        if ratios and ratios['Current_Price'] > 0:
             k1, k2, k3, k4, k5 = st.columns(5)
             k1.metric("P/E", f"{ratios['P/E']:.2f}" if ratios['P/E'] else "-")
             k2.metric("P/B", f"{ratios['P/B']:.2f}" if ratios['P/B'] else "-")
@@ -248,10 +218,9 @@ def view_analysis(fin):
             
             k5.metric("Graham FV", f"{fv:.2f}", delta=f"{delta_val:.1f}%", delta_color=color_fv)
         else:
-            st.warning("تعذر جلب البيانات المالية")
+            st.warning("تعذر جلب البيانات المالية (تأكد من الرمز أو الاتصال)")
 
         st.markdown("---")
-        # عرض الشارت الفني
         render_technical_chart(symbol, period, interval)
 
 def router():
