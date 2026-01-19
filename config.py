@@ -2,24 +2,24 @@ from pathlib import Path
 
 # --- إعدادات الهوية ---
 APP_NAME = "أصولي"
-APP_ICON = "💎"
+APP_ICON = "🏛️"    # تغيير الجوهرة إلى رمز "الأصول/المبنى المالي" ليعبر عن الاسم
 DB_PATH = Path("stocks.db")
 BACKUP_DIR = Path("backups")
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
-# --- الألوان ---
+# --- الألوان (تدرجات الأزرق البنكي) ---
 DEFAULT_COLORS = {
     'page_bg': '#F9FAFB',
     'card_bg': '#FFFFFF',
     'main_text': '#111827',
     'sub_text': '#6B7280',
-    'primary': '#0284c7',
+    'primary': '#0e6ba8',        # أزرق استثماري وقور
     'success': '#10B981',
     'danger': '#EF4444',
     'border': '#E5E7EB',
 }
 
-# --- بيانات الشركات ---
+# --- بيانات الشركات (كما هي) ---
 TADAWUL_DB = {
     '2222': {'name': 'أرامكو السعودية', 'sector': 'الطاقة'},
     '2010': {'name': 'سابك', 'sector': 'المواد الأساسية'},
@@ -54,59 +54,41 @@ def get_css(C):
         
         .stApp {{ background-color: {C['page_bg']} !important; }}
         
-        /* تحسين شعار أصولي */
-        .logo-text {{
-            background: -webkit-linear-gradient(45deg, {C['primary']}, #0ea5e9);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            font-weight: 900;
+        /* تصميم اللوقو الجديد (مربع أيقونة التطبيق) */
+        .app-logo-box {{
+            background: linear-gradient(135deg, {C['primary']}, #0284c7);
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
             font-size: 1.8rem;
+            color: white;
+            box-shadow: 0 4px 6px -1px rgba(14, 107, 168, 0.3);
+            margin-left: 10px;
         }}
         
-        /* تنسيق القائمة المنسدلة (Popover) لتكون جميلة */
-        div[data-testid="stPopoverBody"] {{
-            padding: 10px !important;
-            border-radius: 12px !important;
-            border: 1px solid {C['border']} !important;
-            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1) !important;
+        .logo-text {{
+            font-size: 1.6rem;
+            font-weight: 900;
+            color: {C['primary']};
+            letter-spacing: -0.5px;
         }}
         
-        div[data-testid="stPopoverBody"] button {{
-            width: 100% !important;
-            border: none !important;
-            text-align: right !important;
-            padding: 10px 15px !important;
-            background: transparent !important;
-            color: {C['main_text']} !important;
-            border-radius: 8px !important;
-            transition: all 0.2s !important;
-            display: flex !important;
-            justify-content: flex-start !important;
-        }}
-        
-        div[data-testid="stPopoverBody"] button:hover {{
-            background-color: {C['page_bg']} !important;
-            color: {C['primary']} !important;
-            transform: translateX(-5px);
-        }}
-        
-        /* الزر الأحمر للخروج */
-        div[data-testid="stPopoverBody"] button[kind="primary"] {{
-            color: {C['danger']} !important;
-            background-color: #FEF2F2 !important;
-            margin-top: 10px !important;
-        }}
-        div[data-testid="stPopoverBody"] button[kind="primary"]:hover {{
-            background-color: #FEE2E2 !important;
-        }}
-
-        /* أزرار النافبار */
+        /* تحسينات عامة */
         div[data-testid="stHorizontalBlock"] button {{
             border-radius: 8px !important;
             font-weight: 700 !important;
+            border: 1px solid transparent;
+        }}
+        div[data-testid="stHorizontalBlock"] button:hover {{
+            background-color: white !important;
+            border-color: {C['border']} !important;
+            color: {C['primary']} !important;
         }}
         
-        /* الكروت */
+        /* الكروت والجداول */
         .kpi-box {{
             background-color: {C['card_bg']}; 
             border: 1px solid {C['border']}; 
@@ -114,11 +96,9 @@ def get_css(C):
             padding: 15px; 
             text-align: right; 
             margin-bottom: 10px;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
         }}
         .kpi-value {{ font-size: 1.3rem; font-weight: 800; color: {C['main_text']}; }}
         
-        /* الجداول */
         .finance-table {{ width: 100%; border-collapse: separate; border-spacing: 0 4px; margin-top: 5px; }}
         .finance-table th {{ 
             color: {C['sub_text']} !important; font-weight: 700 !important; font-size: 0.85rem !important;
