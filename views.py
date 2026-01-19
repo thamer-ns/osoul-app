@@ -10,10 +10,9 @@ from database import execute_query, fetch_table, get_db
 from config import BACKUP_DIR
 
 def view_dashboard(fin):
-    # --- 1. مصدر الأموال ---
+    # مصدر الأموال
     st.markdown("### 🏦 مصدر الأموال")
     c1, c2, c3, c4 = st.columns(4)
-    
     total_invested_pocket = fin['total_deposited'] - fin['total_withdrawn']
     
     with c1: render_kpi("النقد المتوفر", f"SAR {fin['cash']:,.2f}")
@@ -23,64 +22,57 @@ def view_dashboard(fin):
 
     st.markdown("---")
 
-    # --- 2. العمليات المنفذة ---
+    # العمليات المنفذة
     st.markdown(f"### ✅ العمليات المنفذة (المغلقة)")
-    
     target_pct = 10.0
     target_amount = total_invested_pocket * (target_pct / 100)
-    total_realized_gains = fin['realized_pl'] # الربح المحقق فقط من الصفقات
+    total_realized_gains = fin['realized_pl'] + fin['total_returns']
+    remaining_to_target = target_amount - total_realized_gains
+    pct_achieved = (total_realized_gains / target_amount * 100) if target_amount != 0 else 0
     
     col_exec1, col_exec2, col_exec3, col_exec4 = st.columns(4)
     with col_exec1:
-        st.metric("التكلفة/المبلغ الأساسي", f"SAR {fin['cost_closed']:,.2f}")
-        st.metric("نسبة الهدف الاستثماري", f"{target_pct}%")
+        st.metric("التكلفة الأساسية", f"SAR {fin['cost_closed']:,.2f}")
+        st.metric("نسبة الهدف", f"{target_pct}%")
     with col_exec2:
         st.metric("الخسائر/الأرباح المحققة", f"SAR {fin['realized_pl']:,.2f}", delta=f"{fin['realized_pl']:,.2f}")
-        st.metric("الهدف الاستثماري (قيمة)", f"SAR {target_amount:,.2f}")
+        st.metric("قيمة الهدف", f"SAR {target_amount:,.2f}")
     with col_exec3:
         st.metric("المبلغ بعد البيع", f"SAR {fin['sales_closed']:,.2f}")
-        diff_target = target_amount - total_realized_gains
-        st.metric("المتبقي للهدف", f"SAR {diff_target:,.2f}")
+        st.metric("المتبقي للهدف", f"SAR {remaining_to_target:,.2f}")
     with col_exec4:
         st.metric("اجمالي العوائد", f"SAR {fin['total_returns']:,.2f}")
-        pct_achieved = (total_realized_gains / target_amount * 100) if target_amount != 0 else 0
-        st.metric("نسبة المحقق من الهدف", f"{pct_achieved:.2f}%")
+        st.metric("نسبة المحقق", f"{pct_achieved:.2f}%")
 
     st.markdown("---")
 
-    # --- 3. العمليات القائمة ---
+    # العمليات القائمة
     st.markdown("### ⏳ العمليات القائمة (المفتوحة)")
-    
     col_op1, col_op2, col_op3, col_op4 = st.columns(4)
-    
     with col_op1: st.metric("التكلفة الحالية", f"SAR {fin['cost_open']:,.2f}")
-    with col_op2: st.metric("سعر السوق (القيمة)", f"SAR {fin['market_val_open']:,.2f}")
+    with col_op2: st.metric("القيمة السوقية", f"SAR {fin['market_val_open']:,.2f}")
     with col_op3: st.metric("الربح/الخسارة", f"SAR {fin['unrealized_pl']:,.2f}", delta=f"{fin['unrealized_pl']:,.2f}")
-    
     unrealized_pct = (fin['unrealized_pl'] / fin['cost_open'] * 100) if fin['cost_open'] > 0 else 0
-    with col_op4: st.metric("نسبة الربح/الخسارة %", f"{unrealized_pct:.2f}%", delta=f"{unrealized_pct:.2f}%")
+    with col_op4: st.metric("نسبة %", f"{unrealized_pct:.2f}%", delta=f"{unrealized_pct:.2f}%")
 
     st.markdown("---")
 
-    # --- 4. توزيع القطاعات ---
+    # توزيع القطاعات
     st.markdown("### 📊 توزيع القطاعات")
     trades = fin['all_trades']
     if not trades.empty:
         open_trades = trades[trades['status'] != 'Close']
         if not open_trades.empty:
             sector_data = open_trades.groupby('sector')['market_value'].sum().reset_index()
-            fig = px.pie(sector_data, values='market_value', names='sector', 
-                         title='توزيع المحفظة حسب القطاع', hole=0.4)
+            fig = px.pie(sector_data, values='market_value', names='sector', title='توزيع المحفظة حسب القطاع', hole=0.4)
             fig.update_layout(font=dict(family="Cairo"))
             st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("لا توجد صفقات مفتوحة.")
+        else: st.info("لا توجد صفقات مفتوحة.")
 
 def view_portfolio(fin, strategy):
     st.header(f"💼 محفظة {strategy}")
     
-    # تحديد مفتاح البحث (جزء من الكلمة لضمان العثور عليها)
-    # نستخدم contains بدلاً من المطابقة الكاملة لحل مشكلة المسافات
+    # 1. تحديد الكلمة المفتاحية
     strat_key = "مضاربة" if strategy=="مضاربة" else "استثمار"
     
     all_trades = fin['all_trades']
@@ -88,55 +80,35 @@ def view_portfolio(fin, strategy):
         st.info("لا توجد بيانات.")
         return
 
-    # الفلترة الذكية (تحتوي على الكلمة)
-    df = all_trades[all_trades['strategy'].str.contains(strat_key, na=False)].copy()
+    # 2. الفلترة الذكية (Contains)
+    # هذا السطر هو الأهم: يبحث عن الكلمة حتى لو كان حولها مسافات
+    df = all_trades[all_trades['strategy'].astype(str).str.contains(strat_key, na=False)].copy()
     
     if not df.empty:
         df = df.sort_values(by='date', ascending=False)
         
-        # --- حساب الوزن النسبي لهذه المحفظة فقط ---
+        # 3. حساب الوزن النسبي للمحفظة الحالية
         is_open = df['status'] != 'Close'
         total_strat_val = df.loc[is_open, 'market_value'].sum()
         
         df['local_weight'] = 0.0
-        # نحسب الوزن فقط إذا كانت الصفقة مفتوحة
         if total_strat_val > 0:
             df.loc[is_open, 'local_weight'] = (df.loc[is_open, 'market_value'] / total_strat_val) * 100
         
-        # --- ترتيب الأعمدة كما طلبت ---
         cols = [
-            ('company_name', 'اسم الشركة'),
-            ('symbol', 'الرمز'),
-            ('sector', 'القطاع'),
-            ('status', 'الحالة'),
-            ('date', 'تاريخ الشراء'),
-            ('exit_date', 'تاريخ البيع'),
-            ('quantity', 'الكمية'),
-            ('entry_price', 'سعر الشراء'),
-            ('total_cost', 'التكلفة'),
-            ('year_high', 'أعلى سنوي'),
-            ('current_price', 'السعر الحالي'),
-            ('year_low', 'أدنى سنوي'),
-            ('market_value', 'سعر السوق'), # (عدد الاسهم * السعر الحالي)
-            ('gain', 'الربح/الخسارة'),
-            ('gain_pct', '% الربح'),
-            ('local_weight', 'الوزن %'),
-            ('daily_change', 'يومي %')
+            ('company_name', 'اسم الشركة'), ('symbol', 'الرمز'), ('sector', 'القطاع'),
+            ('status', 'الحالة'), ('date', 'تاريخ الشراء'), ('exit_date', 'تاريخ البيع'),
+            ('quantity', 'الكمية'), ('entry_price', 'سعر الشراء'), ('total_cost', 'التكلفة'),
+            ('year_high', 'أعلى سنوي'), ('current_price', 'السعر الحالي'), ('year_low', 'أدنى سنوي'),
+            ('market_value', 'القيمة السوقية'), ('gain', 'الربح/الخسارة'), ('gain_pct', '% الربح'),
+            ('local_weight', 'الوزن %'), ('daily_change', 'يومي %')
         ]
         
-        # عرض ملخص سريع لهذه المحفظة
-        t_gain = df['gain'].sum()
-        t_val = df['market_value'].sum()
-        c1, c2 = st.columns(2)
-        with c1: st.metric(f"قيمة محفظة {strategy}", f"{t_val:,.2f}")
-        with c2: st.metric("صافي الربح/الخسارة", f"{t_gain:,.2f}", delta=f"{t_gain:,.2f}")
-
         render_table(df, cols)
     else: 
-        st.warning(f"لا توجد صفقات تحت تصنيف '{strategy}'. تأكد من نوع المحفظة عند الإضافة.")
+        st.warning(f"لا توجد صفقات تحتوي على كلمة '{strat_key}'. تأكد من البيانات.")
 
-# ... (باقي الدوال كما هي view_liquidity, view_add_trade, settings, router) ...
-# سأضعهم هنا للاكتمال
+# الدوال الباقية (مهمة للعمل)
 def view_liquidity():
     st.header("💵 سجلات السيولة")
     fin = calculate_portfolio_metrics()
@@ -189,7 +161,6 @@ def view_settings():
                             df = pd.read_excel(xl, t)
                             if 'id' in df.columns: df = df.drop(columns=['id'])
                             if 'source' in df.columns: df.rename(columns={'source':'note'}, inplace=True)
-                            # تنظيف عند الاستيراد
                             if 'strategy' in df.columns and t == 'Trades':
                                 df['strategy'] = df['strategy'].astype(str).str.strip()
                             df.to_sql(t, conn, if_exists='append', index=False)
