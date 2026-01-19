@@ -10,10 +10,8 @@ def render_navbar():
     current_user = st.session_state.get('username', 'المستثمر')
 
     with st.container():
-        # تقسيم متناسق: اللوقو - القائمة - المستخدم
         c_logo, c_nav, c_user = st.columns([1.5, 5.5, 1.5], gap="small")
         
-        # 1. اللوقو
         with c_logo:
             st.markdown(f"""
             <div style="display: flex; align-items: center; gap: 8px; padding-top: 5px;">
@@ -24,7 +22,6 @@ def render_navbar():
             </div>
             """, unsafe_allow_html=True)
 
-        # 2. أزرار التنقل
         with c_nav:
             cols = st.columns(6, gap="small")
             nav_items = [
@@ -32,7 +29,6 @@ def render_navbar():
                 ("استثمار", "invest"), ("صكوك", "sukuk"), 
                 ("تحليل", "analysis"), ("سيولة", "cash")
             ]
-            
             for col, (label, key) in zip(cols, nav_items):
                 is_active = (st.session_state.get('page') == key)
                 with col:
@@ -40,25 +36,21 @@ def render_navbar():
                         st.session_state.page = key
                         st.rerun()
 
-        # 3. قائمة المستخدم (Popover)
         with c_user:
-            # هنا يظهر الزر بشكل جميل وعند الضغط تظهر القائمة
-            with st.popover(f"👤 {current_user}", use_container_width=True):
+            # === التعديل هنا: إزالة الرمز التعبيري بجانب الاسم ===
+            # كان f"👤 {current_user}" وأصبح current_user فقط
+            with st.popover(current_user, use_container_width=True):
                 st.markdown(f"<div style='text-align:center; color:#9CA3AF; font-size:0.8rem; margin-bottom:10px;'>الملف الشخصي</div>", unsafe_allow_html=True)
                 
-                # أزرار القائمة (سيتم تنسيقها بال CSS لتبدو كقائمة حقيقية)
                 if st.button("⚙️  الإعدادات", key="u_set", use_container_width=True):
                     st.session_state.page = "settings"
                     st.rerun()
-                
                 if st.button("📥  إضافة عملية", key="u_add", use_container_width=True):
                     st.session_state.page = "add"
                     st.rerun()
-                
-                if st.button("🛠️  الأدوات والزكاة", key="u_tools", use_container_width=True):
+                if st.button("🛠️  الأدوات", key="u_tools", use_container_width=True):
                     st.session_state.page = "tools"
                     st.rerun()
-                
                 st.markdown("---")
                 if st.button("تسجيل الخروج", key="u_out", type="primary", use_container_width=True):
                     st.session_state.page = "logout"
@@ -69,14 +61,12 @@ def render_navbar():
 def render_kpi(label, value, color_condition=None, help_text=None):
     C = st.session_state.custom_colors
     val_c = C['main_text']
-    
     if color_condition == "blue": val_c = C['primary']
     elif color_condition == "success": val_c = C['success']
     elif isinstance(color_condition, (int, float)): 
         val_c = C['success'] if color_condition >= 0 else C['danger']
     
     tooltip = f'title="{help_text}"' if help_text else ''
-    
     st.markdown(f"""
     <div class="kpi-box" {tooltip}>
         <div style="color:{C['sub_text']}; font-size:0.8rem; font-weight:700; margin-bottom:5px;">{label}</div>
@@ -98,13 +88,18 @@ def render_table(df, cols_def):
             elif k == 'status':
                 bg, fg, txt = ("#F3F4F6", "#4B5563", "مغلقة") if is_closed else ("#DCFCE7", "#166534", "مفتوحة")
                 disp = f"<span style='background:{bg}; color:{fg}; padding:2px 10px; border-radius:12px; font-size:0.7rem; font-weight:800;'>{txt}</span>"
-            elif k in ['gain', 'gain_pct', 'net_profit', 'roi_pct', 'daily_change']:
+            elif k in ['gain', 'gain_pct', 'net_profit', 'roi_pct', 'daily_change', 'remaining', 'current_weight', 'target_percentage']:
                 if is_closed and k == 'daily_change': disp = "<span style='color:#9CA3AF'>-</span>"
                 else:
                     try:
                         num = float(val)
-                        c = "#10B981" if num >= 0 else "#EF4444"
-                        suffix = "%" if 'pct' in k or 'change' in k else ""
+                        # تلوين خاص للأوزان
+                        if k in ['current_weight', 'target_percentage']:
+                            c = "#0284c7" # أزرق للأوزان
+                            suffix = "%"
+                        else:
+                            c = "#10B981" if num >= 0 else "#EF4444"
+                            suffix = "%" if 'pct' in k or 'change' in k else ""
                         disp = f"<span style='color:{c}; direction:ltr; font-weight:bold;'>{num:,.2f}{suffix}</span>"
                     except: disp = val
             elif k in ['market_value', 'total_cost', 'entry_price', 'current_price']:
