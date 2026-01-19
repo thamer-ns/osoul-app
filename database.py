@@ -20,7 +20,7 @@ def init_db():
     with get_db() as conn:
         conn.execute("CREATE TABLE IF NOT EXISTS Users (username TEXT PRIMARY KEY, password TEXT, created_at TEXT)")
         
-        # الجدول المحدث: أضفنا asset_type
+        # الجدول الشامل (يدعم asset_type)
         conn.execute('''CREATE TABLE IF NOT EXISTS Trades (
             id INTEGER PRIMARY KEY AUTOINCREMENT, 
             symbol TEXT, 
@@ -47,7 +47,7 @@ def init_db():
         conn.execute("CREATE TABLE IF NOT EXISTS Watchlist (symbol TEXT PRIMARY KEY)")
         conn.execute("CREATE TABLE IF NOT EXISTS SectorTargets (sector TEXT PRIMARY KEY, target_percentage REAL)")
         
-        # ترحيل البيانات القديمة (Migration)
+        # الترحيل الآمن (Migrations)
         try: conn.execute("ALTER TABLE Trades ADD COLUMN asset_type TEXT DEFAULT 'Stock'")
         except: pass
         try: conn.execute("ALTER TABLE Trades ADD COLUMN dividend_yield REAL")
