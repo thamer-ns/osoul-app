@@ -56,17 +56,15 @@ def calculate_portfolio_metrics():
                 if c not in trades.columns: trades[c] = 0.0
                 trades[c] = pd.to_numeric(trades[c], errors='coerce').fillna(0.0)
 
-            # --- الحسابات الأساسية للصفقات ---
-            trades['total_cost'] = trades['quantity'] * trades['entry_price']
+            trades['total_cost'] = (trades['quantity'] * trades['entry_price']).round(2)
             is_closed = trades['status'] == 'Close'
             trades.loc[is_closed, 'current_price'] = trades.loc[is_closed, 'exit_price']
-            trades['market_value'] = trades['quantity'] * trades['current_price']
             
-            # الربح الرأسمالي (Capital Gain) فقط
-            trades['gain'] = trades['market_value'] - trades['total_cost']
-            trades['gain_pct'] = (trades['gain'] / trades['total_cost'].replace(0, 1)) * 100
+            trades['market_value'] = (trades['quantity'] * trades['current_price']).round(2)
+            trades['gain'] = (trades['market_value'] - trades['total_cost']).round(2)
+            trades['gain_pct'] = ((trades['gain'] / trades['total_cost'].replace(0, 1)) * 100).round(2)
             
-            trades['daily_change'] = ((trades['current_price'] - trades['prev_close']) / trades['prev_close'].replace(0, 1)) * 100
+            trades['daily_change'] = (((trades['current_price'] - trades['prev_close']) / trades['prev_close'].replace(0, 1)) * 100).round(2)
             trades.loc[is_closed, 'daily_change'] = 0.0
 
         total_dep = dep['amount'].sum() if not dep.empty else 0.0
@@ -83,7 +81,7 @@ def calculate_portfolio_metrics():
 
         total_in = total_dep + total_ret + sales_closed
         total_out = total_wit + cost_open + cost_closed
-        cash_available = total_in - total_out
+        cash_available = round(total_in - total_out, 2)
 
         vals = {
             "cost_open": cost_open,
@@ -97,14 +95,14 @@ def calculate_portfolio_metrics():
             "all_trades": trades, "deposits": dep, "withdrawals": wit, "returns": ret
         }
         
-        vals['unrealized_pl'] = vals['market_val_open'] - vals['cost_open']
-        vals['realized_pl'] = vals['sales_closed'] - vals['cost_closed']
-        vals['equity'] = vals['cash'] + vals['market_val_open']
+        vals['unrealized_pl'] = round(vals['market_val_open'] - vals['cost_open'], 2)
+        vals['realized_pl'] = round(vals['sales_closed'] - vals['cost_closed'], 2)
+        vals['equity'] = round(vals['cash'] + vals['market_val_open'], 2)
         
         return vals
 
     except Exception as e:
-        logger.error(f"Error in calculate_portfolio_metrics: {str(e)}")
+        logger.error(f"Error in metrics: {str(e)}")
         return {
             "cost_open": 0, "market_val_open": 0, "cost_closed": 0, "sales_closed": 0,
             "total_deposited": 0, "total_withdrawn": 0, "total_returns": 0, "cash": 0,
@@ -114,35 +112,23 @@ def calculate_portfolio_metrics():
         }
 
 def get_comprehensive_performance(trades_df, returns_df):
-    """
-    تحليل مالي شامل يدمج أرباح الصفقات + التوزيعات النقدية
-    """
     if trades_df.empty: return pd.DataFrame(), pd.DataFrame()
 
-    # 1. تجميع أداء الصفقات (مفتوحة + مغلقة) حسب السهم والقطاع
-    # نستخدم groupby مرتين: مرة للسهم ومرة للقطاع
-    
-    # --- أ. تحليل القطاعات ---
-    # تجميع الصفقات حسب القطاع
     sector_trades = trades_df.groupby('sector').agg({
         'total_cost': 'sum',
-        'gain': 'sum',         # ربح رأسمالي (فرق سعر)
+        'gain': 'sum',
         'market_value': 'sum',
         'symbol': 'count'
     }).reset_index()
     
-    # تجهيز التوزيعات وربطها بالقطاع
     sector_dividends = pd.DataFrame()
     if not returns_df.empty:
-        # نحتاج معرفة قطاع كل سهم في جدول العوائد
         unique_ret_syms = returns_df['symbol'].unique()
-        info_map = {sym: get_static_info(sym)[1] for sym in unique_ret_syms} # [1] هو القطاع
-        
+        info_map = {sym: get_static_info(sym)[1] for sym in unique_ret_syms}
         returns_df['sector'] = returns_df['symbol'].map(info_map)
         sector_dividends = returns_df.groupby('sector')['amount'].sum().reset_index()
         sector_dividends.rename(columns={'amount': 'total_dividends'}, inplace=True)
     
-    # دمج أرباح الصفقات مع التوزيعات
     if not sector_dividends.empty:
         sector_perf = pd.merge(sector_trades, sector_dividends, on='sector', how='left')
         sector_perf['total_dividends'] = sector_perf['total_dividends'].fillna(0)
@@ -150,16 +136,14 @@ def get_comprehensive_performance(trades_df, returns_df):
         sector_perf = sector_trades
         sector_perf['total_dividends'] = 0.0
         
-    # الربح الشامل للقطاع = ربح الصفقات + التوزيعات
-    sector_perf['net_profit'] = sector_perf['gain'] + sector_perf['total_dividends']
-    sector_perf['roi_pct'] = (sector_perf['net_profit'] / sector_perf['total_cost'].replace(0, 1)) * 100
+    sector_perf['net_profit'] = (sector_perf['gain'] + sector_perf['total_dividends']).round(2)
+    sector_perf['roi_pct'] = ((sector_perf['net_profit'] / sector_perf['total_cost'].replace(0, 1)) * 100).round(2)
 
-    # --- ب. تحليل الأسهم ---
     stock_trades = trades_df.groupby(['symbol', 'company_name', 'sector']).agg({
         'total_cost': 'sum',
         'gain': 'sum',
         'market_value': 'sum',
-        'quantity': 'sum' # مجموع الأسهم المتداولة تاريخياً
+        'quantity': 'sum'
     }).reset_index()
     
     stock_dividends = pd.DataFrame()
@@ -174,10 +158,71 @@ def get_comprehensive_performance(trades_df, returns_df):
         stock_perf = stock_trades
         stock_perf['total_dividends'] = 0.0
         
-    stock_perf['net_profit'] = stock_perf['gain'] + stock_perf['total_dividends']
-    stock_perf['roi_pct'] = (stock_perf['net_profit'] / stock_perf['total_cost'].replace(0, 1)) * 100
+    stock_perf['net_profit'] = (stock_perf['gain'] + stock_perf['total_dividends']).round(2)
+    stock_perf['roi_pct'] = ((stock_perf['net_profit'] / stock_perf['total_cost'].replace(0, 1)) * 100).round(2)
     
     return sector_perf, stock_perf
+
+def get_rebalancing_advice(df_open, targets_df, total_portfolio_value):
+    """
+    تحسب نصائح إعادة التوازن بناءً على الأوزان
+    """
+    if df_open.empty or targets_df.empty or total_portfolio_value == 0:
+        return pd.DataFrame()
+
+    # تجميع القيم الحالية للقطاعات
+    current = df_open.groupby('sector')['market_value'].sum().reset_index()
+    
+    # دمج مع الأهداف
+    merged = pd.merge(current, targets_df, on='sector', how='outer').fillna(0)
+    
+    # حساب القيمة المستهدفة بالريال
+    merged['target_value'] = (merged['target_percentage'] / 100) * total_portfolio_value
+    merged['diff'] = merged['target_value'] - merged['market_value']
+    
+    # نصيحة الشراء/البيع
+    merged['action'] = merged['diff'].apply(lambda x: 'شراء (زيادة)' if x > 0 else 'بيع (تقليص)')
+    merged['suggested_amount'] = merged['diff'].abs().round(2)
+    
+    # فلترة القطاعات التي تحتاج تحرك (أكثر من 1% فرق)
+    threshold = total_portfolio_value * 0.01 
+    advice_df = merged[merged['suggested_amount'] > threshold].copy()
+    
+    return advice_df[['sector', 'action', 'suggested_amount', 'target_percentage']]
+
+def get_dividends_calendar(returns_df):
+    """
+    تجميع العوائد حسب الشهر والسنة
+    """
+    if returns_df.empty: return pd.DataFrame()
+    
+    df = returns_df.copy()
+    df['date'] = pd.to_datetime(df['date'])
+    df['year_month'] = df['date'].dt.strftime('%Y-%m')
+    
+    calendar = df.groupby('year_month').agg({
+        'amount': 'sum',
+        'symbol': lambda x: ', '.join(x.unique())
+    }).reset_index().sort_values('year_month', ascending=False)
+    
+    calendar.rename(columns={'year_month': 'الشهر', 'amount': 'إجمالي التوزيعات', 'symbol': 'الشركات الموزعة'}, inplace=True)
+    return calendar
+
+def generate_equity_curve(trades_df):
+    """
+    توليد بيانات لمنحنى نمو الاستثمار (تراكمي التكلفة)
+    """
+    if trades_df.empty: return pd.DataFrame()
+    
+    # ترتيب العمليات زمنياً
+    df = trades_df[['date', 'total_cost']].copy()
+    df['date'] = pd.to_datetime(df['date'])
+    df = df.sort_values('date')
+    
+    # التكلفة التراكمية (كم ضخيت أموال مع الوقت)
+    df['cumulative_invested'] = df['total_cost'].cumsum()
+    
+    return df
 
 def update_prices():
     try:
@@ -219,13 +264,3 @@ def create_smart_backup():
     except Exception as e:
         logger.error(f"Error in create_smart_backup: {str(e)}")
         return False
-
-def calculate_rsi(data, window=14):
-    try:
-        if 'Close' not in data.columns: return None
-        delta = data['Close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
-        rs = gain / loss
-        return 100 - (100 / (1 + rs))
-    except: return None
