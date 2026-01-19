@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import shutil
 from database import fetch_table, get_db
-from market_data import get_static_info, fetch_batch_data
+from market_data import get_static_info, fetch_batch_data, get_chart_history
 from config import BACKUP_DIR
 import streamlit as st
 import logging
@@ -172,7 +172,6 @@ def get_rebalancing_advice(df_open, targets_df, total_portfolio_value):
     
     merged['target_value'] = (merged['target_percentage'] / 100) * total_portfolio_value
     merged['diff'] = merged['target_value'] - merged['market_value']
-    
     merged['action'] = merged['diff'].apply(lambda x: 'شراء (زيادة)' if x > 0 else 'بيع (تقليص)')
     merged['suggested_amount'] = merged['diff'].abs().round(2)
     
@@ -182,32 +181,67 @@ def get_rebalancing_advice(df_open, targets_df, total_portfolio_value):
     return advice_df[['sector', 'action', 'suggested_amount', 'target_percentage']]
 
 def get_dividends_calendar(returns_df):
-    """
-    تجميع العوائد حسب الشهر والسنة
-    """
     if returns_df.empty: return pd.DataFrame()
-    
     df = returns_df.copy()
     df['date'] = pd.to_datetime(df['date'])
     df['year_month'] = df['date'].dt.strftime('%Y-%m')
-    
-    calendar = df.groupby('year_month').agg({
-        'amount': 'sum',
-        'symbol': lambda x: ', '.join(x.unique())
-    }).reset_index().sort_values('year_month', ascending=False)
-    
-    # حذفنا إعادة التسمية هنا لنتحكم بها في العرض (Render Table)
+    calendar = df.groupby('year_month').agg({'amount': 'sum', 'symbol': lambda x: ', '.join(x.unique())}).reset_index().sort_values('year_month', ascending=False)
     return calendar
 
 def generate_equity_curve(trades_df):
     if trades_df.empty: return pd.DataFrame()
-    
     df = trades_df[['date', 'total_cost']].copy()
     df['date'] = pd.to_datetime(df['date'])
     df = df.sort_values('date')
     df['cumulative_invested'] = df['total_cost'].cumsum()
-    
     return df
+
+# --- حساب التراجع التاريخي (Drawdown Analysis) ---
+@st.cache_data(ttl=3600)
+def calculate_historical_drawdown(open_trades_df):
+    """
+    يقوم بجلب بيانات تاريخية لأسهم المحفظة الحالية لمدة سنة
+    ويحسب منحنى التراجع الافتراضي للمحفظة
+    """
+    if open_trades_df.empty: return pd.DataFrame()
+    
+    symbols = open_trades_df['symbol'].unique().tolist()
+    # جلب بيانات سنة كاملة
+    data = {}
+    try:
+        for sym in symbols:
+            # نجلب سنة كاملة
+            hist = get_chart_history(sym, "1y", "1d")
+            if hist is not None and not hist.empty:
+                data[sym] = hist['Close']
+    except: return pd.DataFrame()
+    
+    if not data: return pd.DataFrame()
+    
+    # دمج البيانات في داتافريم واحد
+    prices_df = pd.DataFrame(data).ffill().dropna()
+    if prices_df.empty: return pd.DataFrame()
+    
+    # حساب قيمة المحفظة التاريخية (افتراض الثبات)
+    portfolio_history = pd.Series(0, index=prices_df.index)
+    
+    for _, row in open_trades_df.iterrows():
+        sym = row['symbol']
+        qty = row['quantity']
+        if sym in prices_df.columns:
+            portfolio_history += prices_df[sym] * qty
+            
+    # حساب Drawdown
+    rolling_max = portfolio_history.cummax()
+    drawdown = (portfolio_history - rolling_max) / rolling_max * 100
+    
+    # تجهيز الداتافريم للرسم
+    result = pd.DataFrame({
+        'date': drawdown.index,
+        'drawdown': drawdown.values,
+        'value': portfolio_history.values
+    })
+    return result
 
 def update_prices():
     try:
