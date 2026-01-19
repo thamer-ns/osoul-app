@@ -10,105 +10,136 @@ from database import execute_query, fetch_table, get_db
 from config import BACKUP_DIR
 
 def view_dashboard(fin):
+    # المؤشر
+    try: t_price, t_change = get_tasi_data()
+    except: t_price, t_change = 0, 0
+    C = st.session_state.custom_colors
+    arrow = "🔼" if t_change >= 0 else "🔽"
+    color = "#10B981" if t_change >= 0 else "#EF4444"
+    st.markdown(f"""
+    <div class="tasi-box">
+        <div>
+            <div style="font-size:1.2rem; color:{C['sub_text']}; margin-bottom:5px;">المؤشر العام (TASI)</div>
+            <div style="font-size:2.5rem; font-weight:900; color:{C['main_text']};">{t_price:,.2f}</div>
+        </div>
+        <div style="text-align:left;">
+            <div style="background:{color}20; color:{color}; padding:10px 25px; border-radius:12px; font-size:1.4rem; font-weight:bold; direction:ltr; border:1px solid {color}50;">
+                {arrow} {t_change:+.2f}%
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
     # مصدر الأموال
-    st.markdown("### 🏦 مصدر الأموال")
+    st.markdown("### 🏦 الملخص المالي")
     c1, c2, c3, c4 = st.columns(4)
     total_invested_pocket = fin['total_deposited'] - fin['total_withdrawn']
+    with c1: render_kpi("النقد المتوفر (الكاش)", f"SAR {fin['cash']:,.2f}")
+    with c2: render_kpi("صافي الإيداعات", f"SAR {total_invested_pocket:,.2f}")
+    with c3: render_kpi("القيمة السوقية الحالية", f"SAR {fin['market_val_open']:,.2f}", "blue")
     
-    with c1: render_kpi("النقد المتوفر", f"SAR {fin['cash']:,.2f}")
-    with c2: render_kpi("اجمالي المستثمر (من حسابي)", f"SAR {total_invested_pocket:,.2f}")
-    with c3: render_kpi("ما تم سحبه", f"SAR {fin['total_withdrawn']:,.2f}", -1)
-    with c4: render_kpi("ما تم إيداعه", f"SAR {fin['total_deposited']:,.2f}", "blue")
-
-    st.markdown("---")
-
-    # العمليات المنفذة
-    st.markdown(f"### ✅ العمليات المنفذة (المغلقة)")
-    target_pct = 10.0
-    target_amount = total_invested_pocket * (target_pct / 100)
-    total_realized_gains = fin['realized_pl'] + fin['total_returns']
-    remaining_to_target = target_amount - total_realized_gains
-    pct_achieved = (total_realized_gains / target_amount * 100) if target_amount != 0 else 0
-    
-    col_exec1, col_exec2, col_exec3, col_exec4 = st.columns(4)
-    with col_exec1:
-        st.metric("التكلفة الأساسية", f"SAR {fin['cost_closed']:,.2f}")
-        st.metric("نسبة الهدف", f"{target_pct}%")
-    with col_exec2:
-        st.metric("الخسائر/الأرباح المحققة", f"SAR {fin['realized_pl']:,.2f}", delta=f"{fin['realized_pl']:,.2f}")
-        st.metric("قيمة الهدف", f"SAR {target_amount:,.2f}")
-    with col_exec3:
-        st.metric("المبلغ بعد البيع", f"SAR {fin['sales_closed']:,.2f}")
-        st.metric("المتبقي للهدف", f"SAR {remaining_to_target:,.2f}")
-    with col_exec4:
-        st.metric("اجمالي العوائد", f"SAR {fin['total_returns']:,.2f}")
-        st.metric("نسبة المحقق", f"{pct_achieved:.2f}%")
-
+    total_pl = fin['unrealized_pl'] + fin['realized_pl'] + fin['total_returns']
+    with c4: render_kpi("إجمالي الأرباح/الخسائر", f"SAR {total_pl:,.2f}", total_pl)
     st.markdown("---")
 
     # العمليات القائمة
-    st.markdown("### ⏳ العمليات القائمة (المفتوحة)")
+    st.markdown("### ⏳ الصفقات المفتوحة (القائمة)")
     col_op1, col_op2, col_op3, col_op4 = st.columns(4)
     with col_op1: st.metric("التكلفة الحالية", f"SAR {fin['cost_open']:,.2f}")
     with col_op2: st.metric("القيمة السوقية", f"SAR {fin['market_val_open']:,.2f}")
-    with col_op3: st.metric("الربح/الخسارة", f"SAR {fin['unrealized_pl']:,.2f}", delta=f"{fin['unrealized_pl']:,.2f}")
+    with col_op3: st.metric("الربح/الخسارة العائم", f"SAR {fin['unrealized_pl']:,.2f}", delta=f"{fin['unrealized_pl']:,.2f}")
     unrealized_pct = (fin['unrealized_pl'] / fin['cost_open'] * 100) if fin['cost_open'] > 0 else 0
-    with col_op4: st.metric("نسبة %", f"{unrealized_pct:.2f}%", delta=f"{unrealized_pct:.2f}%")
-
+    with col_op4: st.metric("نسبة النمو %", f"{unrealized_pct:.2f}%", delta=f"{unrealized_pct:.2f}%")
     st.markdown("---")
 
     # توزيع القطاعات
-    st.markdown("### 📊 توزيع القطاعات")
+    st.markdown("### 📊 توزيع السيولة والقطاعات")
     trades = fin['all_trades']
     if not trades.empty:
-        open_trades = trades[trades['status'] != 'Close']
+        open_trades = trades[trades['status'] == 'Open']
         if not open_trades.empty:
             sector_data = open_trades.groupby('sector')['market_value'].sum().reset_index()
-            fig = px.pie(sector_data, values='market_value', names='sector', title='توزيع المحفظة حسب القطاع', hole=0.4)
+            fig = px.pie(sector_data, values='market_value', names='sector', title='توزيع المحفظة الحالية حسب القطاع', hole=0.4)
             fig.update_layout(font=dict(family="Cairo"))
             st.plotly_chart(fig, use_container_width=True)
-        else: st.info("لا توجد صفقات مفتوحة.")
+        else: st.info("لا توجد صفقات مفتوحة حالياً لعرض الرسم البياني.")
 
-def view_portfolio(fin, strategy):
-    st.header(f"💼 محفظة {strategy}")
-    
-    # 1. تحديد الكلمة المفتاحية
-    strat_key = "مضاربة" if strategy=="مضاربة" else "استثمار"
-    
+def view_portfolio(fin, page_key):
+    # --- إصلاح المشكلة هنا: الربط الصحيح بين مفتاح الصفحة واسم الاستراتيجية في قاعدة البيانات ---
+    if page_key == 'spec':
+        target_strategy = "مضاربة"
+        page_title = "⚡ محفظة المضاربة"
+    else:
+        target_strategy = "استثمار"
+        page_title = "💎 محفظة الاستثمار"
+
+    st.header(page_title)
     all_trades = fin['all_trades']
+    
     if all_trades.empty:
-        st.info("لا توجد بيانات.")
+        st.info("لا توجد بيانات مسجلة في النظام.")
         return
 
-    # 2. الفلترة الذكية (Contains)
-    # هذا السطر هو الأهم: يبحث عن الكلمة حتى لو كان حولها مسافات
-    df = all_trades[all_trades['strategy'].astype(str).str.contains(strat_key, na=False)].copy()
+    # الفلترة الصارمة بناءً على الاستراتيجية
+    # نستخدم strip() لضمان عدم وجود مسافات خفية
+    df_strategy = all_trades[all_trades['strategy'] == target_strategy].copy()
     
-    if not df.empty:
-        df = df.sort_values(by='date', ascending=False)
-        
-        # 3. حساب الوزن النسبي للمحفظة الحالية
-        is_open = df['status'] != 'Close'
-        total_strat_val = df.loc[is_open, 'market_value'].sum()
-        
-        df['local_weight'] = 0.0
-        if total_strat_val > 0:
-            df.loc[is_open, 'local_weight'] = (df.loc[is_open, 'market_value'] / total_strat_val) * 100
-        
-        cols = [
-            ('company_name', 'اسم الشركة'), ('symbol', 'الرمز'), ('sector', 'القطاع'),
-            ('status', 'الحالة'), ('date', 'تاريخ الشراء'), ('exit_date', 'تاريخ البيع'),
-            ('quantity', 'الكمية'), ('entry_price', 'سعر الشراء'), ('total_cost', 'التكلفة'),
-            ('year_high', 'أعلى سنوي'), ('current_price', 'السعر الحالي'), ('year_low', 'أدنى سنوي'),
-            ('market_value', 'القيمة السوقية'), ('gain', 'الربح/الخسارة'), ('gain_pct', '% الربح'),
-            ('local_weight', 'الوزن %'), ('daily_change', 'يومي %')
-        ]
-        
-        render_table(df, cols)
-    else: 
-        st.warning(f"لا توجد صفقات تحتوي على كلمة '{strat_key}'. تأكد من البيانات.")
+    if df_strategy.empty:
+        st.warning(f"لا توجد صفقات مسجلة تحت تصنيف '{target_strategy}'. تأكد من اختيار التصنيف الصحيح عند إضافة الصفقة.")
+        return
 
-# الدوال الباقية (مهمة للعمل)
+    # فصل البيانات (مفتوحة / مغلقة)
+    df_open = df_strategy[df_strategy['status'] == 'Open'].copy()
+    df_closed = df_strategy[df_strategy['status'] == 'Close'].copy()
+
+    # تبويبات للفصل بين المفتوح والمغلق
+    tab1, tab2 = st.tabs([f"الصفقات القائمة (عدد: {len(df_open)})", f"أرشيف العمليات المغلقة (عدد: {len(df_closed)})"])
+
+    # --- تبويب الصفقات المفتوحة ---
+    with tab1:
+        if not df_open.empty:
+            # حساب الأوزان محلياً لهذه المحفظة
+            total_val = df_open['market_value'].sum()
+            df_open['local_weight'] = (df_open['market_value'] / total_val * 100) if total_val > 0 else 0
+            
+            # مؤشرات سريعة لهذه المحفظة
+            c1, c2, c3 = st.columns(3)
+            with c1: st.metric("القيمة السوقية", f"{total_val:,.2f}")
+            gain_val = df_open['gain'].sum()
+            with c2: st.metric("الربح/الخسارة", f"{gain_val:,.2f}", delta=f"{gain_val:,.2f}")
+            with c3: st.metric("عدد الشركات", len(df_open))
+
+            cols_open = [
+                ('company_name', 'الشركة'), ('symbol', 'الرمز'), ('date', 'تاريخ الشراء'),
+                ('quantity', 'الكمية'), ('entry_price', 'سعر الشراء'), 
+                ('current_price', 'السعر الحالي'), ('market_value', 'القيمة السوقية'), 
+                ('gain', 'الربح/الخسارة'), ('gain_pct', '% النمو'),
+                ('local_weight', 'الوزن %'), ('daily_change', 'يومي %')
+            ]
+            render_table(df_open.sort_values(by='date', ascending=False), cols_open)
+        else:
+            st.info("لا توجد أسهم تمتلكها حالياً في هذه المحفظة.")
+
+    # --- تبويب الصفقات المغلقة ---
+    with tab2:
+        if not df_closed.empty:
+            realized = df_closed['gain'].sum()
+            sales = df_closed['market_value'].sum()
+            
+            c1, c2 = st.columns(2)
+            with c1: st.metric("إجمالي المبيعات", f"{sales:,.2f}")
+            with c2: st.metric("الأرباح المحققة", f"{realized:,.2f}", delta=f"{realized:,.2f}")
+
+            cols_closed = [
+                ('company_name', 'الشركة'), ('symbol', 'الرمز'), 
+                ('date', 'تاريخ الشراء'), ('exit_date', 'تاريخ البيع'),
+                ('quantity', 'الكمية'), ('entry_price', 'شراء'), ('exit_price', 'بيع'),
+                ('market_value', 'قيمة البيع'), ('gain', 'الربح المحقق'), ('gain_pct', '% العائد')
+            ]
+            render_table(df_closed.sort_values(by='exit_date', ascending=False), cols_closed)
+        else:
+            st.info("لا توجد صفقات مغلقة سابقة.")
+
 def view_liquidity():
     st.header("💵 سجلات السيولة")
     fin = calculate_portfolio_metrics()
@@ -131,25 +162,27 @@ def view_add_trade():
         qty = c2.number_input("الكمية", min_value=1.0)
         c3, c4 = st.columns(2)
         price = c3.number_input("سعر الشراء", min_value=0.0)
+        # تأكدنا هنا أن القيم المدخلة تطابق ما نبحث عنه في view_portfolio
         strat = c4.selectbox("نوع المحفظة", ["استثمار", "مضاربة"])
         date_t = st.date_input("تاريخ الشراء", date.today())
         
         if st.form_submit_button("حفظ", type="primary"):
             if sym and qty > 0:
                 n, s = get_static_info(sym)
+                # الحالة الافتراضية Open
                 execute_query("INSERT INTO Trades (symbol, company_name, sector, date, quantity, entry_price, strategy, status, current_price) VALUES (?,?,?,?,?,?,?,?,?)", 
                     (sym, n, s, str(date_t), qty, price, strat.strip(), 'Open', price))
-                st.success("تم الحفظ"); st.cache_data.clear()
-            else: st.error("بيانات ناقصة")
+                st.success("تم الحفظ بنجاح"); st.cache_data.clear()
+            else: st.error("الرجاء إدخال الرمز والكمية بشكل صحيح")
 
 def view_settings():
     st.header("⚙️ الإعدادات")
     with st.expander("النسخ الاحتياطي", expanded=True):
-        if st.button("نسخ الآن"): create_smart_backup(); st.success("تم")
+        if st.button("نسخ الآن"): create_smart_backup(); st.success("تم إنشاء نسخة احتياطية")
         bk = BACKUP_DIR / "backup_latest.xlsx"
         if bk.exists():
-            with open(bk, "rb") as f: st.download_button("تحميل Excel", f, "backup.xlsx")
-    with st.expander("استيراد"):
+            with open(bk, "rb") as f: st.download_button("تحميل ملف Excel", f, "backup.xlsx")
+    with st.expander("استيراد بيانات سابقة"):
         up = st.file_uploader("ملف Excel", type=['xlsx'])
         if up and st.button("استيراد"):
             try:
@@ -165,19 +198,21 @@ def view_settings():
                                 df['strategy'] = df['strategy'].astype(str).str.strip()
                             df.to_sql(t, conn, if_exists='append', index=False)
                     conn.commit()
-                st.success("تم"); st.cache_data.clear()
-            except Exception as e: st.error(str(e))
+                st.success("تم الاستيراد بنجاح"); st.cache_data.clear()
+            except Exception as e: st.error(f"خطأ: {str(e)}")
 
 def router():
     render_navbar()
     pg = st.session_state.page
     fin = calculate_portfolio_metrics()
+    
+    # التوجيه الصحيح
     if pg == 'home': view_dashboard(fin)
-    elif pg in ['spec', 'invest']: view_portfolio(fin, pg)
+    elif pg in ['spec', 'invest']: view_portfolio(fin, pg) # هنا نرسل المفتاح spec أو invest
     elif pg == 'cash': view_liquidity()
     elif pg == 'analysis': view_advanced_chart(fin)
     elif pg == 'add': view_add_trade()
     elif pg == 'settings': view_settings()
     elif pg == 'update':
-        with st.spinner("تحديث الأسعار..."): update_prices()
+        with st.spinner("جاري تحديث الأسعار من السوق..."): update_prices()
         st.session_state.page = 'home'; st.rerun()
