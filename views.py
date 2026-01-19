@@ -16,24 +16,19 @@ def view_dashboard(fin):
     
     total_invested_pocket = fin['total_deposited'] - fin['total_withdrawn']
     
-    # تنسيق الأرقام لتبدو مثل الصورة
     with c1: render_kpi("النقد المتوفر", f"SAR {fin['cash']:,.2f}")
     with c2: render_kpi("اجمالي المستثمر (من حسابي)", f"SAR {total_invested_pocket:,.2f}")
-    with c3: render_kpi("ما تم سحبه", f"SAR {fin['total_withdrawn']:,.2f}", -1) # لون أحمر
+    with c3: render_kpi("ما تم سحبه", f"SAR {fin['total_withdrawn']:,.2f}", -1)
     with c4: render_kpi("ما تم إيداعه", f"SAR {fin['total_deposited']:,.2f}", "blue")
 
     st.markdown("---")
 
-    # --- 2. العمليات المنفذة & الأهداف ---
-    st.markdown(f"### ✅ العمليات المنفذة (الهدف الاستثماري حتى {date.today().year}-12-31)")
+    # --- 2. العمليات المنفذة ---
+    st.markdown(f"### ✅ العمليات المنفذة (المغلقة)")
     
-    # حسابات الهدف (افتراض 10% كما في طلبك)
     target_pct = 10.0
     target_amount = total_invested_pocket * (target_pct / 100)
-    # الأرباح المحققة تشمل (الربح الرأسمالي + العوائد)
-    total_realized_gains = fin['realized_pl'] + fin['total_returns']
-    remaining_to_target = target_amount - total_realized_gains
-    pct_achieved = (total_realized_gains / target_amount * 100) if target_amount != 0 else 0
+    total_realized_gains = fin['realized_pl'] # الربح المحقق فقط من الصفقات
     
     col_exec1, col_exec2, col_exec3, col_exec4 = st.columns(4)
     with col_exec1:
@@ -41,12 +36,14 @@ def view_dashboard(fin):
         st.metric("نسبة الهدف الاستثماري", f"{target_pct}%")
     with col_exec2:
         st.metric("الخسائر/الأرباح المحققة", f"SAR {fin['realized_pl']:,.2f}", delta=f"{fin['realized_pl']:,.2f}")
-        st.metric("قيمة الهدف الاستثماري", f"SAR {target_amount:,.2f}")
+        st.metric("الهدف الاستثماري (قيمة)", f"SAR {target_amount:,.2f}")
     with col_exec3:
         st.metric("المبلغ بعد البيع", f"SAR {fin['sales_closed']:,.2f}")
-        st.metric("المتبقي للوصول للهدف", f"SAR {remaining_to_target:,.2f}")
+        diff_target = target_amount - total_realized_gains
+        st.metric("المتبقي للهدف", f"SAR {diff_target:,.2f}")
     with col_exec4:
         st.metric("اجمالي العوائد", f"SAR {fin['total_returns']:,.2f}")
+        pct_achieved = (total_realized_gains / target_amount * 100) if target_amount != 0 else 0
         st.metric("نسبة المحقق من الهدف", f"{pct_achieved:.2f}%")
 
     st.markdown("---")
@@ -57,7 +54,7 @@ def view_dashboard(fin):
     col_op1, col_op2, col_op3, col_op4 = st.columns(4)
     
     with col_op1: st.metric("التكلفة الحالية", f"SAR {fin['cost_open']:,.2f}")
-    with col_op2: st.metric("القيمة السوقية (سعر السوق)", f"SAR {fin['market_val_open']:,.2f}")
+    with col_op2: st.metric("سعر السوق (القيمة)", f"SAR {fin['market_val_open']:,.2f}")
     with col_op3: st.metric("الربح/الخسارة", f"SAR {fin['unrealized_pl']:,.2f}", delta=f"{fin['unrealized_pl']:,.2f}")
     
     unrealized_pct = (fin['unrealized_pl'] / fin['cost_open'] * 100) if fin['cost_open'] > 0 else 0
@@ -65,88 +62,81 @@ def view_dashboard(fin):
 
     st.markdown("---")
 
-    # --- 4. توزيع القطاعات (تم استعادته) ---
+    # --- 4. توزيع القطاعات ---
     st.markdown("### 📊 توزيع القطاعات")
     trades = fin['all_trades']
     if not trades.empty:
         open_trades = trades[trades['status'] != 'Close']
         if not open_trades.empty:
-            # تجميع حسب القطاع
             sector_data = open_trades.groupby('sector')['market_value'].sum().reset_index()
-            
             fig = px.pie(sector_data, values='market_value', names='sector', 
                          title='توزيع المحفظة حسب القطاع', hole=0.4)
             fig.update_layout(font=dict(family="Cairo"))
             st.plotly_chart(fig, use_container_width=True)
         else:
-            st.info("لا توجد صفقات مفتوحة لعرض توزيع القطاعات")
+            st.info("لا توجد صفقات مفتوحة.")
 
 def view_portfolio(fin, strategy):
     st.header(f"💼 محفظة {strategy}")
     
-    # تنظيف مفتاح الاستراتيجية
+    # تحديد مفتاح البحث (جزء من الكلمة لضمان العثور عليها)
+    # نستخدم contains بدلاً من المطابقة الكاملة لحل مشكلة المسافات
     strat_key = "مضاربة" if strategy=="مضاربة" else "استثمار"
     
-    # فلترة صارمة جداً
     all_trades = fin['all_trades']
     if all_trades.empty:
-        st.info("لا توجد بيانات صفقات.")
+        st.info("لا توجد بيانات.")
         return
 
-    # التأكد من أن العمود نصي ونظيف
-    all_trades['strategy'] = all_trades['strategy'].astype(str).str.strip()
-    
-    # الفلترة
-    df = all_trades[all_trades['strategy'] == strat_key].copy()
+    # الفلترة الذكية (تحتوي على الكلمة)
+    df = all_trades[all_trades['strategy'].str.contains(strat_key, na=False)].copy()
     
     if not df.empty:
-        # ترتيب
         df = df.sort_values(by='date', ascending=False)
         
-        # حساب الوزن النسبي داخل هذه المحفظة فقط (كما طلبت)
-        # نحسب الوزن فقط للصفقات المفتوحة، المغلقة وزنها 0
+        # --- حساب الوزن النسبي لهذه المحفظة فقط ---
         is_open = df['status'] != 'Close'
-        total_market_val_strat = df.loc[is_open, 'market_value'].sum()
+        total_strat_val = df.loc[is_open, 'market_value'].sum()
         
         df['local_weight'] = 0.0
-        if total_market_val_strat > 0:
-            df.loc[is_open, 'local_weight'] = (df.loc[is_open, 'market_value'] / total_market_val_strat) * 100
+        # نحسب الوزن فقط إذا كانت الصفقة مفتوحة
+        if total_strat_val > 0:
+            df.loc[is_open, 'local_weight'] = (df.loc[is_open, 'market_value'] / total_strat_val) * 100
         
-        # تعريف الأعمدة بالضبط كما طلبت
-        # الاسم، الرمز، القطاع، الحالة، تاريخ الشراء، تاريخ البيع، الكمية، سعر الشراء، التكلفة، 
-        # اعلى سنوي، السعر الحالي، ادنى سنوي، سعر السوق، الربح والخسارة، نسبة الربح، الوزن، التغير اليومي
-        
+        # --- ترتيب الأعمدة كما طلبت ---
         cols = [
             ('company_name', 'اسم الشركة'),
             ('symbol', 'الرمز'),
             ('sector', 'القطاع'),
             ('status', 'الحالة'),
             ('date', 'تاريخ الشراء'),
-            ('exit_date', 'تاريخ البيع'), # يظهر فقط للمغلقة
+            ('exit_date', 'تاريخ البيع'),
             ('quantity', 'الكمية'),
             ('entry_price', 'سعر الشراء'),
             ('total_cost', 'التكلفة'),
             ('year_high', 'أعلى سنوي'),
             ('current_price', 'السعر الحالي'),
             ('year_low', 'أدنى سنوي'),
-            ('market_value', 'القيمة السوقية'),
+            ('market_value', 'سعر السوق'), # (عدد الاسهم * السعر الحالي)
             ('gain', 'الربح/الخسارة'),
             ('gain_pct', '% الربح'),
             ('local_weight', 'الوزن %'),
             ('daily_change', 'يومي %')
         ]
         
-        # عرض إجمالي هذه المحفظة فقط
-        total_g = df['gain'].sum()
-        total_v = df['market_value'].sum()
+        # عرض ملخص سريع لهذه المحفظة
+        t_gain = df['gain'].sum()
+        t_val = df['market_value'].sum()
         c1, c2 = st.columns(2)
-        with c1: st.metric("قيمة المحفظة", f"{total_v:,.2f}")
-        with c2: st.metric("إجمالي الربح/الخسارة", f"{total_g:,.2f}", delta=f"{total_g:,.2f}")
-        
+        with c1: st.metric(f"قيمة محفظة {strategy}", f"{t_val:,.2f}")
+        with c2: st.metric("صافي الربح/الخسارة", f"{t_gain:,.2f}", delta=f"{t_gain:,.2f}")
+
         render_table(df, cols)
     else: 
-        st.warning(f"لا توجد صفقات مسجلة تحت تصنيف '{strat_key}'. تأكد من اختيار التصنيف الصحيح عند إضافة الصفقة.")
+        st.warning(f"لا توجد صفقات تحت تصنيف '{strategy}'. تأكد من نوع المحفظة عند الإضافة.")
 
+# ... (باقي الدوال كما هي view_liquidity, view_add_trade, settings, router) ...
+# سأضعهم هنا للاكتمال
 def view_liquidity():
     st.header("💵 سجلات السيولة")
     fin = calculate_portfolio_metrics()
@@ -175,7 +165,6 @@ def view_add_trade():
         if st.form_submit_button("حفظ", type="primary"):
             if sym and qty > 0:
                 n, s = get_static_info(sym)
-                # حفظ الاستراتيجية نظيفة
                 execute_query("INSERT INTO Trades (symbol, company_name, sector, date, quantity, entry_price, strategy, status, current_price) VALUES (?,?,?,?,?,?,?,?,?)", 
                     (sym, n, s, str(date_t), qty, price, strat.strip(), 'Open', price))
                 st.success("تم الحفظ"); st.cache_data.clear()
@@ -200,7 +189,7 @@ def view_settings():
                             df = pd.read_excel(xl, t)
                             if 'id' in df.columns: df = df.drop(columns=['id'])
                             if 'source' in df.columns: df.rename(columns={'source':'note'}, inplace=True)
-                            # تنظيف الاستراتيجية عند الاستيراد أيضاً
+                            # تنظيف عند الاستيراد
                             if 'strategy' in df.columns and t == 'Trades':
                                 df['strategy'] = df['strategy'].astype(str).str.strip()
                             df.to_sql(t, conn, if_exists='append', index=False)
