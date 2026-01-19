@@ -32,9 +32,6 @@ def render_navbar():
             st.rerun()
 
 def render_kpi(label, value, color_condition=None, help_text=None):
-    """
-    تم التحديث: إضافة help_text ليظهر كتلميح عند تمرير الماوس
-    """
     C = st.session_state.custom_colors
     val_c = "#1F2937"
     
@@ -42,7 +39,6 @@ def render_kpi(label, value, color_condition=None, help_text=None):
     elif isinstance(color_condition, (int, float)):
         val_c = "#10B981" if color_condition >= 0 else "#EF4444"
     
-    # إضافة خاصية title لعرض التلميح
     tooltip_attr = f'title="{help_text}"' if help_text else ''
     cursor_style = 'cursor: help;' if help_text else ''
             
@@ -71,9 +67,11 @@ def render_table(df, cols_def):
             val = row.get(k, "-")
             disp = val
             
+            # 1. معالجة التواريخ
             if 'date' in k and val:
                 disp = str(val)[:10]
 
+            # 2. معالجة الحالة
             elif k == 'status':
                 if is_closed:
                     bg, fg, txt = ("#F3F4F6", "#4B5563", "مغلقة")
@@ -81,7 +79,34 @@ def render_table(df, cols_def):
                     bg, fg, txt = ("#DCFCE7", "#166534", "مفتوحة") 
                 disp = f"<span style='background:{bg}; color:{fg}; padding:5px 15px; border-radius:20px; font-size:0.8rem; font-weight:800;'>{txt}</span>"
             
-            elif k in ['gain', 'gain_pct', 'daily_change', 'remaining']:
+            # 3. معالجة الأوزان (منطق الألوان والهامش)
+            elif k == 'current_weight':
+                try:
+                    curr = float(val)
+                    target = float(row.get('target_percentage', 0))
+                    
+                    # هامش السماح +/- 1.5%
+                    margin = 1.5
+                    
+                    if target > 0:
+                        diff = curr - target
+                        # إذا كان الفرق ضمن الهامش -> أخضر (ممتاز)
+                        if abs(diff) <= margin:
+                            color = "#10B981" # أخضر
+                        else:
+                            color = "#EF4444" # أحمر (بعيد عن الهدف)
+                    else:
+                        color = "#0e6ba8" # أزرق عادي إذا لم يكن هناك هدف
+
+                    disp = f"<span style='color:{color}; font-weight:bold;'>{curr:.2f}%</span>"
+                except: disp = "-"
+            
+            elif k == 'target_percentage':
+                try: disp = f"{float(val):.2f}%"
+                except: disp = "-"
+
+            # 4. معالجة الأرقام المالية ونسب الربح
+            elif k in ['gain', 'gain_pct', 'daily_change', 'remaining', 'net_profit', 'roi_pct', 'return_pct']:
                 if is_closed and k == 'daily_change':
                     disp = "<span style='color:#9CA3AF'>-</span>"
                 else:
@@ -93,13 +118,7 @@ def render_table(df, cols_def):
                         disp = f"<span style='color:{c}; direction:ltr; font-weight:bold;'>{fmt}{suffix}</span>"
                     except: disp = val
             
-            elif k in ['local_weight', 'target_weight', 'current_weight']:
-                 try:
-                    num = float(val)
-                    disp = f"<span style='color:#0e6ba8; font-weight:bold;'>{num:.2f}%</span>"
-                 except: disp = "-"
-
-            elif k in ['market_value', 'total_cost', 'entry_price', 'current_price', 'exit_price']:
+            elif k in ['market_value', 'total_cost', 'entry_price', 'current_price', 'exit_price', 'total_dividends', 'suggested_amount']:
                 try: disp = "{:,.2f}".format(float(val))
                 except: disp = val
                 
