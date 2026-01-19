@@ -7,15 +7,15 @@ DB_PATH = Path("stocks.db")
 BACKUP_DIR = Path("backups")
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
-# --- الهوية البصرية (مطابقة للصورة) ---
+# --- الهوية البصرية ---
 DEFAULT_COLORS = {
-    'page_bg': '#F8F9FA',      # خلفية فاتحة جداً
+    'page_bg': '#F8F9FA',
     'card_bg': '#FFFFFF',
     'main_text': '#1F2937',
     'sub_text': '#6B7280',
-    'primary': '#0e6ba8',      # اللون الأزرق المستخدم في عناوين الجدول
-    'success': '#10B981',      # أخضر للأرباح
-    'danger': '#EF4444',       # أحمر للخسائر
+    'primary': '#0e6ba8',
+    'success': '#10B981',
+    'danger': '#EF4444',
     'border': '#E5E7EB',
     'input_bg': '#FFFFFF'
 }
@@ -39,6 +39,8 @@ TADAWUL_DB = {
     '4164': {'name': 'النهدي', 'sector': 'تجزئة الأغذية والأدوية'},
     '4007': {'name': 'الحمادي', 'sector': 'الرعاية الصحية'},
     '1150': {'name': 'الإنماء', 'sector': 'البنوك'},
+    '3060': {'name': 'أسمنت ينبع', 'sector': 'المواد الأساسية'},
+    '3040': {'name': 'أسمنت القصيم', 'sector': 'المواد الأساسية'},
 }
 
 def get_css(C):
@@ -52,28 +54,30 @@ def get_css(C):
         
         .stApp {{ background-color: {C['page_bg']} !important; }}
         
-        /* تصميم الجدول ليطابق الصورة */
-        .finance-table {{ width: 100%; border-collapse: separate; border-spacing: 0 5px; margin-top: 10px; }}
+        /* تنسيق الجدول المحسن (مضغوط وبدون التفاف) */
+        .finance-table {{ width: 100%; border-collapse: separate; border-spacing: 0 4px; margin-top: 5px; }}
         
         .finance-table th {{ 
-            color: #0e6ba8 !important; /* اللون الأزرق للعناوين */
+            color: #0e6ba8 !important;
             font-weight: 800 !important;
-            font-size: 0.95rem;
-            padding: 15px 10px;
+            font-size: 0.85rem !important; /* تصغير الخط قليلاً */
+            padding: 10px 5px !important;  /* تقليل الحواف */
             text-align: center;
             background-color: transparent;
             border-bottom: 2px solid #F3F4F6;
+            white-space: nowrap !important; /* منع التفاف النص */
         }}
         
         .finance-table td {{ 
             background-color: white;
-            padding: 12px 10px;
+            padding: 8px 5px !important;   /* تقليل الحواف لتوفير المساحة */
             text-align: center;
             color: #374151;
             font-weight: 600;
-            font-size: 0.9rem;
+            font-size: 0.82rem !important; /* تصغير خط البيانات */
             border-top: 1px solid #F3F4F6;
             border-bottom: 1px solid #F3F4F6;
+            white-space: nowrap !important; /* منع التفاف النص في البيانات */
         }}
         
         .finance-table tr:hover td {{ background-color: #F9FAFB; }}
@@ -88,10 +92,14 @@ def get_css(C):
         
         /* المؤشر */
         .tasi-box {{
-            background: white; padding: 20px; border-radius: 12px; border: 1px solid {C['border']};
+            background: white; padding: 15px; border-radius: 12px; border: 1px solid {C['border']};
             display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;
         }}
         
         [data-testid="stSidebar"] {{ display: none !important; }}
+        
+        /* تحسين عرض التبويبات */
+        .stTabs [data-baseweb="tab-list"] {{ gap: 10px; }}
+        .stTabs [data-baseweb="tab"] {{ height: 40px; white-space: nowrap; }}
     </style>
     """
