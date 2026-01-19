@@ -20,7 +20,6 @@ def fetch_batch_data(symbols_list):
     unique = list(set(tickers_map.values()))
     results = {}
     
-    # تقسيم الدفعات لتسريع العمل
     batch_size = 20
     for i in range(0, len(unique), batch_size):
         batch = unique[i:i+batch_size]
@@ -31,16 +30,12 @@ def fetch_batch_data(symbols_list):
                 if yahoo_symbol in batch:
                     try:
                         t = data.tickers[yahoo_symbol]
-                        # محاولة جلب السعر بطرق متعددة لضمان عدم وجود أصفار
+                        # العودة للطريقة الكلاسيكية التي كانت تعمل
                         price = None
-                        if hasattr(t, 'fast_info'): 
-                            price = t.fast_info.last_price
+                        if hasattr(t, 'fast_info'): price = t.fast_info.last_price
+                        if price is None: price = t.info.get('currentPrice')
                         
-                        if price is None or price == 0:
-                            hist = t.history(period="1d")
-                            if not hist.empty: price = hist['Close'].iloc[-1]
-                            
-                        if price and price > 0:
+                        if price:
                             results[original_symbol] = {
                                 'price': float(price),
                                 'prev_close': float(t.fast_info.previous_close) if hasattr(t, 'fast_info') else price,
@@ -61,26 +56,8 @@ def get_chart_history(symbol, period, interval):
 
 @st.cache_data(ttl=300)
 def get_tasi_data():
-    """
-    دالة محسنة لجلب مؤشر تاسي وتجنب مشكلة الأصفار
-    """
     try:
-        # استخدام history بدلاً من fast_info لأنها أدق للمؤشرات
-        ticker = yf.Ticker("^TASI.SR")
-        hist = ticker.history(period="5d") # نجلب 5 أيام لضمان وجود بيانات
-        
-        if not hist.empty:
-            last_price = hist['Close'].iloc[-1]
-            # البحث عن سعر الإغلاق السابق
-            if len(hist) >= 2:
-                prev_close = hist['Close'].iloc[-2]
-            else:
-                prev_close = last_price # في حال عدم وجود سابق
-            
-            change_pct = ((last_price - prev_close) / prev_close) * 100
-            return last_price, change_pct
-            
-    except Exception as e:
-        pass
-    
-    return 0.0, 0.0
+        # الطريقة الأصلية التي كانت تعمل
+        t = yf.Ticker("^TASI.SR").fast_info
+        return t.last_price, ((t.last_price - t.previous_close) / t.previous_close) * 100
+    except: return 0.0, 0.0
