@@ -48,19 +48,22 @@ def get_css(C):
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap');
         
-        html, body, [class*="css"], p, h1, h2, h3, h4, div, label, button, input, textarea, th, td {{
+        html, body, [class*="css"], p, div, label, button, input, textarea, th, td {{
             font-family: 'Cairo', sans-serif !important; direction: rtl;
         }}
         
         .stApp {{ background-color: {C['page_bg']} !important; }}
         
-        /* تحسين العناوين */
-        h2, h3 {{
+        /* تحسين العناوين - محاذاة لليمين */
+        h1, h2, h3, h4 {{
+            font-family: 'Cairo', sans-serif !important;
             color: #1F2937 !important;
             border-right: 5px solid {C['primary']};
             padding-right: 15px;
             margin-bottom: 20px !important;
             font-weight: 800 !important;
+            text-align: right !important; /* إجبار المحاذاة لليمين */
+            width: 100%;
         }}
 
         /* تنسيق الجدول المحسن */
