@@ -9,7 +9,7 @@ from components import render_kpi, render_table, render_navbar
 from charts import view_advanced_chart
 from market_data import get_static_info, get_tasi_data
 from database import execute_query, fetch_table, get_db
-# --- تم إصلاح الخطأ هنا: استيراد APP_NAME ---
+# --- (تم التعديل هنا) إضافة APP_NAME للاستيراد ---
 from config import BACKUP_DIR, APP_NAME
 
 def apply_sorting(df, cols_definition, key_suffix):
@@ -152,13 +152,16 @@ def view_liquidity():
     with c1: render_kpi("إجمالي الإيداعات", f"{fin['total_deposited']:,.2f}", "blue")
     with c2: render_kpi("إجمالي السحوبات", f"{fin['total_withdrawn']:,.2f}", -1)
     with c3: render_kpi("إجمالي العوائد", f"{fin['total_returns']:,.2f}", "success")
+    
     st.markdown("---")
+    
     st.markdown("### 📅 تقويم التوزيعات النقدية")
     div_cal = get_dividends_calendar(fin['returns'])
     if not div_cal.empty:
         cols_cal = [('year_month', 'الشهر'), ('amount', 'إجمالي التوزيعات'), ('symbol', 'الشركات الموزعة')]
         render_table(div_cal, cols_cal)
     else: st.info("لا توجد توزيعات.")
+    
     st.markdown("---")
     cols_dep = [('date', 'التاريخ'), ('amount', 'المبلغ'), ('note', 'ملاحظات')]
     cols_wit = [('date', 'التاريخ'), ('amount', 'المبلغ'), ('note', 'ملاحظات')]
@@ -192,7 +195,7 @@ def view_tools():
     with tab2:
         st.markdown("### إصدار التقارير")
         st.write("تحميل تقرير شامل:")
-        # استخدام المتغير المستورد بشكل صحيح الآن
+        # استخدام المتغير المستورد بشكل صحيح
         report_html = f"""
         <html>
         <head>
