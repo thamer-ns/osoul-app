@@ -9,15 +9,11 @@ from market_data import get_static_info, get_tasi_data
 from database import execute_query, fetch_table, get_db
 from config import BACKUP_DIR
 
-# --- دالة مساعدة للفرز المحسن ---
+# --- دالة مساعدة للفرز ---
 def apply_sorting(df, cols_definition, key_suffix):
-    """
-    تضيف واجهة للترتيب داخل Expander أنيق
-    """
     if df.empty: return df
     
-    # واجهة الفرز داخل Expander لتقليل الزحمة
-    with st.expander("🔍 أدوات الفرز والترتيب", expanded=False):
+    with st.expander("أدوات الفرز والترتيب", expanded=False):
         label_to_col = {label: col for col, label in cols_definition}
         sort_options = list(label_to_col.keys())
         
@@ -37,7 +33,6 @@ def apply_sorting(df, cols_definition, key_suffix):
                 key=f"sort_ord_{key_suffix}"
             )
     
-    # تطبيق الفرز
     target_col = label_to_col[selected_label]
     is_ascending = (sort_order == "تصاعدي")
     
@@ -66,7 +61,7 @@ def view_dashboard(fin):
     </div>
     """, unsafe_allow_html=True)
 
-    st.markdown("### 🏦 الملخص المالي")
+    st.markdown("### الملخص المالي")
     c1, c2, c3, c4 = st.columns(4)
     net_deposit = fin['total_deposited'] - fin['total_withdrawn']
     with c1: render_kpi("الكاش المتوفر", f"{fin['cash']:,.2f}")
@@ -78,10 +73,10 @@ def view_dashboard(fin):
 def view_portfolio(fin, page_key):
     if page_key == 'spec':
         target_strategy = "مضاربة"
-        page_title = "⚡ محفظة المضاربة"
+        page_title = "محفظة المضاربة"
     else:
         target_strategy = "استثمار"
-        page_title = "💎 محفظة الاستثمار"
+        page_title = "محفظة الاستثمار"
 
     st.header(page_title)
     all_trades = fin['all_trades']
@@ -104,9 +99,9 @@ def view_portfolio(fin, page_key):
     with tab1:
         if not df_open.empty:
             # ==========================================
-            # 1. جدول توزيع القطاعات (مع الأوزان المستهدفة)
+            # 1. جدول توزيع القطاعات
             # ==========================================
-            st.markdown("#### 📊 ملخص القطاعات")
+            st.markdown("#### ملخص القطاعات")
             
             sector_summary = df_open.groupby('sector').agg({
                 'symbol': 'count',
@@ -117,17 +112,13 @@ def view_portfolio(fin, page_key):
             total_mv = sector_summary['market_value'].sum()
             sector_summary['current_weight'] = (sector_summary['market_value'] / total_mv * 100).fillna(0)
             
-            # جلب الأوزان المستهدفة من قاعدة البيانات
             targets_df = fetch_table("SectorTargets")
             if not targets_df.empty:
-                # دمج الجدولين
                 sector_summary = pd.merge(sector_summary, targets_df, on='sector', how='left')
                 sector_summary['target_percentage'] = sector_summary['target_percentage'].fillna(0.0)
             else:
                 sector_summary['target_percentage'] = 0.0
 
-            # حساب المتبقي للهدف
-            # المبلغ المستهدف للقطاع = القيمة السوقية الكلية للمحفظة * (الوزن المستهدف / 100)
             target_amount = total_mv * (sector_summary['target_percentage'] / 100)
             sector_summary['remaining'] = target_amount - sector_summary['market_value']
 
@@ -147,7 +138,7 @@ def view_portfolio(fin, page_key):
             # ==========================================
             # 2. جدول تفاصيل الصفقات
             # ==========================================
-            st.markdown("#### 📋 تفاصيل الصفقات")
+            st.markdown("#### تفاصيل الصفقات")
             
             total_val = df_open['market_value'].sum()
             df_open['local_weight'] = (df_open['market_value'] / total_val * 100) if total_val > 0 else 0
@@ -181,7 +172,7 @@ def view_portfolio(fin, page_key):
 
     with tab2:
         if not df_closed.empty:
-            st.markdown("### 📜 سجل الصفقات المغلقة")
+            st.markdown("### سجل الصفقات المغلقة")
             cols_closed = [
                 ('company_name', 'الشركة'), ('symbol', 'الرمز'), 
                 ('sector', 'القطاع'), ('status', 'الحالة'),
@@ -224,7 +215,7 @@ def view_liquidity():
         render_table(sorted_ret, cols_ret)
 
 def view_add_trade():
-    st.header("📝 إضافة صفقة جديدة")
+    st.header("إضافة صفقة جديدة")
     with st.form("add"):
         c1, c2 = st.columns(2)
         sym = c1.text_input("رمز السهم")
@@ -241,22 +232,18 @@ def view_add_trade():
                 st.success("تم الحفظ"); st.cache_data.clear()
 
 def view_settings():
-    st.header("⚙️ إعدادات النظام")
+    st.header("إعدادات النظام")
     
-    # --- قسم إدارة أوزان القطاعات (الجديد) ---
-    st.markdown("### 📊 توزيع القطاعات المستهدف")
+    st.markdown("### توزيع القطاعات المستهدف")
     st.info("قم بإدخال النسبة المئوية المستهدفة لكل قطاع (مثلاً 20 للقطاع البنكي).")
     
-    # جلب القطاعات الموجودة في الصفقات + المحفوظة مسبقاً
     trades_df = fetch_table("Trades")
     existing_sectors = trades_df['sector'].unique().tolist() if not trades_df.empty else []
     
     current_targets = fetch_table("SectorTargets")
     
-    # دمج البيانات للعرض
     data_for_edit = []
     
-    # إنشاء قائمة بكل القطاعات المعروفة (من الصفقات أو المحفوظة)
     all_known_sectors = set(existing_sectors)
     if not current_targets.empty:
         all_known_sectors.update(current_targets['sector'].tolist())
@@ -271,12 +258,10 @@ def view_settings():
         data_for_edit.append({'القطاع': sec, 'الوزن المستهدف %': val})
     
     if not data_for_edit:
-        # إضافة صف افتراضي إذا لم توجد بيانات
         data_for_edit = [{'القطاع': 'مثال: البنوك', 'الوزن المستهدف %': 0.0}]
 
     df_edit = pd.DataFrame(data_for_edit)
     
-    # محرر البيانات
     edited_df = st.data_editor(
         df_edit, 
         num_rows="dynamic", 
@@ -289,7 +274,7 @@ def view_settings():
 
     if st.button("حفظ الأوزان المستهدفة"):
         with get_db() as conn:
-            conn.execute("DELETE FROM SectorTargets") # مسح القديم
+            conn.execute("DELETE FROM SectorTargets")
             for _, row in edited_df.iterrows():
                 sec = str(row['القطاع']).strip()
                 target = float(row['الوزن المستهدف %'])
@@ -301,13 +286,13 @@ def view_settings():
 
     st.markdown("---")
 
-    with st.expander("💾 النسخ الاحتياطي والاستعادة"):
+    with st.expander("النسخ الاحتياطي والاستعادة"):
         if st.button("إنشاء نسخة احتياطية"): create_smart_backup(); st.success("تم")
         p = BACKUP_DIR / "backup_latest.xlsx"
         if p.exists():
             with open(p, "rb") as f: st.download_button("تحميل ملف النسخة", f, "backup.xlsx")
             
-    with st.expander("📥 استيراد بيانات سابقة"):
+    with st.expander("استيراد بيانات سابقة"):
         f = st.file_uploader("ملف Excel", type="xlsx")
         if f and st.button("بدء الاستيراد"):
             try:
