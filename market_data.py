@@ -30,10 +30,10 @@ def fetch_batch_data(symbols_list):
                 if yahoo_symbol in batch:
                     try:
                         t = data.tickers[yahoo_symbol]
-                        # العودة للطريقة الكلاسيكية التي كانت تعمل
+                        # نستخدم fast_info للسرعة في جلب الأسعار اللحظية
                         price = None
                         if hasattr(t, 'fast_info'): price = t.fast_info.last_price
-                        if price is None: price = t.info.get('currentPrice')
+                        if not price: price = t.info.get('currentPrice')
                         
                         if price:
                             results[original_symbol] = {
@@ -57,7 +57,13 @@ def get_chart_history(symbol, period, interval):
 @st.cache_data(ttl=300)
 def get_tasi_data():
     try:
-        # الطريقة الأصلية التي كانت تعمل
-        t = yf.Ticker("^TASI.SR").fast_info
-        return t.last_price, ((t.last_price - t.previous_close) / t.previous_close) * 100
-    except: return 0.0, 0.0
+        # الطريقة المضمونة: جلب بيانات تاريخية لآخر يومين
+        t = yf.Ticker("^TASI.SR")
+        hist = t.history(period="5d")
+        if not hist.empty:
+            last = hist['Close'].iloc[-1]
+            prev = hist['Close'].iloc[-2] if len(hist) > 1 else last
+            change = ((last - prev) / prev) * 100
+            return last, change
+    except: pass
+    return 0.0, 0.0
