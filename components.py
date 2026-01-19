@@ -31,16 +31,23 @@ def render_navbar():
             st.session_state.page = key
             st.rerun()
 
-def render_kpi(label, value, color_condition=None):
+def render_kpi(label, value, color_condition=None, help_text=None):
+    """
+    تم التحديث: إضافة help_text ليظهر كتلميح عند تمرير الماوس
+    """
     C = st.session_state.custom_colors
     val_c = "#1F2937"
     
     if color_condition == "blue": val_c = "#0e6ba8"
     elif isinstance(color_condition, (int, float)):
         val_c = "#10B981" if color_condition >= 0 else "#EF4444"
+    
+    # إضافة خاصية title لعرض التلميح
+    tooltip_attr = f'title="{help_text}"' if help_text else ''
+    cursor_style = 'cursor: help;' if help_text else ''
             
     st.markdown(f"""
-    <div class="kpi-box">
+    <div class="kpi-box" {tooltip_attr} style="{cursor_style}">
         <div style="color:#6B7280; font-size:0.8rem; font-weight:700; margin-bottom:5px;">{label}</div>
         <div class="kpi-value" style="color: {val_c} !important; direction:ltr;">{value}</div>
     </div>
@@ -74,7 +81,6 @@ def render_table(df, cols_def):
                     bg, fg, txt = ("#DCFCE7", "#166534", "مفتوحة") 
                 disp = f"<span style='background:{bg}; color:{fg}; padding:5px 15px; border-radius:20px; font-size:0.8rem; font-weight:800;'>{txt}</span>"
             
-            # تم إضافة 'remaining' هنا لتلوين عمود "المتبقي للهدف"
             elif k in ['gain', 'gain_pct', 'daily_change', 'remaining']:
                 if is_closed and k == 'daily_change':
                     disp = "<span style='color:#9CA3AF'>-</span>"
@@ -97,7 +103,7 @@ def render_table(df, cols_def):
                 try: disp = "{:,.2f}".format(float(val))
                 except: disp = val
                 
-            elif k in ['quantity', 'symbol_count', 'count']: # symbol_count للجدول الجديد
+            elif k in ['quantity', 'symbol_count', 'count']:
                 try: disp = "{:,.0f}".format(float(val))
                 except: disp = val
 
