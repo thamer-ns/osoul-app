@@ -2,14 +2,13 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from datetime import date
-from analytics import calculate_portfolio_metrics, update_prices, create_smart_backup
+from analytics import calculate_portfolio_metrics, update_prices, create_smart_backup, get_comprehensive_performance
 from components import render_kpi, render_table, render_navbar
 from charts import view_advanced_chart
 from market_data import get_static_info, get_tasi_data
 from database import execute_query, fetch_table, get_db
 from config import BACKUP_DIR
 
-# --- دالة مساعدة للفرز ---
 def apply_sorting(df, cols_definition, key_suffix):
     if df.empty: return df
     
@@ -65,13 +64,11 @@ def view_dashboard(fin):
     c1, c2, c3, c4 = st.columns(4)
     net_deposit = fin['total_deposited'] - fin['total_withdrawn']
     
-    # إضافة تلميحات (Tooltips)
-    with c1: render_kpi("الكاش المتوفر", f"{fin['cash']:,.2f}", help_text="النقد المتاح حالياً في المحفظة للشراء (إيداعات + مبيعات - مشتريات - سحوبات)")
-    with c2: render_kpi("رأس المال (الصافي)", f"{net_deposit:,.2f}", help_text="إجمالي ما قمت بإيداعه من جيبك ناقص ما قمت بسحبه")
-    with c3: render_kpi("القيمة السوقية", f"{fin['market_val_open']:,.2f}", "blue", help_text="قيمة الأسهم التي تمتلكها الآن حسب سعر السوق الحالي")
-    
+    with c1: render_kpi("الكاش المتوفر", f"{fin['cash']:,.2f}", help_text="النقد المتاح حالياً في المحفظة للشراء")
+    with c2: render_kpi("رأس المال (الصافي)", f"{net_deposit:,.2f}", help_text="إجمالي الإيداعات - إجمالي السحوبات")
+    with c3: render_kpi("القيمة السوقية", f"{fin['market_val_open']:,.2f}", "blue", help_text="قيمة الأسهم الحالية في السوق")
     total_pl = fin['unrealized_pl'] + fin['realized_pl'] + fin['total_returns']
-    with c4: render_kpi("صافي الربح/الخسارة", f"{total_pl:,.2f}", total_pl, help_text="الربح الشامل: (أرباح الأسهم المباعة + أرباح الأسهم الحالية العائمة + التوزيعات النقدية)")
+    with c4: render_kpi("صافي الربح/الخسارة", f"{total_pl:,.2f}", total_pl, help_text="الأرباح المحققة + العائمة + التوزيعات")
 
 def view_portfolio(fin, page_key):
     if page_key == 'spec':
@@ -102,10 +99,9 @@ def view_portfolio(fin, page_key):
     with tab1:
         if not df_open.empty:
             # ==========================================
-            # 1. جدول توزيع القطاعات
+            # 1. جدول توزيع القطاعات (الوزن والهدف)
             # ==========================================
-            st.markdown("#### ملخص القطاعات")
-            
+            st.markdown("#### ملخص توزيع القطاعات")
             sector_summary = df_open.groupby('sector').agg({
                 'symbol': 'count',
                 'total_cost': 'sum',
@@ -136,20 +132,58 @@ def view_portfolio(fin, page_key):
             
             sorted_sectors = apply_sorting(sector_summary, cols_sector, f"{page_key}_sec")
             render_table(sorted_sectors, cols_sector)
+            
             st.markdown("---")
 
             # ==========================================
-            # 2. جدول تفاصيل الصفقات
+            # 2. التحليل المالي الشامل (الجديد)
             # ==========================================
-            st.markdown("#### تفاصيل الصفقات")
+            st.markdown("#### التحليل المالي الشامل (الربح + العوائد)")
+            
+            # جلب البيانات المعالجة من analytics.py
+            sec_perf, stock_perf = get_comprehensive_performance(df_strategy, fin['returns'])
+            
+            t_perf1, t_perf2 = st.tabs(["ربحية القطاعات", "ربحية الأسهم"])
+            
+            with t_perf1:
+                if not sec_perf.empty:
+                    cols_sec_perf = [
+                        ('sector', 'القطاع'),
+                        ('total_cost', 'حجم الاستثمار'),
+                        ('gain', 'أرباح رأسمالية'),
+                        ('total_dividends', 'توزيعات نقدية'),
+                        ('net_profit', 'الربح الصافي'),
+                        ('roi_pct', 'العائد الكلي %')
+                    ]
+                    render_table(sec_perf.sort_values(by='net_profit', ascending=False), cols_sec_perf)
+                else: st.info("لا توجد بيانات.")
+
+            with t_perf2:
+                if not stock_perf.empty:
+                    cols_stock_perf = [
+                        ('company_name', 'الشركة'),
+                        ('symbol', 'الرمز'),
+                        ('total_cost', 'التكلفة الكلية'),
+                        ('gain', 'فرق السعر (ربح/خسارة)'),
+                        ('total_dividends', 'العوائد المستلمة'),
+                        ('net_profit', 'صافي الربح'),
+                        ('roi_pct', 'العائد %')
+                    ]
+                    render_table(stock_perf.sort_values(by='net_profit', ascending=False), cols_stock_perf)
+
+            st.markdown("---")
+
+            # ==========================================
+            # 3. جدول تفاصيل الصفقات الحالية
+            # ==========================================
+            st.markdown("#### تفاصيل الصفقات المفتوحة")
             
             total_val = df_open['market_value'].sum()
             df_open['local_weight'] = (df_open['market_value'] / total_val * 100) if total_val > 0 else 0
             
-            # إضافة تلميحات للمقاييس الداخلية
             c1, c2, c3 = st.columns(3)
-            with c1: st.metric("القيمة السوقية", f"{total_val:,.2f}", help="قيمة محفظة هذا القسم فقط حالياً")
-            with c2: st.metric("الربح/الخسارة", f"{df_open['gain'].sum():,.2f}", help="الربح العائم (غير المحقق) لهذه الأسهم")
+            with c1: st.metric("القيمة السوقية", f"{total_val:,.2f}")
+            with c2: st.metric("الربح/الخسارة (العائم)", f"{df_open['gain'].sum():,.2f}")
             with c3: st.metric("عدد الشركات", len(df_open))
 
             cols_open = [
@@ -193,11 +227,10 @@ def view_portfolio(fin, page_key):
 def view_liquidity():
     fin = calculate_portfolio_metrics()
     
-    # إضافة تلميحات لصفحة السيولة
     c1, c2, c3 = st.columns(3)
     with c1: render_kpi("إجمالي الإيداعات", f"{fin['total_deposited']:,.2f}", "blue", help_text="كل المبالغ التي قمت بتحويلها للمحفظة")
-    with c2: render_kpi("إجمالي السحوبات", f"{fin['total_withdrawn']:,.2f}", -1, help_text="المبالغ التي سحبتها من المحفظة لحسابك الجاري")
-    with c3: render_kpi("إجمالي العوائد", f"{fin['total_returns']:,.2f}", "success", help_text="التوزيعات النقدية المستلمة من الشركات")
+    with c2: render_kpi("إجمالي السحوبات", f"{fin['total_withdrawn']:,.2f}", -1, help_text="المبالغ التي سحبتها من المحفظة")
+    with c3: render_kpi("إجمالي العوائد", f"{fin['total_returns']:,.2f}", "success", help_text="التوزيعات النقدية المستلمة")
     
     st.markdown("---")
     
@@ -240,7 +273,7 @@ def view_settings():
     st.header("إعدادات النظام")
     
     st.markdown("### توزيع القطاعات المستهدف")
-    st.info("قم بإدخال النسبة المئوية المستهدفة لكل قطاع (مثلاً 20 للقطاع البنكي).")
+    st.info("قم بإدخال النسبة المئوية المستهدفة لكل قطاع. المجموع يجب أن يكون 100%.")
     
     trades_df = fetch_table("Trades")
     existing_sectors = trades_df['sector'].unique().tolist() if not trades_df.empty else []
@@ -274,10 +307,29 @@ def view_settings():
         column_config={
             "القطاع": st.column_config.TextColumn("اسم القطاع", required=True),
             "الوزن المستهدف %": st.column_config.NumberColumn("النسبة المستهدفة %", min_value=0, max_value=100, step=0.5, format="%.1f%%")
-        }
+        },
+        key="target_editor"
     )
 
-    if st.button("حفظ الأوزان المستهدفة"):
+    total_target = edited_df['الوزن المستهدف %'].sum()
+    remaining = 100.0 - total_target
+    
+    col_sum, col_msg = st.columns([1, 2])
+    
+    if total_target > 100:
+        col_sum.metric("المجموع الكلي", f"{total_target:.1f}%", delta=f"{remaining:.1f}% (تجاوز)", delta_color="inverse")
+        col_msg.error("⚠️ المجموع تجاوز 100%! لا يمكن الحفظ حتى تقوم بتعديل النسب.")
+        btn_disabled = True
+    elif total_target < 100:
+        col_sum.metric("المجموع الكلي", f"{total_target:.1f}%", delta=f"{remaining:.1f}% متبقي")
+        col_msg.warning("المجموع أقل من 100%. يمكنك الحفظ، لكن يفضل توزيع النسبة كاملة.")
+        btn_disabled = False
+    else:
+        col_sum.metric("المجموع الكلي", f"{total_target:.1f}%", delta="مكتمل 100%")
+        col_msg.success("توزيع مثالي!")
+        btn_disabled = False
+
+    if st.button("حفظ الأوزان المستهدفة", disabled=btn_disabled, type="primary"):
         with get_db() as conn:
             conn.execute("DELETE FROM SectorTargets")
             for _, row in edited_df.iterrows():
