@@ -1,8 +1,8 @@
 from pathlib import Path
 
 # --- إعدادات الهوية ---
-APP_NAME = "أصولي"  # الاسم كما طلبت
-APP_ICON = "💎"    # الأيقونة (الجوهرة) لتعبر عن قيمة الأصول
+APP_NAME = "أصولي"
+APP_ICON = "💎"
 DB_PATH = Path("stocks.db")
 BACKUP_DIR = Path("backups")
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
@@ -13,13 +13,13 @@ DEFAULT_COLORS = {
     'card_bg': '#FFFFFF',
     'main_text': '#111827',
     'sub_text': '#6B7280',
-    'primary': '#0284c7',        # أزرق سماوي غامق (لون الثقة والمال)
+    'primary': '#0284c7',
     'success': '#10B981',
     'danger': '#EF4444',
     'border': '#E5E7EB',
 }
 
-# --- بيانات الشركات (كما هي) ---
+# --- بيانات الشركات ---
 TADAWUL_DB = {
     '2222': {'name': 'أرامكو السعودية', 'sector': 'الطاقة'},
     '2010': {'name': 'سابك', 'sector': 'المواد الأساسية'},
@@ -54,29 +54,58 @@ def get_css(C):
         
         .stApp {{ background-color: {C['page_bg']} !important; }}
         
-        /* تصميم اللوقو النصي */
+        /* تحسين شعار أصولي */
         .logo-text {{
             background: -webkit-linear-gradient(45deg, {C['primary']}, #0ea5e9);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             font-weight: 900;
             font-size: 1.8rem;
-            letter-spacing: -1px;
         }}
         
-        /* الأزرار العلوية */
-        div[data-testid="stHorizontalBlock"] button {{
-            border-radius: 8px !important;
-            border: 1px solid transparent !important;
-            transition: 0.2s;
-            font-weight: 700 !important;
+        /* تنسيق القائمة المنسدلة (Popover) لتكون جميلة */
+        div[data-testid="stPopoverBody"] {{
+            padding: 10px !important;
+            border-radius: 12px !important;
+            border: 1px solid {C['border']} !important;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1) !important;
         }}
-        div[data-testid="stHorizontalBlock"] button:hover {{
-            border-color: {C['primary']} !important;
+        
+        div[data-testid="stPopoverBody"] button {{
+            width: 100% !important;
+            border: none !important;
+            text-align: right !important;
+            padding: 10px 15px !important;
+            background: transparent !important;
+            color: {C['main_text']} !important;
+            border-radius: 8px !important;
+            transition: all 0.2s !important;
+            display: flex !important;
+            justify-content: flex-start !important;
+        }}
+        
+        div[data-testid="stPopoverBody"] button:hover {{
             background-color: {C['page_bg']} !important;
             color: {C['primary']} !important;
+            transform: translateX(-5px);
+        }}
+        
+        /* الزر الأحمر للخروج */
+        div[data-testid="stPopoverBody"] button[kind="primary"] {{
+            color: {C['danger']} !important;
+            background-color: #FEF2F2 !important;
+            margin-top: 10px !important;
+        }}
+        div[data-testid="stPopoverBody"] button[kind="primary"]:hover {{
+            background-color: #FEE2E2 !important;
         }}
 
+        /* أزرار النافبار */
+        div[data-testid="stHorizontalBlock"] button {{
+            border-radius: 8px !important;
+            font-weight: 700 !important;
+        }}
+        
         /* الكروت */
         .kpi-box {{
             background-color: {C['card_bg']}; 
@@ -85,7 +114,7 @@ def get_css(C):
             padding: 15px; 
             text-align: right; 
             margin-bottom: 10px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.03);
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
         }}
         .kpi-value {{ font-size: 1.3rem; font-weight: 800; color: {C['main_text']}; }}
         
@@ -100,14 +129,8 @@ def get_css(C):
             color: {C['main_text']}; font-weight: 600; font-size: 0.85rem !important;
             border-top: 1px solid {C['border']}; border-bottom: 1px solid {C['border']};
         }}
-        .finance-table tr:hover td {{ background-color: #F3F4F6; }}
         
-        /* إخفاء العناصر غير المرغوبة */
         [data-testid="stSidebar"] {{ display: none !important; }}
-        #MainMenu {{ visibility: hidden; }}
-        footer {{ visibility: hidden; }}
-        
-        /* التبويبات */
         .stTabs [data-baseweb="tab-list"] {{ gap: 10px; }}
         .stTabs [data-baseweb="tab"] {{ height: 40px; border-radius: 6px; }}
         .stTabs [aria-selected="true"] {{ background-color: {C['primary']} !important; color: white !important; }}
