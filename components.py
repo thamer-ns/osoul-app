@@ -2,7 +2,6 @@ import streamlit as st
 from config import APP_NAME, APP_ICON
 
 def render_navbar():
-    # التأكد من تحميل الألوان
     if 'custom_colors' not in st.session_state:
         from config import DEFAULT_COLORS
         st.session_state.custom_colors = DEFAULT_COLORS.copy()
@@ -11,23 +10,22 @@ def render_navbar():
     current_user = st.session_state.get('username', 'المستثمر')
 
     with st.container():
-        # تقسيم الهيدر
+        # تقسيم متناسق: اللوقو - القائمة - المستخدم
         c_logo, c_nav, c_user = st.columns([1.5, 5.5, 1.5], gap="small")
         
-        # 1. اللوقو المطور
+        # 1. اللوقو
         with c_logo:
             st.markdown(f"""
             <div style="display: flex; align-items: center; gap: 8px; padding-top: 5px;">
                 <div style="font-size: 2rem;">{APP_ICON}</div>
                 <div>
-                    <div style="font-family: 'Cairo'; font-weight: 900; font-size: 1.4rem; color: {C['primary']};">{APP_NAME}</div>
+                    <div class="logo-text">{APP_NAME}</div>
                 </div>
             </div>
             """, unsafe_allow_html=True)
 
-        # 2. القائمة الرئيسية (أزرار التنقل)
+        # 2. أزرار التنقل
         with c_nav:
-            # استخدمنا 6 أعمدة للأزرار
             cols = st.columns(6, gap="small")
             nav_items = [
                 ("الرئيسة", "home"), ("مضاربة", "spec"), 
@@ -42,21 +40,27 @@ def render_navbar():
                         st.session_state.page = key
                         st.rerun()
 
-        # 3. قائمة المستخدم (إصلاح الخطأ باستخدام expander)
+        # 3. قائمة المستخدم (Popover)
         with c_user:
-            # نستخدم expander كبديل آمن للقائمة المنسدلة
-            with st.expander(f"👤 {current_user}"):
-                if st.button("⚙️ إعدادات", key="u_set", use_container_width=True):
+            # هنا يظهر الزر بشكل جميل وعند الضغط تظهر القائمة
+            with st.popover(f"👤 {current_user}", use_container_width=True):
+                st.markdown(f"<div style='text-align:center; color:#9CA3AF; font-size:0.8rem; margin-bottom:10px;'>الملف الشخصي</div>", unsafe_allow_html=True)
+                
+                # أزرار القائمة (سيتم تنسيقها بال CSS لتبدو كقائمة حقيقية)
+                if st.button("⚙️  الإعدادات", key="u_set", use_container_width=True):
                     st.session_state.page = "settings"
                     st.rerun()
-                if st.button("📥 إضافة", key="u_add", use_container_width=True):
+                
+                if st.button("📥  إضافة عملية", key="u_add", use_container_width=True):
                     st.session_state.page = "add"
                     st.rerun()
-                if st.button("🛠️ أدوات", key="u_tools", use_container_width=True):
+                
+                if st.button("🛠️  الأدوات والزكاة", key="u_tools", use_container_width=True):
                     st.session_state.page = "tools"
                     st.rerun()
+                
                 st.markdown("---")
-                if st.button("تسجيل خروج", key="u_out", type="primary", use_container_width=True):
+                if st.button("تسجيل الخروج", key="u_out", type="primary", use_container_width=True):
                     st.session_state.page = "logout"
                     st.rerun()
 
@@ -94,12 +98,15 @@ def render_table(df, cols_def):
             elif k == 'status':
                 bg, fg, txt = ("#F3F4F6", "#4B5563", "مغلقة") if is_closed else ("#DCFCE7", "#166534", "مفتوحة")
                 disp = f"<span style='background:{bg}; color:{fg}; padding:2px 10px; border-radius:12px; font-size:0.7rem; font-weight:800;'>{txt}</span>"
-            elif k in ['gain', 'gain_pct', 'net_profit', 'roi_pct']:
-                try:
-                    num = float(val)
-                    c = "#10B981" if num >= 0 else "#EF4444"
-                    disp = f"<span style='color:{c}; direction:ltr; font-weight:bold;'>{num:,.2f}</span>"
-                except: disp = val
+            elif k in ['gain', 'gain_pct', 'net_profit', 'roi_pct', 'daily_change']:
+                if is_closed and k == 'daily_change': disp = "<span style='color:#9CA3AF'>-</span>"
+                else:
+                    try:
+                        num = float(val)
+                        c = "#10B981" if num >= 0 else "#EF4444"
+                        suffix = "%" if 'pct' in k or 'change' in k else ""
+                        disp = f"<span style='color:{c}; direction:ltr; font-weight:bold;'>{num:,.2f}{suffix}</span>"
+                    except: disp = val
             elif k in ['market_value', 'total_cost', 'entry_price', 'current_price']:
                 try: disp = "{:,.2f}".format(float(val))
                 except: disp = val
