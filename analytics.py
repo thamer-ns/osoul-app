@@ -2,19 +2,13 @@ import pandas as pd
 import numpy as np
 import shutil
 from database import fetch_table, get_db
+# تم التأكد من توافق الاستيراد هنا
 from market_data import get_static_info, fetch_batch_data, get_chart_history
 from config import BACKUP_DIR
 import streamlit as st
 import logging
 
-logging.basicConfig(
-    level=logging.ERROR,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("app_errors.log", encoding='utf-8'),
-        logging.StreamHandler()
-    ]
-)
+logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 
 def calculate_portfolio_metrics():
@@ -25,22 +19,17 @@ def calculate_portfolio_metrics():
         ret = fetch_table("ReturnsGrants")
 
         if trades.empty:
-            trades = pd.DataFrame(columns=[
-                'symbol', 'strategy', 'status', 'market_value', 'total_cost', 
-                'gain', 'sector', 'company_name', 'date', 'exit_date', 
-                'quantity', 'entry_price', 'exit_price'
-            ])
+            trades = pd.DataFrame(columns=['symbol', 'strategy', 'status', 'market_value', 'total_cost', 'gain', 'sector', 'company_name', 'date', 'exit_date', 'quantity', 'entry_price', 'exit_price'])
 
         if not trades.empty:
             unique_symbols = trades['symbol'].unique()
+            # استخدام get_static_info المحدثة
             info_map = {sym: get_static_info(sym) for sym in unique_symbols}
             
             trades['company_name'] = trades['symbol'].map(lambda x: info_map.get(x, (x, ''))[0])
             trades['sector'] = trades['symbol'].map(lambda x: info_map.get(x, ('', ''))[1])
 
-            if 'strategy' in trades.columns:
-                trades['strategy'] = trades['strategy'].astype(str).str.strip()
-            
+            if 'strategy' in trades.columns: trades['strategy'] = trades['strategy'].astype(str).str.strip()
             if 'status' in trades.columns:
                 trades['status'] = trades['status'].astype(str).str.strip()
                 close_keywords = ['close', 'sold', 'مغلقة', 'مباعة']
@@ -48,8 +37,7 @@ def calculate_portfolio_metrics():
                 trades.loc[trades['status'] != 'Close', 'status'] = 'Open'
 
             trades['date'] = pd.to_datetime(trades['date'], errors='coerce')
-            if 'exit_date' in trades.columns:
-                trades['exit_date'] = pd.to_datetime(trades['exit_date'], errors='coerce')
+            if 'exit_date' in trades.columns: trades['exit_date'] = pd.to_datetime(trades['exit_date'], errors='coerce')
             
             num_cols = ['quantity', 'entry_price', 'exit_price', 'current_price', 'prev_close', 'dividend_yield', 'year_high', 'year_low']
             for c in num_cols:
@@ -59,11 +47,9 @@ def calculate_portfolio_metrics():
             trades['total_cost'] = (trades['quantity'] * trades['entry_price']).round(2)
             is_closed = trades['status'] == 'Close'
             trades.loc[is_closed, 'current_price'] = trades.loc[is_closed, 'exit_price']
-            
             trades['market_value'] = (trades['quantity'] * trades['current_price']).round(2)
             trades['gain'] = (trades['market_value'] - trades['total_cost']).round(2)
             trades['gain_pct'] = ((trades['gain'] / trades['total_cost'].replace(0, 1)) * 100).round(2)
-            
             trades['daily_change'] = (((trades['current_price'] - trades['prev_close']) / trades['prev_close'].replace(0, 1)) * 100).round(2)
             trades.loc[is_closed, 'daily_change'] = 0.0
 
@@ -84,43 +70,22 @@ def calculate_portfolio_metrics():
         cash_available = round(total_in - total_out, 2)
 
         vals = {
-            "cost_open": cost_open,
-            "market_val_open": market_val_open,
-            "cost_closed": cost_closed,
-            "sales_closed": sales_closed,
-            "total_deposited": total_dep,
-            "total_withdrawn": total_wit,
-            "total_returns": total_ret,
-            "cash": cash_available,
+            "cost_open": cost_open, "market_val_open": market_val_open, "cost_closed": cost_closed, "sales_closed": sales_closed,
+            "total_deposited": total_dep, "total_withdrawn": total_wit, "total_returns": total_ret, "cash": cash_available,
             "all_trades": trades, "deposits": dep, "withdrawals": wit, "returns": ret
         }
-        
         vals['unrealized_pl'] = round(vals['market_val_open'] - vals['cost_open'], 2)
         vals['realized_pl'] = round(vals['sales_closed'] - vals['cost_closed'], 2)
         vals['equity'] = round(vals['cash'] + vals['market_val_open'], 2)
-        
         return vals
-
     except Exception as e:
         logger.error(f"Error in metrics: {str(e)}")
-        return {
-            "cost_open": 0, "market_val_open": 0, "cost_closed": 0, "sales_closed": 0,
-            "total_deposited": 0, "total_withdrawn": 0, "total_returns": 0, "cash": 0,
-            "unrealized_pl": 0, "realized_pl": 0, "equity": 0,
-            "all_trades": pd.DataFrame(), "deposits": pd.DataFrame(), 
-            "withdrawals": pd.DataFrame(), "returns": pd.DataFrame()
-        }
+        # إرجاع هيكل فارغ لمنع توقف التطبيق
+        return {"cost_open": 0, "market_val_open": 0, "cash": 0, "all_trades": pd.DataFrame(), "unrealized_pl":0, "realized_pl":0, "total_deposited":0, "total_withdrawn":0, "total_returns":0, "deposits":pd.DataFrame(), "withdrawals":pd.DataFrame(), "returns":pd.DataFrame()}
 
 def get_comprehensive_performance(trades_df, returns_df):
     if trades_df.empty: return pd.DataFrame(), pd.DataFrame()
-
-    sector_trades = trades_df.groupby('sector').agg({
-        'total_cost': 'sum',
-        'gain': 'sum',
-        'market_value': 'sum',
-        'symbol': 'count'
-    }).reset_index()
-    
+    sector_trades = trades_df.groupby('sector').agg({'total_cost': 'sum', 'gain': 'sum', 'market_value': 'sum', 'symbol': 'count'}).reset_index()
     sector_dividends = pd.DataFrame()
     if not returns_df.empty:
         unique_ret_syms = returns_df['symbol'].unique()
@@ -128,56 +93,40 @@ def get_comprehensive_performance(trades_df, returns_df):
         returns_df['sector'] = returns_df['symbol'].map(info_map)
         sector_dividends = returns_df.groupby('sector')['amount'].sum().reset_index()
         sector_dividends.rename(columns={'amount': 'total_dividends'}, inplace=True)
-    
     if not sector_dividends.empty:
         sector_perf = pd.merge(sector_trades, sector_dividends, on='sector', how='left')
         sector_perf['total_dividends'] = sector_perf['total_dividends'].fillna(0)
     else:
         sector_perf = sector_trades
         sector_perf['total_dividends'] = 0.0
-        
     sector_perf['net_profit'] = (sector_perf['gain'] + sector_perf['total_dividends']).round(2)
     sector_perf['roi_pct'] = ((sector_perf['net_profit'] / sector_perf['total_cost'].replace(0, 1)) * 100).round(2)
 
-    stock_trades = trades_df.groupby(['symbol', 'company_name', 'sector']).agg({
-        'total_cost': 'sum',
-        'gain': 'sum',
-        'market_value': 'sum',
-        'quantity': 'sum'
-    }).reset_index()
-    
+    stock_trades = trades_df.groupby(['symbol', 'company_name', 'sector']).agg({'total_cost': 'sum', 'gain': 'sum', 'market_value': 'sum', 'quantity': 'sum'}).reset_index()
     stock_dividends = pd.DataFrame()
     if not returns_df.empty:
         stock_dividends = returns_df.groupby('symbol')['amount'].sum().reset_index()
         stock_dividends.rename(columns={'amount': 'total_dividends'}, inplace=True)
-        
     if not stock_dividends.empty:
         stock_perf = pd.merge(stock_trades, stock_dividends, on='symbol', how='left')
         stock_perf['total_dividends'] = stock_perf['total_dividends'].fillna(0)
     else:
         stock_perf = stock_trades
         stock_perf['total_dividends'] = 0.0
-        
     stock_perf['net_profit'] = (stock_perf['gain'] + stock_perf['total_dividends']).round(2)
     stock_perf['roi_pct'] = ((stock_perf['net_profit'] / stock_perf['total_cost'].replace(0, 1)) * 100).round(2)
-    
     return sector_perf, stock_perf
 
 def get_rebalancing_advice(df_open, targets_df, total_portfolio_value):
-    if df_open.empty or targets_df.empty or total_portfolio_value == 0:
-        return pd.DataFrame()
-
+    if df_open.empty or targets_df.empty or total_portfolio_value == 0: return pd.DataFrame()
     current = df_open.groupby('sector')['market_value'].sum().reset_index()
     merged = pd.merge(current, targets_df, on='sector', how='outer').fillna(0)
-    
     merged['target_value'] = (merged['target_percentage'] / 100) * total_portfolio_value
     merged['diff'] = merged['target_value'] - merged['market_value']
     merged['action'] = merged['diff'].apply(lambda x: 'شراء (زيادة)' if x > 0 else 'بيع (تقليص)')
     merged['suggested_amount'] = merged['diff'].abs().round(2)
-    
     threshold = total_portfolio_value * 0.01 
     advice_df = merged[merged['suggested_amount'] > threshold].copy()
-    
     return advice_df[['sector', 'action', 'suggested_amount', 'target_percentage']]
 
 def get_dividends_calendar(returns_df):
@@ -196,71 +145,42 @@ def generate_equity_curve(trades_df):
     df['cumulative_invested'] = df['total_cost'].cumsum()
     return df
 
-# --- حساب التراجع التاريخي (Drawdown Analysis) ---
 @st.cache_data(ttl=3600)
 def calculate_historical_drawdown(open_trades_df):
-    """
-    يقوم بجلب بيانات تاريخية لأسهم المحفظة الحالية لمدة سنة
-    ويحسب منحنى التراجع الافتراضي للمحفظة
-    """
     if open_trades_df.empty: return pd.DataFrame()
-    
     symbols = open_trades_df['symbol'].unique().tolist()
-    # جلب بيانات سنة كاملة
     data = {}
     try:
         for sym in symbols:
-            # نجلب سنة كاملة
             hist = get_chart_history(sym, "1y", "1d")
-            if hist is not None and not hist.empty:
-                data[sym] = hist['Close']
+            if hist is not None and not hist.empty: data[sym] = hist['Close']
     except: return pd.DataFrame()
-    
     if not data: return pd.DataFrame()
-    
-    # دمج البيانات في داتافريم واحد
     prices_df = pd.DataFrame(data).ffill().dropna()
     if prices_df.empty: return pd.DataFrame()
-    
-    # حساب قيمة المحفظة التاريخية (افتراض الثبات)
     portfolio_history = pd.Series(0, index=prices_df.index)
-    
     for _, row in open_trades_df.iterrows():
         sym = row['symbol']
         qty = row['quantity']
-        if sym in prices_df.columns:
-            portfolio_history += prices_df[sym] * qty
-            
-    # حساب Drawdown
+        if sym in prices_df.columns: portfolio_history += prices_df[sym] * qty
     rolling_max = portfolio_history.cummax()
     drawdown = (portfolio_history - rolling_max) / rolling_max * 100
-    
-    # تجهيز الداتافريم للرسم
-    result = pd.DataFrame({
-        'date': drawdown.index,
-        'drawdown': drawdown.values,
-        'value': portfolio_history.values
-    })
-    return result
+    return pd.DataFrame({'date': drawdown.index, 'drawdown': drawdown.values})
 
 def update_prices():
     try:
         trades = fetch_table("Trades")
         wl = fetch_table("Watchlist")
         if trades.empty and wl.empty: return False
-        
         trade_symbols = trades.loc[trades['status'] != 'Close', 'symbol'].dropna().unique().tolist() if not trades.empty else []
         wl_symbols = wl['symbol'].dropna().unique().tolist() if not wl.empty else []
         symbols = list(set(trade_symbols + wl_symbols))
-        
         data = fetch_batch_data(symbols) 
         if not data: return False
-        
         with get_db() as conn:
             for s, d in data.items():
                 if d['price'] > 0:
-                    conn.execute("UPDATE Trades SET current_price=?, prev_close=?, year_high=?, year_low=?, dividend_yield=? WHERE symbol=?", 
-                        (d['price'], d['prev_close'], d['year_high'], d['year_low'], d['dividend_yield'], s))
+                    conn.execute("UPDATE Trades SET current_price=?, prev_close=?, year_high=?, year_low=?, dividend_yield=? WHERE symbol=?", (d['price'], d['prev_close'], d['year_high'], d['year_low'], d['dividend_yield'], s))
             conn.commit()
         create_smart_backup()
         st.cache_data.clear()
@@ -280,6 +200,4 @@ def create_smart_backup():
                     if 'date' in c: df[c] = df[c].astype(str)
                 df.to_excel(writer, sheet_name=t, index=False)
         return True
-    except Exception as e:
-        logger.error(f"Error in create_smart_backup: {str(e)}")
-        return False
+    except: return False
