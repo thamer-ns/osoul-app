@@ -21,9 +21,10 @@ def render_navbar():
     </div>
     """, unsafe_allow_html=True)
 
-    cols = st.columns(9, gap="small")
-    labels = ['الرئيسية', 'مضاربة', 'استثمار', 'السيولة', 'التحليل', 'إضافة', 'الإعدادات', 'تحديث', 'خروج']
-    keys = ['home', 'spec', 'invest', 'cash', 'analysis', 'add', 'settings', 'update', 'logout']
+    # تم إضافة "أدوات" للقائمة
+    cols = st.columns(10, gap="small")
+    labels = ['الرئيسية', 'مضاربة', 'استثمار', 'السيولة', 'التحليل', 'أدوات', 'إضافة', 'الإعدادات', 'تحديث', 'خروج']
+    keys = ['home', 'spec', 'invest', 'cash', 'analysis', 'tools', 'add', 'settings', 'update', 'logout']
     
     for col, label, key in zip(cols, labels, keys):
         active = (st.session_state.get('page') == key)
@@ -67,11 +68,9 @@ def render_table(df, cols_def):
             val = row.get(k, "-")
             disp = val
             
-            # 1. معالجة التواريخ
             if 'date' in k and val:
                 disp = str(val)[:10]
 
-            # 2. معالجة الحالة
             elif k == 'status':
                 if is_closed:
                     bg, fg, txt = ("#F3F4F6", "#4B5563", "مغلقة")
@@ -79,17 +78,19 @@ def render_table(df, cols_def):
                     bg, fg, txt = ("#DCFCE7", "#166534", "مفتوحة") 
                 disp = f"<span style='background:{bg}; color:{fg}; padding:5px 15px; border-radius:20px; font-size:0.8rem; font-weight:800;'>{txt}</span>"
             
-            # 3. معالجة الأوزان (منطق الألوان والهامش)
+            # منطق الألوان للأوزان (أخضر إذا تحقق الهدف، أحمر إذا انحرف)
             elif k == 'current_weight':
                 try:
                     curr = float(val)
                     target = float(row.get('target_percentage', 0))
-                    margin = 1.5
+                    # هامش بسيط 1.5%
                     if target > 0:
-                        diff = curr - target
-                        if abs(diff) <= margin: color = "#10B981" 
-                        else: color = "#EF4444" 
-                    else: color = "#0e6ba8"
+                        if abs(curr - target) <= 1.5:
+                            color = "#10B981" # أخضر (متحقق)
+                        else:
+                            color = "#EF4444" # أحمر (منحرف)
+                    else:
+                        color = "#0e6ba8"
                     disp = f"<span style='color:{color}; font-weight:bold;'>{curr:.2f}%</span>"
                 except: disp = "-"
             
@@ -97,7 +98,6 @@ def render_table(df, cols_def):
                 try: disp = f"{float(val):.2f}%"
                 except: disp = "-"
 
-            # 4. معالجة الأرقام المالية ونسب الربح
             elif k in ['gain', 'gain_pct', 'daily_change', 'remaining', 'net_profit', 'roi_pct', 'return_pct']:
                 if is_closed and k == 'daily_change':
                     disp = "<span style='color:#9CA3AF'>-</span>"
@@ -110,7 +110,6 @@ def render_table(df, cols_def):
                         disp = f"<span style='color:{c}; direction:ltr; font-weight:bold;'>{fmt}{suffix}</span>"
                     except: disp = val
             
-            # تم إضافة 'amount' هنا ليظهر بتنسيق العملة في التقويم
             elif k in ['market_value', 'total_cost', 'entry_price', 'current_price', 'exit_price', 'total_dividends', 'suggested_amount', 'amount']:
                 try: disp = "{:,.2f}".format(float(val))
                 except: disp = val
