@@ -37,7 +37,6 @@ def render_kpi(label, value, color_condition=None):
     C = st.session_state.custom_colors
     val_c = C.get('main_text')
     
-    # منطق الألوان للأرقام
     if color_condition == "blue": val_c = C.get('primary')
     elif isinstance(color_condition, (int, float)):
         val_c = C.get('success') if color_condition >= 0 else C.get('danger')
@@ -60,7 +59,6 @@ def render_table(df, cols_def):
     
     for _, row in df.iterrows():
         cells = ""
-        # التحقق من الحالة لتحديد التنسيق
         status_val = str(row.get('status', '')).lower()
         is_closed = status_val in ['close', 'sold', 'مغلقة', 'مباعة']
         
@@ -68,16 +66,19 @@ def render_table(df, cols_def):
             val = row.get(k, "-")
             disp = val
             
-            # 1. تنسيق الحالة
-            if k == 'status':
+            # معالجة تاريخ البيع: يظهر فقط للمغلقة
+            if k == 'exit_date':
+                if not is_closed: disp = "-"
+                elif val: disp = str(val)[:10]
+
+            elif k == 'status':
                 if is_closed:
                     bg, fg, txt = ("#F3F4F6", "#4B5563", "مغلقة")
                 else:
                     bg, fg, txt = ("#DCFCE7", "#166534", "مفتوحة")
                 disp = f"<span style='background:{bg}; color:{fg}; padding:4px 10px; border-radius:12px; font-size:0.75rem; font-weight:800;'>{txt}</span>"
             
-            # 2. تنسيق النسب المئوية والألوان (ربح/خسارة)
-            elif k in ['gain', 'gain_pct', 'daily_change', 'unrealized_pl', 'realized_pl']:
+            elif k in ['gain', 'gain_pct', 'daily_change']:
                 if is_closed and k == 'daily_change':
                     disp = "<span style='color:#9CA3AF'>-</span>"
                 else:
@@ -89,17 +90,22 @@ def render_table(df, cols_def):
                         disp = f"<span style='color:{c}; direction:ltr; font-weight:bold;'>{fmt}{suffix}</span>"
                     except: disp = val
 
-            # 3. تنسيق الأرقام العادية (العملة)
-            elif k in ['market_value', 'total_cost', 'amount', 'entry_price', 'current_price', 'price']:
+            elif k in ['market_value', 'total_cost', 'entry_price', 'current_price', 'year_high', 'year_low']:
                 try: disp = "{:,.2f}".format(float(val))
                 except: disp = val
             
-            # 4. تنسيق الكميات (بدون فواصل عشرية)
+            # الوزن النسبي
+            elif k == 'local_weight':
+                try:
+                    num = float(val)
+                    if num == 0: disp = "-"
+                    else: disp = f"{num:.2f}%"
+                except: disp = "-"
+                
             elif k in ['quantity']:
                 try: disp = "{:,.0f}".format(float(val))
                 except: disp = val
                 
-            # 5. تنسيق التاريخ
             elif 'date' in k and val:
                 disp = str(val)[:10]
 
