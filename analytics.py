@@ -7,9 +7,17 @@ from config import BACKUP_DIR
 import streamlit as st
 import logging
 
-# إعداد السجل (Logging) كما اقترح التقرير
-logging.basicConfig(level=logging.ERROR)
+# إعداد السجل ليحفظ الأخطاء في ملف خارجي + يظهرها في الشاشة
+logging.basicConfig(
+    level=logging.ERROR,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("app_errors.log", encoding='utf-8'), # يحفظ في ملف
+        logging.StreamHandler() # يظهر في الشاشة السوداء
+    ]
+)
 logger = logging.getLogger(__name__)
+
 
 def calculate_portfolio_metrics():
     try:
