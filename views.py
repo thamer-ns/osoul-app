@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from datetime import date
-from analytics import calculate_portfolio_metrics, update_prices, create_smart_backup, get_comprehensive_performance
+from analytics import calculate_portfolio_metrics, update_prices, create_smart_backup, get_comprehensive_performance, get_rebalancing_advice, get_dividends_calendar, generate_equity_curve
 from components import render_kpi, render_table, render_navbar
 from charts import view_advanced_chart
 from market_data import get_static_info, get_tasi_data
@@ -69,6 +69,15 @@ def view_dashboard(fin):
     with c3: render_kpi("القيمة السوقية", f"{fin['market_val_open']:,.2f}", "blue", help_text="قيمة الأسهم الحالية في السوق")
     total_pl = fin['unrealized_pl'] + fin['realized_pl'] + fin['total_returns']
     with c4: render_kpi("صافي الربح/الخسارة", f"{total_pl:,.2f}", total_pl, help_text="الأرباح المحققة + العائمة + التوزيعات")
+    
+    # --- الجديد: منحنى النمو ---
+    st.markdown("---")
+    st.markdown("### 📈 منحنى نمو الاستثمار")
+    curve_df = generate_equity_curve(fin['all_trades'])
+    if not curve_df.empty:
+        fig = px.line(curve_df, x='date', y='cumulative_invested', title='تطور حجم الاستثمار (التكلفة التراكمية)', markers=True)
+        fig.update_layout(font=dict(family="Cairo"), yaxis_title="القيمة (SAR)", xaxis_title="التاريخ")
+        st.plotly_chart(fig, use_container_width=True)
 
 def view_portfolio(fin, page_key):
     if page_key == 'spec':
@@ -94,13 +103,10 @@ def view_portfolio(fin, page_key):
     df_open = df_strategy[df_strategy['status'] == 'Open'].copy()
     df_closed = df_strategy[df_strategy['status'] == 'Close'].copy()
 
-    tab1, tab2 = st.tabs([f"الصفقات القائمة ({len(df_open)})", f"الصفقات المغلقة ({len(df_closed)})"])
+    tab1, tab2, tab3 = st.tabs([f"الصفقات القائمة ({len(df_open)})", "التحليل و إعادة التوازن", f"الصفقات المغلقة ({len(df_closed)})"])
 
     with tab1:
         if not df_open.empty:
-            # ==========================================
-            # 1. جدول توزيع القطاعات (الوزن والهدف)
-            # ==========================================
             st.markdown("#### ملخص توزيع القطاعات")
             sector_summary = df_open.groupby('sector').agg({
                 'symbol': 'count',
@@ -125,8 +131,8 @@ def view_portfolio(fin, page_key):
                 ('sector', 'القطاع'),
                 ('symbol', 'عدد الشركات'),
                 ('total_cost', 'التكلفة'),
-                ('current_weight', 'الوزن الحالي %'),
-                ('target_percentage', 'الوزن المستهدف %'),
+                ('current_weight', 'الوزن الحالي'),
+                ('target_percentage', 'الوزن المستهدف'),
                 ('remaining', 'المتبقي للهدف')
             ]
             
@@ -134,58 +140,11 @@ def view_portfolio(fin, page_key):
             render_table(sorted_sectors, cols_sector)
             
             st.markdown("---")
-
-            # ==========================================
-            # 2. التحليل المالي الشامل (الجديد)
-            # ==========================================
-            st.markdown("#### التحليل المالي الشامل (الربح + العوائد)")
-            
-            # جلب البيانات المعالجة من analytics.py
-            sec_perf, stock_perf = get_comprehensive_performance(df_strategy, fin['returns'])
-            
-            t_perf1, t_perf2 = st.tabs(["ربحية القطاعات", "ربحية الأسهم"])
-            
-            with t_perf1:
-                if not sec_perf.empty:
-                    cols_sec_perf = [
-                        ('sector', 'القطاع'),
-                        ('total_cost', 'حجم الاستثمار'),
-                        ('gain', 'أرباح رأسمالية'),
-                        ('total_dividends', 'توزيعات نقدية'),
-                        ('net_profit', 'الربح الصافي'),
-                        ('roi_pct', 'العائد الكلي %')
-                    ]
-                    render_table(sec_perf.sort_values(by='net_profit', ascending=False), cols_sec_perf)
-                else: st.info("لا توجد بيانات.")
-
-            with t_perf2:
-                if not stock_perf.empty:
-                    cols_stock_perf = [
-                        ('company_name', 'الشركة'),
-                        ('symbol', 'الرمز'),
-                        ('total_cost', 'التكلفة الكلية'),
-                        ('gain', 'فرق السعر (ربح/خسارة)'),
-                        ('total_dividends', 'العوائد المستلمة'),
-                        ('net_profit', 'صافي الربح'),
-                        ('roi_pct', 'العائد %')
-                    ]
-                    render_table(stock_perf.sort_values(by='net_profit', ascending=False), cols_stock_perf)
-
-            st.markdown("---")
-
-            # ==========================================
-            # 3. جدول تفاصيل الصفقات الحالية
-            # ==========================================
-            st.markdown("#### تفاصيل الصفقات المفتوحة")
+            st.markdown("#### تفاصيل الصفقات")
             
             total_val = df_open['market_value'].sum()
             df_open['local_weight'] = (df_open['market_value'] / total_val * 100) if total_val > 0 else 0
             
-            c1, c2, c3 = st.columns(3)
-            with c1: st.metric("القيمة السوقية", f"{total_val:,.2f}")
-            with c2: st.metric("الربح/الخسارة (العائم)", f"{df_open['gain'].sum():,.2f}")
-            with c3: st.metric("عدد الشركات", len(df_open))
-
             cols_open = [
                 ('company_name', 'الشركة'),
                 ('symbol', 'الرمز'),
@@ -207,8 +166,48 @@ def view_portfolio(fin, page_key):
             render_table(sorted_open, cols_open)
         else:
             st.info("المحفظة فارغة حالياً.")
-
+    
     with tab2:
+        # --- التحليل الشامل ---
+        st.markdown("### التحليل المالي الشامل")
+        sec_perf, stock_perf = get_comprehensive_performance(df_strategy, fin['returns'])
+        
+        if not sec_perf.empty:
+            st.markdown("**أداء القطاعات (الربح + العوائد)**")
+            cols_sec_perf = [
+                ('sector', 'القطاع'),
+                ('total_cost', 'حجم الاستثمار'),
+                ('gain', 'أرباح رأسمالية'),
+                ('total_dividends', 'توزيعات نقدية'),
+                ('net_profit', 'الربح الصافي'),
+                ('roi_pct', 'العائد الكلي %')
+            ]
+            render_table(sec_perf.sort_values(by='net_profit', ascending=False), cols_sec_perf)
+        
+        st.markdown("---")
+        
+        # --- إعادة التوازن الذكي ---
+        st.markdown("### ⚖️ مقترح إعادة التوازن")
+        targets_df = fetch_table("SectorTargets")
+        if not targets_df.empty and not df_open.empty:
+            total_mv_strat = df_open['market_value'].sum()
+            advice = get_rebalancing_advice(df_open, targets_df, total_mv_strat)
+            
+            if not advice.empty:
+                st.info(f"لضبط المحفظة لتطابق الأوزان المستهدفة بناءً على القيمة الحالية ({total_mv_strat:,.2f})، يقترح النظام التالي:")
+                cols_advice = [
+                    ('sector', 'القطاع'),
+                    ('target_percentage', 'الهدف %'),
+                    ('action', 'الإجراء المقترح'),
+                    ('suggested_amount', 'القيمة التقديرية (ريال)')
+                ]
+                render_table(advice, cols_advice)
+            else:
+                st.success("🎉 محفظتك متوازنة تماماً مع أهدافك!")
+        else:
+            st.warning("الرجاء تحديد الأوزان المستهدفة في الإعدادات أولاً.")
+
+    with tab3:
         if not df_closed.empty:
             st.markdown("### سجل الصفقات المغلقة")
             cols_closed = [
@@ -228,10 +227,20 @@ def view_liquidity():
     fin = calculate_portfolio_metrics()
     
     c1, c2, c3 = st.columns(3)
-    with c1: render_kpi("إجمالي الإيداعات", f"{fin['total_deposited']:,.2f}", "blue", help_text="كل المبالغ التي قمت بتحويلها للمحفظة")
-    with c2: render_kpi("إجمالي السحوبات", f"{fin['total_withdrawn']:,.2f}", -1, help_text="المبالغ التي سحبتها من المحفظة")
-    with c3: render_kpi("إجمالي العوائد", f"{fin['total_returns']:,.2f}", "success", help_text="التوزيعات النقدية المستلمة")
+    with c1: render_kpi("إجمالي الإيداعات", f"{fin['total_deposited']:,.2f}", "blue")
+    with c2: render_kpi("إجمالي السحوبات", f"{fin['total_withdrawn']:,.2f}", -1)
+    with c3: render_kpi("إجمالي العوائد", f"{fin['total_returns']:,.2f}", "success")
     
+    st.markdown("---")
+    
+    # --- الجديد: تقويم التوزيعات ---
+    st.markdown("### 📅 تقويم التوزيعات النقدية")
+    div_cal = get_dividends_calendar(fin['returns'])
+    if not div_cal.empty:
+        st.dataframe(div_cal, use_container_width=True)
+    else:
+        st.info("لا توجد توزيعات مسجلة لعرض التقويم.")
+        
     st.markdown("---")
     
     cols_dep = [('date', 'التاريخ'), ('amount', 'المبلغ'), ('note', 'ملاحظات')]
