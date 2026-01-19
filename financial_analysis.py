@@ -5,52 +5,84 @@ import requests
 from bs4 import BeautifulSoup
 from market_data import get_ticker_symbol
 
-def scrape_google_finance(symbol):
+# === روبوت جوجل المالي المحسن (Google Finance Scraper) ===
+def scrape_google_finance_advanced(symbol):
     """
-    محاولة جلب السعر والمؤشرات الأساسية من Google Finance
-    كدعم إضافي في حال فشل Yahoo.
+    محاولة قوية لسحب البيانات من واجهة جوجل المالية
+    تعتمد على البحث عن النصوص بدلاً من الكلاسات المتغيرة.
     """
     clean_sym = str(symbol).replace('.SR', '').replace('.sr', '')
     url = f"https://www.google.com/finance/quote/{clean_sym}:TADAWUL?hl=en"
     
     data = {}
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-        response = requests.get(url, headers=headers, timeout=3) # تقليل المهلة لتسريع التطبيق
+        # استخدام هيدر متصفح حقيقي لتجنب الحجب
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9'
+        }
+        response = requests.get(url, headers=headers, timeout=4)
         
         if response.status_code == 200:
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # 1. السعر
-            price_div = soup.find('div', {'class': 'YMlKec fxKbKc'})
-            if price_div:
-                data['price'] = float(price_div.text.replace(',', '').replace('SAR', '').strip())
+            # 1. البحث عن السعر (عادة يكون أكبر رقم في الصفحة)
+            # نبحث عن الكلاس الذي يحتوي العملة SAR أو الرقم الكبير
+            price_candidates = soup.find_all('div', string=lambda t: t and '.' in t)
+            for tag in price_candidates:
+                # محاولة التقاط السعر من السياق
+                parent = tag.parent
+                if 'SAR' in parent.text or 'YMlKec' in str(tag.get('class')):
+                    try:
+                        price_val = float(tag.text.replace(',', '').replace('SAR', '').strip())
+                        if price_val > 0:
+                            data['price'] = price_val
+                            break
+                    except: continue
 
-            # 2. المؤشرات من الجدول
-            items = soup.find_all('div', {'class': 'gyFHrc'})
-            for item in items:
-                text = item.text.upper()
-                val_div = item.find('div', {'class': 'P6K39c'})
-                if not val_div: continue
-                val_str = val_div.text.strip()
+            # 2. البحث عن المؤشرات في الجدول (P/E, Market Cap, Yield)
+            # هذه الطريقة تبحث عن "Label" ثم تأخذ القيمة التي تليها
+            all_text = soup.get_text()
+            
+            # دالة مساعدة لاستخراج القيمة بعد نص معين
+            def extract_val(label):
+                try:
+                    # نبحث عن النص في الـ HTML الخام لأنه أدق في الترتيب
+                    items = soup.find_all("div", text=label)
+                    if not items: items = soup.find_all("div", string=label)
+                    
+                    for item in items:
+                        # القيمة عادة تكون في العنصر المجاور أو الابن
+                        parent = item.parent
+                        value_div = parent.find_next_sibling("div")
+                        if value_div:
+                            return value_div.text.strip()
+                except: return None
+                return None
+
+            # استخراج P/E
+            pe_str = extract_val("P/E ratio")
+            if pe_str and pe_str != '-':
+                data['pe'] = float(pe_str.replace(',', ''))
+
+            # استخراج العائد
+            div_str = extract_val("Dividend yield")
+            if div_str and div_str != '-':
+                data['div_yield'] = float(div_str.replace('%', '').strip())
                 
-                if val_str == '-': continue
-                
-                if 'P/E RATIO' in text:
-                    data['pe'] = float(val_str.replace(',', ''))
-                elif 'DIVIDEND YIELD' in text:
-                    data['div_yield'] = float(val_str.replace('%', '').strip())
-                elif 'MARKET CAP' in text:
-                    # تحويل القيم النصية (B, M, T)
-                    mult = 1
-                    if 'T' in val_str: mult = 1e12
-                    elif 'B' in val_str: mult = 1e9
-                    elif 'M' in val_str: mult = 1e6
-                    clean_val = val_str.replace('SAR', '').replace('T', '').replace('B', '').replace('M', '').strip()
-                    try: data['mcap'] = float(clean_val) * mult
-                    except: pass
-    except:
-        pass
+            # استخراج القيمة السوقية
+            mcap_str = extract_val("Market cap")
+            if mcap_str:
+                mult = 1
+                if 'T' in mcap_str: mult = 1e12
+                elif 'B' in mcap_str: mult = 1e9
+                elif 'M' in mcap_str: mult = 1e6
+                clean = mcap_str.replace('SAR', '').replace('T', '').replace('B', '').replace('M', '').strip()
+                try: data['mcap'] = float(clean) * mult
+                except: pass
+
+    except Exception as e:
+        pass # الفشل الصامت للمتابعة
     
     return data
 
@@ -58,7 +90,7 @@ def scrape_google_finance(symbol):
 def get_fundamental_ratios(symbol):
     ticker_sym = get_ticker_symbol(symbol)
     
-    # القيم الافتراضية (None بدلاً من 0 لتمييز "البيانات المفقودة" عن "القيمة الصفرية")
+    # تهيئة القيم بـ None لتمييز "عدم التوفر" عن "الصفر"
     metrics = {
         "P/E": None, "P/B": None, "ROE": None, "EPS": None, 
         "Book_Value": None, "Current_Price": 0.0, "Fair_Value": None,
@@ -69,103 +101,109 @@ def get_fundamental_ratios(symbol):
     try:
         t = yf.Ticker(ticker_sym)
         
-        # === 1. السعر (الأولوية القصوى) ===
-        # نحاول جوجل أولاً (لأنه أدق حالياً)
-        g_data = scrape_google_finance(symbol)
-        metrics["Current_Price"] = g_data.get('price', 0.0)
+        # ==========================================
+        # 1. معركة السعر (Price Hunting)
+        # ==========================================
+        # أ) محاولة جوجل
+        g_data = scrape_google_finance_advanced(symbol)
+        price = g_data.get('price', 0.0)
         
-        # إذا فشل جوجل، نحاول ياهو (لحظي ثم تاريخي)
-        if metrics["Current_Price"] == 0:
-            if hasattr(t, 'fast_info') and t.fast_info.last_price:
-                metrics["Current_Price"] = float(t.fast_info.last_price)
-            else:
-                hist = t.history(period="5d")
-                if not hist.empty:
-                    metrics["Current_Price"] = float(hist['Close'].iloc[-1])
+        # ب) محاولة ياهو التاريخية (موثوقة جداً للإغلاقات)
+        if price == 0:
+            hist = t.history(period="5d")
+            if not hist.empty:
+                price = float(hist['Close'].iloc[-1])
+        
+        # ج) محاولة ياهو اللحظية
+        if price == 0 and hasattr(t, 'fast_info') and t.fast_info.last_price:
+            price = float(t.fast_info.last_price)
+            
+        metrics["Current_Price"] = price
+        if price == 0: return metrics # لا يمكن عمل شيء بدون سعر
 
-        # إذا لم نجد سعراً نهائياً، نتوقف
-        if metrics["Current_Price"] == 0: return None
-
-        # === 2. دمج البيانات (Hybrid) ===
+        # ==========================================
+        # 2. تعبئة المؤشرات المتاحة (Hybrid)
+        # ==========================================
         info = t.info if t.info else {}
         
-        # أ) التوزيعات (الأولوية لجوجل ثم ياهو)
-        div = g_data.get('div_yield')
-        if div is None and info.get('dividendYield') is not None:
-            div = info.get('dividendYield') * 100
-        metrics["Dividend_Yield"] = div
+        # دمج بيانات جوجل
+        metrics["P/E"] = g_data.get('pe')
+        metrics["Dividend_Yield"] = g_data.get('div_yield')
+        
+        # دمج بيانات ياهو الجاهزة (إذا لم نجدها في جوجل)
+        if metrics["P/E"] is None: metrics["P/E"] = info.get('trailingPE')
+        if metrics["Dividend_Yield"] is None and info.get('dividendYield'):
+            metrics["Dividend_Yield"] = info.get('dividendYield') * 100
 
-        # ب) مكرر الربحية (P/E)
-        pe = g_data.get('pe')
-        if pe is None and info.get('trailingPE') is not None:
-            pe = info.get('trailingPE')
-        metrics["P/E"] = pe
-
-        # ج) باقي المؤشرات من ياهو (غالباً غير موجودة في جوجل المالي المبسط)
+        metrics["P/B"] = info.get('priceToBook')
         metrics["EPS"] = info.get('trailingEps')
         metrics["Book_Value"] = info.get('bookValue')
-        metrics["P/B"] = info.get('priceToBook')
-        
         if info.get('returnOnEquity'): metrics["ROE"] = info.get('returnOnEquity') * 100
         if info.get('profitMargins'): metrics["Profit_Margin"] = info.get('profitMargins') * 100
-        if info.get('debtToEquity'): metrics["Debt_to_Equity"] = info.get('debtToEquity')
+        metrics["Debt_to_Equity"] = info.get('debtToEquity')
 
-        # === 3. الحساب اليدوي (للبيانات الناقصة) ===
-        # محاولة أخيرة لحساب EPS و P/B من القوائم المالية إذا كانت مفقودة
-        if metrics["EPS"] is None or metrics["Book_Value"] is None:
+        # ==========================================
+        # 3. الحساب اليدوي (للبيانات الناقصة)
+        # ==========================================
+        # محاولة حساب EPS إذا كان مفقوداً
+        if metrics["EPS"] is None:
             try:
-                # نحتاج عدد الأسهم
+                financials = t.financials
                 shares = info.get('sharesOutstanding')
                 if not shares: shares = t.get_shares_full(start="2024-01-01").iloc[-1]
                 
-                if shares:
-                    # حساب EPS
-                    if metrics["EPS"] is None:
-                        fin_stmt = t.financials
-                        if not fin_stmt.empty:
-                            net_income = None
-                            for k in ['Net Income', 'Net Income Common Stockholders']:
-                                if k in fin_stmt.index:
-                                    net_income = fin_stmt.loc[k].iloc[0]; break
-                            if net_income: metrics["EPS"] = net_income / shares
-
-                    # حساب Book Value
-                    if metrics["Book_Value"] is None:
-                        bal_sheet = t.balance_sheet
-                        if not bal_sheet.empty:
-                            equity = None
-                            if 'Stockholders Equity' in bal_sheet.index:
-                                equity = bal_sheet.loc['Stockholders Equity'].iloc[0]
-                            elif 'Total Assets' in bal_sheet.index:
-                                equity = bal_sheet.loc['Total Assets'].iloc[0] - bal_sheet.loc['Total Liabilities Net Minority Interest'].iloc[0]
-                            
-                            if equity: metrics["Book_Value"] = equity / shares
+                if not financials.empty and shares:
+                    # البحث بذكاء عن صف الدخل
+                    net_income = None
+                    for label in ['Net Income', 'Net Income Common Stockholders', 'Net Income Continuous Operations']:
+                        if label in financials.index:
+                            net_income = financials.loc[label].iloc[0]
+                            break
+                    
+                    if net_income: metrics["EPS"] = net_income / shares
             except: pass
 
-        # استكمال الحسابات المعتمدة على القيم المحسوبة
+        # إعادة حساب P/E إذا توفر EPS والسعر
         if metrics["P/E"] is None and metrics["EPS"] and metrics["EPS"] > 0:
-            metrics["P/E"] = metrics["Current_Price"] / metrics["EPS"]
-            
-        if metrics["P/B"] is None and metrics["Book_Value"] and metrics["Book_Value"] > 0:
-            metrics["P/B"] = metrics["Current_Price"] / metrics["Book_Value"]
+            metrics["P/E"] = price / metrics["EPS"]
 
-        # === 4. القيمة العادلة (Graham) ===
-        # نحسبها فقط إذا توفرت بيانات الربح والقيمة الدفترية (لا تصلح للريت غالباً)
+        # محاولة حساب Book Value يدوياً
+        if metrics["Book_Value"] is None:
+            try:
+                balance = t.balance_sheet
+                shares = info.get('sharesOutstanding') or t.get_shares_full(start="2024-01-01").iloc[-1]
+                
+                if not balance.empty and shares:
+                    equity = None
+                    if 'Stockholders Equity' in balance.index:
+                        equity = balance.loc['Stockholders Equity'].iloc[0]
+                    elif 'Total Assets' in balance.index:
+                        equity = balance.loc['Total Assets'].iloc[0] - balance.loc['Total Liabilities Net Minority Interest'].iloc[0]
+                    
+                    if equity: metrics["Book_Value"] = equity / shares
+            except: pass
+
+        # إعادة حساب P/B
+        if metrics["P/B"] is None and metrics["Book_Value"] and metrics["Book_Value"] > 0:
+            metrics["P/B"] = price / metrics["Book_Value"]
+
+        # ==========================================
+        # 4. القيمة العادلة والتقييم
+        # ==========================================
         if metrics["EPS"] and metrics["EPS"] > 0 and metrics["Book_Value"] and metrics["Book_Value"] > 0:
             metrics["Fair_Value"] = (22.5 * metrics["EPS"] * metrics["Book_Value"]) ** 0.5
 
-        # === 5. التقييم والرأي ===
+        # حساب النقاط
         score = 0
         opinions = []
         
         # P/E
         if metrics["P/E"]:
-            if 0 < metrics["P/E"] <= 15: score += 2; opinions.append(f"✅ مكرر ربحية ممتاز ({metrics['P/E']:.1f})")
-            elif 15 < metrics["P/E"] <= 25: score += 1; opinions.append("ℹ️ مكرر ربحية عادل")
-            elif metrics["P/E"] > 25: score -= 1; opinions.append("⚠️ مكرر ربحية مرتفع")
-        else:
-            opinions.append("⚪ مكرر الربحية غير متاح (ربما خسائر أو صندوق)")
-
+            pe = metrics["P/E"]
+            if 0 < pe <= 15: score += 2; opinions.append(f"✅ مكرر ربحية ممتاز ({pe:.1f})")
+            elif 15 < pe <= 25: score += 1; opinions.append(f"ℹ️ مكرر ربحية مقبول ({pe:.1f})")
+            elif pe > 25: score -= 1; opinions.append(f"⚠️ مكرر ربحية مرتفع ({pe:.1f})")
+        
         # P/B
         if metrics["P/B"] and 0 < metrics["P/B"] <= 2: 
             score += 1; opinions.append("✅ يتداول قرب القيمة الدفترية")
@@ -175,11 +213,13 @@ def get_fundamental_ratios(symbol):
             score += 1; opinions.append(f"💰 توزيعات قوية ({metrics['Dividend_Yield']:.1f}%)")
             
         # Fair Value
-        if metrics["Fair_Value"] and metrics["Current_Price"] < metrics["Fair_Value"]:
-            diff = ((metrics['Fair_Value'] - metrics['Current_Price']) / metrics['Fair_Value']) * 100
-            score += 2; opinions.append(f"💎 فرصة: أقل من العادلة بـ {diff:.1f}%")
+        if metrics["Fair_Value"] and metrics["Fair_Value"] > 0:
+            if price < metrics["Fair_Value"]:
+                diff = ((metrics['Fair_Value'] - price) / metrics['Fair_Value']) * 100
+                score += 2; opinions.append(f"💎 فرصة: أقل من العادلة بـ {diff:.1f}%")
+            else:
+                opinions.append("📉 السعر الحالي أعلى من القيمة العادلة")
 
-        # تصنيف النتيجة
         metrics["Score"] = max(0, min(10, 5 + score))
         if metrics["Score"] >= 8: metrics["Rating"] = "شراء قوي ⭐"
         elif metrics["Score"] >= 6: metrics["Rating"] = "شراء ✅"
@@ -190,6 +230,5 @@ def get_fundamental_ratios(symbol):
         return metrics
 
     except Exception as e:
-        # في أسوأ الأحوال، نعيد السعر فقط لكي لا يفشل البرنامج
-        if metrics["Current_Price"] > 0: return metrics
-        return None
+        # إرجاع ما تم جمعه حتى لو ناقص لتجنب انهيار الواجهة
+        return metrics
