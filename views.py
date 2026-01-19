@@ -1,9 +1,8 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px  # <--- هذا هو السطر الذي كان ناقصاً وسبب المشكلة
+import plotly.express as px
 from datetime import date
 
-# === الاستيرادات ===
 from components import render_navbar, render_kpi, render_table
 from analytics import (calculate_portfolio_metrics, update_prices, create_smart_backup, 
                        get_comprehensive_performance, get_rebalancing_advice, 
@@ -15,7 +14,6 @@ from database import execute_query, fetch_table
 from config import BACKUP_DIR, APP_NAME
 from data_source import TADAWUL_DB
 
-# === دوال المساعدة ===
 def apply_sorting(df, cols_definition, key_suffix):
     if df.empty: return df
     with st.expander("🔍 أدوات الفرز", expanded=False):
@@ -29,7 +27,6 @@ def apply_sorting(df, cols_definition, key_suffix):
     try: return df.sort_values(by=target, ascending=asc)
     except: return df
 
-# === الصفحات ===
 def view_dashboard(fin):
     try: t_price, t_change = get_tasi_data()
     except: t_price, t_change = 0, 0
@@ -70,8 +67,6 @@ def view_dashboard(fin):
         fig = px.line(curve, x='date', y='cumulative_invested', title='نمو حجم الاستثمار')
         fig.update_layout(font=dict(family="Cairo"), yaxis_title="القيمة", xaxis_title="التاريخ")
         st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("لا توجد بيانات كافية لرسم المنحنى.")
 
 def view_portfolio(fin, page_key):
     target_strat = "مضاربة" if page_key == 'spec' else "استثمار"
@@ -79,15 +74,13 @@ def view_portfolio(fin, page_key):
     all_data = fin['all_trades']
     
     if all_data.empty: st.info("لا توجد بيانات"); return
-    
     df_strat = all_data[(all_data['strategy'] == target_strat) & (all_data['asset_type'] != 'Sukuk')].copy()
-    
     if df_strat.empty: st.warning(f"محفظة {target_strat} فارغة"); return
     
     open_df = df_strat[df_strat['status']=='Open'].copy()
     closed_df = df_strat[df_strat['status']=='Close'].copy()
     
-    # تدقيق الحسابات
+    # إعادة الحسابات للتدقيق
     if not open_df.empty:
         open_df['total_cost'] = open_df['quantity'] * open_df['entry_price']
         open_df['market_value'] = open_df['quantity'] * open_df['current_price']
@@ -98,7 +91,6 @@ def view_portfolio(fin, page_key):
     
     with t1:
         if not open_df.empty:
-            # عرض القطاعات فقط في الاستثمار
             if page_key == 'invest':
                 st.markdown("#### توزيع القطاعات")
                 sec_sum = open_df.groupby('sector').agg({'symbol':'count','total_cost':'sum','market_value':'sum'}).reset_index()
@@ -111,7 +103,6 @@ def view_portfolio(fin, page_key):
                     sec_sum['target_percentage'] = sec_sum['target_percentage'].fillna(0.0)
                 else: sec_sum['target_percentage'] = 0.0
                 sec_sum['remaining'] = (total_mv * sec_sum['target_percentage']/100) - sec_sum['market_value']
-                
                 cols_sec = [('sector', 'القطاع'), ('symbol', 'عدد'), ('total_cost', 'التكلفة'), ('current_weight', 'الوزن %'), ('target_percentage', 'الهدف %'), ('remaining', 'المتبقي')]
                 render_table(apply_sorting(sec_sum, cols_sec, f"{page_key}_s"), cols_sec)
                 st.markdown("---")
@@ -131,30 +122,18 @@ def view_portfolio(fin, page_key):
             ]
             render_table(apply_sorting(open_df, cols_op, f"{page_key}_o"), cols_op)
             
-            # === قسم البيع ===
             st.markdown("---")
             with st.expander("🔻 تسجيل بيع / إغلاق صفقة", expanded=True):
-                st.info("لبيع سهم، اختره من القائمة وسجل سعر البيع.")
-                sell_options = open_df['symbol'].unique().tolist()
-                
+                sell_opts = open_df['symbol'].unique().tolist()
                 with st.form(f"sell_form_{page_key}"):
                     c1, c2, c3 = st.columns(3)
-                    selected_symbol = c1.selectbox("اختر السهم للبيع", sell_options)
-                    exit_price = c2.number_input("سعر البيع", min_value=0.01)
-                    exit_date = c3.date_input("تاريخ البيع", date.today())
-                    
+                    sel_sym = c1.selectbox("اختر السهم", sell_opts)
+                    ex_p = c2.number_input("سعر البيع", min_value=0.01)
+                    ex_d = c3.date_input("تاريخ البيع", date.today())
                     if st.form_submit_button("✅ تأكيد البيع"):
-                        try:
-                            execute_query(
-                                "UPDATE Trades SET status='Close', exit_price=?, exit_date=? WHERE symbol=? AND strategy=? AND status='Open'", 
-                                (exit_price, str(exit_date), selected_symbol, target_strat)
-                            )
-                            st.success(f"تم بيع {selected_symbol} بنجاح!")
-                            st.cache_data.clear()
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"حدث خطأ: {e}")
-        else: st.info("المحفظة فارغة حالياً")
+                        execute_query("UPDATE Trades SET status='Close', exit_price=?, exit_date=? WHERE symbol=? AND strategy=? AND status='Open'", (ex_p, str(ex_d), sel_sym, target_strat))
+                        st.success("تم البيع"); st.cache_data.clear(); st.rerun()
+        else: st.info("فارغة")
 
     with t2:
         if page_key == 'invest':
@@ -167,7 +146,7 @@ def view_portfolio(fin, page_key):
         if not open_df.empty:
             st.markdown("### تحليل المخاطر")
             dd = calculate_historical_drawdown(open_df)
-            if not dd.empty: st.metric("أقصى تراجع (Max Drawdown)", f"{dd['drawdown'].min():.2f}%")
+            if not dd.empty: st.metric("أقصى تراجع", f"{dd['drawdown'].min():.2f}%")
 
     with t3:
         if not closed_df.empty:
@@ -178,10 +157,8 @@ def view_portfolio(fin, page_key):
 def view_sukuk_portfolio(fin):
     st.header("📜 محفظة الصكوك")
     all_data = fin['all_trades']
-    
     if all_data.empty: st.info("لا توجد بيانات"); return
     sukuk_df = all_data[all_data['asset_type'] == 'Sukuk'].copy()
-    
     if sukuk_df.empty: st.warning("لم تقم بإضافة أي صكوك بعد."); return
     
     open_sukuk = sukuk_df[sukuk_df['status'] == 'Open'].copy()
@@ -209,9 +186,7 @@ def view_sukuk_portfolio(fin):
                 exit_d = c3.date_input("تاريخ العملية", date.today())
                 if st.form_submit_button("✅ تأكيد العملية"):
                     execute_query("UPDATE Trades SET status='Close', exit_price=?, exit_date=? WHERE symbol=? AND asset_type='Sukuk' AND status='Open'", (exit_p, str(exit_d), sel_sukuk))
-                    st.success(f"تم بيع {sel_sukuk} بنجاح")
-                    st.cache_data.clear()
-                    st.rerun()
+                    st.success("تم البيع"); st.cache_data.clear(); st.rerun()
 
 def view_liquidity():
     fin = calculate_portfolio_metrics()
@@ -254,10 +229,10 @@ def view_add_trade():
                         if n == f"سهم {sym}": n = f"صك {sym}"
                     if strat == "صكوك" and asset_val != "Sukuk": asset_val = "Sukuk"
                     execute_query("INSERT INTO Trades (symbol, company_name, sector, asset_type, date, quantity, entry_price, strategy, status, current_price) VALUES (?,?,?,?,?,?,?,?,?,?)", (sym, n, s, asset_val, str(d), qty, price, strat, 'Open', price))
-                    st.success("تمت إضافة الصفقة بنجاح"); st.cache_data.clear()
+                    st.success("تمت إضافة الصفقة"); st.cache_data.clear()
 
     with tab2:
-        st.info("تسجيل التوزيعات النقدية للأصول التي تملكها")
+        st.info("تسجيل التوزيعات النقدية")
         trades = fetch_table("Trades")
         if not trades.empty:
             open_assets = trades[trades['status'] == 'Open']['symbol'].unique().tolist()
@@ -265,14 +240,14 @@ def view_add_trade():
         if open_assets:
             with st.form("dividend_form"):
                 c1, c2 = st.columns(2)
-                selected_asset = c1.selectbox("اختر الأصل (سهم/صك)", open_assets)
+                selected_asset = c1.selectbox("اختر الأصل", open_assets)
                 amount = c2.number_input("قيمة التوزيعات (ريال)", min_value=0.01)
                 div_date = st.date_input("تاريخ الاستحقاق", date.today())
                 if st.form_submit_button("💰 تسجيل العائد"):
                     comp_name, _ = get_static_info(selected_asset)
                     execute_query("INSERT INTO ReturnsGrants (date, symbol, company_name, amount) VALUES (?,?,?,?)", (str(div_date), selected_asset, comp_name, amount))
-                    st.success(f"تم تسجيل {amount} ريال عائد"); st.cache_data.clear()
-        else: st.warning("لا توجد أصول مفتوحة لتسجيل عوائد لها.")
+                    st.success(f"تم تسجيل {amount} ريال"); st.cache_data.clear()
+        else: st.warning("لا توجد أصول مفتوحة.")
 
     with tab3:
         col_dep, col_wit = st.columns(2)
@@ -310,7 +285,6 @@ def view_tools():
 def view_settings():
     st.header("إعدادات وتوزيع القطاعات")
     st.info("💡 قم بتعديل النسب المستهدفة في الجدول أدناه مباشرة ثم اضغط حفظ.")
-    
     all_sectors = sorted(list(set(d['sector'] for d in TADAWUL_DB.values())))
     df_all_sectors = pd.DataFrame({'sector': all_sectors})
     saved_targets = fetch_table("SectorTargets")
@@ -327,9 +301,7 @@ def view_settings():
             "sector": st.column_config.TextColumn("القطاع", disabled=True, width="medium"),
             "target_percentage": st.column_config.NumberColumn("النسبة المستهدفة %", min_value=0, max_value=100, step=1, format="%.0f%%", width="small")
         },
-        hide_index=True,
-        use_container_width=True,
-        num_rows="fixed"
+        hide_index=True, use_container_width=True, num_rows="fixed"
     )
     
     if st.button("حفظ التغييرات"):
