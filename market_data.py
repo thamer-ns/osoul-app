@@ -21,53 +21,60 @@ def fetch_batch_data(symbols_list):
     unique = list(set(tickers_map.values()))
     results = {}
     
-    # معالجة كل سهم على حدة لضمان الدقة (Batching أحياناً يضيع بعض الأسهم السعودية)
-    for original_symbol, yahoo_symbol in tickers_map.items():
+    # نستخدم yf.download لأنها أسرع في جلب مجموعة أسهم دفعة واحدة
+    if unique:
         try:
-            t = yf.Ticker(yahoo_symbol)
-            price = None
-            prev_close = None
+            # جلب آخر يومين فقط
+            df = yf.download(unique, period="2d", group_by='ticker', progress=False)
             
-            # الطريقة المضمونة: السجل التاريخي
-            hist = t.history(period="2d")
-            
-            if not hist.empty:
-                price = hist['Close'].iloc[-1]
-                prev_close = hist['Close'].iloc[-2] if len(hist) > 1 else price
-            
-            # محاولة احتياطية
-            if not price and hasattr(t, 'fast_info'):
-                price = t.fast_info.last_price
-                prev_close = t.fast_info.previous_close
-
-            if price and price > 0:
-                results[original_symbol] = {
-                    'price': float(price),
-                    'prev_close': float(prev_close) if prev_close else float(price),
-                    'year_high': float(t.fast_info.year_high) if hasattr(t, 'fast_info') else price,
-                    'year_low': float(t.fast_info.year_low) if hasattr(t, 'fast_info') else price,
-                    'dividend_yield': 0.0 # نتجاهل التوزيعات الآن لتسريع الجلب
-                }
-        except: continue
+            for original, yahoo_sym in tickers_map.items():
+                try:
+                    # التعامل مع هيكل البيانات المعقد من yfinance
+                    if len(unique) > 1:
+                        stock_data = df[yahoo_sym]
+                    else:
+                        stock_data = df # إذا كان سهم واحد، الداتافريم يكون مباشراً
+                    
+                    if not stock_data.empty:
+                        # آخر سعر إغلاق
+                        last_price = float(stock_data['Close'].iloc[-1])
+                        # الإغلاق السابق
+                        prev_close = float(stock_data['Close'].iloc[-2]) if len(stock_data) > 1 else last_price
+                        
+                        if last_price > 0:
+                            results[original] = {
+                                'price': last_price,
+                                'prev_close': prev_close,
+                                'year_high': last_price, # بيانات تقريبية للسرعة
+                                'year_low': last_price,
+                                'dividend_yield': 0.0
+                            }
+                except: continue
+        except: pass
             
     return results
 
 @st.cache_data(ttl=300)
 def get_chart_history(symbol, period, interval):
     try:
-        t = yf.Ticker(get_ticker_symbol(symbol))
-        return t.history(period=period, interval=interval)
+        # استخدام download للحصول على الداتا فريم مباشرة
+        df = yf.download(get_ticker_symbol(symbol), period=period, interval=interval, progress=False)
+        return df if not df.empty else None
     except: return None
 
 @st.cache_data(ttl=300)
 def get_tasi_data():
+    """
+    إصلاح المؤشر: استخدام download بدلاً من Ticker
+    """
     try:
-        t = yf.Ticker("^TASI.SR")
-        hist = t.history(period="5d")
-        if not hist.empty:
-            last = hist['Close'].iloc[-1]
-            prev = hist['Close'].iloc[-2] if len(hist) > 1 else last
+        # نجلب 5 أيام لضمان تجاوز العطلات
+        df = yf.download("^TASI.SR", period="5d", progress=False)
+        if not df.empty:
+            last = df['Close'].iloc[-1]
+            prev = df['Close'].iloc[-2]
             change = ((last - prev) / prev) * 100
-            return last, change
-    except: pass
+            return float(last), float(change)
+    except: 
+        pass
     return 0.0, 0.0
