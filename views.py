@@ -47,12 +47,19 @@ def view_dashboard(fin):
         st.plotly_chart(fig, use_container_width=True)
 
 def view_portfolio(fin, page_key):
-    target = "مضاربة" if page_key == 'spec' else "استثمار"
-    st.header(f"محفظة {target}")
-    all = fin['all_trades']
-    if all.empty: st.info("لا توجد بيانات"); return
-    df_strat = all[all['strategy'] == target].copy()
-    if df_strat.empty: st.warning("المحفظة فارغة"); return
+    # الفلترة حسب الصفحة (استثمار أو مضاربة)
+    target_strat = "مضاربة" if page_key == 'spec' else "استثمار"
+    
+    st.header(f"محفظة {target_strat}")
+    all_data = fin['all_trades']
+    
+    if all_data.empty: st.info("لا توجد بيانات"); return
+    
+    # نستبعد الصكوك من هنا لأن لها صفحة خاصة، ونفلتر حسب الاستراتيجية
+    df_strat = all_data[(all_data['strategy'] == target_strat) & (all_data['asset_type'] != 'Sukuk')].copy()
+    
+    if df_strat.empty: st.warning(f"محفظة {target_strat} فارغة"); return
+    
     open_df = df_strat[df_strat['status']=='Open'].copy()
     closed_df = df_strat[df_strat['status']=='Close'].copy()
     
@@ -92,18 +99,39 @@ def view_portfolio(fin, page_key):
             if not dd.empty:
                 st.metric("Max Drawdown", f"{dd['drawdown'].min():.2f}%")
                 st.plotly_chart(px.area(dd, x='date', y='drawdown', title='التراجع التاريخي'), use_container_width=True)
-        st.markdown("### إعادة التوازن")
-        targets = fetch_table("SectorTargets")
-        if not targets.empty and not open_df.empty:
-            advice = get_rebalancing_advice(open_df, targets, open_df['market_value'].sum())
-            if not advice.empty: render_table(advice, [('sector', 'القطاع'), ('action', 'إجراء'), ('suggested_amount', 'قيمة')])
-            else: st.success("متوازنة")
 
     with t3:
         if not closed_df.empty:
             cols_cl = [('company_name', 'الشركة'), ('symbol', 'الرمز'), ('gain', 'الربح'), ('gain_pct', '%'), ('exit_date', 'بيع')]
             render_table(apply_sorting(closed_df, cols_cl, f"{page_key}_c"), cols_cl)
         else: st.info("لا يوجد")
+
+def view_sukuk_portfolio(fin):
+    st.header("📜 محفظة الصكوك")
+    all_data = fin['all_trades']
+    
+    if all_data.empty: st.info("لا توجد بيانات"); return
+
+    # فلترة الصكوك فقط
+    sukuk_df = all_data[all_data['asset_type'] == 'Sukuk'].copy()
+    
+    if sukuk_df.empty:
+        st.warning("لم تقم بإضافة أي صكوك بعد. اذهب لصفحة 'إضافة' واختر نوع الأصل 'Sukuk'.")
+        return
+
+    # حساب الملخص
+    total_cost = sukuk_df['total_cost'].sum()
+    current_val = sukuk_df['market_value'].sum()
+    gain = sukuk_df['gain'].sum()
+    
+    c1, c2, c3 = st.columns(3)
+    c1.metric("إجمالي الصكوك", f"{total_cost:,.2f}")
+    c2.metric("القيمة الحالية", f"{current_val:,.2f}")
+    c3.metric("الربح الرأسمالي", f"{gain:,.2f}", delta_color="normal")
+
+    st.markdown("### قائمة الصكوك")
+    cols = [('company_name', 'اسم الصك'), ('symbol', 'الرمز'), ('quantity', 'العدد'), ('entry_price', 'سعر الشراء'), ('current_price', 'السعر الحالي'), ('market_value', 'القيمة السوقية'), ('gain_pct', 'النمو %')]
+    render_table(sukuk_df, cols)
 
 def view_liquidity():
     fin = calculate_portfolio_metrics()
@@ -200,6 +228,7 @@ def view_analysis(fin):
 
     if symbol:
         st.markdown("---")
+        # === التحليل المالي ===
         st.subheader(f"📊 البطاقة المالية: {symbol}")
         
         with st.spinner("جاري جلب البيانات المالية وتحليل القوائم..."):
@@ -213,23 +242,24 @@ def view_analysis(fin):
             k4.metric("ربح السهم (EPS)", f"{ratios['EPS']:.2f}" if ratios['EPS'] else "-")
             
             fv = ratios['Fair_Value']
-            curr = ratios['Price_to_Fair'] * fv if fv else 0
-            delta_fv = ((curr - fv) / fv * 100) if fv else 0
+            curr = ratios['Current_Price']
             
             color_fv = "normal"
-            if fv > 0 and curr < fv: color_fv = "inverse"
+            delta_val = 0
+            if fv > 0 and curr > 0:
+                delta_val = ((curr - fv) / fv * 100)
+                if curr < fv: color_fv = "inverse"
             
-            k5.metric("القيمة العادلة", f"{fv:.2f}", delta_color=color_fv)
+            k5.metric("القيمة العادلة (Graham)", f"{fv:.2f}", delta=f"{delta_val:.1f}%", delta_color=color_fv)
             
             if fv > 0 and curr < fv * 0.8:
-                st.success(f"💡 **إشارة:** السهم يتداول بأقل من قيمته العادلة بـ {abs(delta_fv):.1f}%")
-            elif fv > 0 and curr > fv * 1.2:
-                st.warning(f"⚠️ **تنبيه:** السعر أعلى من القيمة العادلة بـ {delta_fv:.1f}%")
+                st.success(f"💡 **إشارة:** السهم يتداول بأقل من قيمته العادلة بـ {abs(delta_val):.1f}%")
 
         else:
             st.warning("تعذر جلب البيانات المالية.")
 
         st.markdown("---")
+        # === التحليل الفني ===
         st.subheader("📈 الشارت الفني")
         render_technical_chart(symbol, period, interval)
 
@@ -237,8 +267,10 @@ def router():
     render_navbar()
     pg = st.session_state.page
     fin = calculate_portfolio_metrics()
+    
     if pg == 'home': view_dashboard(fin)
     elif pg in ['spec', 'invest']: view_portfolio(fin, pg)
+    elif pg == 'sukuk': view_sukuk_portfolio(fin) # الصفحة الجديدة
     elif pg == 'cash': view_liquidity()
     elif pg == 'analysis': view_analysis(fin)
     elif pg == 'tools': view_tools()
