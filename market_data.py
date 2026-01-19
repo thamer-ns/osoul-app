@@ -3,68 +3,53 @@ import streamlit as st
 from config import TADAWUL_DB
 
 def get_ticker_symbol(symbol):
-    """تحويل الرمز إلى صيغة ياهو فاينانس"""
     s = str(symbol).strip().upper()
     if s.isdigit(): return f"{s}.SR"
     return s
 
 def get_static_info(symbol):
-    """
-    جلب معلومات الشركة (الاسم والقطاع)
-    الأولوية: قاعدة البيانات المحلية المصححة (TADAWUL_DB)
-    """
     s_clean = str(symbol).strip().replace('.SR', '').replace('.sr', '')
-    
-    # البحث في قاعدتنا المحلية أولاً (الأدق)
     if s_clean in TADAWUL_DB:
         return TADAWUL_DB[s_clean]['name'], TADAWUL_DB[s_clean]['sector']
-    
-    # إذا لم توجد، نعيد الرمز وقطاع غير محدد
     return f"سهم {s_clean}", "أخرى"
 
 @st.cache_data(ttl=300, show_spinner=False)
 def fetch_batch_data(symbols_list):
-    """جلب بيانات الأسعار فقط من السوق"""
     if not symbols_list: return {}
-    
-    # تنظيف الرموز
     tickers_map = {s: get_ticker_symbol(s) for s in symbols_list}
-    unique_tickers = list(set(tickers_map.values()))
+    unique = list(set(tickers_map.values()))
     results = {}
     
-    batch_size = 20 # زيادة حجم الدفعة
-    for i in range(0, len(unique_tickers), batch_size):
-        batch = unique_tickers[i:i+batch_size]
+    # تقسيم الدفعات لتسريع العمل
+    batch_size = 20
+    for i in range(0, len(unique), batch_size):
+        batch = unique[i:i+batch_size]
         try:
             tickers_str = ' '.join(batch)
             data = yf.Tickers(tickers_str)
-            
             for original_symbol, yahoo_symbol in tickers_map.items():
                 if yahoo_symbol in batch:
                     try:
-                        ticker_obj = data.tickers[yahoo_symbol]
-                        # محاولة جلب السعر اللحظي أو سعر الإغلاق السابق
+                        t = data.tickers[yahoo_symbol]
+                        # محاولة جلب السعر بطرق متعددة لضمان عدم وجود أصفار
                         price = None
-                        if hasattr(ticker_obj, 'fast_info'):
-                            price = ticker_obj.fast_info.last_price
+                        if hasattr(t, 'fast_info'): 
+                            price = t.fast_info.last_price
                         
-                        if price is None:
-                            price = ticker_obj.info.get('currentPrice')
+                        if price is None or price == 0:
+                            hist = t.history(period="1d")
+                            if not hist.empty: price = hist['Close'].iloc[-1]
                             
-                        if price:
+                        if price and price > 0:
                             results[original_symbol] = {
                                 'price': float(price),
-                                'prev_close': float(ticker_obj.fast_info.previous_close),
-                                'year_high': float(ticker_obj.fast_info.year_high),
-                                'year_low': float(ticker_obj.fast_info.year_low),
-                                'dividend_yield': float(ticker_obj.info.get('dividendYield', 0) or 0)
+                                'prev_close': float(t.fast_info.previous_close) if hasattr(t, 'fast_info') else price,
+                                'year_high': float(t.fast_info.year_high) if hasattr(t, 'fast_info') else price,
+                                'year_low': float(t.fast_info.year_low) if hasattr(t, 'fast_info') else price,
+                                'dividend_yield': float(t.info.get('dividendYield', 0) or 0)
                             }
-                    except Exception as e:
-                        # في حال فشل جلب سهم معين، نتجاهله ولا نوقف البرنامج
-                        continue
-        except Exception as e:
-            continue
-            
+                    except: continue
+        except: continue
     return results
 
 @st.cache_data(ttl=300)
@@ -76,7 +61,26 @@ def get_chart_history(symbol, period, interval):
 
 @st.cache_data(ttl=300)
 def get_tasi_data():
+    """
+    دالة محسنة لجلب مؤشر تاسي وتجنب مشكلة الأصفار
+    """
     try:
-        t = yf.Ticker("^TASI.SR").fast_info
-        return t.last_price, ((t.last_price - t.previous_close) / t.previous_close) * 100
-    except: return 0.0, 0.0
+        # استخدام history بدلاً من fast_info لأنها أدق للمؤشرات
+        ticker = yf.Ticker("^TASI.SR")
+        hist = ticker.history(period="5d") # نجلب 5 أيام لضمان وجود بيانات
+        
+        if not hist.empty:
+            last_price = hist['Close'].iloc[-1]
+            # البحث عن سعر الإغلاق السابق
+            if len(hist) >= 2:
+                prev_close = hist['Close'].iloc[-2]
+            else:
+                prev_close = last_price # في حال عدم وجود سابق
+            
+            change_pct = ((last_price - prev_close) / prev_close) * 100
+            return last_price, change_pct
+            
+    except Exception as e:
+        pass
+    
+    return 0.0, 0.0
