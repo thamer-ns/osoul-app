@@ -39,8 +39,6 @@ def view_dashboard(fin):
     with c3: render_kpi("القيمة السوقية", f"{fin['market_val_open']:,.2f}", "blue")
     total_pl = fin['unrealized_pl'] + fin['realized_pl'] + fin['total_returns']
     with c4: render_kpi("صافي الربح/الخسارة", f"{total_pl:,.2f}", total_pl)
-    
-    # تمت إزالة رسم توزيع القطاعات من هنا بناءً على طلبك
 
 def view_portfolio(fin, page_key):
     if page_key == 'spec':
@@ -66,35 +64,27 @@ def view_portfolio(fin, page_key):
     df_open = df_strategy[df_strategy['status'] == 'Open'].copy()
     df_closed = df_strategy[df_strategy['status'] == 'Close'].copy()
 
-    tab1, tab2 = st.tabs([f"الصفقات القائمة ({len(df_open)})", f"الأرشيف ({len(df_closed)})"])
+    # تعديل المسمى هنا إلى "الصفقات المغلقة"
+    tab1, tab2 = st.tabs([f"الصفقات القائمة ({len(df_open)})", f"الصفقات المغلقة ({len(df_closed)})"])
 
     with tab1:
         if not df_open.empty:
             # ==========================================
-            # 1. جدول توزيع القطاعات (الجديد مثل الصورة)
+            # 1. جدول توزيع القطاعات
             # ==========================================
             st.markdown("#### 📊 ملخص القطاعات")
             
-            # تجميع البيانات حسب القطاع
             sector_summary = df_open.groupby('sector').agg({
-                'symbol': 'count',          # عدد الشركات
-                'total_cost': 'sum',        # التكلفة
-                'market_value': 'sum'       # القيمة السوقية (لحساب الوزن)
+                'symbol': 'count',
+                'total_cost': 'sum',
+                'market_value': 'sum'
             }).reset_index()
             
-            # الحسابات
             total_mv = sector_summary['market_value'].sum()
             sector_summary['current_weight'] = (sector_summary['market_value'] / total_mv * 100).fillna(0)
-            
-            # الوزن المستهدف (قيمة افتراضية 0 لأنها غير موجودة في قاعدة البيانات حالياً)
             sector_summary['target_weight'] = 0.0 
-            
-            # المتبقي للهدف = (القيمة الاجمالية * الهدف%) - القيمة الحالية للقطاع
-            # بما أن الهدف 0، المتبقي سيكون بالسالب (أي أننا تجاوزنا الهدف) وسيظهر بالأحمر
             sector_summary['remaining'] = (total_mv * sector_summary['target_weight'] / 100) - sector_summary['market_value']
 
-            # ترتيب الأعمدة للعرض (مطابق للصورة تماماً)
-            # القطاع | عدد الشركات | التكلفة | الوزن الحالي | الوزن المستهدف | المتبقي
             cols_sector = [
                 ('sector', 'القطاع'),
                 ('symbol', 'عدد الشركات'),
@@ -107,14 +97,13 @@ def view_portfolio(fin, page_key):
             st.markdown("---")
 
             # ==========================================
-            # 2. جدول تفاصيل الصفقات (القديم)
+            # 2. جدول تفاصيل الصفقات
             # ==========================================
             st.markdown("#### 📋 تفاصيل الصفقات")
             
             total_val = df_open['market_value'].sum()
             df_open['local_weight'] = (df_open['market_value'] / total_val * 100) if total_val > 0 else 0
             
-            # ملخص سريع
             c1, c2, c3 = st.columns(3)
             with c1: st.metric("القيمة السوقية", f"{total_val:,.2f}")
             with c2: st.metric("الربح/الخسارة", f"{df_open['gain'].sum():,.2f}")
@@ -128,7 +117,7 @@ def view_portfolio(fin, page_key):
                 ('quantity', 'الكمية'),
                 ('entry_price', 'شراء'),
                 ('total_cost', 'التكلفة'),
-                ('current_price', 'سعر السوق/البيع'),
+                ('current_price', 'سعر السوق'),
                 ('market_value', 'القيمة'),
                 ('gain', 'الربح/الخسارة'),
                 ('gain_pct', 'النسبة %'),
@@ -155,8 +144,17 @@ def view_portfolio(fin, page_key):
             st.info("لا توجد صفقات مغلقة.")
 
 def view_liquidity():
-    st.header("💵 السيولة النقدية")
+    # تم حذف العنوان (السيولة النقدية) كما طلبت
     fin = calculate_portfolio_metrics()
+    
+    # إضافة الكروت الإحصائية كما في الرئيسية
+    c1, c2, c3 = st.columns(3)
+    with c1: render_kpi("إجمالي الإيداعات", f"{fin['total_deposited']:,.2f}", "blue")
+    with c2: render_kpi("إجمالي السحوبات", f"{fin['total_withdrawn']:,.2f}", -1)
+    with c3: render_kpi("إجمالي العوائد", f"{fin['total_returns']:,.2f}", "success")
+    
+    st.markdown("---")
+    
     t1, t2, t3 = st.tabs(["الإيداعات", "السحوبات", "العوائد"])
     with t1: render_table(fin['deposits'], [('date', 'التاريخ'), ('amount', 'المبلغ'), ('note', 'ملاحظات')])
     with t2: render_table(fin['withdrawals'], [('date', 'التاريخ'), ('amount', 'المبلغ'), ('note', 'ملاحظات')])
