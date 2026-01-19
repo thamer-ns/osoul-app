@@ -7,27 +7,23 @@ from config import BACKUP_DIR
 import streamlit as st
 import logging
 
-# إعداد السجل ليحفظ الأخطاء في ملف خارجي + يظهرها في الشاشة
 logging.basicConfig(
     level=logging.ERROR,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler("app_errors.log", encoding='utf-8'), # يحفظ في ملف
-        logging.StreamHandler() # يظهر في الشاشة السوداء
+        logging.FileHandler("app_errors.log", encoding='utf-8'),
+        logging.StreamHandler()
     ]
 )
 logger = logging.getLogger(__name__)
 
-
 def calculate_portfolio_metrics():
     try:
-        # 1. جلب البيانات الخام
         trades = fetch_table("Trades")
         dep = fetch_table("Deposits")
         wit = fetch_table("Withdrawals")
         ret = fetch_table("ReturnsGrants")
 
-        # هيكل فارغ في حال عدم وجود بيانات
         if trades.empty:
             trades = pd.DataFrame(columns=[
                 'symbol', 'strategy', 'status', 'market_value', 'total_cost', 
@@ -36,29 +32,21 @@ def calculate_portfolio_metrics():
             ])
 
         if not trades.empty:
-            # --- تحسين الأداء: استبدال الحلقة (Loop) بالمعالجة المجمعة (Batch Processing) ---
-            
-            # 1. جلب معلومات الشركات مرة واحدة لكل رمز فريد (أسرع بكثير)
             unique_symbols = trades['symbol'].unique()
-            # إنشاء خريطة (Dictionary) للرموز
             info_map = {sym: get_static_info(sym) for sym in unique_symbols}
             
-            # تطبيق الخريطة على الداتافريم
             trades['company_name'] = trades['symbol'].map(lambda x: info_map.get(x, (x, ''))[0])
             trades['sector'] = trades['symbol'].map(lambda x: info_map.get(x, ('', ''))[1])
 
-            # 2. توحيد النصوص
             if 'strategy' in trades.columns:
                 trades['strategy'] = trades['strategy'].astype(str).str.strip()
             
             if 'status' in trades.columns:
                 trades['status'] = trades['status'].astype(str).str.strip()
                 close_keywords = ['close', 'sold', 'مغلقة', 'مباعة']
-                # استخدام str.lower() بأمان
                 trades.loc[trades['status'].str.lower().isin(close_keywords), 'status'] = 'Close'
                 trades.loc[trades['status'] != 'Close', 'status'] = 'Open'
 
-            # 3. معالجة التواريخ والأرقام
             trades['date'] = pd.to_datetime(trades['date'], errors='coerce')
             if 'exit_date' in trades.columns:
                 trades['exit_date'] = pd.to_datetime(trades['exit_date'], errors='coerce')
@@ -68,25 +56,19 @@ def calculate_portfolio_metrics():
                 if c not in trades.columns: trades[c] = 0.0
                 trades[c] = pd.to_numeric(trades[c], errors='coerce').fillna(0.0)
 
-            # --- الحسابات المالية ---
+            # --- الحسابات الأساسية للصفقات ---
             trades['total_cost'] = trades['quantity'] * trades['entry_price']
-            
             is_closed = trades['status'] == 'Close'
-            
-            # للمغلقة: السعر الحالي هو سعر البيع
             trades.loc[is_closed, 'current_price'] = trades.loc[is_closed, 'exit_price']
-            
             trades['market_value'] = trades['quantity'] * trades['current_price']
-            trades['gain'] = trades['market_value'] - trades['total_cost']
             
-            # تجنب القسمة على صفر
+            # الربح الرأسمالي (Capital Gain) فقط
+            trades['gain'] = trades['market_value'] - trades['total_cost']
             trades['gain_pct'] = (trades['gain'] / trades['total_cost'].replace(0, 1)) * 100
             
-            # التغير اليومي (للمفتوحة فقط)
             trades['daily_change'] = ((trades['current_price'] - trades['prev_close']) / trades['prev_close'].replace(0, 1)) * 100
             trades.loc[is_closed, 'daily_change'] = 0.0
 
-        # --- التجميعات النهائية ---
         total_dep = dep['amount'].sum() if not dep.empty else 0.0
         total_wit = wit['amount'].sum() if not wit.empty else 0.0
         total_ret = ret['amount'].sum() if not ret.empty else 0.0
@@ -99,7 +81,6 @@ def calculate_portfolio_metrics():
         sales_closed = closed_trades['market_value'].sum() if not closed_trades.empty else 0.0
         market_val_open = open_trades['market_value'].sum() if not open_trades.empty else 0.0
 
-        # معادلة الكاش
         total_in = total_dep + total_ret + sales_closed
         total_out = total_wit + cost_open + cost_closed
         cash_available = total_in - total_out
@@ -124,7 +105,6 @@ def calculate_portfolio_metrics():
 
     except Exception as e:
         logger.error(f"Error in calculate_portfolio_metrics: {str(e)}")
-        # إعادة قيم صفرية آمنة في حال الخطأ لمنع انهيار البرنامج
         return {
             "cost_open": 0, "market_val_open": 0, "cost_closed": 0, "sales_closed": 0,
             "total_deposited": 0, "total_withdrawn": 0, "total_returns": 0, "cash": 0,
@@ -133,13 +113,78 @@ def calculate_portfolio_metrics():
             "withdrawals": pd.DataFrame(), "returns": pd.DataFrame()
         }
 
+def get_comprehensive_performance(trades_df, returns_df):
+    """
+    تحليل مالي شامل يدمج أرباح الصفقات + التوزيعات النقدية
+    """
+    if trades_df.empty: return pd.DataFrame(), pd.DataFrame()
+
+    # 1. تجميع أداء الصفقات (مفتوحة + مغلقة) حسب السهم والقطاع
+    # نستخدم groupby مرتين: مرة للسهم ومرة للقطاع
+    
+    # --- أ. تحليل القطاعات ---
+    # تجميع الصفقات حسب القطاع
+    sector_trades = trades_df.groupby('sector').agg({
+        'total_cost': 'sum',
+        'gain': 'sum',         # ربح رأسمالي (فرق سعر)
+        'market_value': 'sum',
+        'symbol': 'count'
+    }).reset_index()
+    
+    # تجهيز التوزيعات وربطها بالقطاع
+    sector_dividends = pd.DataFrame()
+    if not returns_df.empty:
+        # نحتاج معرفة قطاع كل سهم في جدول العوائد
+        unique_ret_syms = returns_df['symbol'].unique()
+        info_map = {sym: get_static_info(sym)[1] for sym in unique_ret_syms} # [1] هو القطاع
+        
+        returns_df['sector'] = returns_df['symbol'].map(info_map)
+        sector_dividends = returns_df.groupby('sector')['amount'].sum().reset_index()
+        sector_dividends.rename(columns={'amount': 'total_dividends'}, inplace=True)
+    
+    # دمج أرباح الصفقات مع التوزيعات
+    if not sector_dividends.empty:
+        sector_perf = pd.merge(sector_trades, sector_dividends, on='sector', how='left')
+        sector_perf['total_dividends'] = sector_perf['total_dividends'].fillna(0)
+    else:
+        sector_perf = sector_trades
+        sector_perf['total_dividends'] = 0.0
+        
+    # الربح الشامل للقطاع = ربح الصفقات + التوزيعات
+    sector_perf['net_profit'] = sector_perf['gain'] + sector_perf['total_dividends']
+    sector_perf['roi_pct'] = (sector_perf['net_profit'] / sector_perf['total_cost'].replace(0, 1)) * 100
+
+    # --- ب. تحليل الأسهم ---
+    stock_trades = trades_df.groupby(['symbol', 'company_name', 'sector']).agg({
+        'total_cost': 'sum',
+        'gain': 'sum',
+        'market_value': 'sum',
+        'quantity': 'sum' # مجموع الأسهم المتداولة تاريخياً
+    }).reset_index()
+    
+    stock_dividends = pd.DataFrame()
+    if not returns_df.empty:
+        stock_dividends = returns_df.groupby('symbol')['amount'].sum().reset_index()
+        stock_dividends.rename(columns={'amount': 'total_dividends'}, inplace=True)
+        
+    if not stock_dividends.empty:
+        stock_perf = pd.merge(stock_trades, stock_dividends, on='symbol', how='left')
+        stock_perf['total_dividends'] = stock_perf['total_dividends'].fillna(0)
+    else:
+        stock_perf = stock_trades
+        stock_perf['total_dividends'] = 0.0
+        
+    stock_perf['net_profit'] = stock_perf['gain'] + stock_perf['total_dividends']
+    stock_perf['roi_pct'] = (stock_perf['net_profit'] / stock_perf['total_cost'].replace(0, 1)) * 100
+    
+    return sector_perf, stock_perf
+
 def update_prices():
     try:
         trades = fetch_table("Trades")
         wl = fetch_table("Watchlist")
         if trades.empty and wl.empty: return False
         
-        # تجميع الرموز بأمان
         trade_symbols = trades.loc[trades['status'] != 'Close', 'symbol'].dropna().unique().tolist() if not trades.empty else []
         wl_symbols = wl['symbol'].dropna().unique().tolist() if not wl.empty else []
         symbols = list(set(trade_symbols + wl_symbols))
