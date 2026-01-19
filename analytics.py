@@ -3,31 +3,38 @@ import numpy as np
 import shutil
 from database import fetch_table, get_db
 from market_data import get_static_info, fetch_batch_data
-from config import BACKUP_DIR, SECTOR_TARGETS
+from config import BACKUP_DIR
 import streamlit as st
 
 def calculate_portfolio_metrics():
-    # جلب البيانات
     trades = fetch_table("Trades")
     dep = fetch_table("Deposits")
     wit = fetch_table("Withdrawals")
     ret = fetch_table("ReturnsGrants")
 
     if trades.empty:
-        trades = pd.DataFrame(columns=['symbol', 'strategy', 'status', 'market_value', 'total_cost', 'gain', 'sector'])
+        trades = pd.DataFrame(columns=['symbol', 'strategy', 'status', 'market_value', 'total_cost', 'gain', 'sector', 'company_name', 'date', 'exit_date', 'quantity', 'entry_price'])
 
     if not trades.empty:
-        # --- [الإصلاح الجذري] تنظيف عمود الاستراتيجية من المسافات المخفية ---
+        # --- تنظيف البيانات الحاسم ---
+        # توحيد استراتيجية الاستثمار والمضاربة وإزالة المسافات
         if 'strategy' in trades.columns:
-            # تحويل النص وتنظيفه من الجهتين
             trades['strategy'] = trades['strategy'].astype(str).str.strip()
         
-        # التأكد من التواريخ
+        # توحيد الحالة (Open/Close) لضمان الفرز الصحيح
+        if 'status' in trades.columns:
+            trades['status'] = trades['status'].astype(str).str.strip()
+            # تحويل كل صيغ الإغلاق إلى كلمة موحدة 'Close' والباقي 'Open'
+            close_keywords = ['close', 'sold', 'مغلقة', 'مباعة']
+            trades.loc[trades['status'].str.lower().isin(close_keywords), 'status'] = 'Close'
+            trades.loc[trades['status'] != 'Close', 'status'] = 'Open'
+
+        # معالجة التواريخ
         trades['date'] = pd.to_datetime(trades['date'], errors='coerce')
         if 'exit_date' in trades.columns:
             trades['exit_date'] = pd.to_datetime(trades['exit_date'], errors='coerce')
         
-        # التأكد من الأرقام وتحويلها
+        # تحويل الأرقام
         cols = ['quantity', 'entry_price', 'exit_price', 'current_price', 'prev_close', 'dividend_yield', 'year_high', 'year_low']
         for c in cols:
             if c not in trades.columns: trades[c] = 0.0
@@ -35,11 +42,10 @@ def calculate_portfolio_metrics():
 
         trades['total_cost'] = trades['quantity'] * trades['entry_price']
         
-        # تنظيف الحالة أيضاً (Status)
-        trades['status'] = trades['status'].astype(str).str.strip()
-        is_closed = trades['status'].str.lower().isin(['close', 'sold', 'مغلقة', 'مباعة'])
+        # منطق الحساب
+        is_closed = trades['status'] == 'Close'
         
-        # حساب السعر الحالي (للمغلقة سعر البيع، للمفتوحة سعر السوق)
+        # في حالة الإغلاق، السعر الحالي هو سعر الخروج
         trades.loc[is_closed, 'current_price'] = trades.loc[is_closed, 'exit_price']
         
         trades['market_value'] = trades['quantity'] * trades['current_price']
@@ -50,7 +56,7 @@ def calculate_portfolio_metrics():
         trades['daily_change'] = ((trades['current_price'] - trades['prev_close']) / trades['prev_close'].replace(0, 1)) * 100
         trades.loc[is_closed, 'daily_change'] = 0.0
         
-        # تعبئة البيانات المفقودة
+        # إكمال البيانات الناقصة من قاعدة البيانات المحلية
         for idx, row in trades.iterrows():
             n, s = get_static_info(row['symbol'])
             if pd.isna(row['company_name']) or str(row['company_name']).strip() == "":
@@ -58,14 +64,14 @@ def calculate_portfolio_metrics():
             if pd.isna(row['sector']) or str(row['sector']).strip() == "":
                 trades.at[idx, 'sector'] = s
 
-    # التجميعات المالية
+    # التجميعات النهائية
     total_dep = dep['amount'].sum() if not dep.empty else 0
     total_wit = wit['amount'].sum() if not wit.empty else 0
     total_ret = ret['amount'].sum() if not ret.empty else 0
     
-    # تقسيم المحافظ
-    open_trades = trades[~trades['status'].str.lower().isin(['close', 'sold', 'مغلقة', 'مباعة'])] if not trades.empty else pd.DataFrame()
-    closed_trades = trades[trades['status'].str.lower().isin(['close', 'sold', 'مغلقة', 'مباعة'])] if not trades.empty else pd.DataFrame()
+    # التقسيم بناءً على الحالة الموحدة
+    open_trades = trades[trades['status'] == 'Open'] if not trades.empty else pd.DataFrame()
+    closed_trades = trades[trades['status'] == 'Close'] if not trades.empty else pd.DataFrame()
     
     vals = {
         "cost_open": open_trades['total_cost'].sum() if not open_trades.empty else 0,
@@ -84,7 +90,6 @@ def calculate_portfolio_metrics():
     # معادلة الكاش الدقيقة
     vals['cash'] = (total_dep - total_wit) + total_ret + vals['sales_closed'] - vals['cost_open']
     vals['equity'] = vals['cash'] + vals['market_val_open']
-    vals['projected_income'] = (open_trades['market_value'] * open_trades['dividend_yield']).sum() if not open_trades.empty and 'dividend_yield' in open_trades else 0
     
     return vals
 
@@ -94,6 +99,7 @@ def update_prices():
         wl = fetch_table("Watchlist")
         if trades.empty and wl.empty: return False
         
+        # تحديث الأسعار للصفقات المفتوحة فقط أو قائمة المتابعة
         symbols = list(set(trades[trades['status'] != 'Close']['symbol'].tolist() + wl['symbol'].tolist()))
         data = fetch_batch_data(symbols)
         if not data: return False
