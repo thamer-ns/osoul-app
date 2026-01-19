@@ -52,7 +52,6 @@ def render_table(df, cols_def):
         return
 
     C = st.session_state.custom_colors
-    # بناء الهيدر
     headers = "".join([f"<th>{label}</th>" for _, label in cols_def])
     rows_html = ""
     
@@ -65,34 +64,30 @@ def render_table(df, cols_def):
             val = row.get(k, "-")
             disp = val
             
-            # معالجة التاريخ ليكون قصيراً
             if 'date' in k and val:
                 disp = str(val)[:10]
 
-            # معالجة الحالة (التصميم من الصورة)
             elif k == 'status':
                 if is_closed:
                     bg, fg, txt = ("#F3F4F6", "#4B5563", "مغلقة")
                 else:
-                    # أخضر فاتح جداً مع نص أخضر غامق (مطابق للصورة)
                     bg, fg, txt = ("#DCFCE7", "#166534", "مفتوحة") 
                 disp = f"<span style='background:{bg}; color:{fg}; padding:5px 15px; border-radius:20px; font-size:0.8rem; font-weight:800;'>{txt}</span>"
             
-            # الأرقام والألوان
-            elif k in ['gain', 'gain_pct', 'daily_change']:
+            # تم إضافة 'remaining' هنا لتلوين عمود "المتبقي للهدف"
+            elif k in ['gain', 'gain_pct', 'daily_change', 'remaining']:
                 if is_closed and k == 'daily_change':
                     disp = "<span style='color:#9CA3AF'>-</span>"
                 else:
                     try:
                         num_val = float(val)
-                        # الألوان مطابقة للصورة (أخضر للأرباح، أحمر للخسائر)
                         c = "#10B981" if num_val >= 0 else "#EF4444"
                         suffix = "%" if 'pct' in k or 'change' in k or 'weight' in k else ""
                         fmt = "{:,.2f}".format(num_val)
                         disp = f"<span style='color:{c}; direction:ltr; font-weight:bold;'>{fmt}{suffix}</span>"
                     except: disp = val
             
-            elif k == 'local_weight':
+            elif k in ['local_weight', 'target_weight', 'current_weight']:
                  try:
                     num = float(val)
                     disp = f"<span style='color:#0e6ba8; font-weight:bold;'>{num:.2f}%</span>"
@@ -102,7 +97,7 @@ def render_table(df, cols_def):
                 try: disp = "{:,.2f}".format(float(val))
                 except: disp = val
                 
-            elif k in ['quantity']:
+            elif k in ['quantity', 'symbol_count', 'count']: # symbol_count للجدول الجديد
                 try: disp = "{:,.0f}".format(float(val))
                 except: disp = val
 
