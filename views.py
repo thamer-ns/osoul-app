@@ -70,7 +70,6 @@ def view_dashboard(fin):
     total_pl = fin['unrealized_pl'] + fin['realized_pl'] + fin['total_returns']
     with c4: render_kpi("صافي الربح/الخسارة", f"{total_pl:,.2f}", total_pl, help_text="الأرباح المحققة + العائمة + التوزيعات")
     
-    # --- الجديد: منحنى النمو ---
     st.markdown("---")
     st.markdown("### 📈 منحنى نمو الاستثمار")
     curve_df = generate_equity_curve(fin['all_trades'])
@@ -168,7 +167,6 @@ def view_portfolio(fin, page_key):
             st.info("المحفظة فارغة حالياً.")
     
     with tab2:
-        # --- التحليل الشامل ---
         st.markdown("### التحليل المالي الشامل")
         sec_perf, stock_perf = get_comprehensive_performance(df_strategy, fin['returns'])
         
@@ -186,7 +184,6 @@ def view_portfolio(fin, page_key):
         
         st.markdown("---")
         
-        # --- إعادة التوازن الذكي ---
         st.markdown("### ⚖️ مقترح إعادة التوازن")
         targets_df = fetch_table("SectorTargets")
         if not targets_df.empty and not df_open.empty:
@@ -233,11 +230,18 @@ def view_liquidity():
     
     st.markdown("---")
     
-    # --- الجديد: تقويم التوزيعات ---
+    # --- التعديل هنا: استخدام render_table بدلاً من dataframe ---
     st.markdown("### 📅 تقويم التوزيعات النقدية")
     div_cal = get_dividends_calendar(fin['returns'])
+    
     if not div_cal.empty:
-        st.dataframe(div_cal, use_container_width=True)
+        cols_cal = [
+            ('year_month', 'الشهر'),
+            ('amount', 'إجمالي التوزيعات'),
+            ('symbol', 'الشركات الموزعة')
+        ]
+        # استخدام دالة العرض الموحدة
+        render_table(div_cal, cols_cal)
     else:
         st.info("لا توجد توزيعات مسجلة لعرض التقويم.")
         
