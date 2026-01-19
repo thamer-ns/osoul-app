@@ -30,7 +30,7 @@ def view_dashboard(fin):
     </div>
     """, unsafe_allow_html=True)
 
-    # الملخص
+    # الملخص المالي
     st.markdown("### 🏦 الملخص المالي")
     c1, c2, c3, c4 = st.columns(4)
     net_deposit = fin['total_deposited'] - fin['total_withdrawn']
@@ -39,16 +39,8 @@ def view_dashboard(fin):
     with c3: render_kpi("القيمة السوقية", f"{fin['market_val_open']:,.2f}", "blue")
     total_pl = fin['unrealized_pl'] + fin['realized_pl'] + fin['total_returns']
     with c4: render_kpi("صافي الربح/الخسارة", f"{total_pl:,.2f}", total_pl)
-    st.markdown("---")
-
-    # القطاعات الرئيسية
-    if not fin['all_trades'].empty:
-        st.markdown("### 📊 توزيع المحفظة الكلية")
-        open_trades = fin['all_trades'][fin['all_trades']['status'] == 'Open']
-        if not open_trades.empty:
-            fig = px.pie(open_trades, values='market_value', names='sector', hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel)
-            fig.update_layout(font=dict(family="Cairo"), height=350, margin=dict(t=20, b=20))
-            st.plotly_chart(fig, use_container_width=True)
+    
+    # تمت إزالة رسم توزيع القطاعات من هنا بناءً على طلبك
 
 def view_portfolio(fin, page_key):
     if page_key == 'spec':
@@ -78,16 +70,47 @@ def view_portfolio(fin, page_key):
 
     with tab1:
         if not df_open.empty:
-            # --- رسم توزيع القطاعات (طلبك الجديد) ---
-            st.markdown("### 📊 توزيع القطاعات")
-            fig = px.pie(df_open, values='market_value', names='sector', hole=0.5, 
-                         color_discrete_sequence=px.colors.qualitative.Set3)
-            fig.update_traces(textposition='inside', textinfo='percent+label')
-            fig.update_layout(font=dict(family="Cairo", size=14), height=300, margin=dict(t=10, b=10, l=10, r=10), showlegend=True)
-            st.plotly_chart(fig, use_container_width=True)
-            st.markdown("---")
-            # ---------------------------------------
+            # ==========================================
+            # 1. جدول توزيع القطاعات (الجديد مثل الصورة)
+            # ==========================================
+            st.markdown("#### 📊 ملخص القطاعات")
+            
+            # تجميع البيانات حسب القطاع
+            sector_summary = df_open.groupby('sector').agg({
+                'symbol': 'count',          # عدد الشركات
+                'total_cost': 'sum',        # التكلفة
+                'market_value': 'sum'       # القيمة السوقية (لحساب الوزن)
+            }).reset_index()
+            
+            # الحسابات
+            total_mv = sector_summary['market_value'].sum()
+            sector_summary['current_weight'] = (sector_summary['market_value'] / total_mv * 100).fillna(0)
+            
+            # الوزن المستهدف (قيمة افتراضية 0 لأنها غير موجودة في قاعدة البيانات حالياً)
+            sector_summary['target_weight'] = 0.0 
+            
+            # المتبقي للهدف = (القيمة الاجمالية * الهدف%) - القيمة الحالية للقطاع
+            # بما أن الهدف 0، المتبقي سيكون بالسالب (أي أننا تجاوزنا الهدف) وسيظهر بالأحمر
+            sector_summary['remaining'] = (total_mv * sector_summary['target_weight'] / 100) - sector_summary['market_value']
 
+            # ترتيب الأعمدة للعرض (مطابق للصورة تماماً)
+            # القطاع | عدد الشركات | التكلفة | الوزن الحالي | الوزن المستهدف | المتبقي
+            cols_sector = [
+                ('sector', 'القطاع'),
+                ('symbol', 'عدد الشركات'),
+                ('total_cost', 'التكلفة'),
+                ('current_weight', 'الوزن الحالي %'),
+                ('target_weight', 'الوزن المستهدف %'),
+                ('remaining', 'المتبقي للهدف')
+            ]
+            render_table(sector_summary, cols_sector)
+            st.markdown("---")
+
+            # ==========================================
+            # 2. جدول تفاصيل الصفقات (القديم)
+            # ==========================================
+            st.markdown("#### 📋 تفاصيل الصفقات")
+            
             total_val = df_open['market_value'].sum()
             df_open['local_weight'] = (df_open['market_value'] / total_val * 100) if total_val > 0 else 0
             
@@ -97,8 +120,6 @@ def view_portfolio(fin, page_key):
             with c2: st.metric("الربح/الخسارة", f"{df_open['gain'].sum():,.2f}")
             with c3: st.metric("عدد الشركات", len(df_open))
 
-            # --- ترتيب الأعمدة مطابق للصورة تماماً ---
-            # الشركة | الرمز | القطاع | الحالة | الكمية | شراء | التكلفة | سعر السوق | القيمة | الربح | النسبة | الوزن | تغيير يومي | التاريخ
             cols_open = [
                 ('company_name', 'الشركة'),
                 ('symbol', 'الرمز'),
