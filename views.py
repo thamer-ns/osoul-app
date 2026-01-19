@@ -9,7 +9,7 @@ from components import render_kpi, render_table, render_navbar
 from charts import view_advanced_chart
 from market_data import get_static_info, get_tasi_data
 from database import execute_query, fetch_table, get_db
-# --- الإصلاح هنا: استيراد APP_NAME ---
+# --- تم إصلاح الخطأ هنا: استيراد APP_NAME ---
 from config import BACKUP_DIR, APP_NAME
 
 def apply_sorting(df, cols_definition, key_suffix):
@@ -152,18 +152,13 @@ def view_liquidity():
     with c1: render_kpi("إجمالي الإيداعات", f"{fin['total_deposited']:,.2f}", "blue")
     with c2: render_kpi("إجمالي السحوبات", f"{fin['total_withdrawn']:,.2f}", -1)
     with c3: render_kpi("إجمالي العوائد", f"{fin['total_returns']:,.2f}", "success")
-    
     st.markdown("---")
-    
-    # --- إصلاح شكل تقويم التوزيعات ليطابق الجداول ---
     st.markdown("### 📅 تقويم التوزيعات النقدية")
     div_cal = get_dividends_calendar(fin['returns'])
     if not div_cal.empty:
-        # تعريف الأعمدة لعرضها بـ render_table المنسق
         cols_cal = [('year_month', 'الشهر'), ('amount', 'إجمالي التوزيعات'), ('symbol', 'الشركات الموزعة')]
         render_table(div_cal, cols_cal)
     else: st.info("لا توجد توزيعات.")
-    
     st.markdown("---")
     cols_dep = [('date', 'التاريخ'), ('amount', 'المبلغ'), ('note', 'ملاحظات')]
     cols_wit = [('date', 'التاريخ'), ('amount', 'المبلغ'), ('note', 'ملاحظات')]
@@ -175,7 +170,6 @@ def view_liquidity():
 
 def view_tools():
     st.header("🛠️ الأدوات المالية")
-    
     tab1, tab2 = st.tabs(["🧮 حاسبة الزكاة", "📄 التقارير"])
     fin = calculate_portfolio_metrics()
     
@@ -198,7 +192,7 @@ def view_tools():
     with tab2:
         st.markdown("### إصدار التقارير")
         st.write("تحميل تقرير شامل:")
-        # استخدام APP_NAME المستورد بشكل صحيح
+        # استخدام المتغير المستورد بشكل صحيح الآن
         report_html = f"""
         <html>
         <head>
@@ -312,7 +306,7 @@ def router():
     elif pg in ['spec', 'invest']: view_portfolio(fin, pg)
     elif pg == 'cash': view_liquidity()
     elif pg == 'analysis': view_advanced_chart(fin)
-    elif pg == 'tools': view_tools() # الصفحة الجديدة
+    elif pg == 'tools': view_tools()
     elif pg == 'add': view_add_trade()
     elif pg == 'settings': view_settings()
     elif pg == 'update':
