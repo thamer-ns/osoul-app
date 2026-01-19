@@ -9,6 +9,47 @@ from market_data import get_static_info, get_tasi_data
 from database import execute_query, fetch_table, get_db
 from config import BACKUP_DIR
 
+# --- دالة مساعدة للفرز (الترتيب) ---
+def apply_sorting(df, cols_definition, key_suffix):
+    """
+    تضيف واجهة للترتيب وتقوم بفرز البيانات
+    """
+    if df.empty: return df
+    
+    # استخراج أسماء الأعمدة للعرض
+    # cols_definition عبارة عن قائمة من (اسم_العمود، اسم_العرض)
+    label_to_col = {label: col for col, label in cols_definition}
+    sort_options = list(label_to_col.keys())
+    
+    # واجهة الفرز (مدمجة وصغيرة)
+    c_sort1, c_sort2 = st.columns([3, 1])
+    with c_sort1:
+        selected_label = st.selectbox(
+            "رتب حسب:", 
+            sort_options, 
+            index=0, 
+            key=f"sort_col_{key_suffix}",
+            label_visibility="collapsed",
+            placeholder="اختر عمود للترتيب"
+        )
+    with c_sort2:
+        sort_order = st.radio(
+            "الترتيب:", 
+            ["تنازلي", "تصاعدي"], 
+            horizontal=True, 
+            key=f"sort_ord_{key_suffix}",
+            label_visibility="collapsed"
+        )
+    
+    # تطبيق الفرز
+    target_col = label_to_col[selected_label]
+    is_ascending = (sort_order == "تصاعدي")
+    
+    try:
+        return df.sort_values(by=target_col, ascending=is_ascending)
+    except:
+        return df
+
 def view_dashboard(fin):
     # المؤشر
     try: t_price, t_change = get_tasi_data()
@@ -64,7 +105,6 @@ def view_portfolio(fin, page_key):
     df_open = df_strategy[df_strategy['status'] == 'Open'].copy()
     df_closed = df_strategy[df_strategy['status'] == 'Close'].copy()
 
-    # تعديل المسمى هنا إلى "الصفقات المغلقة"
     tab1, tab2 = st.tabs([f"الصفقات القائمة ({len(df_open)})", f"الصفقات المغلقة ({len(df_closed)})"])
 
     with tab1:
@@ -93,7 +133,10 @@ def view_portfolio(fin, page_key):
                 ('target_weight', 'الوزن المستهدف %'),
                 ('remaining', 'المتبقي للهدف')
             ]
-            render_table(sector_summary, cols_sector)
+            
+            # فرز القطاعات
+            sorted_sectors = apply_sorting(sector_summary, cols_sector, f"{page_key}_sec")
+            render_table(sorted_sectors, cols_sector)
             st.markdown("---")
 
             # ==========================================
@@ -125,7 +168,11 @@ def view_portfolio(fin, page_key):
                 ('daily_change', 'تغيير يومي'),
                 ('date', 'التاريخ'),
             ]
-            render_table(df_open.sort_values(by='date', ascending=False), cols_open)
+            
+            # فرز الصفقات المفتوحة
+            st.markdown("<div style='margin-bottom: 5px; font-size: 0.8rem; color: #666;'>فرز البيانات:</div>", unsafe_allow_html=True)
+            sorted_open = apply_sorting(df_open, cols_open, f"{page_key}_open")
+            render_table(sorted_open, cols_open)
         else:
             st.info("المحفظة فارغة حالياً.")
 
@@ -139,15 +186,18 @@ def view_portfolio(fin, page_key):
                 ('market_value', 'قيمة البيع'), ('gain', 'الربح المحقق'), ('gain_pct', 'العائد %'),
                 ('exit_date', 'تاريخ البيع')
             ]
-            render_table(df_closed.sort_values(by='exit_date', ascending=False), cols_closed)
+            
+            # فرز الصفقات المغلقة
+            sorted_closed = apply_sorting(df_closed, cols_closed, f"{page_key}_closed")
+            render_table(sorted_closed, cols_closed)
         else:
             st.info("لا توجد صفقات مغلقة.")
 
 def view_liquidity():
-    # تم حذف العنوان (السيولة النقدية) كما طلبت
+    # تمت إزالة العنوان والشعار كما طلبت
     fin = calculate_portfolio_metrics()
     
-    # إضافة الكروت الإحصائية كما في الرئيسية
+    # الكروت الإحصائية بنفس أيقونات وتصميم الرئيسية
     c1, c2, c3 = st.columns(3)
     with c1: render_kpi("إجمالي الإيداعات", f"{fin['total_deposited']:,.2f}", "blue")
     with c2: render_kpi("إجمالي السحوبات", f"{fin['total_withdrawn']:,.2f}", -1)
@@ -155,10 +205,24 @@ def view_liquidity():
     
     st.markdown("---")
     
+    # تعريف الأعمدة لكل جدول لتفعيل الفرز
+    cols_dep = [('date', 'التاريخ'), ('amount', 'المبلغ'), ('note', 'ملاحظات')]
+    cols_wit = [('date', 'التاريخ'), ('amount', 'المبلغ'), ('note', 'ملاحظات')]
+    cols_ret = [('date', 'التاريخ'), ('symbol', 'الرمز'), ('company_name', 'الشركة'), ('amount', 'المبلغ')]
+
     t1, t2, t3 = st.tabs(["الإيداعات", "السحوبات", "العوائد"])
-    with t1: render_table(fin['deposits'], [('date', 'التاريخ'), ('amount', 'المبلغ'), ('note', 'ملاحظات')])
-    with t2: render_table(fin['withdrawals'], [('date', 'التاريخ'), ('amount', 'المبلغ'), ('note', 'ملاحظات')])
-    with t3: render_table(fin['returns'], [('date', 'التاريخ'), ('symbol', 'الرمز'), ('company_name', 'الشركة'), ('amount', 'المبلغ')])
+    
+    with t1: 
+        sorted_dep = apply_sorting(fin['deposits'], cols_dep, "liq_dep")
+        render_table(sorted_dep, cols_dep)
+        
+    with t2: 
+        sorted_wit = apply_sorting(fin['withdrawals'], cols_wit, "liq_wit")
+        render_table(sorted_wit, cols_wit)
+        
+    with t3: 
+        sorted_ret = apply_sorting(fin['returns'], cols_ret, "liq_ret")
+        render_table(sorted_ret, cols_ret)
 
 def view_add_trade():
     st.header("📝 إضافة صفقة")
