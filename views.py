@@ -26,7 +26,6 @@ def apply_sorting(df, cols_definition, key_suffix):
     except: return df
 
 def view_dashboard(fin):
-    # استخدام الدالة المحسنة للمؤشر
     try: t_price, t_change = get_tasi_data()
     except: t_price, t_change = 0, 0
     
@@ -69,27 +68,22 @@ def view_portfolio(fin, page_key):
     all_data = fin['all_trades']
     
     if all_data.empty: st.info("لا توجد بيانات"); return
-    
-    # التأكد من استبعاد الصكوك وفلترة النوع
     df_strat = all_data[(all_data['strategy'] == target_strat) & (all_data['asset_type'] != 'Sukuk')].copy()
-    
     if df_strat.empty: st.warning(f"محفظة {target_strat} فارغة"); return
     
     open_df = df_strat[df_strat['status']=='Open'].copy()
     closed_df = df_strat[df_strat['status']=='Close'].copy()
     
-    # استعادة التبويبات كاملة
     t1, t2, t3 = st.tabs([f"القائمة ({len(open_df)})", "تحليل الأداء", f"المغلقة ({len(closed_df)})"])
     
     with t1:
         if not open_df.empty:
-            # استعادة ملخص القطاعات
+            # === استعادة جدول القطاعات مع الأوزان ===
             st.markdown("#### توزيع القطاعات")
             sec_sum = open_df.groupby('sector').agg({'symbol':'count','total_cost':'sum','market_value':'sum'}).reset_index()
             total_mv = sec_sum['market_value'].sum()
             sec_sum['current_weight'] = (sec_sum['market_value']/total_mv*100).fillna(0)
             
-            # جلب الأهداف
             targets = fetch_table("SectorTargets")
             if not targets.empty:
                 sec_sum = pd.merge(sec_sum, targets, on='sector', how='left')
@@ -97,13 +91,13 @@ def view_portfolio(fin, page_key):
             else: sec_sum['target_percentage'] = 0.0
             sec_sum['remaining'] = (total_mv * sec_sum['target_percentage']/100) - sec_sum['market_value']
             
-            # عرض جدول القطاعات
+            # الأعمدة الكاملة للقطاعات
             cols_sec = [('sector', 'القطاع'), ('symbol', 'عدد'), ('total_cost', 'التكلفة'), ('current_weight', 'الوزن %'), ('target_percentage', 'الهدف %'), ('remaining', 'المتبقي')]
             render_table(apply_sorting(sec_sum, cols_sec, f"{page_key}_s"), cols_sec)
             
             st.markdown("---")
             st.markdown("#### تفاصيل الأسهم")
-            # الجدول الكامل
+            # الأعمدة الكاملة للأسهم
             cols_op = [('company_name', 'الشركة'), ('symbol', 'الرمز'), ('status', 'الحالة'), ('quantity', 'الكمية'), ('entry_price', 'ت.شراء'), ('current_price', 'سعر'), ('daily_change', 'يومي %'), ('market_value', 'قيمة'), ('gain', 'ربح'), ('gain_pct', '%'), ('date', 'تاريخ')]
             render_table(apply_sorting(open_df, cols_op, f"{page_key}_o"), cols_op)
         else: st.info("فارغة")
@@ -120,7 +114,7 @@ def view_portfolio(fin, page_key):
             dd = calculate_historical_drawdown(open_df)
             if not dd.empty:
                 st.metric("أقصى تراجع (Max Drawdown)", f"{dd['drawdown'].min():.2f}%")
-                st.plotly_chart(px.area(dd, x='date', y='drawdown', title='التراجع التاريخي للمحفظة'), use_container_width=True)
+                st.plotly_chart(px.area(dd, x='date', y='drawdown', title='التراجع التاريخي'), use_container_width=True)
 
     with t3:
         if not closed_df.empty:
@@ -217,6 +211,7 @@ def view_settings():
     with st.expander("إدارة البيانات"):
         if st.button("نسخ احتياطي"): create_smart_backup(); st.success("تم النسخ")
 
+# === دالة التحليل المالي والفني (التي كانت تعمل تمام) ===
 def view_analysis(fin):
     st.header("🔍 التحليل الشامل (مالي وفني)")
     trades = fin['all_trades']
@@ -226,25 +221,37 @@ def view_analysis(fin):
     if not wl.empty: symbols.extend(wl['symbol'].unique().tolist())
     symbols = list(set(symbols))
     if not symbols: st.info("أضف أسهم للمحفظة أولاً"); return
+    
     c1, c2, c3 = st.columns([1, 1, 2])
     symbol = c1.selectbox("اختر الشركة", symbols)
     period = c2.selectbox("الفترة", ["1y", "2y", "5y", "max"], index=1)
     interval = c3.selectbox("الفاصل الزمني", ["1d", "1wk", "1mo"], index=0)
+    
     if symbol:
         st.markdown("---")
         st.subheader(f"📊 البطاقة المالية: {symbol}")
-        with st.spinner("جاري جلب البيانات..."): ratios = get_fundamental_ratios(symbol)
+        with st.spinner("جاري جلب البيانات..."): 
+            ratios = get_fundamental_ratios(symbol)
+            
         if ratios:
+            # عرض البطاقة المالية
             k1, k2, k3, k4, k5 = st.columns(5)
             k1.metric("P/E", f"{ratios['P/E']:.2f}" if ratios['P/E'] else "-")
             k2.metric("P/B", f"{ratios['P/B']:.2f}" if ratios['P/B'] else "-")
             k3.metric("ROE", f"{ratios['ROE']:.1f}%" if ratios['ROE'] else "-")
             k4.metric("EPS", f"{ratios['EPS']:.2f}" if ratios['EPS'] else "-")
+            
             fv = ratios['Fair_Value']
             curr = ratios['Current_Price']
             delta_val = ((curr - fv) / fv * 100) if fv > 0 and curr > 0 else 0
-            k5.metric("Graham FV", f"{fv:.2f}", delta=f"{delta_val:.1f}%", delta_color="inverse" if curr < fv else "normal")
+            color_fv = "inverse" if fv > 0 and curr < fv else "normal"
+            
+            k5.metric("Graham FV", f"{fv:.2f}", delta=f"{delta_val:.1f}%", delta_color=color_fv)
+        else:
+            st.warning("تعذر جلب البيانات المالية")
+
         st.markdown("---")
+        # عرض الشارت الفني
         render_technical_chart(symbol, period, interval)
 
 def router():
