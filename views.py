@@ -11,7 +11,7 @@ from analytics import (calculate_portfolio_metrics, update_prices, create_smart_
 from charts import render_technical_chart
 from financial_analysis import get_fundamental_ratios, render_financial_dashboard_ui, get_thesis, save_thesis
 from market_data import get_static_info, get_tasi_data
-from database import execute_query, fetch_table, get_db, clean_database_duplicates
+from database import execute_query, fetch_table, get_db, clean_database_duplicates, clear_all_data
 from config import APP_NAME
 from data_source import TADAWUL_DB
 
@@ -79,14 +79,13 @@ def view_portfolio(fin, page_key):
     st.header(f"💼 محفظة {target_strat}")
     all_data = fin['all_trades']
     
-    if all_data.empty: st.info("لا توجد بيانات"); return
-    
-    all_data['strategy'] = all_data['strategy'].astype(str).str.strip()
-    df_strat = all_data[(all_data['strategy'] == target_strat) & (all_data['asset_type'] != 'Sukuk')].copy()
-    
-    if df_strat.empty: 
-        st.warning(f"المحفظة فارغة. (تأكد أن الصفقات مسجلة تحت مسمى '{target_strat}')")
-        return
+    if not all_data.empty:
+        all_data['strategy'] = all_data['strategy'].astype(str).str.strip()
+        df_strat = all_data[(all_data['strategy'] == target_strat) & (all_data['asset_type'] != 'Sukuk')].copy()
+    else:
+        df_strat = pd.DataFrame()
+
+    if df_strat.empty and page_key == 'invest': st.info("ابدأ بإضافة صفقات استثمارية.")
     
     open_df = df_strat[df_strat['status']=='Open'].copy()
     closed_df = df_strat[df_strat['status']=='Close'].copy()
@@ -97,18 +96,68 @@ def view_portfolio(fin, page_key):
         open_df['gain'] = open_df['market_value'] - open_df['total_cost']
         open_df['gain_pct'] = open_df.apply(lambda row: (row['gain']/row['total_cost']*100) if row['total_cost']>0 else 0, axis=1)
 
-    t1, t2, t3 = st.tabs([f"الأسهم القائمة ({len(open_df)})", "تحليل الأداء", f"الأرشيف ({len(closed_df)})"])
+    t1, t2, t3 = st.tabs([f"القائمة ({len(open_df)})", "تحليل الأداء", f"الأرشيف ({len(closed_df)})"])
     
     with t1:
-        if not open_df.empty:
-            if page_key == 'invest':
-                st.markdown("#### 🧩 التوزيع القطاعي")
+        # === قسم التوزيع القطاعي وتعديل الأوزان (نقلناه هنا) ===
+        if page_key == 'invest':
+            st.markdown("#### 🎯 التوزيع القطاعي والأهداف")
+            
+            # 1. حساب البيانات الحالية
+            if not open_df.empty:
                 sec_sum = open_df.groupby('sector').agg({'market_value':'sum'}).reset_index()
                 total_mv = sec_sum['market_value'].sum()
-                sec_sum['weight'] = (sec_sum['market_value']/total_mv*100)
-                render_table(sec_sum, [('sector', 'القطاع'), ('market_value', 'القيمة'), ('weight', 'الوزن %')])
-                st.markdown("---")
+                sec_sum['current_weight'] = (sec_sum['market_value']/total_mv*100).round(1)
+            else:
+                sec_sum = pd.DataFrame(columns=['sector', 'current_weight'])
 
+            # 2. جلب الأهداف المحفوظة
+            saved_targets = fetch_table("SectorTargets")
+            
+            # 3. دمج البيانات (كل القطاعات الموجودة في المحفظة + المحفوظة)
+            all_sectors_in_view = set(sec_sum['sector'].tolist())
+            if not saved_targets.empty:
+                all_sectors_in_view.update(saved_targets['sector'].tolist())
+            
+            # إنشاء داتا فريم للعرض
+            df_edit = pd.DataFrame({'sector': list(all_sectors_in_view)})
+            df_edit = pd.merge(df_edit, sec_sum, on='sector', how='left').fillna(0)
+            
+            if not saved_targets.empty:
+                df_edit = pd.merge(df_edit, saved_targets, on='sector', how='left')
+                df_edit['target_percentage'] = df_edit['target_percentage'].fillna(0.0)
+            else:
+                df_edit['target_percentage'] = 0.0
+
+            # 4. عرض الجدول القابل للتعديل
+            with st.container():
+                st.caption("💡 يمكنك تعديل 'الهدف %' مباشرة في الجدول أدناه وسيتم الحفظ تلقائياً.")
+                edited_targets = st.data_editor(
+                    df_edit,
+                    column_config={
+                        "sector": st.column_config.TextColumn("القطاع", disabled=True),
+                        "market_value": st.column_config.NumberColumn("القيمة الحالية", format="%.2f", disabled=True),
+                        "current_weight": st.column_config.ProgressColumn("الوزن الحالي %", min_value=0, max_value=100, format="%.1f%%"),
+                        "target_percentage": st.column_config.NumberColumn("الهدف % (اضغط للتعديل)", min_value=0, max_value=100, step=1, format="%d%%")
+                    },
+                    hide_index=True,
+                    use_container_width=True,
+                    key="portfolio_sector_editor"
+                )
+            
+            # 5. منطق الحفظ التلقائي عند التغيير
+            # نقارن النسخة المعدلة مع النسخة الأصلية
+            # لكن لتجنب التعقيد، سنحفظ دائماً القيم الجديدة إذا كانت صالحة
+            if not edited_targets.equals(df_edit):
+                execute_query("DELETE FROM SectorTargets")
+                for _, row in edited_targets.iterrows():
+                    if row['target_percentage'] > 0:
+                        execute_query("INSERT INTO SectorTargets (sector, target_percentage) VALUES (?,?)", (row['sector'], row['target_percentage']))
+                st.toast("✅ تم تحديث أهداف المحفظة بنجاح!")
+                
+            st.markdown("---")
+
+        if not open_df.empty:
             cols_op = [('company_name', 'الشركة'), ('symbol', 'الرمز'), ('quantity', 'الكمية'), ('entry_price', 'التكلفة'), ('current_price', 'السعر'), ('daily_change', 'يومي %'), ('market_value', 'القيمة'), ('gain', 'الربح'), ('gain_pct', '%')]
             render_table(apply_sorting(open_df, cols_op, page_key), cols_op)
             
@@ -250,50 +299,58 @@ def view_tools():
 
 def view_settings():
     st.header("⚙️ الإعدادات العامة")
-    tab_sec, tab_data = st.tabs(["توزيع القطاعات", "إدارة البيانات"])
     
-    with tab_sec:
-        all_sectors = sorted(list(set(d['sector'] for d in TADAWUL_DB.values())))
-        df_all = pd.DataFrame({'sector': all_sectors})
-        saved = fetch_table("SectorTargets")
-        df = pd.merge(df_all, saved, on='sector', how='left').fillna(0) if not saved.empty else df_all.assign(target_percentage=0.0)
-        
-        st.info("قم بتعديل النسب المئوية المستهدفة:")
-        edited = st.data_editor(df, column_config={"sector": "القطاع", "target_percentage": st.column_config.NumberColumn("النسبة %", format="%d%%")}, hide_index=True, use_container_width=True)
-        if st.button("💾 حفظ التوزيع", type="primary"):
-            execute_query("DELETE FROM SectorTargets")
-            for _, row in edited.iterrows():
-                if row['target_percentage'] > 0:
-                    execute_query("INSERT INTO SectorTargets (sector, target_percentage) VALUES (?,?)", (row['sector'], row['target_percentage']))
-            st.success("تم الحفظ")
+    st.markdown("### 📤 النسخ الاحتياطي")
+    if st.button("📦 إنشاء نسخة احتياطية (Excel)"):
+        if create_smart_backup(): st.success("✅ تم الحفظ في مجلد backups")
+        else: st.error("فشل النسخ")
+    
+    st.markdown("---")
+    
+    st.markdown("### 📥 إدارة البيانات (حذف / استعادة)")
+    
+    # زر الحذف الشامل
+    col_del, col_space = st.columns([1, 2])
+    with col_del:
+        if st.button("🗑️ حذف جميع البيانات (Format)", type="primary"):
+            clear_all_data()
+            st.warning("⚠️ تم مسح جميع البيانات!")
+            st.cache_data.clear()
+            st.rerun()
 
-    with tab_data:
-        st.markdown("### 🧹 الصيانة")
-        if st.button("🧹 تنظيف التكرار وإصلاح البيانات", type="primary"):
-            if clean_database_duplicates(): st.success("✅ تم التنظيف!"); st.cache_data.clear()
-            else: st.error("فشل التنظيف")
-
-        st.markdown("### 📥 استيراد بيانات (Restore)")
-        f = st.file_uploader("ملف Excel", type=['xlsx'])
-        if f and st.button("🚀 استيراد"):
-            try:
-                xls = pd.ExcelFile(f)
-                with get_db() as conn:
-                    tables = ['Trades', 'Deposits', 'Withdrawals', 'ReturnsGrants', 'Watchlist', 'SectorTargets', 'InvestmentThesis', 'FinancialStatements']
-                    for t in tables:
-                        if t in xls.sheet_names:
-                            df = pd.read_excel(xls, t)
-                            if not df.empty:
-                                if 'id' in df.columns: df = df.drop(columns=['id'])
-                                cursor = conn.execute(f"PRAGMA table_info({t})")
-                                db_cols = [row['name'] for row in cursor.fetchall()]
-                                valid_df = df[[c for c in df.columns if c in db_cols]]
-                                if 'strategy' in db_cols and 'strategy' in valid_df.columns:
-                                    valid_df['strategy'] = valid_df['strategy'].fillna('استثمار')
-                                valid_df.to_sql(t, conn, if_exists='append', index=False)
-                st.success("تم الاستيراد!")
-                st.cache_data.clear()
-            except Exception as e: st.error(f"خطأ: {e}")
+    st.markdown("---")
+    st.warning("لاستعادة البيانات: اختر ملف Excel، سيتم تجاهل أي أعمدة غير متوافقة تلقائياً.")
+    f = st.file_uploader("ملف النسخة الاحتياطية", type=['xlsx'])
+    
+    if f and st.button("🚀 استيراد البيانات"):
+        try:
+            # 1. تنظيف البيانات القديمة لضمان عدم التكرار
+            clear_all_data()
+            
+            xls = pd.ExcelFile(f)
+            with get_db() as conn:
+                tables = ['Trades', 'Deposits', 'Withdrawals', 'ReturnsGrants', 'Watchlist', 'SectorTargets', 'InvestmentThesis', 'FinancialStatements']
+                for t in tables:
+                    if t in xls.sheet_names:
+                        df = pd.read_excel(xls, t)
+                        if not df.empty:
+                            if 'id' in df.columns: df = df.drop(columns=['id'])
+                            
+                            # === الفلترة الذكية للأعمدة ===
+                            cursor = conn.execute(f"PRAGMA table_info({t})")
+                            db_cols = [row['name'] for row in cursor.fetchall()]
+                            
+                            # الاحتفاظ فقط بالأعمدة الصالحة
+                            valid_df = df[[c for c in df.columns if c in db_cols]]
+                            
+                            if 'strategy' in db_cols and 'strategy' not in valid_df.columns:
+                                valid_df['strategy'] = 'استثمار' # قيمة افتراضية
+                            
+                            valid_df.to_sql(t, conn, if_exists='append', index=False)
+                            
+            st.success("تم الاستيراد بنجاح!")
+            st.cache_data.clear()
+        except Exception as e: st.error(f"خطأ: {e}")
 
 def router():
     render_navbar()
