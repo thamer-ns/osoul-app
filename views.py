@@ -79,21 +79,15 @@ def view_portfolio(fin, page_key):
     st.header(f"💼 محفظة {target_strat}")
     all_data = fin['all_trades']
     
-    # --- إصلاح الخطأ: التأكد من وجود البيانات والأعمدة قبل التصفية ---
     df_strat = pd.DataFrame()
     if not all_data.empty and 'strategy' in all_data.columns:
-        # تنظيف البيانات
         all_data['strategy'] = all_data['strategy'].astype(str).str.strip()
-        # التصفية
         df_strat = all_data[(all_data['strategy'] == target_strat) & (all_data['asset_type'] != 'Sukuk')].copy()
     
     if df_strat.empty: 
         st.warning(f"المحفظة فارغة. (تأكد أن الصفقات مسجلة تحت مسمى '{target_strat}')")
-        # لا نوقف التنفيذ هنا للسماح بعرض باقي الصفحة
     
-    # التأكد من وجود عمود الحالة قبل استخدامه
-    if 'status' not in df_strat.columns:
-        df_strat['status'] = 'Open' # قيمة افتراضية
+    if 'status' not in df_strat.columns: df_strat['status'] = 'Open'
 
     open_df = df_strat[df_strat['status']=='Open'].copy()
     closed_df = df_strat[df_strat['status']=='Close'].copy()
@@ -107,57 +101,7 @@ def view_portfolio(fin, page_key):
     t1, t2, t3 = st.tabs([f"القائمة ({len(open_df)})", "تحليل الأداء", f"الأرشيف ({len(closed_df)})"])
     
     with t1:
-        # === نقلنا جدول الأوزان هنا كما طلبت ===
-        if page_key == 'invest':
-            st.markdown("#### 🎯 توزيع الأهداف (اضغط للتعديل)")
-            
-            # تجهيز البيانات
-            sec_sum = pd.DataFrame(columns=['sector', 'market_value', 'current_weight'])
-            if not open_df.empty:
-                sec_sum = open_df.groupby('sector').agg({'market_value':'sum'}).reset_index()
-                total_mv = sec_sum['market_value'].sum()
-                if total_mv > 0:
-                    sec_sum['current_weight'] = (sec_sum['market_value']/total_mv*100)
-            
-            saved_targets = fetch_table("SectorTargets")
-            
-            # دمج القطاعات الموجودة في المحفظة مع الأهداف المحفوظة
-            all_secs = set(sec_sum['sector'].tolist())
-            if not saved_targets.empty: all_secs.update(saved_targets['sector'].tolist())
-            
-            df_edit = pd.DataFrame({'sector': list(all_secs)})
-            df_edit = pd.merge(df_edit, sec_sum, on='sector', how='left').fillna(0)
-            
-            if not saved_targets.empty:
-                df_edit = pd.merge(df_edit, saved_targets, on='sector', how='left')
-                df_edit['target_percentage'] = df_edit['target_percentage'].fillna(0.0)
-            else:
-                df_edit['target_percentage'] = 0.0
-
-            # العرض باستخدام Data Editor للتعديل المباشر
-            edited_targets = st.data_editor(
-                df_edit,
-                column_config={
-                    "sector": st.column_config.TextColumn("القطاع", disabled=True),
-                    "market_value": st.column_config.NumberColumn("القيمة الحالية", format="%.2f", disabled=True),
-                    "current_weight": st.column_config.ProgressColumn("الوزن الحالي %", format="%.1f%%", min_value=0, max_value=100),
-                    "target_percentage": st.column_config.NumberColumn("الهدف % ✏️", format="%d%%", step=1, min_value=0, max_value=100)
-                },
-                hide_index=True,
-                use_container_width=True,
-                key="sec_editor_invest"
-            )
-            
-            # الحفظ التلقائي عند التغيير
-            if not edited_targets.equals(df_edit):
-                execute_query("DELETE FROM SectorTargets")
-                for _, row in edited_targets.iterrows():
-                    if row['target_percentage'] > 0:
-                        execute_query("INSERT INTO SectorTargets (sector, target_percentage) VALUES (?,?)", (row['sector'], row['target_percentage']))
-                st.toast("✅ تم تحديث الأهداف بنجاح!")
-            
-            st.markdown("---")
-
+        # === تم حذف جدول التوزيعات بناءً على طلبك ===
         if not open_df.empty:
             cols_op = [('company_name', 'الشركة'), ('symbol', 'الرمز'), ('quantity', 'الكمية'), ('entry_price', 'التكلفة'), ('current_price', 'السعر'), ('daily_change', 'يومي %'), ('market_value', 'القيمة'), ('gain', 'الربح'), ('gain_pct', '%')]
             render_table(apply_sorting(open_df, cols_op, page_key), cols_op)
@@ -280,20 +224,34 @@ def view_add_trade():
 def view_cash_log():
     st.header("💵 سجل السيولة")
     fin = calculate_portfolio_metrics()
+    
+    # --- هنا تمت إضافة الإجماليات لكل قسم ---
     t1, t2, t3 = st.tabs(["الإيداعات", "السحوبات", "التوزيعات"])
+    
     with t1:
+        total_dep = fin['deposits']['amount'].sum() if not fin['deposits'].empty else 0
+        st.metric("إجمالي الإيداعات", f"{total_dep:,.2f}", delta="مجموع كلي")
+        
         with st.expander("➕ إيداع جديد"):
              with st.form("dep"):
                  amt = st.number_input("المبلغ"); dt = st.date_input("التاريخ"); nt = st.text_input("ملاحظة")
                  if st.form_submit_button("حفظ"): execute_query("INSERT INTO Deposits (date, amount, note) VALUES (?,?,?)", (str(dt), amt, nt)); st.success("تم"); st.rerun()
         render_table(fin['deposits'], [('date','التاريخ'), ('amount','المبلغ'), ('note','ملاحظات')])
+        
     with t2:
+        total_wit = fin['withdrawals']['amount'].sum() if not fin['withdrawals'].empty else 0
+        st.metric("إجمالي السحوبات", f"{total_wit:,.2f}", delta="-", delta_color="inverse")
+        
         with st.expander("➖ سحب جديد"):
              with st.form("wit"):
                  amt = st.number_input("المبلغ"); dt = st.date_input("التاريخ"); nt = st.text_input("ملاحظة")
                  if st.form_submit_button("حفظ"): execute_query("INSERT INTO Withdrawals (date, amount, note) VALUES (?,?,?)", (str(dt), amt, nt)); st.success("تم"); st.rerun()
         render_table(fin['withdrawals'], [('date','التاريخ'), ('amount','المبلغ'), ('note','ملاحظات')])
+        
     with t3:
+        total_ret = fin['returns']['amount'].sum() if not fin['returns'].empty else 0
+        st.metric("إجمالي التوزيعات المستلمة", f"{total_ret:,.2f}", delta="+", delta_color="normal")
+        
         with st.expander("💰 توزيعات"):
              with st.form("ret"):
                  sym = st.text_input("الرمز"); amt = st.number_input("المبلغ"); dt = st.date_input("التاريخ")
@@ -307,7 +265,6 @@ def view_tools():
 
 def view_settings():
     st.header("⚙️ الإعدادات العامة")
-    # تم إزالة تبويب التوزيعات لأنه نقل لصفحة الاستثمار
     
     st.markdown("### 📤 النسخ الاحتياطي")
     if st.button("📦 إنشاء نسخة احتياطية (Excel)"):
@@ -315,7 +272,6 @@ def view_settings():
         else: st.error("فشل النسخ")
     
     st.markdown("---")
-    
     st.markdown("### 📥 إدارة البيانات (حذف / استعادة)")
     
     col_del, col_space = st.columns([1, 2])
@@ -332,8 +288,8 @@ def view_settings():
     
     if f and st.button("🚀 استيراد البيانات"):
         try:
-            # تنظيف قبل الاستيراد لمنع التكرار (اختياري حسب الرغبة، هنا آمن لأننا نستخدم append)
-            # clear_all_data() 
+            # تنظيف تلقائي قبل الاستيراد لمنع التكرار (يمكن إزالته إذا أردت الدمج)
+            clear_all_data()
             
             xls = pd.ExcelFile(f)
             with get_db() as conn:
@@ -350,8 +306,9 @@ def view_settings():
                             
                             valid_df = df[[c for c in df.columns if c in db_cols]]
                             
+                            # إصلاح استراتيجيات التداول
                             if 'strategy' in db_cols and 'strategy' not in valid_df.columns:
-                                valid_df['strategy'] = 'استثمار' 
+                                valid_df['strategy'] = 'استثمار'
                             
                             valid_df.to_sql(t, conn, if_exists='append', index=False)
                             
