@@ -40,7 +40,7 @@ def render_kpi(label, value, color=None):
 
 def render_table(df, cols_definition):
     """
-    يقوم برسم جدول مطابق تماماً للتصميم الأصلي
+    يقوم برسم جدول مطابق للتصميم الأصلي ويعالج مشكلة السنوات (الأرقام)
     """
     if df.empty:
         st.info("لا توجد بيانات للعرض")
@@ -60,8 +60,11 @@ def render_table(df, cols_definition):
             val = row.get(col_key, "-")
             display_val = val
             
+            # تحويل مفتاح العمود لنص لتجنب الأخطاء عند مقارنة السنوات (2024, 2025)
+            key_str = str(col_key).lower()
+            
             # 1. تنسيق الحالة
-            if col_key == 'status':
+            if key_str == 'status':
                 if not is_closed:
                     display_val = f"<span style='background:#E3FCEF; color:#006644; padding:2px 8px; border-radius:4px; font-size:0.8rem;'>مفتوحة</span>"
                 else:
@@ -72,9 +75,6 @@ def render_table(df, cols_definition):
                 fmt = "{:,.2f}".format(val)
                 
                 # تلوين الربح والخسارة
-                # تم إضافة str() هنا لمنع الخطأ عند مقارنة السنوات
-                key_str = str(col_key).lower()
-                
                 if key_str in ['gain', 'gain_pct', 'daily_change', 'net_profit', 'change']:
                     color = "#006644" if val >= 0 else "#DE350B"
                     suffix = "%" if 'pct' in key_str or 'change' in key_str else ""
@@ -85,14 +85,14 @@ def render_table(df, cols_definition):
                 elif 'weight' in key_str or 'percentage' in key_str:
                     display_val = f"{fmt}%"
                     
-                # الملايين (للقوائم المالية) - شرط ذكي: إذا الرقم كبير واسم العمود ليس سنة
+                # الملايين (للقوائم المالية) - شرط: إذا الرقم كبير واسم العمود ليس سنة
                 elif val > 1_000_000 and not str(col_key).isdigit():
                      display_val = f"{val/1_000_000:,.1f}M"
                 else:
                     display_val = fmt
 
             # 3. تنسيق التواريخ
-            elif 'date' in str(col_key) and val:
+            elif 'date' in key_str and val:
                 display_val = str(val)[:10]
 
             cells += f"<td>{display_val}</td>"
