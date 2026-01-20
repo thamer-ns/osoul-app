@@ -19,43 +19,42 @@ def calculate_portfolio_metrics():
         wit = fetch_table("Withdrawals")
         ret = fetch_table("ReturnsGrants")
 
-        # === الإصلاح هنا: تعريف الأعمدة دائماً ===
+        # 1. تحديد الأعمدة المطلوبة بدقة
         expected_cols = [
             'symbol', 'strategy', 'status', 'market_value', 'total_cost', 
             'gain', 'gain_pct', 'sector', 'company_name', 'date', 'exit_date', 
             'quantity', 'entry_price', 'exit_price', 'current_price', 
-            'prev_close', 'daily_change', 'dividend_yield', 'asset_type'
+            'prev_close', 'daily_change', 'dividend_yield', 'asset_type',
+            'year_high', 'year_low', 'weight' # تمت إضافة الأعمدة الناقصة
         ]
 
         if trades.empty:
             trades = pd.DataFrame(columns=expected_cols)
         else:
-            # التأكد من وجود جميع الأعمدة حتى لو البيانات قديمة
+            # ضمان وجود الأعمدة
             for col in expected_cols:
                 if col not in trades.columns:
-                    trades[col] = 0.0 if 'price' in col or 'cost' in col else None
+                    trades[col] = 0.0 if col not in ['symbol', 'strategy', 'status', 'sector', 'company_name', 'date', 'exit_date', 'asset_type'] else None
 
             if 'status' not in trades.columns: trades['status'] = 'Open'
             trades['status'] = trades['status'].astype(str).str.strip()
             close_keywords = ['close', 'sold', 'مغلقة', 'مباعة']
             
-            # تصحيح الحالة
-            # استخدام دالة للتأكد من الحالة
             trades['status'] = trades['status'].apply(lambda x: 'Close' if str(x).lower() in close_keywords else 'Open')
             
-            num_cols = ['quantity', 'entry_price', 'exit_price', 'current_price', 'prev_close']
+            num_cols = ['quantity', 'entry_price', 'exit_price', 'current_price', 'prev_close', 'year_high', 'year_low']
             for c in num_cols:
                 trades[c] = pd.to_numeric(trades[c], errors='coerce').fillna(0.0)
 
             trades['total_cost'] = (trades['quantity'] * trades['entry_price']).round(2)
             
-            # منطق حساب السوق
+            # منطق الصفقات المغلقة/المفتوحة
             is_closed = trades['status'] == 'Close'
             trades.loc[is_closed, 'current_price'] = trades.loc[is_closed, 'exit_price']
             trades['market_value'] = (trades['quantity'] * trades['current_price']).round(2)
             trades['gain'] = (trades['market_value'] - trades['total_cost']).round(2)
             
-            # تجنب القسمة على صفر
+            # حساب النسب
             trades['gain_pct'] = 0.0
             mask_nonzero = trades['total_cost'] != 0
             trades.loc[mask_nonzero, 'gain_pct'] = (trades.loc[mask_nonzero, 'gain'] / trades.loc[mask_nonzero, 'total_cost'] * 100).round(2)
@@ -64,13 +63,18 @@ def calculate_portfolio_metrics():
             mask_prev = (trades['prev_close'] != 0) & (~is_closed)
             trades.loc[mask_prev, 'daily_change'] = (((trades.loc[mask_prev, 'current_price'] - trades.loc[mask_prev, 'prev_close']) / trades.loc[mask_prev, 'prev_close']) * 100).round(2)
 
+            # === حساب وزن السهم (Weight) ===
+            total_open_value = trades.loc[~is_closed, 'market_value'].sum()
+            trades['weight'] = 0.0
+            if total_open_value > 0:
+                trades.loc[~is_closed, 'weight'] = (trades.loc[~is_closed, 'market_value'] / total_open_value * 100).round(2)
+
         # الحسابات الإجمالية
         total_dep = dep['amount'].sum() if not dep.empty else 0.0
         total_wit = wit['amount'].sum() if not wit.empty else 0.0
         total_ret = ret['amount'].sum() if not ret.empty else 0.0
         
-        # التقسيم الآمن
-        if not trades.empty and 'status' in trades.columns:
+        if not trades.empty:
             open_trades = trades[trades['status'] == 'Open']
             closed_trades = trades[trades['status'] == 'Close']
         else:
@@ -97,7 +101,6 @@ def calculate_portfolio_metrics():
         return vals
     except Exception as e:
         logger.error(f"Error in metrics: {str(e)}")
-        # إرجاع هيكل فارغ آمن لمنع توقف التطبيق
         empty_df = pd.DataFrame()
         return {"cost_open": 0, "market_val_open": 0, "cash": 0, "all_trades": empty_df, "unrealized_pl":0, "realized_pl":0, "total_deposited":0, "total_withdrawn":0, "total_returns":0, "deposits":empty_df, "withdrawals":empty_df, "returns":empty_df}
 
