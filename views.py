@@ -31,14 +31,35 @@ def apply_sorting(df, cols_def, key):
 def view_dashboard(fin):
     try: t_p, t_c = get_tasi_data()
     except: t_p, t_c = 0, 0
+    
+    if 'custom_colors' not in st.session_state:
+        from config import DEFAULT_COLORS
+        st.session_state.custom_colors = DEFAULT_COLORS.copy()
+    
     color = "#10B981" if t_c >= 0 else "#EF4444"
+    
+    # عرض المؤشر العام
     st.markdown(f"<div style='background:white;padding:15px;border-radius:10px;box-shadow:0 2px 5px rgba(0,0,0,0.05);display:flex;justify-content:space-between;align-items:center;'><div><div style='color:gray'>المؤشر العام</div><div style='font-size:1.8rem;font-weight:bold'>{t_p:,.2f}</div></div><div style='color:{color};font-weight:bold;direction:ltr'>{t_c:+.2f}%</div></div>", unsafe_allow_html=True)
+    
     st.markdown("---")
+    
+    # عرض الملخص المالي
     c1, c2, c3 = st.columns(3)
     c1.metric("القيمة السوقية", f"{fin['market_val_open']:,.2f}")
     c2.metric("الكاش", f"{fin['cash']:,.2f}")
     c3.metric("الربح الكلي", f"{(fin['unrealized_pl']+fin['realized_pl']+fin['total_returns']):,.2f}")
-    st.plotly_chart(px.line(generate_equity_curve(fin['all_trades']), x='date', y='cumulative_invested', title="نمو المحفظة"), use_container_width=True)
+    
+    # --- إصلاح الخطأ هنا ---
+    # نقوم بتوليد البيانات أولاً
+    curve_data = generate_equity_curve(fin['all_trades'])
+    
+    # نفحص هل البيانات موجودة وفيها أعمدة؟
+    if not curve_data.empty and 'date' in curve_data.columns:
+        fig = px.line(curve_data, x='date', y='cumulative_invested', title="نمو المحفظة")
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        # إذا كانت فارغة نعرض رسالة بدلاً من الانهيار
+        st.info("📉 لا توجد بيانات كافية لرسم منحنى النمو. (قم بإضافة صفقات أولاً)")
 
 def view_portfolio(fin, key):
     strat = "مضاربة" if key == 'spec' else "استثمار"
