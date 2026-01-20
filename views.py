@@ -9,7 +9,8 @@ from analytics import (calculate_portfolio_metrics, update_prices, create_smart_
                        get_comprehensive_performance, get_rebalancing_advice, 
                        get_dividends_calendar, generate_equity_curve, calculate_historical_drawdown)
 from charts import render_technical_chart
-from financial_analysis import get_fundamental_ratios
+# تم تحديث الاستيراد هنا ليشمل الدالة الجديدة
+from financial_analysis import get_fundamental_ratios, render_financial_dashboard_ui, format_large_number
 from market_data import get_static_info, get_tasi_data
 from database import execute_query, fetch_table
 from config import BACKUP_DIR, APP_NAME
@@ -29,19 +30,13 @@ def apply_sorting(df, cols_definition, key_suffix):
     try: return df.sort_values(by=target, ascending=asc)
     except: return df
 
-# === دالة حماية النصوص (تمنع ظهور الأخطاء) ===
 def safe_fmt(val, suffix=""):
-    """دالة مساعدة لتنسيق الأرقام بأمان وتجنب الأخطاء إذا كانت القيمة فارغة"""
-    if val is None:
-        return "غير متاح"
+    if val is None: return "غير متاح"
     try:
-        # تحويل القيمة لرقم للتأكد
         num = float(val)
-        if num == 0 and suffix == "": # إذا كان صفر ومو نسبة مئوية، نعرضه كصفر
-             return "0.00"
+        if num == 0 and suffix == "": return "0.00"
         return f"{num:.2f}{suffix}"
-    except (ValueError, TypeError):
-        return "غير متاح"
+    except (ValueError, TypeError): return "غير متاح"
 
 # === الصفحات ===
 def view_dashboard(fin):
@@ -121,7 +116,7 @@ def view_portfolio(fin, page_key):
                 ('company_name', 'الشركة'), 
                 ('symbol', 'الرمز'), 
                 ('quantity', 'الكمية'), 
-                ('entry_price', 'سعر الشراء'),   
+                ('entry_price', 'سعر الشراء'),    
                 ('total_cost', 'إجمالي التكلفة'), 
                 ('current_price', 'السعر الحالي'), 
                 ('daily_change', 'يومي %'), 
@@ -328,6 +323,9 @@ def view_settings():
     with st.expander("إدارة البيانات"):
         if st.button("نسخ احتياطي فوري"): create_smart_backup(); st.success("تم النسخ")
 
+# =========================================================
+# تحديث الدالة الرئيسية للتحليل (View Analysis)
+# =========================================================
 def view_analysis(fin):
     st.header("🔍 مركز التحليل")
     from classical_analysis import render_classical_analysis
@@ -347,19 +345,22 @@ def view_analysis(fin):
 
     if symbol:
         st.markdown(f"### تحليل سهم: {symbol}")
-        tab_fund, tab_tech, tab_class = st.tabs(["💰 التحليل المالي والأساسي", "📈 التحليل الفني", "🏛️ التحليل الكلاسيكي"])
+        # --- التحديث: إضافة تبويب القوائم المالية ---
+        tab_fund, tab_financials, tab_tech, tab_class = st.tabs([
+            "💰 المؤشرات والتقييم", 
+            "📑 القوائم المالية (جديد)", 
+            "📈 التحليل الفني", 
+            "🏛️ التحليل الكلاسيكي"
+        ])
         
+        # 1. المؤشرات (الكود الأصلي)
         with tab_fund:
             with st.spinner("جاري فحص القوائم المالية وحساب المؤشرات..."):
-                # استدعاء الدالة الذكية (الهجينة)
                 data = get_fundamental_ratios(symbol)
             
-            # التحقق من وجود بيانات
             if data and data['Current_Price'] > 0:
-                # عرض الرأي والتقييم
                 c_score, c_opinion = st.columns([1, 2])
                 with c_score:
-                    # تلوين النتيجة
                     score_color = "#0e6ba8"
                     if data['Score'] < 4: score_color = "#EF4444"
                     elif data['Score'] > 7: score_color = "#10B981"
@@ -378,7 +379,6 @@ def view_analysis(fin):
                     else: st.markdown("- لا توجد بيانات كافية لتوليد رأي دقيق.")
                 
                 st.markdown("---")
-                # عرض المؤشرات (مع استخدام دالة الحماية safe_fmt)
                 k1, k2, k3, k4 = st.columns(4)
                 k1.metric("مكرر الربحية (P/E)", safe_fmt(data['P/E']))
                 k2.metric("القيمة الدفترية (P/B)", safe_fmt(data['P/B']))
@@ -390,10 +390,8 @@ def view_analysis(fin):
                 k6.metric("المديونية", safe_fmt(data['Debt_to_Equity']))
                 k7.metric("الربح (EPS)", safe_fmt(data['EPS']))
                 
-                # القيمة العادلة
                 fv = data['Fair_Value']
                 curr = data['Current_Price']
-                
                 if fv and fv > 0 and curr > 0:
                     delta = ((curr - fv) / fv * 100)
                     color = "inverse" if fv > 0 and curr < fv else "normal"
@@ -403,9 +401,15 @@ def view_analysis(fin):
             else:
                 st.error(f"تعذر جلب البيانات المالية للسهم {symbol}. يرجى المحاولة لاحقاً.")
 
+        # 2. القوائم المالية (القسم الجديد)
+        with tab_financials:
+            render_financial_dashboard_ui(symbol)
+
+        # 3. التحليل الفني
         with tab_tech:
             render_technical_chart(symbol, period, interval)
             
+        # 4. التحليل الكلاسيكي
         with tab_class:
             render_classical_analysis(symbol)
 
