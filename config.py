@@ -8,16 +8,16 @@ DB_PATH = Path("stocks.db")
 BACKUP_DIR = Path("backups")
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
-# --- الألوان (استعادة الثيم الأصلي من الكود المرفق) ---
+# --- الألوان الموحدة ---
 DEFAULT_COLORS = {
-    'primary': '#0052CC',       # الأزرق الأصلي
-    'page_bg': '#F4F6F8',       # الخلفية الأصلية
-    'card_bg': '#FFFFFF',
-    'main_text': '#172B4D',     # لون النص الأصلي
-    'sub_text': '#6B7280',
-    'success': '#006644',       # أخضر داكن (أكثر احترافية)
-    'danger': '#DE350B',        # أحمر داكن
-    'border': '#DFE1E6',
+    'primary': '#0052CC',       # الأزرق (للعناوين والأزرار)
+    'page_bg': '#F4F5F7',       # خلفية الصفحة (رمادي مائل للأزرق خفيف جداً)
+    'card_bg': '#FFFFFF',       # خلفية الجداول والكروت
+    'main_text': '#172B4D',     # لون النص الأساسي (كحلي غامق)
+    'sub_text': '#5E6C84',      # لون النص الفرعي
+    'success': '#006644',       # أخضر (للأرباح)
+    'danger': '#DE350B',        # أحمر (للخسائر)
+    'border': '#DFE1E6',        # لون الحدود
 }
 
 def get_css(C):
@@ -33,7 +33,56 @@ def get_css(C):
         
         .stApp {{ background-color: {C['page_bg']} !important; }}
         
-        /* تصميم اللوقو الأصلي */
+        /* --- 1. حاوية الجدول الموحدة (The Container) --- */
+        .finance-table-container {{
+            background-color: {C['card_bg']};
+            border: 1px solid {C['border']};
+            border-radius: 8px;          /* زوايا دائرية */
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05); /* ظل خفيف */
+            overflow: hidden;            /* لضمان قص الزوايا */
+            margin-bottom: 20px;
+        }}
+
+        /* --- 2. الجدول نفسه --- */
+        .finance-table {{
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9rem;
+        }}
+
+        /* --- 3. رأس الجدول (Header) --- */
+        .finance-table th {{
+            background-color: #FAFBFC;   /* رمادي فاتح جداً */
+            color: {C['sub_text']} !important;
+            font-weight: 700 !important;
+            padding: 12px 16px !important;
+            text-align: right;
+            border-bottom: 2px solid {C['border']};
+            white-space: nowrap;         /* منع التفاف النص */
+        }}
+
+        /* --- 4. خلايا الجدول (Rows) --- */
+        .finance-table td {{
+            background-color: {C['card_bg']};
+            padding: 12px 16px !important;
+            text-align: right;
+            border-bottom: 1px solid {C['border']};
+            color: {C['main_text']};
+            font-weight: 600;
+            vertical-align: middle;
+        }}
+
+        /* تأثير عند مرور الماوس */
+        .finance-table tr:hover td {{
+            background-color: #F4F5F7 !important;
+        }}
+
+        /* إزالة الخط من آخر صف */
+        .finance-table tr:last-child td {{
+            border-bottom: none;
+        }}
+
+        /* --- عناصر أخرى (كروت KPI والناف بار) --- */
         .app-logo-box {{
             background: linear-gradient(135deg, {C['primary']}, #0065FF);
             width: 48px; height: 48px; border-radius: 8px;
@@ -42,41 +91,14 @@ def get_css(C):
             box-shadow: 0 4px 6px -1px rgba(0, 82, 204, 0.3);
             margin-left: 10px;
         }}
-        .logo-text {{
-            font-size: 1.6rem; font-weight: 900; color: {C['primary']}; letter-spacing: -0.5px;
-        }}
+        .logo-text {{ font-size: 1.6rem; font-weight: 900; color: {C['primary']}; }}
         
-        /* تحسينات الأزرار لتشبه التصميم الأصلي */
-        div[data-testid="stHorizontalBlock"] button {{
-            border-radius: 6px !important; font-weight: 700 !important; border: none;
-            transition: all 0.2s;
-        }}
-        
-        /* الكروت KPI */
         .kpi-box {{
-            background-color: {C['card_bg']}; 
-            border: 1px solid {C['border']}; 
-            border-radius: 8px; 
-            padding: 16px; 
-            text-align: right; 
+            background-color: {C['card_bg']}; border: 1px solid {C['border']}; 
+            border-radius: 8px; padding: 16px; text-align: right; 
             box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-            margin-bottom: 10px;
         }}
         .kpi-value {{ font-size: 1.4rem; font-weight: 800; color: {C['main_text']}; direction: ltr; }}
-        
-        /* الجداول (التصميم الأصلي مع دعم القوائم المالية) */
-        .finance-table {{ width: 100%; border-collapse: separate; border-spacing: 0 4px; margin-top: 5px; }}
-        .finance-table th {{ 
-            color: {C['sub_text']} !important; font-weight: 700 !important; font-size: 0.85rem !important;
-            padding: 10px !important; text-align: center; border-bottom: 2px solid {C['border']};
-            background-color: transparent;
-        }}
-        .finance-table td {{ 
-            background-color: white; padding: 12px !important; text-align: center;
-            color: {C['main_text']}; font-weight: 600; font-size: 0.9rem !important;
-            border-top: 1px solid {C['border']}; border-bottom: 1px solid {C['border']};
-            border-radius: 4px; /* زوايا دائرية للصفوف */
-        }}
         
         [data-testid="stSidebar"] {{ display: none !important; }}
         .stTabs [data-baseweb="tab-list"] {{ gap: 20px; }}
