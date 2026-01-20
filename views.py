@@ -42,7 +42,7 @@ def view_dashboard(fin):
     try: t_price, t_change = get_tasi_data()
     except: t_price, t_change = 0, 0
     arrow = "🔼" if t_change >= 0 else "🔽"
-    color = "#006644" if t_change >= 0 else "#DE350B" # تعديل الألوان لتطابق الجديد
+    color = "#006644" if t_change >= 0 else "#DE350B"
     
     st.markdown(f"""
     <div style="background:white; padding:20px; border-radius:8px; border:1px solid #DFE1E6; margin-bottom:20px; display:flex; justify-content:space-between; align-items:center; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
@@ -222,7 +222,6 @@ def view_settings():
         df = pd.merge(df_all, saved, on='sector', how='left').fillna(0) if not saved.empty else df_all.assign(target_percentage=0.0)
         
         st.info("قم بتعديل النسب المئوية المستهدفة:")
-        # هنا التعديل: إحاطة الجدول بـ div يشبه تصميم الجداول الأخرى
         st.markdown('<div class="finance-table-container" style="padding:10px;">', unsafe_allow_html=True)
         edited = st.data_editor(df, column_config={"sector": "القطاع", "target_percentage": st.column_config.NumberColumn("النسبة %", format="%d%%")}, hide_index=True, use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
@@ -247,12 +246,32 @@ def view_settings():
             try:
                 xls = pd.ExcelFile(f)
                 with get_db() as conn:
-                    for t in ['Trades', 'Deposits', 'Withdrawals', 'ReturnsGrants', 'Watchlist', 'SectorTargets', 'InvestmentThesis']:
+                    # القائمة الكاملة للجداول
+                    tables = ['Trades', 'Deposits', 'Withdrawals', 'ReturnsGrants', 'Watchlist', 'SectorTargets', 'InvestmentThesis', 'FinancialStatements']
+                    for t in tables:
                         if t in xls.sheet_names:
-                            d = pd.read_excel(xls, t)
-                            if 'id' in d.columns: d = d.drop(columns=['id'])
-                            d.to_sql(t, conn, if_exists='append', index=False)
-                st.success("تم الاستيراد!")
+                            df = pd.read_excel(xls, t)
+                            if not df.empty:
+                                # 1. حذف عمود ID لتجنب التعارض
+                                if 'id' in df.columns: df = df.drop(columns=['id'])
+                                
+                                # 2. التحقق من الأعمدة المسموح بها فقط لتجنب خطأ "unknown column"
+                                try:
+                                    cursor = conn.execute(f"PRAGMA table_info({t})")
+                                    valid_cols = [r['name'] for r in cursor.fetchall()]
+                                    
+                                    # فلترة الداتا فريم لإبقاء الأعمدة الموجودة في قاعدة البيانات فقط
+                                    # هذا السطر هو الحل الجذري لمشكلتك
+                                    existing_cols = [c for c in df.columns if c in valid_cols]
+                                    df_final = df[existing_cols]
+                                    
+                                    if not df_final.empty:
+                                        df_final.to_sql(t, conn, if_exists='append', index=False)
+                                except Exception as e:
+                                    st.warning(f"تجاوز الجدول {t} بسبب خطأ: {e}")
+                                    
+                st.success("تم الاستيراد بنجاح! يرجى تحديث الصفحة.")
+                st.cache_data.clear()
             except Exception as e: st.error(f"خطأ: {e}")
 
 def router():
