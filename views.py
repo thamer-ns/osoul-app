@@ -3,7 +3,7 @@ import pandas as pd
 import plotly.express as px
 from datetime import date
 
-# === الاستيرادات (تم الحفاظ عليها كما هي) ===
+# === الاستيرادات ===
 from components import render_navbar, render_kpi, render_table
 from analytics import (calculate_portfolio_metrics, update_prices, create_smart_backup, 
                        get_comprehensive_performance, get_dividends_calendar, 
@@ -15,43 +15,6 @@ from database import execute_query, fetch_table, get_db, clean_database_duplicat
 from config import APP_NAME
 from data_source import TADAWUL_DB
 
-# =========================================================
-# 1. تنسيق CSS (تمت إضافته لضبط الخطوط والجداول)
-# =========================================================
-st.markdown("""
-<style>
-    /* استيراد خط Cairo */
-    @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap');
-
-    /* تطبيق الخط واتجاه النص */
-    html, body, [class*="css"] {
-        font-family: 'Cairo', sans-serif !important;
-        direction: rtl;
-    }
-
-    /* تنسيق الجداول لتكون سطراً واحداً ومحاذاة لليمين */
-    div[data-testid="stDataFrame"] div[role="grid"] div[role="row"] div {
-        white-space: nowrap !important;
-        text-align: right !important;
-        font-size: 15px !important;
-        display: flex;
-        align-items: center;
-        justify-content: flex-end;
-    }
-    
-    /* تنسيق عناوين الأعمدة */
-    div[data-testid="stDataFrame"] div[role="columnheader"] {
-        text-align: right !important;
-        font-weight: bold !important;
-        white-space: nowrap !important;
-    }
-
-    /* إخفاء العمود الرقمي الجانبي */
-    thead tr th:first-child {display:none}
-    tbody th {display:none}
-</style>
-""", unsafe_allow_html=True)
-
 # === دوال مساعدة ===
 def safe_fmt(val, suffix=""):
     if val is None: return "غير متاح"
@@ -61,7 +24,18 @@ def safe_fmt(val, suffix=""):
         return f"{num:.2f}{suffix}"
     except: return "غير متاح"
 
-# (تم حذف دالة apply_sorting لأننا سنستخدم ترتيب الجدول التلقائي لضمان التنسيق)
+def apply_sorting(df, cols_definition, key_suffix):
+    if df.empty: return df
+    with st.expander("🔍 أدوات الفرز والتصفية", expanded=False):
+        label_to_col = {label: col for col, label in cols_definition}
+        sort_options = list(label_to_col.keys())
+        c1, c2 = st.columns([2, 1])
+        with c1: selected = st.selectbox("فرز حسب:", sort_options, key=f"sc_{key_suffix}")
+        with c2: order = st.radio("الترتيب:", ["تنازلي", "تصاعدي"], horizontal=True, key=f"so_{key_suffix}")
+    target = label_to_col[selected]
+    asc = (order == "تصاعدي")
+    try: return df.sort_values(by=target, ascending=asc)
+    except: return df
 
 # === الصفحات ===
 def view_dashboard(fin):
@@ -70,9 +44,8 @@ def view_dashboard(fin):
     arrow = "🔼" if t_change >= 0 else "🔽"
     color = "#006644" if t_change >= 0 else "#DE350B"
     
-    # تم حذف الرموز من العناوين
     st.markdown(f"""
-    <div style="background:white; padding:20px; border-radius:8px; border:1px solid #DFE1E6; margin-bottom:20px; display:flex; justify-content:space-between; align-items:center;">
+    <div style="background:white; padding:20px; border-radius:8px; border:1px solid #DFE1E6; margin-bottom:20px; display:flex; justify-content:space-between; align-items:center; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
         <div>
             <div style="font-size:0.9rem; color:#5E6C84; font-weight:bold;">المؤشر العام (TASI)</div>
             <div style="font-size:2rem; font-weight:900; color:#172B4D;">{t_price:,.2f}</div>
@@ -83,7 +56,7 @@ def view_dashboard(fin):
     </div>
     """, unsafe_allow_html=True)
     
-    st.markdown("### الملخص المالي")
+    st.markdown("### 📊 الملخص المالي")
     c1, c2, c3, c4 = st.columns(4)
     with c1: render_kpi("الكاش المتوفر", f"{fin['cash']:,.2f}", "blue")
     with c2: render_kpi("رأس المال المستثمر", f"{(fin['total_deposited']-fin['total_withdrawn']):,.2f}")
@@ -93,18 +66,17 @@ def view_dashboard(fin):
     with c4: render_kpi("صافي الربح الكلي", f"{total_pl:,.2f}", color_pl)
     
     st.markdown("---")
-    st.markdown("### نمو المحفظة")
+    st.markdown("### 📈 نمو المحفظة")
     curve_data = generate_equity_curve(fin['all_trades'])
     if not curve_data.empty and 'date' in curve_data.columns:
         fig = px.line(curve_data, x='date', y='cumulative_invested')
-        fig.update_layout(yaxis_title="القيمة (ريال)", xaxis_title="التاريخ", font=dict(family="Cairo"))
+        fig.update_layout(yaxis_title="القيمة (ريال)", xaxis_title="التاريخ", font=dict(family="Cairo"), paper_bgcolor="white", plot_bgcolor="white")
         st.plotly_chart(fig, use_container_width=True)
-    else: st.info("لا توجد بيانات كافية لرسم منحنى النمو.")
+    else: st.info("📉 لا توجد بيانات كافية لرسم منحنى النمو.")
 
 def view_portfolio(fin, page_key):
     target_strat = "مضاربة" if page_key == 'spec' else "استثمار"
-    # تم حذف الرمز من العنوان
-    st.header(f"محفظة {target_strat}")
+    st.header(f"💼 محفظة {target_strat}")
     all_data = fin['all_trades']
     
     df_strat = pd.DataFrame()
@@ -129,65 +101,76 @@ def view_portfolio(fin, page_key):
     t1, t2, t3 = st.tabs([f"القائمة ({len(open_df)})", "تحليل الأداء", f"الأرشيف ({len(closed_df)})"])
     
     with t1:
-        # === تم حذف قسم توزيع القطاعات بالكامل كما طلبت ===
-        
+        # === قسم توزيع القطاعات (الاستثمار فقط) ===
+        if page_key == 'invest':
+            st.markdown("#### 🎯 التوزيع القطاعي والأهداف")
+            
+            # تجهيز البيانات
+            sec_sum = pd.DataFrame(columns=['sector', 'market_value', 'current_weight'])
+            if not open_df.empty:
+                sec_sum = open_df.groupby('sector').agg({'market_value':'sum'}).reset_index()
+                total_mv = sec_sum['market_value'].sum()
+                if total_mv > 0: sec_sum['current_weight'] = (sec_sum['market_value']/total_mv*100)
+            
+            saved_targets = fetch_table("SectorTargets")
+            all_secs = set(sec_sum['sector'].tolist())
+            if not saved_targets.empty: all_secs.update(saved_targets['sector'].tolist())
+            
+            df_edit = pd.DataFrame({'sector': list(all_secs)})
+            df_edit = pd.merge(df_edit, sec_sum, on='sector', how='left').fillna(0)
+            if not saved_targets.empty:
+                df_edit = pd.merge(df_edit, saved_targets, on='sector', how='left')
+                df_edit['target_percentage'] = df_edit['target_percentage'].fillna(0.0)
+            else: df_edit['target_percentage'] = 0.0
+
+            # 1. العرض باستخدام الجدول الجميل (للقراءة فقط)
+            render_table(df_edit, [('sector', 'القطاع'), ('current_weight', 'الوزن الحالي %'), ('target_percentage', 'الهدف %')])
+            
+            # 2. زر التعديل (يظهر الجدول القابل للتعديل عند الضغط عليه)
+            with st.expander("✏️ تعديل الأهداف (النسب)"):
+                edited_targets = st.data_editor(
+                    df_edit,
+                    column_config={
+                        "sector": st.column_config.TextColumn("القطاع", disabled=True),
+                        "target_percentage": st.column_config.NumberColumn("الهدف %", format="%d%%", step=1, min_value=0, max_value=100)
+                    },
+                    hide_index=True, use_container_width=True
+                )
+                if st.button("حفظ التغييرات"):
+                    execute_query("DELETE FROM SectorTargets")
+                    for _, row in edited_targets.iterrows():
+                        if row['target_percentage'] > 0:
+                            execute_query("INSERT INTO SectorTargets (sector, target_percentage) VALUES (?,?)", (row['sector'], row['target_percentage']))
+                    st.success("تم الحفظ!")
+                    st.rerun()
+            st.markdown("---")
+
         if not open_df.empty:
-            # === تجهيز الجدول للتنسيق الجديد ===
-            
-            # 1. حذف عمود تاريخ البيع من الصفقات المفتوحة
-            if 'exit_date' in open_df.columns:
-                open_df = open_df.drop(columns=['exit_date'])
-                
-            # 2. تحديد الأعمدة المطلوبة
-            cols_to_show = [
-                'symbol', 'company_name', 'sector', 'date', 
-                'quantity', 'entry_price', 'current_price', 
-                'market_value', 'gain', 'gain_pct'
+            # === ترتيب الأعمدة بالضبط كما طلبت ===
+            cols_op = [
+                ('company_name', 'اسم الشركة'),
+                ('sector', 'القطاع'),
+                ('status', 'الحالة'),
+                ('symbol', 'رمز الشركة'),
+                ('date', 'تاريخ الشراء'),
+                ('exit_date', 'تاريخ البيع'),
+                ('quantity', 'الكمية'),
+                ('entry_price', 'سعر الشراء'),
+                ('total_cost', 'التكلفة'),
+                ('year_high', 'اعلى سنوي'),
+                ('current_price', 'السعر الحالي'),
+                ('year_low', 'ادنى سنوي'),
+                ('market_value', 'سعر السوق'), # أو القيمة السوقية
+                ('gain', 'الربح والخسارة'),
+                ('gain_pct', 'نسبة الربح والخسارة'),
+                ('weight', 'وزن السهم'),
+                ('daily_change', 'نسبة التغير اليومي'),
+                ('prev_close', 'اغلاق الامس')
             ]
-            
-            # التأكد من وجود الأعمدة
-            final_cols = [c for c in cols_to_show if c in open_df.columns]
-            view_df = open_df[final_cols].copy()
-            
-            # إعادة تسمية الأعمدة للعربية (بدون رموز)
-            view_df.rename(columns={
-                'symbol': 'رمز الشركة',
-                'company_name': 'اسم الشركة',
-                'sector': 'القطاع',
-                'date': 'تاريخ الشراء',
-                'quantity': 'الكمية',
-                'entry_price': 'سعر الشراء',
-                'current_price': 'السعر الحالي',
-                'market_value': 'القيمة السوقية',
-                'gain': 'الربح/الخسارة',
-                'gain_pct': 'النسبة %'
-            }, inplace=True)
-
-            # 3. إعدادات التنسيق (Column Config)
-            column_configuration = {
-                "رمز الشركة": st.column_config.NumberColumn(
-                    "رمز الشركة", format="%d" # رقم صحيح بدون فواصل
-                ),
-                "سعر الشراء": st.column_config.NumberColumn("سعر الشراء", format="%.2f"),
-                "السعر الحالي": st.column_config.NumberColumn("السعر الحالي", format="%.2f"),
-                "القيمة السوقية": st.column_config.NumberColumn("القيمة السوقية", format="%.2f"),
-                "الربح/الخسارة": st.column_config.NumberColumn("الربح/الخسارة", format="%.2f"),
-                "النسبة %": st.column_config.ProgressColumn(
-                    "النسبة %", format="%.2f%%", min_value=-100, max_value=100,
-                ),
-                 "تاريخ الشراء": st.column_config.DateColumn("تاريخ الشراء", format="YYYY-MM-DD")
-            }
-
-            # استخدام st.dataframe بدلاً من render_table لضمان تطبيق التنسيقات المطلوبة
-            st.dataframe(
-                view_df,
-                use_container_width=True,
-                hide_index=True,
-                column_config=column_configuration
-            )
+            render_table(apply_sorting(open_df, cols_op, page_key), cols_op)
             
             st.markdown("---")
-            with st.expander("تسجيل بيع"):
+            with st.expander("🔴 تسجيل بيع"):
                 with st.form(f"sell_{page_key}"):
                     c1, c2, c3 = st.columns(3)
                     sel = c1.selectbox("السهم", open_df['symbol'].unique())
@@ -202,30 +185,17 @@ def view_portfolio(fin, page_key):
         if not open_df.empty:
             dd = calculate_historical_drawdown(open_df)
             if not dd.empty:
-                st.markdown("##### أقصى تراجع")
+                st.markdown("##### 📉 أقصى تراجع")
                 fig = px.area(dd, x='date', y='drawdown', color_discrete_sequence=['#DE350B'])
                 st.plotly_chart(fig, use_container_width=True)
 
     with t3:
         if not closed_df.empty:
-            # استخدام st.dataframe للأرشيف أيضاً
-            archive_df = closed_df[['company_name', 'symbol', 'gain', 'gain_pct', 'exit_date']].copy()
-            archive_df.rename(columns={'company_name':'الشركة', 'symbol':'الرمز', 'gain':'الربح', 'gain_pct':'%', 'exit_date':'تاريخ البيع'}, inplace=True)
-            
-            st.dataframe(
-                archive_df,
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "الرمز": st.column_config.NumberColumn("الرمز", format="%d"),
-                    "%": st.column_config.NumberColumn("%", format="%.2f%%"),
-                    "الربح": st.column_config.NumberColumn("الربح", format="%.2f")
-                }
-            )
+            render_table(closed_df, [('company_name', 'الشركة'), ('symbol', 'الرمز'), ('gain', 'الربح'), ('gain_pct', '%'), ('exit_date', 'تاريخ البيع')])
         else: st.info("سجل فارغ.")
 
 def view_sukuk_portfolio(fin):
-    st.header("محفظة الصكوك")
+    st.header("📜 محفظة الصكوك")
     all_data = fin['all_trades']
     sukuk_df = pd.DataFrame()
     if not all_data.empty:
@@ -241,15 +211,12 @@ def view_sukuk_portfolio(fin):
     c1.metric("إجمالي الصكوك", f"{total_cost:,.2f}")
     c2.metric("الربح الرأسمالي", f"{gain:,.2f}")
     
-    # تنسيق جدول الصكوك
-    display_sukuk = open_sukuk[['company_name', 'symbol', 'quantity', 'entry_price', 'current_price', 'market_value', 'gain_pct']].copy()
-    display_sukuk.rename(columns={'company_name':'اسم الصك', 'symbol':'الرمز', 'quantity':'العدد', 'entry_price':'شراء', 'current_price':'حالياً', 'market_value':'القيمة', 'gain_pct':'النمو %'}, inplace=True)
-    
-    st.dataframe(display_sukuk, use_container_width=True, hide_index=True, column_config={"الرمز": st.column_config.NumberColumn(format="%d")})
+    cols = [('company_name', 'اسم الصك'), ('symbol', 'الرمز'), ('quantity', 'العدد'), ('entry_price', 'سعر الشراء'), ('current_price', 'السعر الحالي'), ('market_value', 'القيمة السوقية'), ('gain_pct', 'النمو %')]
+    render_table(open_sukuk, cols)
 
-# === استعادة قسم التحليل ===
+# === استعادة قسم التحليل (Fixing Missing Analysis) ===
 def view_analysis(fin):
-    st.header("مركز التحليل الشامل")
+    st.header("🔬 مركز التحليل الشامل")
     from classical_analysis import render_classical_analysis
     trades = fin['all_trades']
     wl = fetch_table("Watchlist")
@@ -267,7 +234,7 @@ def view_analysis(fin):
     if symbol:
         n, s = get_static_info(symbol)
         st.markdown(f"### {n} ({symbol})")
-        t1, t2, t3, t4, t5 = st.tabs(["المؤشرات", "القوائم المالية", "الأطروحة", "فني", "كلاسيكي"])
+        t1, t2, t3, t4, t5 = st.tabs(["📊 المؤشرات", "📑 القوائم المالية", "📝 الأطروحة", "📈 فني", "🏛️ كلاسيكي"])
         
         with t1:
             with st.spinner("جاري التحليل..."):
@@ -275,8 +242,8 @@ def view_analysis(fin):
                 if d and d['Current_Price']:
                     c_sc, c_det = st.columns([1, 3])
                     with c_sc:
-                          color = "#006644" if d['Score'] >= 7 else "#DE350B"
-                          st.markdown(f"<div style='text-align:center; padding:15px; border:2px solid {color}; border-radius:15px;'><div style='font-size:3rem; font-weight:bold; color:{color};'>{d['Score']}/10</div><div style='font-weight:bold;'>{d['Rating']}</div></div>", unsafe_allow_html=True)
+                         color = "#006644" if d['Score'] >= 7 else "#DE350B"
+                         st.markdown(f"<div style='text-align:center; padding:15px; border:2px solid {color}; border-radius:15px;'><div style='font-size:3rem; font-weight:bold; color:{color};'>{d['Score']}/10</div><div style='font-weight:bold;'>{d['Rating']}</div></div>", unsafe_allow_html=True)
                     with c_det:
                         st.markdown("**أبرز الملاحظات:**")
                         for op in d['Opinions']: st.write(f"• {op}")
@@ -301,7 +268,7 @@ def view_analysis(fin):
         with t5: render_classical_analysis(symbol)
 
 def view_add_trade():
-    st.header("إضافة عملية جديدة")
+    st.header("➕ إضافة عملية جديدة")
     with st.container():
         with st.form("add_trade_form"):
             c1, c2 = st.columns(2)
@@ -312,14 +279,14 @@ def view_add_trade():
             price = c4.number_input("السعر", min_value=0.0)
             date_ex = c5.date_input("التاريخ", date.today())
             
-            if st.form_submit_button("حفظ", type="primary"):
+            if st.form_submit_button("💾 حفظ", type="primary"):
                 n, s = get_static_info(sym)
                 atype = "Sukuk" if strat == "صكوك" else "Stock"
                 execute_query("INSERT INTO Trades (symbol, company_name, sector, asset_type, date, quantity, entry_price, strategy, status, current_price) VALUES (?,?,?,?,?,?,?,?,'Open',?)", (sym, n, s, atype, str(date_ex), qty, price, strat, price))
                 st.success("تم"); st.cache_data.clear()
 
 def view_cash_log():
-    st.header("سجل السيولة")
+    st.header("💵 سجل السيولة")
     fin = calculate_portfolio_metrics()
     
     t1, t2, t3 = st.tabs(["الإيداعات", "السحوبات", "التوزيعات"])
@@ -328,55 +295,54 @@ def view_cash_log():
         total_d = fin['deposits']['amount'].sum() if not fin['deposits'].empty else 0
         st.metric("إجمالي الإيداعات", f"{total_d:,.2f}", delta="مجموع كلي")
         
-        with st.expander("إيداع جديد"):
+        with st.expander("➕ إيداع جديد"):
              with st.form("dep"):
                  amt = st.number_input("المبلغ"); dt = st.date_input("التاريخ"); nt = st.text_input("ملاحظة")
                  if st.form_submit_button("حفظ"): execute_query("INSERT INTO Deposits (date, amount, note) VALUES (?,?,?)", (str(dt), amt, nt)); st.success("تم"); st.rerun()
-        # هنا استخدمنا dataframe لضبط التنسيق بدلاً من render_table
-        st.dataframe(fin['deposits'], use_container_width=True, hide_index=True)
+        render_table(fin['deposits'], [('date','التاريخ'), ('amount','المبلغ'), ('note','ملاحظات')])
         
     with t2:
         total_w = fin['withdrawals']['amount'].sum() if not fin['withdrawals'].empty else 0
         st.metric("إجمالي السحوبات", f"{total_w:,.2f}", delta="-", delta_color="inverse")
         
-        with st.expander("سحب جديد"):
+        with st.expander("➖ سحب جديد"):
              with st.form("wit"):
                  amt = st.number_input("المبلغ"); dt = st.date_input("التاريخ"); nt = st.text_input("ملاحظة")
                  if st.form_submit_button("حفظ"): execute_query("INSERT INTO Withdrawals (date, amount, note) VALUES (?,?,?)", (str(dt), amt, nt)); st.success("تم"); st.rerun()
-        st.dataframe(fin['withdrawals'], use_container_width=True, hide_index=True)
+        render_table(fin['withdrawals'], [('date','التاريخ'), ('amount','المبلغ'), ('note','ملاحظات')])
         
     with t3:
         total_r = fin['returns']['amount'].sum() if not fin['returns'].empty else 0
         st.metric("إجمالي التوزيعات", f"{total_r:,.2f}", delta="+", delta_color="normal")
         
-        with st.expander("تسجيل توزيع"):
+        with st.expander("💰 تسجيل توزيع"):
              with st.form("ret"):
                  sym = st.text_input("الرمز"); amt = st.number_input("المبلغ"); dt = st.date_input("التاريخ")
                  if st.form_submit_button("حفظ"): execute_query("INSERT INTO ReturnsGrants (date, symbol, amount) VALUES (?,?,?)", (str(dt), sym, amt)); st.success("تم"); st.rerun()
-        st.dataframe(fin['returns'], use_container_width=True, hide_index=True)
+        render_table(fin['returns'], [('date','التاريخ'), ('symbol','الرمز'), ('amount','المبلغ')])
 
 def view_tools():
-    st.header("الأدوات")
+    st.header("🛠️ الأدوات")
     fin = calculate_portfolio_metrics()
     st.info("زكاة تقديرية (2.5775%): " + str(fin['market_val_open'] * 0.025775))
 
 def view_settings():
-    st.header("الإعدادات العامة")
+    st.header("⚙️ الإعدادات العامة")
     
-    st.markdown("### النسخ الاحتياطي")
-    if st.button("إنشاء نسخة احتياطية (Excel)"):
+    st.markdown("### 📤 النسخ الاحتياطي")
+    if st.button("📦 إنشاء نسخة احتياطية (Excel)"):
         if create_smart_backup(): st.success("✅ تم الحفظ في مجلد backups")
         else: st.error("فشل النسخ")
     
     st.markdown("---")
-    st.markdown("### إدارة البيانات")
-    if st.button("حذف جميع البيانات (Format)", type="primary"):
+    st.markdown("### 📥 إدارة البيانات")
+    if st.button("🗑️ حذف جميع البيانات (Format)", type="primary"):
         clear_all_data()
         st.warning("تم مسح البيانات!"); st.cache_data.clear(); st.rerun()
 
     st.warning("استعادة البيانات (سيتم دمج الأعمدة الصحيحة فقط)")
     f = st.file_uploader("ملف Excel", type=['xlsx'])
-    if f and st.button("استيراد"):
+    if f and st.button("🚀 استيراد"):
         try:
             xls = pd.ExcelFile(f)
             with get_db() as conn:
