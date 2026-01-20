@@ -18,9 +18,10 @@ def get_db():
 
 def init_db():
     with get_db() as conn:
+        # 1. جداول المستخدمين (لن تتأثر)
         conn.execute("CREATE TABLE IF NOT EXISTS Users (username TEXT PRIMARY KEY, password TEXT, created_at TEXT)")
         
-        # الجدول الشامل (يدعم asset_type)
+        # 2. جدول الصفقات (العمود الفقري - لن يحذف)
         conn.execute('''CREATE TABLE IF NOT EXISTS Trades (
             id INTEGER PRIMARY KEY AUTOINCREMENT, 
             symbol TEXT, 
@@ -47,16 +48,42 @@ def init_db():
         conn.execute("CREATE TABLE IF NOT EXISTS Watchlist (symbol TEXT PRIMARY KEY)")
         conn.execute("CREATE TABLE IF NOT EXISTS SectorTargets (sector TEXT PRIMARY KEY, target_percentage REAL)")
         
-        # الترحيل الآمن (Migrations)
+        # --- الإضافات الجديدة (القوائم المالية والأطروحة) ---
+        
+        # 3. جدول القوائم المالية
+        conn.execute('''CREATE TABLE IF NOT EXISTS FinancialStatements (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT,
+            period_type TEXT, -- 'Annual' or 'Quarterly'
+            date TEXT,
+            revenue REAL,
+            net_income REAL,
+            gross_profit REAL,
+            operating_income REAL,
+            total_assets REAL,
+            total_liabilities REAL,
+            total_equity REAL,
+            operating_cash_flow REAL,
+            free_cash_flow REAL,
+            eps REAL,
+            source TEXT, 
+            UNIQUE(symbol, period_type, date)
+        )''')
+
+        # 4. جدول أطروحة الاستثمار
+        conn.execute('''CREATE TABLE IF NOT EXISTS InvestmentThesis (
+            symbol TEXT PRIMARY KEY,
+            thesis_text TEXT,
+            target_price REAL,
+            recommendation TEXT, -- 'Buy', 'Hold', 'Sell'
+            last_updated TEXT
+        )''')
+        
+        # --- الترحيل الآمن (Migrations) للأعمدة الناقصة ---
         try: conn.execute("ALTER TABLE Trades ADD COLUMN asset_type TEXT DEFAULT 'Stock'")
         except: pass
         try: conn.execute("ALTER TABLE Trades ADD COLUMN dividend_yield REAL")
         except: pass
-        
-        updates = [("ReturnsGrants", "amount", "REAL"), ("ReturnsGrants", "company_name", "TEXT"), ("Deposits", "note", "TEXT"), ("Withdrawals", "note", "TEXT")]
-        for tbl, col, typ in updates:
-            try: conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {typ}")
-            except: pass
 
 def db_create_user(username, password):
     hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
