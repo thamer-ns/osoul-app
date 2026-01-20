@@ -11,4 +11,3 @@ extra-streamlit-components
 openpyxl
 bcrypt
 watchdog
-jinja2
