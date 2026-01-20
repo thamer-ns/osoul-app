@@ -3,14 +3,15 @@ import numpy as np
 import shutil
 from database import fetch_table, get_db
 from market_data import get_static_info, fetch_batch_data, get_chart_history
-from config import BACKUP_DIR, SECTOR_TARGETS
+# --- التعديل هنا: حذفنا SECTOR_TARGETS من الاستيراد ---
+from config import BACKUP_DIR 
 import streamlit as st
 import logging
 
 logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 
-# ملاحظة: SECTOR_TARGETS هنا كمتغير افتراضي إذا لم يوجد في قاعدة البيانات
+# هذا هو تعريف المتغير (كان يسبب مشكلة لأنه موجود هنا ومستدعى من فوق)
 SECTOR_TARGETS = {}
 
 def calculate_portfolio_metrics():
