@@ -2,7 +2,6 @@ import streamlit as st
 from config import APP_NAME, APP_ICON
 
 def render_navbar():
-    # (نفس الكود السابق للناف بار)
     if 'custom_colors' not in st.session_state:
         from config import DEFAULT_COLORS
         st.session_state.custom_colors = DEFAULT_COLORS.copy()
@@ -41,7 +40,7 @@ def render_kpi(label, value, color=None):
 
 def render_table(df, cols_definition):
     """
-    يقوم برسم جدول مطابق تماماً للتصميم الأصلي (سكرين شوت 428)
+    يقوم برسم جدول مطابق تماماً للتصميم الأصلي
     """
     if df.empty:
         st.info("لا توجد بيانات للعرض")
@@ -61,7 +60,7 @@ def render_table(df, cols_definition):
             val = row.get(col_key, "-")
             display_val = val
             
-            # 1. تنسيق الحالة (مفتوحة/مغلقة)
+            # 1. تنسيق الحالة
             if col_key == 'status':
                 if not is_closed:
                     display_val = f"<span style='background:#E3FCEF; color:#006644; padding:2px 8px; border-radius:4px; font-size:0.8rem;'>مفتوحة</span>"
@@ -73,25 +72,27 @@ def render_table(df, cols_definition):
                 fmt = "{:,.2f}".format(val)
                 
                 # تلوين الربح والخسارة
-                if col_key in ['gain', 'gain_pct', 'daily_change', 'net_profit', 'change']:
+                # تم إضافة str() هنا لمنع الخطأ عند مقارنة السنوات
+                key_str = str(col_key).lower()
+                
+                if key_str in ['gain', 'gain_pct', 'daily_change', 'net_profit', 'change']:
                     color = "#006644" if val >= 0 else "#DE350B"
-                    suffix = "%" if 'pct' in col_key or 'change' in col_key else ""
-                    # جعل الخط عريض للقيم المهمة
-                    weight = "bold" if col_key in ['gain', 'gain_pct'] else "normal"
+                    suffix = "%" if 'pct' in key_str or 'change' in key_str else ""
+                    weight = "bold" if key_str in ['gain', 'gain_pct'] else "normal"
                     display_val = f"<span style='color:{color}; font-weight:{weight}; direction:ltr;'>{fmt}{suffix}</span>"
                 
                 # تنسيق النسب العادية
-                elif 'weight' in col_key or 'percentage' in col_key:
+                elif 'weight' in key_str or 'percentage' in key_str:
                     display_val = f"{fmt}%"
                     
-                # الملايين (للقوائم المالية)
-                elif val > 1_000_000 and col_key in ['revenue', 'net_income']:
+                # الملايين (للقوائم المالية) - شرط ذكي: إذا الرقم كبير واسم العمود ليس سنة
+                elif val > 1_000_000 and not str(col_key).isdigit():
                      display_val = f"{val/1_000_000:,.1f}M"
                 else:
                     display_val = fmt
 
             # 3. تنسيق التواريخ
-            elif 'date' in col_key and val:
+            elif 'date' in str(col_key) and val:
                 display_val = str(val)[:10]
 
             cells += f"<td>{display_val}</td>"
