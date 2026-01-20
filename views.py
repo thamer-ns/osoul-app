@@ -9,9 +9,9 @@ from analytics import (calculate_portfolio_metrics, update_prices, create_smart_
                        get_comprehensive_performance, get_dividends_calendar, 
                        generate_equity_curve, calculate_historical_drawdown)
 from charts import render_technical_chart
-from financial_analysis import get_fundamental_ratios, render_financial_dashboard_ui
+from financial_analysis import get_fundamental_ratios, render_financial_dashboard_ui, get_thesis, save_thesis
 from market_data import get_static_info, get_tasi_data
-from database import execute_query, fetch_table, get_db
+from database import execute_query, fetch_table, get_db, clean_database_duplicates
 from config import APP_NAME
 from data_source import TADAWUL_DB
 
@@ -62,7 +62,7 @@ def view_dashboard(fin):
     with c2: render_kpi("رأس المال المستثمر", f"{(fin['total_deposited']-fin['total_withdrawn']):,.2f}")
     with c3: render_kpi("القيمة السوقية", f"{fin['market_val_open']:,.2f}")
     total_pl = fin['unrealized_pl'] + fin['realized_pl'] + fin['total_returns']
-    color_pl = 'green' if total_pl >= 0 else 'red'
+    color_pl = 'success' if total_pl >= 0 else 'danger'
     with c4: render_kpi("صافي الربح الكلي", f"{total_pl:,.2f}", color_pl)
     
     st.markdown("---")
@@ -80,8 +80,13 @@ def view_portfolio(fin, page_key):
     all_data = fin['all_trades']
     
     if all_data.empty: st.info("لا توجد بيانات"); return
+    
+    all_data['strategy'] = all_data['strategy'].astype(str).str.strip()
     df_strat = all_data[(all_data['strategy'] == target_strat) & (all_data['asset_type'] != 'Sukuk')].copy()
-    if df_strat.empty: st.warning("المحفظة فارغة."); return
+    
+    if df_strat.empty: 
+        st.warning(f"المحفظة فارغة. (تأكد أن الصفقات مسجلة تحت مسمى '{target_strat}')")
+        return
     
     open_df = df_strat[df_strat['status']=='Open'].copy()
     closed_df = df_strat[df_strat['status']=='Close'].copy()
@@ -132,6 +137,23 @@ def view_portfolio(fin, page_key):
             render_table(closed_df, [('company_name', 'الشركة'), ('symbol', 'الرمز'), ('gain', 'الربح المحقق'), ('gain_pct', '%'), ('exit_date', 'تاريخ البيع')])
         else: st.info("سجل الصفقات المغلقة فارغ.")
 
+def view_sukuk_portfolio(fin):
+    st.header("📜 محفظة الصكوك")
+    all_data = fin['all_trades']
+    sukuk_df = all_data[all_data['asset_type'] == 'Sukuk'].copy()
+    if sukuk_df.empty: st.warning("لم تقم بإضافة أي صكوك بعد."); return
+    
+    open_sukuk = sukuk_df[sukuk_df['status'] == 'Open'].copy()
+    total_cost = open_sukuk['total_cost'].sum()
+    gain = open_sukuk['gain'].sum()
+    
+    c1, c2 = st.columns(2)
+    c1.metric("إجمالي الصكوك", f"{total_cost:,.2f}")
+    c2.metric("الربح الرأسمالي", f"{gain:,.2f}")
+    
+    cols = [('company_name', 'اسم الصك'), ('symbol', 'الرمز'), ('quantity', 'العدد'), ('entry_price', 'سعر الشراء'), ('current_price', 'السعر الحالي'), ('market_value', 'القيمة السوقية'), ('gain_pct', 'النمو %')]
+    render_table(open_sukuk, cols)
+
 def view_analysis(fin):
     st.header("🔬 مركز التحليل الشامل")
     from classical_analysis import render_classical_analysis
@@ -147,7 +169,7 @@ def view_analysis(fin):
     if symbol:
         n, s = get_static_info(symbol)
         st.markdown(f"### {n} ({symbol})")
-        t1, t2, t3, t4 = st.tabs(["📊 المؤشرات الأساسية", "📑 القوائم المالية", "📈 التحليل الفني", "🏛️ التحليل الكلاسيكي"])
+        t1, t2, t3, t4, t5 = st.tabs(["📊 المؤشرات", "📑 القوائم المالية", "📝 الأطروحة", "📈 فني", "🏛️ كلاسيكي"])
         
         with t1:
             with st.spinner("جاري التحليل..."):
@@ -162,13 +184,23 @@ def view_analysis(fin):
                         for op in d['Opinions']: st.write(f"• {op}")
                     st.markdown("---")
                     k1, k2, k3, k4 = st.columns(4)
-                    k1.metric("مكرر الأرباح (P/E)", safe_fmt(d['P/E']))
-                    k2.metric("مضاعف الدفترية (P/B)", safe_fmt(d['P/B']))
-                    k3.metric("العائد (ROE)", safe_fmt(d['ROE'], "%"))
-                    k4.metric("القيمة العادلة", safe_fmt(d['Fair_Value']))
+                    k1.metric("P/E", safe_fmt(d['P/E']))
+                    k2.metric("P/B", safe_fmt(d['P/B']))
+                    k3.metric("ROE", safe_fmt(d['ROE'], "%"))
+                    k4.metric("Fair Value", safe_fmt(d['Fair_Value']))
         with t2: render_financial_dashboard_ui(symbol)
-        with t3: render_technical_chart(symbol, "2y", "1d")
-        with t4: render_classical_analysis(symbol)
+        with t3:
+            current = get_thesis(symbol)
+            def_text = current['thesis_text'] if current else ""
+            def_target = current['target_price'] if current else 0.0
+            with st.form("thesis_form"):
+                target = st.number_input("السعر المستهدف", value=def_target)
+                text = st.text_area("أطروحة الاستثمار", value=def_text)
+                if st.form_submit_button("حفظ"):
+                    save_thesis(symbol, text, target, "Hold")
+                    st.success("تم الحفظ")
+        with t4: render_technical_chart(symbol, "2y", "1d")
+        with t5: render_classical_analysis(symbol)
 
 def view_add_trade():
     st.header("➕ إضافة عملية جديدة")
@@ -211,6 +243,11 @@ def view_cash_log():
                  if st.form_submit_button("حفظ"): execute_query("INSERT INTO ReturnsGrants (date, symbol, amount) VALUES (?,?,?)", (str(dt), sym, amt)); st.success("تم"); st.rerun()
         render_table(fin['returns'], [('date','التاريخ'), ('symbol','الرمز'), ('amount','المبلغ')])
 
+def view_tools():
+    st.header("🛠️ الأدوات")
+    fin = calculate_portfolio_metrics()
+    st.info("زكاة تقديرية (2.5775%): " + str(fin['market_val_open'] * 0.025775))
+
 def view_settings():
     st.header("⚙️ الإعدادات العامة")
     tab_sec, tab_data = st.tabs(["توزيع القطاعات", "إدارة البيانات"])
@@ -222,10 +259,7 @@ def view_settings():
         df = pd.merge(df_all, saved, on='sector', how='left').fillna(0) if not saved.empty else df_all.assign(target_percentage=0.0)
         
         st.info("قم بتعديل النسب المئوية المستهدفة:")
-        st.markdown('<div class="finance-table-container" style="padding:10px;">', unsafe_allow_html=True)
         edited = st.data_editor(df, column_config={"sector": "القطاع", "target_percentage": st.column_config.NumberColumn("النسبة %", format="%d%%")}, hide_index=True, use_container_width=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-        
         if st.button("💾 حفظ التوزيع", type="primary"):
             execute_query("DELETE FROM SectorTargets")
             for _, row in edited.iterrows():
@@ -234,43 +268,30 @@ def view_settings():
             st.success("تم الحفظ")
 
     with tab_data:
-        st.markdown("### 📤 النسخ الاحتياطي")
-        if st.button("📦 إنشاء نسخة احتياطية (Excel)"):
-            if create_smart_backup(): st.success("✅ تم الحفظ في مجلد backups")
-            else: st.error("فشل النسخ")
-        st.markdown("---")
-        st.markdown("### 📥 استيراد بيانات")
-        st.warning("سيقوم بدمج البيانات مع الحالية.")
+        st.markdown("### 🧹 الصيانة")
+        if st.button("🧹 تنظيف التكرار وإصلاح البيانات", type="primary"):
+            if clean_database_duplicates(): st.success("✅ تم التنظيف!"); st.cache_data.clear()
+            else: st.error("فشل التنظيف")
+
+        st.markdown("### 📥 استيراد بيانات (Restore)")
         f = st.file_uploader("ملف Excel", type=['xlsx'])
         if f and st.button("🚀 استيراد"):
             try:
                 xls = pd.ExcelFile(f)
                 with get_db() as conn:
-                    # القائمة الكاملة للجداول
                     tables = ['Trades', 'Deposits', 'Withdrawals', 'ReturnsGrants', 'Watchlist', 'SectorTargets', 'InvestmentThesis', 'FinancialStatements']
                     for t in tables:
                         if t in xls.sheet_names:
                             df = pd.read_excel(xls, t)
                             if not df.empty:
-                                # 1. حذف عمود ID لتجنب التعارض
                                 if 'id' in df.columns: df = df.drop(columns=['id'])
-                                
-                                # 2. التحقق من الأعمدة المسموح بها فقط لتجنب خطأ "unknown column"
-                                try:
-                                    cursor = conn.execute(f"PRAGMA table_info({t})")
-                                    valid_cols = [r['name'] for r in cursor.fetchall()]
-                                    
-                                    # فلترة الداتا فريم لإبقاء الأعمدة الموجودة في قاعدة البيانات فقط
-                                    # هذا السطر هو الحل الجذري لمشكلتك
-                                    existing_cols = [c for c in df.columns if c in valid_cols]
-                                    df_final = df[existing_cols]
-                                    
-                                    if not df_final.empty:
-                                        df_final.to_sql(t, conn, if_exists='append', index=False)
-                                except Exception as e:
-                                    st.warning(f"تجاوز الجدول {t} بسبب خطأ: {e}")
-                                    
-                st.success("تم الاستيراد بنجاح! يرجى تحديث الصفحة.")
+                                cursor = conn.execute(f"PRAGMA table_info({t})")
+                                db_cols = [row['name'] for row in cursor.fetchall()]
+                                valid_df = df[[c for c in df.columns if c in db_cols]]
+                                if 'strategy' in db_cols and 'strategy' in valid_df.columns:
+                                    valid_df['strategy'] = valid_df['strategy'].fillna('استثمار')
+                                valid_df.to_sql(t, conn, if_exists='append', index=False)
+                st.success("تم الاستيراد!")
                 st.cache_data.clear()
             except Exception as e: st.error(f"خطأ: {e}")
 
@@ -281,11 +302,12 @@ def router():
     fin = calculate_portfolio_metrics()
     if pg == 'home': view_dashboard(fin)
     elif pg in ['spec', 'invest']: view_portfolio(fin, pg)
-    elif pg == 'sukuk': view_portfolio(fin, 'invest')
+    elif pg == 'sukuk': view_sukuk_portfolio(fin)
     elif pg == 'cash': view_cash_log()
     elif pg == 'analysis': view_analysis(fin)
+    elif pg == 'tools': view_tools()
     elif pg == 'add': view_add_trade()
     elif pg == 'settings': view_settings()
     elif pg == 'update':
         with st.spinner("تحديث..."): update_prices()
-        st.rerun()
+        st.session_state.page = 'home'; st.rerun()
