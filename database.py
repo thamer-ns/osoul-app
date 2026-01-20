@@ -18,10 +18,9 @@ def get_db():
 
 def init_db():
     with get_db() as conn:
-        # 1. جداول المستخدمين (لن تتأثر)
         conn.execute("CREATE TABLE IF NOT EXISTS Users (username TEXT PRIMARY KEY, password TEXT, created_at TEXT)")
         
-        # 2. جدول الصفقات (العمود الفقري - لن يحذف)
+        # الجدول الرئيسي للصفقات
         conn.execute('''CREATE TABLE IF NOT EXISTS Trades (
             id INTEGER PRIMARY KEY AUTOINCREMENT, 
             symbol TEXT, 
@@ -48,13 +47,11 @@ def init_db():
         conn.execute("CREATE TABLE IF NOT EXISTS Watchlist (symbol TEXT PRIMARY KEY)")
         conn.execute("CREATE TABLE IF NOT EXISTS SectorTargets (sector TEXT PRIMARY KEY, target_percentage REAL)")
         
-        # --- الإضافات الجديدة (القوائم المالية والأطروحة) ---
-        
-        # 3. جدول القوائم المالية
+        # الجداول الجديدة للتحليل المالي والأطروحة
         conn.execute('''CREATE TABLE IF NOT EXISTS FinancialStatements (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             symbol TEXT,
-            period_type TEXT, -- 'Annual' or 'Quarterly'
+            period_type TEXT,
             date TEXT,
             revenue REAL,
             net_income REAL,
@@ -69,21 +66,34 @@ def init_db():
             source TEXT, 
             UNIQUE(symbol, period_type, date)
         )''')
-
-        # 4. جدول أطروحة الاستثمار
         conn.execute('''CREATE TABLE IF NOT EXISTS InvestmentThesis (
             symbol TEXT PRIMARY KEY,
             thesis_text TEXT,
             target_price REAL,
-            recommendation TEXT, -- 'Buy', 'Hold', 'Sell'
+            recommendation TEXT,
             last_updated TEXT
         )''')
         
-        # --- الترحيل الآمن (Migrations) للأعمدة الناقصة ---
+        # ترحيل الأعمدة المفقودة (Migrations)
         try: conn.execute("ALTER TABLE Trades ADD COLUMN asset_type TEXT DEFAULT 'Stock'")
         except: pass
         try: conn.execute("ALTER TABLE Trades ADD COLUMN dividend_yield REAL")
         except: pass
+
+def clean_database_duplicates():
+    """تنظيف التكرار من قاعدة البيانات"""
+    queries = [
+        "DELETE FROM Trades WHERE id NOT IN (SELECT MIN(id) FROM Trades GROUP BY symbol, date, quantity, entry_price, strategy, status);",
+        "DELETE FROM Deposits WHERE id NOT IN (SELECT MIN(id) FROM Deposits GROUP BY date, amount, note);",
+        "DELETE FROM Withdrawals WHERE id NOT IN (SELECT MIN(id) FROM Withdrawals GROUP BY date, amount, note);",
+        "DELETE FROM ReturnsGrants WHERE id NOT IN (SELECT MIN(id) FROM ReturnsGrants GROUP BY date, symbol, amount);"
+    ]
+    with get_db() as conn:
+        for q in queries:
+            try: conn.execute(q)
+            except Exception as e: logger.error(f"Error cleaning: {e}")
+        conn.commit()
+    return True
 
 def db_create_user(username, password):
     hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
