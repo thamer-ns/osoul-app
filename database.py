@@ -20,7 +20,6 @@ def init_db():
     with get_db() as conn:
         conn.execute("CREATE TABLE IF NOT EXISTS Users (username TEXT PRIMARY KEY, password TEXT, created_at TEXT)")
         
-        # الجدول الرئيسي للصفقات
         conn.execute('''CREATE TABLE IF NOT EXISTS Trades (
             id INTEGER PRIMARY KEY AUTOINCREMENT, 
             symbol TEXT, 
@@ -47,7 +46,6 @@ def init_db():
         conn.execute("CREATE TABLE IF NOT EXISTS Watchlist (symbol TEXT PRIMARY KEY)")
         conn.execute("CREATE TABLE IF NOT EXISTS SectorTargets (sector TEXT PRIMARY KEY, target_percentage REAL)")
         
-        # الجداول الجديدة للتحليل المالي والأطروحة
         conn.execute('''CREATE TABLE IF NOT EXISTS FinancialStatements (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             symbol TEXT,
@@ -66,6 +64,7 @@ def init_db():
             source TEXT, 
             UNIQUE(symbol, period_type, date)
         )''')
+        
         conn.execute('''CREATE TABLE IF NOT EXISTS InvestmentThesis (
             symbol TEXT PRIMARY KEY,
             thesis_text TEXT,
@@ -74,14 +73,22 @@ def init_db():
             last_updated TEXT
         )''')
         
-        # ترحيل الأعمدة المفقودة (Migrations)
         try: conn.execute("ALTER TABLE Trades ADD COLUMN asset_type TEXT DEFAULT 'Stock'")
         except: pass
         try: conn.execute("ALTER TABLE Trades ADD COLUMN dividend_yield REAL")
         except: pass
 
+def clear_all_data():
+    """حذف جميع البيانات من جميع الجداول (تصفير البرنامج)"""
+    tables = ['Trades', 'Deposits', 'Withdrawals', 'ReturnsGrants', 'Watchlist', 'SectorTargets', 'FinancialStatements', 'InvestmentThesis']
+    with get_db() as conn:
+        for t in tables:
+            try: conn.execute(f"DELETE FROM {t}")
+            except: pass
+        conn.commit()
+    return True
+
 def clean_database_duplicates():
-    """تنظيف التكرار من قاعدة البيانات"""
     queries = [
         "DELETE FROM Trades WHERE id NOT IN (SELECT MIN(id) FROM Trades GROUP BY symbol, date, quantity, entry_price, strategy, status);",
         "DELETE FROM Deposits WHERE id NOT IN (SELECT MIN(id) FROM Deposits GROUP BY date, amount, note);",
@@ -91,7 +98,7 @@ def clean_database_duplicates():
     with get_db() as conn:
         for q in queries:
             try: conn.execute(q)
-            except Exception as e: logger.error(f"Error cleaning: {e}")
+            except: pass
         conn.commit()
     return True
 
