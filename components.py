@@ -42,21 +42,21 @@ def render_kpi(label, value, color=None):
     """, unsafe_allow_html=True)
 
 def render_table(df, cols_def):
-    """
-    محرك الجداول الموحد (تم إصلاح الخطأ هنا)
-    """
     if df.empty:
         st.info("لا توجد بيانات للعرض")
         return
 
-    # بناء رأس الجدول
     headers = ""
-    # التصحيح: استخدام المتغير الصحيح cols_def
-    if cols_def:
+    # التعامل المرن سواء كانت cols_def قائمة بسيطة أو قائمة أزواج
+    if cols_def and isinstance(cols_def[0], tuple):
         for _, title in cols_def:
             headers += f"<th>{title}</th>"
-    
-    col_keys = [k for k, _ in cols_def]
+        col_keys = [k for k, _ in cols_def]
+    else:
+        # حالة احتياطية لو تم تمرير قائمة بسيطة
+        for title in cols_def:
+            headers += f"<th>{title}</th>"
+        col_keys = df.columns
 
     rows_html = ""
     for _, row in df.iterrows():
@@ -68,48 +68,32 @@ def render_table(df, cols_def):
             disp = val
             key_str = str(k).lower()
             
-            # --- منطق التنسيق ---
-            
-            # 1. التواريخ
             if 'date' in key_str and val:
                 disp = str(val)[:10]
-            
-            # 2. الحالة
             elif key_str == 'status':
                 if not is_closed:
                     disp = f"<span style='background:#E3FCEF; color:#006644; padding:2px 8px; border-radius:4px; font-size:0.8rem;'>مفتوحة</span>"
                 else:
                     disp = f"<span style='background:#DFE1E6; color:#42526E; padding:2px 8px; border-radius:4px; font-size:0.8rem;'>مغلقة</span>"
-            
-            # 3. الأرقام والعملات
             elif isinstance(val, (int, float)) or (isinstance(val, str) and val.replace('.','',1).isdigit()):
                 try:
                     num = float(val)
                     fmt_num = "{:,.2f}".format(num)
-                    
                     if key_str in ['gain', 'gain_pct', 'net_profit', 'roi_pct', 'daily_change', 'change']:
                         color = "#006644" if num >= 0 else "#DE350B"
                         suffix = "%" if 'pct' in key_str or 'change' in key_str else ""
                         weight = "bold" if key_str in ['gain', 'gain_pct'] else "600"
-                        
-                        if is_closed and key_str == 'daily_change':
-                            disp = "<span style='color:#9CA3AF'>-</span>"
-                        else:
-                            disp = f"<span style='color:{color}; font-weight:{weight}; direction:ltr;'>{fmt_num}{suffix}</span>"
-                    
+                        if is_closed and key_str == 'daily_change': disp = "<span style='color:#9CA3AF'>-</span>"
+                        else: disp = f"<span style='color:{color}; font-weight:{weight}; direction:ltr;'>{fmt_num}{suffix}</span>"
                     elif key_str == 'current_weight':
                         disp = f"<span style='font-weight:bold; color:#0052CC;'>{fmt_num}%</span>"
-                    
                     elif key_str == 'target_percentage':
                         disp = f"{fmt_num}%"
-
                     elif num > 1_000_000 and not str(k).isdigit():
                          disp = f"{num/1_000_000:,.1f}M"
-                    
                     else:
                         disp = fmt_num
                 except: disp = val
-            
             cells += f"<td>{disp}</td>"
         rows_html += f"<tr>{cells}</tr>"
 
