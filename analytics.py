@@ -3,7 +3,6 @@ import numpy as np
 import shutil
 from database import fetch_table, get_db
 from market_data import get_static_info, fetch_batch_data, get_chart_history
-# --- التعديل هنا: حذفنا SECTOR_TARGETS ---
 from config import BACKUP_DIR 
 import streamlit as st
 import logging
@@ -11,7 +10,6 @@ import logging
 logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 
-# تعريف المتغير هنا كقيمة افتراضية لتجنب خطأ الاستيراد
 SECTOR_TARGETS = {}
 
 def calculate_portfolio_metrics():
@@ -21,35 +19,63 @@ def calculate_portfolio_metrics():
         wit = fetch_table("Withdrawals")
         ret = fetch_table("ReturnsGrants")
 
-        if trades.empty:
-            trades = pd.DataFrame(columns=['symbol', 'strategy', 'status', 'market_value', 'total_cost', 'gain', 'sector', 'company_name', 'date', 'exit_date', 'quantity', 'entry_price', 'exit_price'])
+        # === الإصلاح هنا: تعريف الأعمدة دائماً ===
+        expected_cols = [
+            'symbol', 'strategy', 'status', 'market_value', 'total_cost', 
+            'gain', 'gain_pct', 'sector', 'company_name', 'date', 'exit_date', 
+            'quantity', 'entry_price', 'exit_price', 'current_price', 
+            'prev_close', 'daily_change', 'dividend_yield', 'asset_type'
+        ]
 
-        if not trades.empty:
+        if trades.empty:
+            trades = pd.DataFrame(columns=expected_cols)
+        else:
+            # التأكد من وجود جميع الأعمدة حتى لو البيانات قديمة
+            for col in expected_cols:
+                if col not in trades.columns:
+                    trades[col] = 0.0 if 'price' in col or 'cost' in col else None
+
             if 'status' not in trades.columns: trades['status'] = 'Open'
-            trades['status'] = trades['status'].str.strip()
+            trades['status'] = trades['status'].astype(str).str.strip()
             close_keywords = ['close', 'sold', 'مغلقة', 'مباعة']
-            trades.loc[trades['status'].str.lower().isin(close_keywords), 'status'] = 'Close'
+            
+            # تصحيح الحالة
+            # استخدام دالة للتأكد من الحالة
+            trades['status'] = trades['status'].apply(lambda x: 'Close' if str(x).lower() in close_keywords else 'Open')
             
             num_cols = ['quantity', 'entry_price', 'exit_price', 'current_price', 'prev_close']
             for c in num_cols:
-                if c not in trades.columns: trades[c] = 0.0
                 trades[c] = pd.to_numeric(trades[c], errors='coerce').fillna(0.0)
 
             trades['total_cost'] = (trades['quantity'] * trades['entry_price']).round(2)
             
+            # منطق حساب السوق
             is_closed = trades['status'] == 'Close'
             trades.loc[is_closed, 'current_price'] = trades.loc[is_closed, 'exit_price']
             trades['market_value'] = (trades['quantity'] * trades['current_price']).round(2)
             trades['gain'] = (trades['market_value'] - trades['total_cost']).round(2)
-            trades['daily_change'] = (((trades['current_price'] - trades['prev_close']) / trades['prev_close'].replace(0, 1)) * 100).round(2)
-            trades.loc[is_closed, 'daily_change'] = 0.0
+            
+            # تجنب القسمة على صفر
+            trades['gain_pct'] = 0.0
+            mask_nonzero = trades['total_cost'] != 0
+            trades.loc[mask_nonzero, 'gain_pct'] = (trades.loc[mask_nonzero, 'gain'] / trades.loc[mask_nonzero, 'total_cost'] * 100).round(2)
 
+            trades['daily_change'] = 0.0
+            mask_prev = (trades['prev_close'] != 0) & (~is_closed)
+            trades.loc[mask_prev, 'daily_change'] = (((trades.loc[mask_prev, 'current_price'] - trades.loc[mask_prev, 'prev_close']) / trades.loc[mask_prev, 'prev_close']) * 100).round(2)
+
+        # الحسابات الإجمالية
         total_dep = dep['amount'].sum() if not dep.empty else 0.0
         total_wit = wit['amount'].sum() if not wit.empty else 0.0
         total_ret = ret['amount'].sum() if not ret.empty else 0.0
         
-        open_trades = trades[trades['status'] != 'Close'] if not trades.empty else pd.DataFrame()
-        closed_trades = trades[trades['status'] == 'Close'] if not trades.empty else pd.DataFrame()
+        # التقسيم الآمن
+        if not trades.empty and 'status' in trades.columns:
+            open_trades = trades[trades['status'] == 'Open']
+            closed_trades = trades[trades['status'] == 'Close']
+        else:
+            open_trades = pd.DataFrame(columns=expected_cols)
+            closed_trades = pd.DataFrame(columns=expected_cols)
         
         cost_open = open_trades['total_cost'].sum() if not open_trades.empty else 0.0
         cost_closed = closed_trades['total_cost'].sum() if not closed_trades.empty else 0.0
@@ -71,13 +97,17 @@ def calculate_portfolio_metrics():
         return vals
     except Exception as e:
         logger.error(f"Error in metrics: {str(e)}")
-        return {"cost_open": 0, "market_val_open": 0, "cash": 0, "all_trades": pd.DataFrame(), "unrealized_pl":0, "realized_pl":0, "total_deposited":0, "total_withdrawn":0, "total_returns":0, "deposits":pd.DataFrame(), "withdrawals":pd.DataFrame(), "returns":pd.DataFrame()}
+        # إرجاع هيكل فارغ آمن لمنع توقف التطبيق
+        empty_df = pd.DataFrame()
+        return {"cost_open": 0, "market_val_open": 0, "cash": 0, "all_trades": empty_df, "unrealized_pl":0, "realized_pl":0, "total_deposited":0, "total_withdrawn":0, "total_returns":0, "deposits":empty_df, "withdrawals":empty_df, "returns":empty_df}
 
 def get_comprehensive_performance(trades_df, returns_df):
     if trades_df.empty: return pd.DataFrame(), pd.DataFrame()
     sector_trades = trades_df.groupby('sector').agg({'total_cost': 'sum', 'gain': 'sum', 'market_value': 'sum'}).reset_index()
-    sector_trades['net_profit'] = sector_trades['gain']
-    sector_trades['roi_pct'] = ((sector_trades['net_profit'] / sector_trades['total_cost'].replace(0, 1)) * 100).round(2)
+    sector_trades['net_profit'] = sector_trades['gain'] 
+    sector_trades['roi_pct'] = 0.0
+    mask = sector_trades['total_cost'] != 0
+    sector_trades.loc[mask, 'roi_pct'] = ((sector_trades.loc[mask, 'net_profit'] / sector_trades.loc[mask, 'total_cost']) * 100).round(2)
     return sector_trades, pd.DataFrame()
 
 def get_rebalancing_advice(df_open, targets_df, total_portfolio_value):
@@ -151,7 +181,7 @@ def create_smart_backup():
         latest = BACKUP_DIR / "backup_latest.xlsx"
         if latest.exists(): shutil.copy(latest, BACKUP_DIR / "backup_previous.xlsx")
         with pd.ExcelWriter(latest, engine='xlsxwriter') as writer:
-            for t in ['Trades', 'Deposits', 'Withdrawals', 'ReturnsGrants', 'Watchlist', 'Users', 'SectorTargets', 'InvestmentThesis']:
+            for t in ['Trades', 'Deposits', 'Withdrawals', 'ReturnsGrants', 'Watchlist', 'Users', 'SectorTargets', 'InvestmentThesis', 'FinancialStatements']:
                 df = fetch_table(t)
                 for c in df.columns:
                     if 'date' in c: df[c] = df[c].astype(str)
