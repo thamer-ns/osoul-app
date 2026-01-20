@@ -260,21 +260,76 @@ def view_add_trade():
                     execute_query("INSERT INTO Withdrawals (date, amount) VALUES (?,?)", (str(date.today()), amt))
                     st.success("تم")
 
+# ... (نفس محتوى views.py السابق، فقط استبدل دالة view_settings بالتالي) ...
+
 def view_settings():
-    st.header("الإعدادات")
-    st.info("قم بتعديل النسب المستهدفة مباشرة في الجدول.")
+    st.header("⚙️ الإعدادات وتوزيع المحفظة")
+    
+    # 1. قسم الأوزان (Sector Weights)
+    st.markdown("### 🎯 الأهداف القطاعية")
+    st.markdown("""
+    <div style="font-size:0.9rem; color:#6B7280; margin-bottom:10px;">
+    تحكم في التوزيع المستهدف لمحفظتك. سيقوم البرنامج بتنبيهك إذا تجاوزت الوزن المحدد.
+    </div>
+    """, unsafe_allow_html=True)
+    
     all_sectors = sorted(list(set(d['sector'] for d in TADAWUL_DB.values())))
     df_all = pd.DataFrame({'sector': all_sectors})
     saved = fetch_table("SectorTargets")
-    df = pd.merge(df_all, saved, on='sector', how='left').fillna(0) if not saved.empty else df_all.assign(target_percentage=0.0)
     
-    edited = st.data_editor(df, key="sec_edit", num_rows="fixed")
-    if st.button("حفظ التغييرات"):
-        execute_query("DELETE FROM SectorTargets")
-        for _, row in edited.iterrows():
-            if row['target_percentage'] > 0:
-                execute_query("INSERT INTO SectorTargets (sector, target_percentage) VALUES (?,?)", (row['sector'], row['target_percentage']))
-        st.success("تم الحفظ")
+    if not saved.empty:
+        df = pd.merge(df_all, saved, on='sector', how='left').fillna(0)
+    else:
+        df = df_all
+        df['target_percentage'] = 0.0
+    
+    # تحسين عرض المحرر ليشبه الجدول الموحد
+    with st.container():
+        edited = st.data_editor(
+            df, 
+            column_config={
+                "sector": st.column_config.TextColumn("القطاع", disabled=True),
+                "target_percentage": st.column_config.NumberColumn(
+                    "النسبة المستهدفة %", 
+                    min_value=0, max_value=100, step=1, 
+                    format="%d%%",
+                    help="أدخل النسبة المئوية المستهدفة لهذا القطاع"
+                )
+            },
+            hide_index=True,
+            use_container_width=True,
+            key="sec_editor" # مفتاح فريد
+        )
+        
+    # أزرار التحكم
+    c1, c2 = st.columns([1, 4])
+    with c1:
+        if st.button("💾 حفظ التوزيع", type="primary"):
+            execute_query("DELETE FROM SectorTargets")
+            total = 0
+            for _, row in edited.iterrows():
+                if row['target_percentage'] > 0:
+                    execute_query("INSERT INTO SectorTargets (sector, target_percentage) VALUES (?,?)", (row['sector'], row['target_percentage']))
+                    total += row['target_percentage']
+            
+            if total > 100:
+                st.warning(f"⚠️ تنبيه: مجموع النسب {total}% أكبر من 100%!")
+            else:
+                st.success(f"تم الحفظ بنجاح (المجموع: {total}%)")
+    
+    st.markdown("---")
+    
+    # 2. قسم النسخ الاحتياطي (Data Backup)
+    st.markdown("### 🛡️ أمان البيانات")
+    c_back, c_info = st.columns([1, 3])
+    with c_back:
+        if st.button("📦 إنشاء نسخة احتياطية"):
+            if create_smart_backup():
+                st.success("✅ تم حفظ النسخة في مجلد backups")
+            else:
+                st.error("فشل النسخ")
+    with c_info:
+        st.info("يُنصح بعمل نسخة احتياطية بعد إضافة صفقات جديدة. تجد الملفات في مجلد 'backups' داخل المشروع.")
 
 def router():
     render_navbar()
