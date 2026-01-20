@@ -3,7 +3,7 @@ import numpy as np
 import shutil
 from database import fetch_table, get_db
 from market_data import get_static_info, fetch_batch_data, get_chart_history
-# --- التعديل هنا: حذفنا SECTOR_TARGETS من الاستيراد ---
+# --- التعديل هنا: حذفنا SECTOR_TARGETS ---
 from config import BACKUP_DIR 
 import streamlit as st
 import logging
@@ -11,7 +11,7 @@ import logging
 logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 
-# هذا هو تعريف المتغير (كان يسبب مشكلة لأنه موجود هنا ومستدعى من فوق)
+# تعريف المتغير هنا كقيمة افتراضية لتجنب خطأ الاستيراد
 SECTOR_TARGETS = {}
 
 def calculate_portfolio_metrics():
@@ -25,7 +25,6 @@ def calculate_portfolio_metrics():
             trades = pd.DataFrame(columns=['symbol', 'strategy', 'status', 'market_value', 'total_cost', 'gain', 'sector', 'company_name', 'date', 'exit_date', 'quantity', 'entry_price', 'exit_price'])
 
         if not trades.empty:
-            # تنظيف البيانات وتجهيزها
             if 'status' not in trades.columns: trades['status'] = 'Open'
             trades['status'] = trades['status'].str.strip()
             close_keywords = ['close', 'sold', 'مغلقة', 'مباعة']
@@ -38,7 +37,6 @@ def calculate_portfolio_metrics():
 
             trades['total_cost'] = (trades['quantity'] * trades['entry_price']).round(2)
             
-            # حساب القيمة السوقية
             is_closed = trades['status'] == 'Close'
             trades.loc[is_closed, 'current_price'] = trades.loc[is_closed, 'exit_price']
             trades['market_value'] = (trades['quantity'] * trades['current_price']).round(2)
@@ -46,7 +44,6 @@ def calculate_portfolio_metrics():
             trades['daily_change'] = (((trades['current_price'] - trades['prev_close']) / trades['prev_close'].replace(0, 1)) * 100).round(2)
             trades.loc[is_closed, 'daily_change'] = 0.0
 
-        # الحسابات الإجمالية
         total_dep = dep['amount'].sum() if not dep.empty else 0.0
         total_wit = wit['amount'].sum() if not wit.empty else 0.0
         total_ret = ret['amount'].sum() if not ret.empty else 0.0
@@ -79,12 +76,12 @@ def calculate_portfolio_metrics():
 def get_comprehensive_performance(trades_df, returns_df):
     if trades_df.empty: return pd.DataFrame(), pd.DataFrame()
     sector_trades = trades_df.groupby('sector').agg({'total_cost': 'sum', 'gain': 'sum', 'market_value': 'sum'}).reset_index()
-    sector_trades['net_profit'] = sector_trades['gain'] # تبسيط للآن
+    sector_trades['net_profit'] = sector_trades['gain']
     sector_trades['roi_pct'] = ((sector_trades['net_profit'] / sector_trades['total_cost'].replace(0, 1)) * 100).round(2)
     return sector_trades, pd.DataFrame()
 
 def get_rebalancing_advice(df_open, targets_df, total_portfolio_value):
-    return pd.DataFrame() # يمكن تفعيلها لاحقاً
+    return pd.DataFrame()
 
 def get_dividends_calendar(returns_df):
     if returns_df.empty: return pd.DataFrame()
