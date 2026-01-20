@@ -1,11 +1,12 @@
-# config.py
 from pathlib import Path
-from data_source import TADAWUL_DB  # <--- هذا هو الربط السحري!
 
 # --- إعدادات الهوية ---
 APP_NAME = "أصولي"
 APP_ICON = "🏛️"
-DB_PATH = Path("stocks.db")
+
+# هنا يتم حفظ البيانات - لن يتم حذف هذا الملف عند إعادة تشغيل الكود
+DB_PATH = Path("stocks.db") 
+
 BACKUP_DIR = Path("backups")
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -22,8 +23,6 @@ DEFAULT_COLORS = {
 }
 
 def get_css(C):
-    # ... (نفس كود CSS السابق تماماً) ...
-    # (انسخ دالة get_css من ردي السابق في data_source.py وضعها هنا)
     return f"""
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap');
@@ -35,48 +34,31 @@ def get_css(C):
         
         .stApp {{ background-color: {C['page_bg']} !important; }}
         
-        /* تصميم اللوقو الجديد (مربع أيقونة التطبيق) */
+        /* تصميم اللوقو */
         .app-logo-box {{
             background: linear-gradient(135deg, {C['primary']}, #0284c7);
-            width: 48px;
-            height: 48px;
-            border-radius: 12px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.8rem;
-            color: white;
+            width: 48px; height: 48px; border-radius: 12px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 1.8rem; color: white;
             box-shadow: 0 4px 6px -1px rgba(14, 107, 168, 0.3);
             margin-left: 10px;
         }}
-        
         .logo-text {{
-            font-size: 1.6rem;
-            font-weight: 900;
-            color: {C['primary']};
-            letter-spacing: -0.5px;
+            font-size: 1.6rem; font-weight: 900; color: {C['primary']}; letter-spacing: -0.5px;
         }}
         
         /* تحسينات عامة */
         div[data-testid="stHorizontalBlock"] button {{
-            border-radius: 8px !important;
-            font-weight: 700 !important;
-            border: 1px solid transparent;
+            border-radius: 8px !important; font-weight: 700 !important; border: 1px solid transparent;
         }}
         div[data-testid="stHorizontalBlock"] button:hover {{
-            background-color: white !important;
-            border-color: {C['border']} !important;
-            color: {C['primary']} !important;
+            background-color: white !important; border-color: {C['border']} !important; color: {C['primary']} !important;
         }}
         
         /* الكروت والجداول */
         .kpi-box {{
-            background-color: {C['card_bg']}; 
-            border: 1px solid {C['border']}; 
-            border-radius: 12px;
-            padding: 15px; 
-            text-align: right; 
-            margin-bottom: 10px;
+            background-color: {C['card_bg']}; border: 1px solid {C['border']}; 
+            border-radius: 12px; padding: 15px; text-align: right; margin-bottom: 10px;
         }}
         .kpi-value {{ font-size: 1.3rem; font-weight: 800; color: {C['main_text']}; }}
         
