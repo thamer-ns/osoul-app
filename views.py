@@ -3,6 +3,7 @@ import pandas as pd
 import plotly.express as px
 from datetime import date
 
+# === الاستيرادات ===
 from components import render_navbar, render_kpi, render_table
 from analytics import (calculate_portfolio_metrics, update_prices, create_smart_backup, 
                        generate_equity_curve, calculate_historical_drawdown)
@@ -11,10 +12,13 @@ from financial_analysis import get_fundamental_ratios, render_financial_dashboar
 from market_data import get_static_info, get_tasi_data, get_chart_history 
 from database import execute_query, fetch_table, get_db, clear_all_data
 
-try: from backtester import run_backtest
-except ImportError: 
+# === استيراد ملف المختبر الجديد ===
+try:
+    from backtester import run_backtest
+except ImportError:
     def run_backtest(*args): return None
 
+# === دوال مساعدة ===
 def safe_fmt(val, suffix=""):
     if val is None: return "غير متاح"
     try:
@@ -35,6 +39,8 @@ def apply_sorting(df, cols_definition, key_suffix):
     asc = (order == "تصاعدي")
     try: return df.sort_values(by=target, ascending=asc)
     except: return df
+
+# === الصفحات ===
 
 def view_dashboard(fin):
     try: t_price, t_change = get_tasi_data()
@@ -101,7 +107,8 @@ def view_portfolio(fin, page_key):
     with t1:
         if page_key == 'invest':
             st.markdown("#### 🎯 التوزيع القطاعي والأهداف")
-            # --- إصلاح الخطأ: التعامل مع البيانات الفارغة وتوحيد الأنواع ---
+            
+            # --- إصلاح المشكلة هنا: التعامل مع البيانات الفارغة وتوحيد الأنواع ---
             if not open_df.empty:
                 sec_sum = open_df.groupby('sector').agg({'market_value':'sum'}).reset_index()
                 total_mv = sec_sum['market_value'].sum()
@@ -141,7 +148,7 @@ def view_portfolio(fin, page_key):
                     execute_query("DELETE FROM SectorTargets")
                     for _, row in edited_targets.iterrows():
                         if row['target_percentage'] > 0:
-                            # استخدام %s بدلاً من ?
+                            # استخدام %s
                             execute_query("INSERT INTO SectorTargets (sector, target_percentage) VALUES (%s, %s)", (row['sector'], row['target_percentage']))
                     st.success("تم الحفظ!")
                     st.rerun()
