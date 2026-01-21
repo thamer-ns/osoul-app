@@ -117,7 +117,7 @@ def db_verify_user(username, password):
             except: pass
     return False
 
-# --- هذه الدالة كانت ناقصة ---
+# --- الدالة التي كانت ناقصة ---
 def clear_all_data():
     tables = ['Trades', 'Deposits', 'Withdrawals', 'ReturnsGrants', 'Watchlist', 'SectorTargets', 'FinancialStatements', 'InvestmentThesis']
     with get_db() as conn:
