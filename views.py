@@ -90,6 +90,7 @@ def view_portfolio(fin, page_key):
     
     if df_strat.empty: 
         st.warning(f"المحفظة فارغة. (تأكد أن الصفقات مسجلة تحت مسمى '{target_strat}')")
+        # نكمل التنفيذ ولا نتوقف
     
     if 'status' not in df_strat.columns: df_strat['status'] = 'Open'
 
@@ -120,15 +121,10 @@ def view_portfolio(fin, page_key):
             # 2. تجهيز قائمة القطاعات (all_secs)
             saved_targets = fetch_table("SectorTargets")
             all_secs = set()
-            
-            # تحويل القيم إلى نصوص لتجنب الأخطاء
             if not sec_sum.empty:
-                sec_sum['sector'] = sec_sum['sector'].astype(str)
-                all_secs.update(sec_sum['sector'].tolist())
-                
+                all_secs.update(sec_sum['sector'].dropna().astype(str).tolist())
             if not saved_targets.empty:
-                saved_targets['sector'] = saved_targets['sector'].astype(str)
-                all_secs.update(saved_targets['sector'].tolist())
+                all_secs.update(saved_targets['sector'].dropna().astype(str).tolist())
             
             # 3. إنشاء الجدول الأساسي (df_edit) مع إجبار النوع على String
             if all_secs:
@@ -137,7 +133,11 @@ def view_portfolio(fin, page_key):
             else:
                 df_edit = pd.DataFrame(columns=['sector'])
 
-            # 4. الدمج الآمن (الآن جميع الأطراف String)
+            # 4. تأكيد أنواع الأعمدة في الجداول الأخرى قبل الدمج
+            if not sec_sum.empty: sec_sum['sector'] = sec_sum['sector'].astype(str)
+            if not saved_targets.empty: saved_targets['sector'] = saved_targets['sector'].astype(str)
+
+            # 5. الدمج الآمن
             if not df_edit.empty:
                 df_edit = pd.merge(df_edit, sec_sum, on='sector', how='left').fillna(0)
                 if not saved_targets.empty:
@@ -409,54 +409,14 @@ def router():
     fin = calculate_portfolio_metrics()
     
     if pg == 'home': view_dashboard(fin)
-    elif pg == 'profile': 
-        from views import view_profile # استيراد داخل الدالة لتجنب التكرار
-        view_profile()
     elif pg in ['spec', 'invest']: view_portfolio(fin, pg)
     elif pg == 'sukuk': view_sukuk_portfolio(fin)
     elif pg == 'cash': view_cash_log()
     elif pg == 'analysis': view_analysis(fin)
-    elif pg == 'backtest': view_backtester_ui(fin)
+    elif pg == 'backtest': view_backtester_ui(fin) # <-- هنا تم ربط الصفحة الجديدة
     elif pg == 'tools': view_tools()
     elif pg == 'add': view_add_trade()
     elif pg == 'settings': view_settings()
     elif pg == 'update':
         with st.spinner("تحديث..."): update_prices()
         st.session_state.page = 'home'; st.rerun()
-
-# === إضافة دالة البروفايل (في حال كنت تريدها في نفس الملف) ===
-# ملاحظة: إذا كان الملف السابق يحتوي على view_profile، فابقها هنا أو احذفها إذا كنت لا تستخدمها.
-# سأضعها هنا احتياطاً لأنك طلبت الملف "المصحح والكامل".
-def view_profile():
-    from database import get_user_details, update_user_email, update_user_password
-    st.header("👤 الملف الشخصي")
-    username = st.session_state.get("username")
-    if not username: st.error("يرجى تسجيل الدخول"); return
-
-    user_data = get_user_details(username)
-    current_email = user_data[0] if user_data and user_data[0] else ""
-    join_date = user_data[1] if user_data else "غير معروف"
-
-    c1, c2 = st.columns([1, 2])
-    with c1: st.image("https://ui-avatars.com/api/?name=" + username + "&background=0D8ABC&color=fff&size=200", width=150)
-    with c2:
-        st.subheader(username)
-        st.caption(f"تاريخ الانضمام: {join_date}")
-        st.info(f"البريد: {current_email if current_email else 'غير محدد'}")
-
-    st.markdown("---")
-    t1, t2 = st.tabs(["📧 البريد", "🔒 كلمة المرور"])
-    with t1:
-        with st.form("mail_upd"):
-            nm = st.text_input("البريد الجديد", value=current_email)
-            if st.form_submit_button("حفظ"):
-                if update_user_email(username, nm): st.success("تم التحديث"); st.rerun()
-                else: st.error("خطأ")
-    with t2:
-        with st.form("pass_upd"):
-            p1 = st.text_input("جديدة", type="password"); p2 = st.text_input("تأكيد", type="password")
-            if st.form_submit_button("تغيير"):
-                if p1 and p1==p2: 
-                    if update_user_password(username, p1): st.success("تم التغيير")
-                    else: st.error("فشل")
-                else: st.warning("غير متطابقة")
