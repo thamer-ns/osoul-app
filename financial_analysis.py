@@ -2,15 +2,24 @@ import yfinance as yf
 import pandas as pd
 import streamlit as st
 import plotly.express as px
+import requests
 from market_data import get_ticker_symbol
 from database import execute_query, get_db
 from components import render_table
 
 # === أدوات التشخيص ===
 def debug_msg(msg):
-    """دالة مساعدة لإظهار خطوات العمل على الشاشة"""
     st.toast(msg)
     print(msg)
+
+# === دالة إنشاء جلسة متصفح وهمي (الخدعة الجديدة) ===
+def get_yf_session():
+    session = requests.Session()
+    # نرسل هوية متصفح حقيقي لتجنب الحظر
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    })
+    return session
 
 @st.cache_data(ttl=3600*4)
 def get_fundamental_ratios(symbol):
@@ -23,31 +32,34 @@ def get_fundamental_ratios(symbol):
     
     if not symbol: return metrics
     ticker_sym = get_ticker_symbol(symbol)
-    ticker = yf.Ticker(ticker_sym)
+    
+    # استخدام الجلسة الوهمية
+    try:
+        session = get_yf_session()
+        ticker = yf.Ticker(ticker_sym, session=session)
+    except:
+        ticker = yf.Ticker(ticker_sym)
     
     # 1. جلب السعر
     try:
-        # محاولة 1: Fast Info (الأسرع)
         if hasattr(ticker, 'fast_info') and ticker.fast_info.last_price:
              metrics["Current_Price"] = ticker.fast_info.last_price
         else:
-            # محاولة 2: History
             hist = ticker.history(period="5d")
             if not hist.empty:
                 metrics["Current_Price"] = float(hist['Close'].iloc[-1])
     except Exception as e:
-        metrics["Opinions"].append(f"خطأ في السعر: {str(e)}")
+        metrics["Opinions"].append(f"خطأ جزئي في السعر: {str(e)}")
 
     if metrics["Current_Price"] == 0:
         metrics["Rating"] = "السعر غير متاح"
         return metrics
 
-    # 2. جلب المعلومات المالية (Info)
+    # 2. جلب المعلومات المالية
     try:
         info = ticker.info
         if not info or info.get('trailingEps') is None: 
-            # محاولة fallback إذا فشل yfinance العادي
-            metrics["Opinions"].append("لم يتم العثور على بيانات مالية تفصيلية من المصدر")
+            metrics["Opinions"].append("لم يتم العثور على بيانات مالية تفصيلية")
         else:
             metrics["EPS"] = info.get('trailingEps')
             metrics["Book_Value"] = info.get('bookValue')
@@ -58,19 +70,18 @@ def get_fundamental_ratios(symbol):
             metrics["Debt_to_Equity"] = info.get('debtToEquity', 0)
             metrics["Dividend_Yield"] = (info.get('dividendYield') or 0) * 100
 
-            # معادلة جراهام
             if metrics["EPS"] and metrics["EPS"] > 0 and metrics["Book_Value"] and metrics["Book_Value"] > 0:
                 metrics["Fair_Value"] = (22.5 * metrics["EPS"] * metrics["Book_Value"]) ** 0.5
 
     except Exception as e:
-        metrics["Opinions"].append(f"خطأ في جلب المؤشرات: {e}")
+        metrics["Opinions"].append(f"ملاحظة: {e}")
 
-    # 3. حساب التقييم
+    # 3. التقييم
     score = 0
     ops = []
     
     if metrics["Fair_Value"] and metrics["Current_Price"] < metrics["Fair_Value"]:
-        score += 3; ops.append("💎 سعر مغري (أقل من القيمة العادلة)")
+        score += 3; ops.append("💎 سعر مغري (أقل من العادلة)")
     
     pe = metrics["P/E"]
     if pe:
@@ -92,26 +103,25 @@ def get_fundamental_ratios(symbol):
 
 def update_financial_statements(symbol):
     ticker_sym = get_ticker_symbol(symbol)
-    ticker = yf.Ticker(ticker_sym)
     
-    debug_msg(f"جاري الاتصال بـ Yahoo Finance لـ {ticker_sym}...")
+    debug_msg(f"جاري الاتصال بـ Yahoo Finance لـ {ticker_sym} مع تجاوز الحظر...")
     
     try:
-        # جلب القوائم
+        # استخدام الجلسة الوهمية هنا أيضاً
+        session = get_yf_session()
+        ticker = yf.Ticker(ticker_sym, session=session)
+        
         financials = ticker.financials.T
         if financials.empty:
-            debug_msg("محاولة بديلة لجلب القوائم...")
+            debug_msg("محاولة بديلة...")
             financials = ticker.get_financials().T
         
         if financials.empty:
-            st.error(f"عذراً، لا توجد قوائم مالية متاحة لـ {symbol} في المصدر.")
+            st.error(f"عذراً، المصدر يرفض تزويد البيانات لـ {symbol} حالياً (قد يكون بسبب ضغط السيرفر).")
             return False
 
-        # تحضير الـ DataFrame
         df = pd.DataFrame(index=financials.index)
         
-        # تعبئة الأعمدة الأساسية
-        # نتأكد من وجود الأعمدة حتى لو غير موجودة في المصدر
         target_cols = {
             'revenue': ['Total Revenue', 'Operating Revenue'],
             'net_income': ['Net Income'],
@@ -127,7 +137,6 @@ def update_financial_statements(symbol):
                     df[db_col] = financials[cand]
                     break
         
-        # جلب الميزانية والتدفقات
         balance = ticker.balance_sheet.T
         cashflow = ticker.cashflow.T
         
@@ -138,7 +147,6 @@ def update_financial_statements(symbol):
         df['free_cash_flow'] = 0.0
 
         for date in df.index:
-            # دمج بيانات الميزانية
             if not balance.empty:
                 try:
                     row_bs = balance.loc[balance.index == date]
@@ -148,7 +156,6 @@ def update_financial_statements(symbol):
                         df.at[date, 'total_equity'] = row_bs.get('Stockholders Equity', [0])[0]
                 except: pass
             
-            # دمج بيانات التدفقات
             if not cashflow.empty:
                 try:
                     row_cf = cashflow.loc[cashflow.index == date]
@@ -158,10 +165,8 @@ def update_financial_statements(symbol):
                 except: pass
 
         df.fillna(0, inplace=True)
-        debug_msg(f"تم جلب {len(df)} سنوات مالية. جاري الحفظ...")
+        debug_msg(f"تم جلب البيانات بنجاح! جاري الحفظ...")
 
-        # الحفظ في قاعدة البيانات
-        saved_count = 0
         for date, row in df.iterrows():
             d_str = str(date.date())
             query = """
@@ -175,7 +180,6 @@ def update_financial_statements(symbol):
                 operating_cash_flow=EXCLUDED.operating_cash_flow, free_cash_flow=EXCLUDED.free_cash_flow, eps=EXCLUDED.eps;
             """
             
-            # تحويل القيم بأمان تام إلى float
             def safe_float(val):
                 try: return float(val)
                 except: return 0.0
@@ -189,26 +193,24 @@ def update_financial_statements(symbol):
                 safe_float(row['eps']), 'Yahoo'
             )
             execute_query(query, vals)
-            saved_count += 1
             
-        debug_msg(f"تم حفظ {saved_count} سجلات بنجاح.")
+        debug_msg("تم الحفظ بنجاح.")
         return True
 
     except Exception as e:
-        st.error(f"خطأ غير متوقع أثناء المعالجة: {str(e)}")
+        st.error(f"حدث خطأ: {str(e)}")
         return False
 
+# ... (بقية الكود كما هي: get_stored_financials, save_thesis, get_thesis)
 def get_stored_financials(symbol):
     with get_db() as conn:
         if conn:
             try: 
                 return pd.read_sql("SELECT * FROM FinancialStatements WHERE symbol = %s ORDER BY date ASC", conn, params=(symbol,))
             except Exception as e:
-                # إذا فشل الاستعلام، غالباً الجدول غير موجود أو به مشكلة
                 return pd.DataFrame()
     return pd.DataFrame()
 
-# ... (بقية الدوال save_thesis, get_thesis كما هي) ...
 def save_thesis(symbol, text, target, rec):
     query = """
     INSERT INTO InvestmentThesis (symbol, thesis_text, target_price, recommendation, last_updated)
@@ -232,13 +234,12 @@ def get_thesis(symbol):
     return None
 
 def render_financial_dashboard_ui(symbol):
-    # زر الإصلاح السريع
-    with st.expander("🛠️ أدوات الصيانة (اضغط هنا إذا لم يظهر الرسم)"):
+    with st.expander("🛠️ أدوات الصيانة"):
         if st.button("إعادة بناء جدول البيانات المالية (Reset Table)"):
             execute_query("DROP TABLE IF EXISTS FinancialStatements;")
             from database import init_db
             init_db()
-            st.success("تم إعادة بناء الجدول. اضغط تحديث القوائم الآن.")
+            st.success("تم إعادة البناء.")
 
     c1, c2 = st.columns([1, 4])
     with c1:
@@ -255,7 +256,6 @@ def render_financial_dashboard_ui(symbol):
             df = df.sort_values('year')
 
             st.markdown("##### 📊 الأداء المالي (بالمليون)")
-            # الرسم البياني
             if 'revenue' in df.columns and 'net_income' in df.columns:
                 chart_df = df.melt(id_vars=['year'], value_vars=['revenue', 'net_income'], var_name='Metric', value_name='Value')
                 chart_df['Metric'] = chart_df['Metric'].map({'revenue': 'الإيرادات', 'net_income': 'صافي الربح'})
@@ -264,7 +264,6 @@ def render_financial_dashboard_ui(symbol):
                 fig.update_layout(paper_bgcolor="white", plot_bgcolor="white", font={'family': "Cairo"}, height=400)
                 st.plotly_chart(fig, use_container_width=True)
 
-            # الجدول
             st.markdown("##### 📑 التفاصيل المالية")
             cols_display = {
                 'revenue': 'الإيرادات', 'net_income': 'صافي الدخل', 'gross_profit': 'إجمالي الربح',
@@ -278,9 +277,8 @@ def render_financial_dashboard_ui(symbol):
                 df_disp.index = df_disp.index.map(cols_display)
                 st.dataframe(df_disp, use_container_width=True)
             else:
-                st.warning("البيانات موجودة لكن الأعمدة المطلوبة فارغة.")
+                st.warning("البيانات موجودة لكن الأعمدة فارغة.")
         except Exception as e:
-            st.error(f"خطأ في عرض البيانات: {e}")
-            st.write(df.head()) # للمساعدة في التشخيص
+            st.error(f"خطأ العرض: {e}")
     else:
         st.info("لا توجد بيانات محفوظة. يرجى الضغط على زر 'تحديث القوائم'.")
