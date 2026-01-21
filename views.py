@@ -10,7 +10,7 @@ from analytics import (calculate_portfolio_metrics, update_prices, create_smart_
 from charts import render_technical_chart
 from financial_analysis import get_fundamental_ratios, render_financial_dashboard_ui, get_thesis, save_thesis
 from market_data import get_static_info, get_tasi_data, get_chart_history 
-from database import execute_query, fetch_table, get_db, clear_all_data, get_user_details, update_user_email, update_user_password
+from database import execute_query, fetch_table, get_db, clear_all_data
 
 # === استيراد ملف المختبر ===
 try:
@@ -40,59 +40,7 @@ def apply_sorting(df, cols_definition, key_suffix):
     try: return df.sort_values(by=target, ascending=asc)
     except: return df
 
-# === صفحة الملف الشخصي (الجديدة) ===
-def view_profile():
-    st.header("👤 الملف الشخصي")
-    
-    username = st.session_state.get("username")
-    if not username:
-        st.error("يرجى تسجيل الدخول أولاً")
-        return
-
-    # جلب البيانات الحالية
-    user_data = get_user_details(username)
-    current_email = user_data[0] if user_data and user_data[0] else ""
-    join_date = user_data[1] if user_data else "غير معروف"
-
-    with st.container():
-        c1, c2 = st.columns([1, 2])
-        with c1:
-            st.image("https://ui-avatars.com/api/?name=" + username + "&background=0D8ABC&color=fff&size=200", width=150)
-        with c2:
-            st.subheader(username)
-            st.caption(f"تاريخ الانضمام: {join_date}")
-            st.info(f"البريد الحالي: {current_email if current_email else 'لم يتم تعيين بريد'}")
-
-    st.markdown("---")
-
-    t1, t2 = st.tabs(["📧 تحديث البيانات", "🔒 تغيير كلمة المرور"])
-
-    with t1:
-        with st.form("update_email_form"):
-            st.subheader("تحديث البريد الإلكتروني")
-            new_email = st.text_input("البريد الإلكتروني الجديد", value=current_email)
-            if st.form_submit_button("حفظ التغييرات"):
-                if update_user_email(username, new_email):
-                    st.success("تم تحديث البريد الإلكتروني بنجاح!")
-                    st.rerun()
-                else:
-                    st.error("حدث خطأ أثناء التحديث")
-
-    with t2:
-        with st.form("update_pass_form"):
-            st.subheader("تغيير كلمة المرور")
-            p1 = st.text_input("كلمة المرور الجديدة", type="password")
-            p2 = st.text_input("تأكيد كلمة المرور", type="password")
-            if st.form_submit_button("تحديث كلمة المرور"):
-                if p1 and p1 == p2:
-                    if update_user_password(username, p1):
-                        st.success("تم تغيير كلمة المرور بنجاح!")
-                    else:
-                        st.error("فشل التحديث")
-                else:
-                    st.warning("كلمات المرور غير متطابقة")
-
-# === باقي الصفحات (كما هي) ===
+# === الصفحات ===
 
 def view_dashboard(fin):
     try: t_price, t_change = get_tasi_data()
@@ -159,6 +107,9 @@ def view_portfolio(fin, page_key):
     with t1:
         if page_key == 'invest':
             st.markdown("#### 🎯 التوزيع القطاعي والأهداف")
+            
+            # --- منطقة الإصلاح (Safe Merge Zone) ---
+            # 1. تجهيز جدول الملخص (sec_sum)
             if not open_df.empty:
                 sec_sum = open_df.groupby('sector').agg({'market_value':'sum'}).reset_index()
                 total_mv = sec_sum['market_value'].sum()
@@ -166,30 +117,56 @@ def view_portfolio(fin, page_key):
             else:
                 sec_sum = pd.DataFrame(columns=['sector', 'market_value', 'current_weight'])
             
+            # 2. تجهيز قائمة القطاعات (all_secs)
             saved_targets = fetch_table("SectorTargets")
-            all_secs = set(sec_sum['sector'].tolist()) if not sec_sum.empty else set()
-            if not saved_targets.empty: all_secs.update(saved_targets['sector'].tolist())
+            all_secs = set()
             
-            df_edit = pd.DataFrame({'sector': list(all_secs)})
-            
-            if not df_edit.empty: df_edit['sector'] = df_edit['sector'].astype(str)
-            if not sec_sum.empty: sec_sum['sector'] = sec_sum['sector'].astype(str)
-            if not saved_targets.empty: saved_targets['sector'] = saved_targets['sector'].astype(str)
-
-            df_edit = pd.merge(df_edit, sec_sum, on='sector', how='left').fillna(0)
+            # تحويل القيم إلى نصوص لتجنب الأخطاء
+            if not sec_sum.empty:
+                sec_sum['sector'] = sec_sum['sector'].astype(str)
+                all_secs.update(sec_sum['sector'].tolist())
+                
             if not saved_targets.empty:
-                df_edit = pd.merge(df_edit, saved_targets, on='sector', how='left')
-                df_edit['target_percentage'] = df_edit['target_percentage'].fillna(0.0)
-            else: df_edit['target_percentage'] = 0.0
+                saved_targets['sector'] = saved_targets['sector'].astype(str)
+                all_secs.update(saved_targets['sector'].tolist())
+            
+            # 3. إنشاء الجدول الأساسي (df_edit) مع إجبار النوع على String
+            if all_secs:
+                df_edit = pd.DataFrame({'sector': list(all_secs)})
+                df_edit['sector'] = df_edit['sector'].astype(str)
+            else:
+                df_edit = pd.DataFrame(columns=['sector'])
+
+            # 4. الدمج الآمن (الآن جميع الأطراف String)
+            if not df_edit.empty:
+                df_edit = pd.merge(df_edit, sec_sum, on='sector', how='left').fillna(0)
+                if not saved_targets.empty:
+                    df_edit = pd.merge(df_edit, saved_targets, on='sector', how='left')
+                    df_edit['target_percentage'] = df_edit['target_percentage'].fillna(0.0)
+                else:
+                    df_edit['target_percentage'] = 0.0
+            else:
+                # حالة الجدول الفارغ تماماً
+                df_edit = pd.DataFrame(columns=['sector', 'market_value', 'current_weight', 'target_percentage'])
+
+            # --- نهاية الإصلاح ---
 
             render_table(df_edit, [('sector', 'القطاع'), ('current_weight', 'الوزن الحالي %'), ('target_percentage', 'الهدف %')])
             
             with st.expander("✏️ تعديل الأهداف (النسب)"):
-                edited_targets = st.data_editor(df_edit, column_config={"sector": st.column_config.TextColumn("القطاع", disabled=True), "target_percentage": st.column_config.NumberColumn("الهدف %", format="%d%%", step=1, min_value=0, max_value=100)}, hide_index=True, use_container_width=True)
+                edited_targets = st.data_editor(
+                    df_edit,
+                    column_config={
+                        "sector": st.column_config.TextColumn("القطاع", disabled=True),
+                        "target_percentage": st.column_config.NumberColumn("الهدف %", format="%d%%", step=1, min_value=0, max_value=100)
+                    },
+                    hide_index=True, use_container_width=True
+                )
                 if st.button("حفظ التغييرات"):
                     execute_query("DELETE FROM SectorTargets")
                     for _, row in edited_targets.iterrows():
                         if row['target_percentage'] > 0:
+                            # استخدام %s للحفظ الآمن
                             execute_query("INSERT INTO SectorTargets (sector, target_percentage) VALUES (%s, %s)", (str(row['sector']), row['target_percentage']))
                     st.success("تم الحفظ!")
                     st.rerun()
@@ -432,7 +409,9 @@ def router():
     fin = calculate_portfolio_metrics()
     
     if pg == 'home': view_dashboard(fin)
-    elif pg == 'profile': view_profile() # <-- إضافة صفحة الملف الشخصي للموجه
+    elif pg == 'profile': 
+        from views import view_profile # استيراد داخل الدالة لتجنب التكرار
+        view_profile()
     elif pg in ['spec', 'invest']: view_portfolio(fin, pg)
     elif pg == 'sukuk': view_sukuk_portfolio(fin)
     elif pg == 'cash': view_cash_log()
@@ -444,3 +423,40 @@ def router():
     elif pg == 'update':
         with st.spinner("تحديث..."): update_prices()
         st.session_state.page = 'home'; st.rerun()
+
+# === إضافة دالة البروفايل (في حال كنت تريدها في نفس الملف) ===
+# ملاحظة: إذا كان الملف السابق يحتوي على view_profile، فابقها هنا أو احذفها إذا كنت لا تستخدمها.
+# سأضعها هنا احتياطاً لأنك طلبت الملف "المصحح والكامل".
+def view_profile():
+    from database import get_user_details, update_user_email, update_user_password
+    st.header("👤 الملف الشخصي")
+    username = st.session_state.get("username")
+    if not username: st.error("يرجى تسجيل الدخول"); return
+
+    user_data = get_user_details(username)
+    current_email = user_data[0] if user_data and user_data[0] else ""
+    join_date = user_data[1] if user_data else "غير معروف"
+
+    c1, c2 = st.columns([1, 2])
+    with c1: st.image("https://ui-avatars.com/api/?name=" + username + "&background=0D8ABC&color=fff&size=200", width=150)
+    with c2:
+        st.subheader(username)
+        st.caption(f"تاريخ الانضمام: {join_date}")
+        st.info(f"البريد: {current_email if current_email else 'غير محدد'}")
+
+    st.markdown("---")
+    t1, t2 = st.tabs(["📧 البريد", "🔒 كلمة المرور"])
+    with t1:
+        with st.form("mail_upd"):
+            nm = st.text_input("البريد الجديد", value=current_email)
+            if st.form_submit_button("حفظ"):
+                if update_user_email(username, nm): st.success("تم التحديث"); st.rerun()
+                else: st.error("خطأ")
+    with t2:
+        with st.form("pass_upd"):
+            p1 = st.text_input("جديدة", type="password"); p2 = st.text_input("تأكيد", type="password")
+            if st.form_submit_button("تغيير"):
+                if p1 and p1==p2: 
+                    if update_user_password(username, p1): st.success("تم التغيير")
+                    else: st.error("فشل")
+                else: st.warning("غير متطابقة")
