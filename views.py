@@ -12,7 +12,7 @@ from financial_analysis import get_fundamental_ratios, render_financial_dashboar
 from market_data import get_static_info, get_tasi_data, get_chart_history 
 from database import execute_query, fetch_table, get_db, clear_all_data
 
-# === استيراد ملف المختبر الجديد ===
+# === استيراد ملف المختبر ===
 try:
     from backtester import run_backtest
 except ImportError:
@@ -90,7 +90,7 @@ def view_portfolio(fin, page_key):
     
     if df_strat.empty: 
         st.warning(f"المحفظة فارغة. (تأكد أن الصفقات مسجلة تحت مسمى '{target_strat}')")
-        # لا نوقف التنفيذ هنا بل نكمل لكي لا يظهر خطأ عند عرض الجداول الفارغة
+        # نكمل الكود ولا نتوقف لتجنب الأخطاء
     
     if 'status' not in df_strat.columns: df_strat['status'] = 'Open'
 
@@ -109,7 +109,7 @@ def view_portfolio(fin, page_key):
         if page_key == 'invest':
             st.markdown("#### 🎯 التوزيع القطاعي والأهداف")
             
-            # --- بداية الإصلاح الجذري لمشكلة الدمج ---
+            # --- إصلاح الخطأ الجذري (ValueError: Merge on object and int64) ---
             if not open_df.empty:
                 sec_sum = open_df.groupby('sector').agg({'market_value':'sum'}).reset_index()
                 total_mv = sec_sum['market_value'].sum()
@@ -123,17 +123,17 @@ def view_portfolio(fin, page_key):
             
             df_edit = pd.DataFrame({'sector': list(all_secs)})
             
-            # توحيد نوع البيانات (إلى نص) لتجنب خطأ ValueError
+            # 1. إجبار عمود القطاع أن يكون نصياً (String) في جميع الجداول قبل الدمج
             if not df_edit.empty: df_edit['sector'] = df_edit['sector'].astype(str)
             if not sec_sum.empty: sec_sum['sector'] = sec_sum['sector'].astype(str)
             if not saved_targets.empty: saved_targets['sector'] = saved_targets['sector'].astype(str)
 
+            # 2. الدمج الآن آمن
             df_edit = pd.merge(df_edit, sec_sum, on='sector', how='left').fillna(0)
             if not saved_targets.empty:
                 df_edit = pd.merge(df_edit, saved_targets, on='sector', how='left')
                 df_edit['target_percentage'] = df_edit['target_percentage'].fillna(0.0)
             else: df_edit['target_percentage'] = 0.0
-            # --- نهاية الإصلاح ---
 
             render_table(df_edit, [('sector', 'القطاع'), ('current_weight', 'الوزن الحالي %'), ('target_percentage', 'الهدف %')])
             
@@ -150,7 +150,7 @@ def view_portfolio(fin, page_key):
                     execute_query("DELETE FROM SectorTargets")
                     for _, row in edited_targets.iterrows():
                         if row['target_percentage'] > 0:
-                            execute_query("INSERT INTO SectorTargets (sector, target_percentage) VALUES (%s, %s)", (row['sector'], row['target_percentage']))
+                            execute_query("INSERT INTO SectorTargets (sector, target_percentage) VALUES (%s, %s)", (str(row['sector']), row['target_percentage']))
                     st.success("تم الحفظ!")
                     st.rerun()
             st.markdown("---")
