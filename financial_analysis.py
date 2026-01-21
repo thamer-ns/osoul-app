@@ -116,7 +116,6 @@ def update_financial_statements(symbol):
         df.fillna(0, inplace=True)
         for date, row in df.iterrows():
             d_str = str(date.date())
-            # === التصحيح الهام لـ Postgres ===
             query = """
                 INSERT INTO FinancialStatements 
                 (symbol, period_type, date, revenue, net_income, gross_profit, operating_income, total_assets, total_liabilities, total_equity, operating_cash_flow, free_cash_flow, eps, source)
@@ -136,7 +135,6 @@ def update_financial_statements(symbol):
 def get_stored_financials(symbol):
     with get_db() as conn:
         try: 
-            # استخدام %s مع read_sql للمعاملات
             return pd.read_sql("SELECT * FROM FinancialStatements WHERE symbol = %s ORDER BY date ASC", conn, params=(symbol,))
         except: return pd.DataFrame()
 
@@ -153,7 +151,6 @@ def save_thesis(symbol, text, target, rec):
     execute_query(query, (symbol, text, target, rec))
 
 def get_thesis(symbol):
-    # تصحيح قراءة الأطروحة باستخدام pandas
     with get_db() as conn:
         try:
             df = pd.read_sql("SELECT * FROM InvestmentThesis WHERE symbol = %s", conn, params=(symbol,))
