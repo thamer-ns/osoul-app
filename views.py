@@ -109,8 +109,7 @@ def view_portfolio(fin, page_key):
         if page_key == 'invest':
             st.markdown("#### 🎯 التوزيع القطاعي والأهداف")
             
-            # --- منطقة الإصلاح (Safe Merge Zone) ---
-            # 1. تجهيز جدول الملخص (sec_sum)
+            # --- بداية الإصلاح الجذري لمشكلة الدمج ---
             if not open_df.empty:
                 sec_sum = open_df.groupby('sector').agg({'market_value':'sum'}).reset_index()
                 total_mv = sec_sum['market_value'].sum()
@@ -118,26 +117,25 @@ def view_portfolio(fin, page_key):
             else:
                 sec_sum = pd.DataFrame(columns=['sector', 'market_value', 'current_weight'])
             
-            # 2. تجهيز قائمة القطاعات (all_secs)
             saved_targets = fetch_table("SectorTargets")
             all_secs = set()
-            if not sec_sum.empty:
-                all_secs.update(sec_sum['sector'].dropna().astype(str).tolist())
-            if not saved_targets.empty:
-                all_secs.update(saved_targets['sector'].dropna().astype(str).tolist())
             
-            # 3. إنشاء الجدول الأساسي (df_edit) مع إجبار النوع على String
+            # تحويل القيم إلى نصوص (String) لتجنب الأخطاء
+            if not sec_sum.empty:
+                sec_sum['sector'] = sec_sum['sector'].astype(str)
+                all_secs.update(sec_sum['sector'].tolist())
+            
+            if not saved_targets.empty:
+                saved_targets['sector'] = saved_targets['sector'].astype(str)
+                all_secs.update(saved_targets['sector'].tolist())
+            
             if all_secs:
                 df_edit = pd.DataFrame({'sector': list(all_secs)})
                 df_edit['sector'] = df_edit['sector'].astype(str)
             else:
                 df_edit = pd.DataFrame(columns=['sector'])
 
-            # 4. تأكيد أنواع الأعمدة في الجداول الأخرى قبل الدمج
-            if not sec_sum.empty: sec_sum['sector'] = sec_sum['sector'].astype(str)
-            if not saved_targets.empty: saved_targets['sector'] = saved_targets['sector'].astype(str)
-
-            # 5. الدمج الآمن
+            # الدمج الآمن
             if not df_edit.empty:
                 df_edit = pd.merge(df_edit, sec_sum, on='sector', how='left').fillna(0)
                 if not saved_targets.empty:
@@ -146,9 +144,7 @@ def view_portfolio(fin, page_key):
                 else:
                     df_edit['target_percentage'] = 0.0
             else:
-                # حالة الجدول الفارغ تماماً
                 df_edit = pd.DataFrame(columns=['sector', 'market_value', 'current_weight', 'target_percentage'])
-
             # --- نهاية الإصلاح ---
 
             render_table(df_edit, [('sector', 'القطاع'), ('current_weight', 'الوزن الحالي %'), ('target_percentage', 'الهدف %')])
@@ -166,7 +162,6 @@ def view_portfolio(fin, page_key):
                     execute_query("DELETE FROM SectorTargets")
                     for _, row in edited_targets.iterrows():
                         if row['target_percentage'] > 0:
-                            # استخدام %s للحفظ الآمن
                             execute_query("INSERT INTO SectorTargets (sector, target_percentage) VALUES (%s, %s)", (str(row['sector']), row['target_percentage']))
                     st.success("تم الحفظ!")
                     st.rerun()
