@@ -194,7 +194,6 @@ def render_financial_dashboard_ui(symbol):
                     st.error("فشل الجلب")
 
     df = get_stored_financials(symbol)
-    
     if not df.empty:
         df['year'] = pd.to_datetime(df['date']).dt.year
         df = df.sort_values('year')
