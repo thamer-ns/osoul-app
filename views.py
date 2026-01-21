@@ -397,7 +397,7 @@ def router():
     elif pg == 'sukuk': view_sukuk_portfolio(fin)
     elif pg == 'cash': view_cash_log()
     elif pg == 'analysis': view_analysis(fin)
-    elif pg == 'backtest': view_backtester_ui(fin)
+    elif pg == 'backtest': view_backtester_ui(fin) # <-- هنا تم ربط الصفحة الجديدة
     elif pg == 'tools': view_tools()
     elif pg == 'add': view_add_trade()
     elif pg == 'settings': view_settings()
