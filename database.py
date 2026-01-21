@@ -45,7 +45,7 @@ def get_db():
         if conn:
             pool.putconn(conn)
 
-# --- التنفيذ الآمن ---
+# --- التنفيذ الآمن (يدعم %s) ---
 def execute_query(query, params=()):
     with get_db() as conn:
         if conn:
@@ -79,6 +79,7 @@ def init_db():
         """CREATE TABLE IF NOT EXISTS ReturnsGrants (id SERIAL PRIMARY KEY, date DATE, symbol VARCHAR(20), company_name TEXT, amount DOUBLE PRECISION)""",
         """CREATE TABLE IF NOT EXISTS Watchlist (symbol VARCHAR(20) PRIMARY KEY)""",
         """CREATE TABLE IF NOT EXISTS SectorTargets (sector VARCHAR(50) PRIMARY KEY, target_percentage DOUBLE PRECISION)""",
+        # جدول القوائم المالية مع قيد UNIQUE المهم جداً للأمر ON CONFLICT
         """CREATE TABLE IF NOT EXISTS FinancialStatements (id SERIAL PRIMARY KEY, symbol VARCHAR(20), period_type VARCHAR(20), date DATE, revenue DOUBLE PRECISION, net_income DOUBLE PRECISION, gross_profit DOUBLE PRECISION, operating_income DOUBLE PRECISION, total_assets DOUBLE PRECISION, total_liabilities DOUBLE PRECISION, total_equity DOUBLE PRECISION, operating_cash_flow DOUBLE PRECISION, free_cash_flow DOUBLE PRECISION, eps DOUBLE PRECISION, source VARCHAR(50), UNIQUE(symbol, period_type, date))""",
         """CREATE TABLE IF NOT EXISTS InvestmentThesis (symbol VARCHAR(20) PRIMARY KEY, thesis_text TEXT, target_price DOUBLE PRECISION, recommendation VARCHAR(20), last_updated TIMESTAMP DEFAULT NOW())"""
     ]
@@ -90,7 +91,6 @@ def init_db():
                     except: pass
                 conn.commit()
 
-# --- إدارة المستخدمين ---
 def db_create_user(username, password):
     if not username or not password: return False, "البيانات ناقصة"
     hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
@@ -117,7 +117,6 @@ def db_verify_user(username, password):
             except: pass
     return False
 
-# --- الدالة التي كانت ناقصة ---
 def clear_all_data():
     tables = ['Trades', 'Deposits', 'Withdrawals', 'ReturnsGrants', 'Watchlist', 'SectorTargets', 'FinancialStatements', 'InvestmentThesis']
     with get_db() as conn:
