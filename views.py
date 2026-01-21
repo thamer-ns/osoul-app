@@ -90,7 +90,7 @@ def view_portfolio(fin, page_key):
     
     if df_strat.empty: 
         st.warning(f"المحفظة فارغة. (تأكد أن الصفقات مسجلة تحت مسمى '{target_strat}')")
-        # نكمل الكود ولا نتوقف لتجنب الأخطاء
+        # نكمل التنفيذ ولا نتوقف لتجنب الأخطاء
     
     if 'status' not in df_strat.columns: df_strat['status'] = 'Open'
 
@@ -109,7 +109,7 @@ def view_portfolio(fin, page_key):
         if page_key == 'invest':
             st.markdown("#### 🎯 التوزيع القطاعي والأهداف")
             
-            # --- إصلاح الخطأ الجذري (ValueError: Merge on object and int64) ---
+            # --- إصلاح الخطأ الجذري (ValueError: Merge) ---
             if not open_df.empty:
                 sec_sum = open_df.groupby('sector').agg({'market_value':'sum'}).reset_index()
                 total_mv = sec_sum['market_value'].sum()
@@ -124,11 +124,12 @@ def view_portfolio(fin, page_key):
             df_edit = pd.DataFrame({'sector': list(all_secs)})
             
             # 1. إجبار عمود القطاع أن يكون نصياً (String) في جميع الجداول قبل الدمج
+            # هذا هو السطر السحري الذي يحل المشكلة
             if not df_edit.empty: df_edit['sector'] = df_edit['sector'].astype(str)
             if not sec_sum.empty: sec_sum['sector'] = sec_sum['sector'].astype(str)
             if not saved_targets.empty: saved_targets['sector'] = saved_targets['sector'].astype(str)
 
-            # 2. الدمج الآن آمن
+            # 2. الدمج الآن آمن حتى لو كانت البيانات فارغة
             df_edit = pd.merge(df_edit, sec_sum, on='sector', how='left').fillna(0)
             if not saved_targets.empty:
                 df_edit = pd.merge(df_edit, saved_targets, on='sector', how='left')
@@ -396,7 +397,7 @@ def router():
     elif pg == 'sukuk': view_sukuk_portfolio(fin)
     elif pg == 'cash': view_cash_log()
     elif pg == 'analysis': view_analysis(fin)
-    elif pg == 'backtest': view_backtester_ui(fin) # <-- هنا تم ربط الصفحة الجديدة
+    elif pg == 'backtest': view_backtester_ui(fin)
     elif pg == 'tools': view_tools()
     elif pg == 'add': view_add_trade()
     elif pg == 'settings': view_settings()
