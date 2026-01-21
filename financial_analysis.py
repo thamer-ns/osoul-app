@@ -64,17 +64,13 @@ def get_fundamental_ratios(symbol):
     score = 0
     ops = []
     
-    # 1. القيمة العادلة
     if metrics["Fair_Value"] and metrics["Current_Price"] < metrics["Fair_Value"]:
         score += 3; ops.append("💎 سعر مغري (أقل من العادلة)")
-    
-    # 2. مكرر الربحية
     pe = metrics["P/E"]
     if pe:
         if 0 < pe <= 15: score += 2; ops.append("✅ مكرر ربحية ممتاز")
         elif 15 < pe <= 22: score += 1
     
-    # 3. العائد على الحقوق والهوامش
     if metrics["ROE"] and metrics["ROE"] > 15: score += 2; ops.append("🚀 عائد حقوق ملكية قوي")
     if metrics["Profit_Margin"] and metrics["Profit_Margin"] > 10: score += 2; ops.append("💰 هوامش ربحية عالية")
 
