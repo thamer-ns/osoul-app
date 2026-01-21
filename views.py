@@ -90,6 +90,7 @@ def view_portfolio(fin, page_key):
     
     if df_strat.empty: 
         st.warning(f"المحفظة فارغة. (تأكد أن الصفقات مسجلة تحت مسمى '{target_strat}')")
+        # نكمل التنفيذ ولا نتوقف
     
     if 'status' not in df_strat.columns: df_strat['status'] = 'Open'
 
@@ -108,7 +109,8 @@ def view_portfolio(fin, page_key):
         if page_key == 'invest':
             st.markdown("#### 🎯 التوزيع القطاعي والأهداف")
             
-            # --- بداية الإصلاح الجذري لمشكلة الدمج ---
+            # --- منطقة الإصلاح (Safe Merge Zone) ---
+            # 1. تجهيز جدول الملخص (sec_sum)
             if not open_df.empty:
                 sec_sum = open_df.groupby('sector').agg({'market_value':'sum'}).reset_index()
                 total_mv = sec_sum['market_value'].sum()
@@ -116,26 +118,37 @@ def view_portfolio(fin, page_key):
             else:
                 sec_sum = pd.DataFrame(columns=['sector', 'market_value', 'current_weight'])
             
+            # 2. تجهيز قائمة القطاعات (all_secs)
             saved_targets = fetch_table("SectorTargets")
-            
-            # تجميع كل القطاعات
             all_secs = set()
-            if not sec_sum.empty: all_secs.update(sec_sum['sector'].astype(str).tolist())
-            if not saved_targets.empty: all_secs.update(saved_targets['sector'].astype(str).tolist())
+            if not sec_sum.empty:
+                all_secs.update(sec_sum['sector'].dropna().astype(str).tolist())
+            if not saved_targets.empty:
+                all_secs.update(saved_targets['sector'].dropna().astype(str).tolist())
             
-            df_edit = pd.DataFrame({'sector': list(all_secs)})
-            
-            # 1. إجبار عمود القطاع أن يكون نصياً (String) في جميع الجداول قبل الدمج
-            if not df_edit.empty: df_edit['sector'] = df_edit['sector'].astype(str)
+            # 3. إنشاء الجدول الأساسي (df_edit) مع إجبار النوع على String
+            if all_secs:
+                df_edit = pd.DataFrame({'sector': list(all_secs)})
+                df_edit['sector'] = df_edit['sector'].astype(str)
+            else:
+                df_edit = pd.DataFrame(columns=['sector'])
+
+            # 4. تأكيد أنواع الأعمدة في الجداول الأخرى قبل الدمج
             if not sec_sum.empty: sec_sum['sector'] = sec_sum['sector'].astype(str)
             if not saved_targets.empty: saved_targets['sector'] = saved_targets['sector'].astype(str)
 
-            # 2. الدمج الآن آمن حتى لو كانت البيانات فارغة
-            df_edit = pd.merge(df_edit, sec_sum, on='sector', how='left').fillna(0)
-            if not saved_targets.empty:
-                df_edit = pd.merge(df_edit, saved_targets, on='sector', how='left')
-                df_edit['target_percentage'] = df_edit['target_percentage'].fillna(0.0)
-            else: df_edit['target_percentage'] = 0.0
+            # 5. الدمج الآمن
+            if not df_edit.empty:
+                df_edit = pd.merge(df_edit, sec_sum, on='sector', how='left').fillna(0)
+                if not saved_targets.empty:
+                    df_edit = pd.merge(df_edit, saved_targets, on='sector', how='left')
+                    df_edit['target_percentage'] = df_edit['target_percentage'].fillna(0.0)
+                else:
+                    df_edit['target_percentage'] = 0.0
+            else:
+                # حالة الجدول الفارغ تماماً
+                df_edit = pd.DataFrame(columns=['sector', 'market_value', 'current_weight', 'target_percentage'])
+
             # --- نهاية الإصلاح ---
 
             render_table(df_edit, [('sector', 'القطاع'), ('current_weight', 'الوزن الحالي %'), ('target_percentage', 'الهدف %')])
@@ -153,7 +166,7 @@ def view_portfolio(fin, page_key):
                     execute_query("DELETE FROM SectorTargets")
                     for _, row in edited_targets.iterrows():
                         if row['target_percentage'] > 0:
-                            # استخدام %s
+                            # استخدام %s للحفظ الآمن
                             execute_query("INSERT INTO SectorTargets (sector, target_percentage) VALUES (%s, %s)", (str(row['sector']), row['target_percentage']))
                     st.success("تم الحفظ!")
                     st.rerun()
@@ -176,7 +189,6 @@ def view_portfolio(fin, page_key):
                     ep = c2.number_input("سعر البيع", min_value=0.01)
                     ed = c3.date_input("التاريخ", date.today())
                     if st.form_submit_button("تأكيد البيع"):
-                        # استخدام %s
                         execute_query("UPDATE Trades SET status='Close', exit_price=%s, exit_date=%s WHERE symbol=%s AND strategy=%s AND status='Open'", (ep, str(ed), sel, target_strat))
                         st.success("تم البيع"); st.cache_data.clear(); st.rerun()
         else: st.info("لا توجد صفقات مفتوحة.")
@@ -325,7 +337,6 @@ def view_add_trade():
             if st.form_submit_button("💾 حفظ", type="primary"):
                 n, s = get_static_info(sym)
                 atype = "Sukuk" if strat == "صكوك" else "Stock"
-                # استخدام %s
                 execute_query("INSERT INTO Trades (symbol, company_name, sector, asset_type, date, quantity, entry_price, strategy, status, current_price) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'Open', %s)", (sym, n, s, atype, str(date_ex), qty, price, strat, price))
                 st.success("تم"); st.cache_data.clear()
 
@@ -402,7 +413,7 @@ def router():
     elif pg == 'sukuk': view_sukuk_portfolio(fin)
     elif pg == 'cash': view_cash_log()
     elif pg == 'analysis': view_analysis(fin)
-    elif pg == 'backtest': view_backtester_ui(fin) # <-- هنا تم ربط الصفحة الجديدة
+    elif pg == 'backtest': view_backtester_ui(fin)
     elif pg == 'tools': view_tools()
     elif pg == 'add': view_add_trade()
     elif pg == 'settings': view_settings()
