@@ -18,9 +18,11 @@ def get_fundamental_ratios(symbol):
     ticker_sym = get_ticker_symbol(symbol)
     ticker = yf.Ticker(ticker_sym)
     
+    # 1. جلب السعر
     try:
         hist = ticker.history(period="5d")
-        if not hist.empty: metrics["Current_Price"] = float(hist['Close'].iloc[-1])
+        if not hist.empty:
+            metrics["Current_Price"] = float(hist['Close'].iloc[-1])
         else:
             if hasattr(ticker, 'fast_info') and ticker.fast_info.last_price:
                  metrics["Current_Price"] = ticker.fast_info.last_price
@@ -30,6 +32,7 @@ def get_fundamental_ratios(symbol):
         metrics["Rating"] = "السعر غير متاح"
         return metrics
 
+    # 2. جلب البيانات المالية
     try:
         info = ticker.info
         if not info: info = {}
@@ -48,6 +51,7 @@ def get_fundamental_ratios(symbol):
         metrics["Dividend_Yield"] = info.get('dividendYield')
         if metrics["Dividend_Yield"]: metrics["Dividend_Yield"] *= 100
 
+        # حسابات تكميلية في حال نقص البيانات
         if metrics["P/E"] is None and metrics["EPS"] and metrics["EPS"] > 0:
             metrics["P/E"] = metrics["Current_Price"] / metrics["EPS"]
             
@@ -57,6 +61,7 @@ def get_fundamental_ratios(symbol):
     except Exception as e:
         metrics["Opinions"].append(f"بيانات ناقصة: {str(e)}")
 
+    # 3. حساب السكور
     score = 0
     ops = []
     
@@ -87,9 +92,13 @@ def update_financial_statements(symbol):
         financials = ticker.financials.T
         balance_sheet = ticker.balance_sheet.T
         cashflow = ticker.cashflow.T
-        if financials.empty: return False
+        
+        if financials.empty:
+            financials = ticker.get_financials().T
+            if financials.empty: return False
 
         df = pd.DataFrame(index=financials.index)
+        
         if 'Total Revenue' in financials.columns: df['revenue'] = financials['Total Revenue']
         elif 'Operating Revenue' in financials.columns: df['revenue'] = financials['Operating Revenue']
         else: df['revenue'] = 0
@@ -101,22 +110,25 @@ def update_financial_statements(symbol):
         
         for date in df.index:
             try:
-                bs_row = balance_sheet.loc[balance_sheet.index == date]
-                if not bs_row.empty:
-                    df.at[date, 'total_assets'] = bs_row.get('Total Assets', [0])[0]
-                    df.at[date, 'total_liabilities'] = bs_row.get('Total Liabilities Net Minority Interest', [0])[0]
-                    df.at[date, 'total_equity'] = bs_row.get('Stockholders Equity', [0])[0]
+                if not balance_sheet.empty:
+                    bs_row = balance_sheet.loc[balance_sheet.index == date]
+                    if not bs_row.empty:
+                        df.at[date, 'total_assets'] = bs_row.get('Total Assets', [0])[0]
+                        df.at[date, 'total_liabilities'] = bs_row.get('Total Liabilities Net Minority Interest', [0])[0]
+                        df.at[date, 'total_equity'] = bs_row.get('Stockholders Equity', [0])[0]
                 
-                cf_row = cashflow.loc[cashflow.index == date]
-                if not cf_row.empty:
-                    df.at[date, 'operating_cash_flow'] = cf_row.get('Operating Cash Flow', [0])[0]
-                    df.at[date, 'free_cash_flow'] = cf_row.get('Free Cash Flow', [0])[0]
+                if not cashflow.empty:
+                    cf_row = cashflow.loc[cashflow.index == date]
+                    if not cf_row.empty:
+                        df.at[date, 'operating_cash_flow'] = cf_row.get('Operating Cash Flow', [0])[0]
+                        df.at[date, 'free_cash_flow'] = cf_row.get('Free Cash Flow', [0])[0]
             except: pass
 
         df.fillna(0, inplace=True)
+        
+        # حفظ البيانات في Postgres (Using %s and ON CONFLICT)
         for date, row in df.iterrows():
             d_str = str(date.date())
-            # === التصحيح الهام لـ Postgres ===
             query = """
                 INSERT INTO FinancialStatements 
                 (symbol, period_type, date, revenue, net_income, gross_profit, operating_income, total_assets, total_liabilities, total_equity, operating_cash_flow, free_cash_flow, eps, source)
@@ -127,7 +139,15 @@ def update_financial_statements(symbol):
                 total_liabilities=EXCLUDED.total_liabilities, total_equity=EXCLUDED.total_equity,
                 operating_cash_flow=EXCLUDED.operating_cash_flow, free_cash_flow=EXCLUDED.free_cash_flow, eps=EXCLUDED.eps;
             """
-            execute_query(query, (symbol, 'Annual', d_str, row['revenue'], row['net_income'], row['gross_profit'], row.get('operating_income', 0), row.get('total_assets',0), row.get('total_liabilities',0), row.get('total_equity',0), row.get('operating_cash_flow',0), row.get('free_cash_flow',0), row.get('eps', 0), 'Yahoo'))
+            vals = (
+                symbol, 'Annual', d_str, 
+                float(row['revenue']), float(row['net_income']), float(row['gross_profit']), 
+                float(row.get('operating_income', 0)), float(row.get('total_assets',0)), 
+                float(row.get('total_liabilities',0)), float(row.get('total_equity',0)), 
+                float(row.get('operating_cash_flow',0)), float(row.get('free_cash_flow',0)), 
+                float(row.get('eps', 0)), 'Yahoo'
+            )
+            execute_query(query, vals)
         return True
     except Exception as e:
         print(f"Error fetching financials: {e}")
@@ -135,10 +155,11 @@ def update_financial_statements(symbol):
 
 def get_stored_financials(symbol):
     with get_db() as conn:
-        try: 
-            # استخدام %s مع read_sql للمعاملات
-            return pd.read_sql("SELECT * FROM FinancialStatements WHERE symbol = %s ORDER BY date ASC", conn, params=(symbol,))
-        except: return pd.DataFrame()
+        if conn:
+            try: 
+                return pd.read_sql("SELECT * FROM FinancialStatements WHERE symbol = %s ORDER BY date ASC", conn, params=(symbol,))
+            except: pass
+    return pd.DataFrame()
 
 def save_thesis(symbol, text, target, rec):
     query = """
@@ -153,27 +174,28 @@ def save_thesis(symbol, text, target, rec):
     execute_query(query, (symbol, text, target, rec))
 
 def get_thesis(symbol):
-    # تصحيح قراءة الأطروحة باستخدام pandas
     with get_db() as conn:
-        try:
-            df = pd.read_sql("SELECT * FROM InvestmentThesis WHERE symbol = %s", conn, params=(symbol,))
-            if not df.empty:
-                return df.iloc[0]
-        except: pass
+        if conn:
+            try:
+                df = pd.read_sql("SELECT * FROM InvestmentThesis WHERE symbol = %s", conn, params=(symbol,))
+                if not df.empty:
+                    return df.iloc[0]
+            except: pass
     return None
 
 def render_financial_dashboard_ui(symbol):
     c1, c2 = st.columns([1, 4])
     with c1:
         if st.button("🔄 تحديث القوائم", key="upd_fin"):
-            with st.spinner("جاري جلب البيانات..."):
+            with st.spinner("جاري جلب البيانات من المصدر..."):
                 if update_financial_statements(symbol):
-                    st.success("تم التحديث")
+                    st.success("تم تحديث البيانات")
                     st.rerun()
                 else:
-                    st.error("فشل الجلب")
+                    st.error("فشل جلب البيانات. المصدر قد يكون غير متاح.")
 
     df = get_stored_financials(symbol)
+    
     if not df.empty:
         df['year'] = pd.to_datetime(df['date']).dt.year
         df = df.sort_values('year')
@@ -181,21 +203,35 @@ def render_financial_dashboard_ui(symbol):
         st.markdown("##### 📊 الأداء المالي (بالمليون)")
         chart_df = df.melt(id_vars=['year'], value_vars=['revenue', 'net_income'], var_name='Metric', value_name='Value')
         chart_df['Metric'] = chart_df['Metric'].map({'revenue': 'الإيرادات', 'net_income': 'صافي الربح'})
-        fig = px.bar(chart_df, x='year', y='Value', color='Metric', barmode='group', color_discrete_map={'الإيرادات': '#0052CC', 'صافي الربح': '#006644'})
+        
+        fig = px.bar(chart_df, x='year', y='Value', color='Metric', barmode='group', 
+                     color_discrete_map={'الإيرادات': '#0052CC', 'صافي الربح': '#006644'})
         fig.update_layout(paper_bgcolor="white", plot_bgcolor="white", font={'family': "Cairo"})
         st.plotly_chart(fig, use_container_width=True)
 
         st.markdown("##### 📑 التفاصيل المالية السنوية")
         cols_to_show = ['revenue', 'gross_profit', 'operating_income', 'net_income', 'eps', 'operating_cash_flow', 'free_cash_flow', 'total_assets', 'total_liabilities', 'total_equity']
+        
         available_cols = [c for c in cols_to_show if c in df.columns]
-        pivot_df = df.set_index('year')[available_cols]
-        translation_map = {'revenue': 'الإيرادات', 'gross_profit': 'إجمالي الربح', 'operating_income': 'الدخل التشغيلي', 'net_income': 'صافي الدخل', 'eps': 'ربحية السهم (EPS)', 'operating_cash_flow': 'التدفق التشغيلي', 'free_cash_flow': 'التدفق الحر', 'total_assets': 'مجموع الأصول', 'total_liabilities': 'مجموع الالتزامات', 'total_equity': 'حقوق الملكية'}
-        pivot_df = pivot_df.rename(columns=translation_map)
-        display_df = pivot_df.T.reset_index()
-        display_df.columns.name = None 
-        display_df = display_df.rename(columns={'index': 'المؤشر المالي'})
-        cols_def = [('المؤشر المالي', 'المؤشر المالي')]
-        for col in display_df.columns:
-            if col != 'المؤشر المالي': cols_def.append((col, str(col)))
-        render_table(display_df, cols_def)
-    else: st.info("لا توجد بيانات مالية محفوظة. اضغط 'تحديث القوائم' لجلبها.")
+        
+        if available_cols:
+            pivot_df = df.set_index('year')[available_cols]
+            translation_map = {
+                'revenue': 'الإيرادات', 'gross_profit': 'إجمالي الربح', 'operating_income': 'الدخل التشغيلي', 
+                'net_income': 'صافي الدخل', 'eps': 'ربحية السهم (EPS)', 'operating_cash_flow': 'التدفق التشغيلي', 
+                'free_cash_flow': 'التدفق الحر', 'total_assets': 'مجموع الأصول', 
+                'total_liabilities': 'مجموع الالتزامات', 'total_equity': 'حقوق الملكية'
+            }
+            pivot_df = pivot_df.rename(columns=translation_map)
+            
+            display_df = pivot_df.T.reset_index()
+            display_df.columns.name = None 
+            display_df = display_df.rename(columns={'index': 'المؤشر المالي'})
+            
+            cols_def = [('المؤشر المالي', 'المؤشر المالي')]
+            for col in display_df.columns:
+                if col != 'المؤشر المالي': cols_def.append((col, str(col)))
+            
+            render_table(display_df, cols_def)
+    else:
+        st.info("لا توجد بيانات محفوظة. يرجى الضغط على زر 'تحديث القوائم' لجلب أحدث البيانات.")
