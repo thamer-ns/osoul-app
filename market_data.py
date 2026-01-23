@@ -1,16 +1,15 @@
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
-from tvDatafeed import TvDatafeed, Interval
 import streamlit as st
 import time
 import random
 
-# تهيئة TradingView (وضع الضيف)
-tv = TvDatafeed()
+# ملاحظة: تم إيقاف tvDatafeed لعدم توافقه مع السيرفر
+# سنعتمد على Google Finance للأسعار المباشرة
 
 def get_ticker_symbol(symbol):
-    """تنظيف الرمز (إزالة .SR)"""
+    """تنظيف الرمز"""
     return str(symbol).replace('.SR', '').replace('.sr', '').strip()
 
 # === 1. جلب السعر المباشر من Google Finance ===
@@ -26,7 +25,7 @@ def fetch_price_from_google(symbol):
         response = requests.get(url, headers=headers, timeout=5)
         if response.status_code == 200:
             soup = BeautifulSoup(response.text, 'html.parser')
-            # البحث عن كلاس السعر (قد يتغير، لذا نستخدم الكلاس الشائع حالياً)
+            # البحث عن كلاس السعر
             price_div = soup.find('div', {'class': 'YMlKec fxKbKc'})
             if price_div:
                 return float(price_div.text.replace('SAR', '').replace(',', '').strip())
@@ -34,19 +33,11 @@ def fetch_price_from_google(symbol):
         print(f"Google Finance Error ({ticker}): {e}")
     return 0.0
 
-# === 2. جلب الشارت من TradingView ===
+# === 2. جلب الشارت (معطل مؤقتاً) ===
 @st.cache_data(ttl=3600)
 def get_chart_history(symbol, period='1y', interval='1d'):
-    ticker = get_ticker_symbol(symbol)
-    try:
-        # جلب 300 شمعة يومية (تقريباً سنة)
-        df = tv.get_hist(symbol=ticker, exchange='TADAWUL', interval=Interval.in_daily, n_bars=300)
-        if df is not None and not df.empty:
-            df = df.rename(columns={'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'})
-            df.index.name = 'Date'
-            return df
-    except Exception as e:
-        print(f"TradingView Error: {e}")
+    # تم تعطيل TradingView لتجنب أخطاء التثبيت
+    # يمكن مستقبلاً تفعيل بديل آخر أو رفع ملف CSV للشارت
     return None
 
 # === 3. تحديث الأسعار الجماعي ===
@@ -60,11 +51,10 @@ def fetch_batch_data(symbols_list):
             results[sym] = {
                 'price': price,
                 'prev_close': price, # قيمة تقريبية
-                'year_high': price,  # قيمة تقريبية
-                'year_low': price,   # قيمة تقريبية
+                'year_high': price,
+                'year_low': price,
                 'dividend_yield': 0.0
             }
-        # تأخير بسيط لتجنب الحظر
         time.sleep(random.uniform(0.1, 0.3))
     return results
 
