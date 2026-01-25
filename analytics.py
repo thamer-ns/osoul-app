@@ -1,8 +1,7 @@
 import pandas as pd
 import numpy as np
 import yfinance as yf
-from datetime import datetime, timedelta
-from database import fetch_table, execute_query, get_db
+from database import fetch_table, get_db
 import logging
 
 logging.basicConfig(level=logging.ERROR)
@@ -36,39 +35,30 @@ def get_portfolio_summary_sql():
 
 # --- 2. المحرك الأساسي ---
 def calculate_portfolio_metrics():
-    # 1. جلب الإجماليات بسرعة البرق من SQL
     sql_sums = get_portfolio_summary_sql()
     
-    # 2. جلب جداول البيانات للعرض (نحتاج التفاصيل للجدول فقط)
     trades = fetch_table("Trades")
     dep = fetch_table("Deposits")
     wit = fetch_table("Withdrawals")
     ret = fetch_table("ReturnsGrants")
     
-    # تحسين: إذا لم تكن هناك صفقات، نعود مبكراً
     if trades.empty:
         return {
             **sql_sums, "market_val_open": 0, "unrealized_pl": 0, "cash": 0,
             "all_trades": pd.DataFrame(), "deposits": dep, "withdrawals": wit, "returns": ret
         }
 
-    # معالجة الصفقات المفتوحة والمغلقة
+    # تنظيف البيانات
     trades['current_price'] = pd.to_numeric(trades['current_price'], errors='coerce').fillna(0.0)
     trades['entry_price'] = pd.to_numeric(trades['entry_price'], errors='coerce').fillna(0.0)
     
-    # حساب القيم للسجلات المفتوحة فقط في بايثون (أقل تكلفة من الجدول كامل)
     open_trades = trades[trades['status'] == 'Open'].copy()
     market_val_open = (open_trades['quantity'] * open_trades['current_price']).sum()
     unrealized_pl = market_val_open - sql_sums['cost_open']
     
-    # حساب الكاش المتوفر
-    # الكاش = (إيداعات + عوائد + مبيعات الأسهم) - (سحوبات + مشتريات الأسهم)
-    # معادلة مبسطة: الكاش = (صافي التمويل) + (الربح المحقق) + (رأس المال المسترد من البيع) - (تكلفة الشراء المفتوح)
-    # الأسهل: نعتمد على حركة الأموال المسجلة لو أردنا دقة، أو المعادلة التالية:
-    
+    # حساب الكاش
     total_sales_value = trades[trades['status'] == 'Close'].apply(lambda x: x['quantity'] * x['exit_price'], axis=1).sum()
     total_buy_cost_all = (trades['quantity'] * trades['entry_price']).sum()
-    
     cash = (sql_sums['total_deposited'] + sql_sums['total_ret'] + total_sales_value) - (sql_sums['total_withdrawn'] + total_buy_cost_all)
 
     return {
@@ -82,54 +72,57 @@ def calculate_portfolio_metrics():
         "returns": ret
     }
 
-# --- 3. مقاييس المخاطر المتقدمة (Missing Features) ---
-def calculate_risk_metrics(symbol_list):
-    """حساب Beta و Max Drawdown للمحفظة"""
-    if not symbol_list: return {"beta": 0, "sharpe": 0, "max_drawdown": 0}
+# --- 3. دالة المختبر (BACKTESTING) - كانت مفقودة ---
+def run_backtest(df, strategy_name, initial_capital=100000):
+    """تشغيل اختبار استراتيجية على بيانات تاريخية"""
+    if df is None or df.empty: return None
     
-    try:
-        # نحتاج بيانات تاريخية للسهم وللسوق (تاسي)
-        tickers = [f"{s.replace('.SR','').strip()}.SR" for s in symbol_list]
-        tickers.append("^TASI.SR")
-        
-        # تحميل بيانات سنة
-        data = yf.download(tickers, period="1y", progress=False)['Close']
-        
-        # حساب العوائد اليومية
-        returns = data.pct_change().dropna()
-        
-        if returns.empty: return {"beta": 0, "sharpe": 0, "max_drawdown": 0}
+    df = df.copy()
+    df['Signal'] = 0
+    
+    # إعداد المؤشرات البسيطة للاختبار
+    df['SMA_20'] = df['Close'].rolling(window=20).mean()
+    df['SMA_50'] = df['Close'].rolling(window=50).mean()
+    
+    # منطق الاستراتيجية
+    if strategy_name == "Trend Follower":
+        # تقاطع ذهبي: شراء لما متوسط 20 يقطع 50 لأعلى
+        df.loc[df['SMA_20'] > df['SMA_50'], 'Signal'] = 1
+        df.loc[df['SMA_20'] < df['SMA_50'], 'Signal'] = -1
+    else: # Sniper
+        # استراتيجية بسيطة: شراء إذا السعر فوق متوسط 20
+        df.loc[df['Close'] > df['SMA_20'], 'Signal'] = 1
+        df.loc[df['Close'] < df['SMA_20'], 'Signal'] = -1
 
-        # 1. حساب Beta (حساسية المحفظة للسوق)
-        # نفترض المحفظة متساوية الأوزان للتبسيط هنا
-        port_returns = returns.drop(columns=["^TASI.SR"], errors='ignore').mean(axis=1)
-        market_returns = returns["^TASI.SR"]
+    # محاكاة المحفظة
+    cash = initial_capital
+    position = 0
+    portfolio_values = []
+    
+    for i in range(len(df)):
+        price = df['Close'].iloc[i]
+        signal = df['Signal'].iloc[i]
         
-        covariance = np.cov(port_returns, market_returns)[0][1]
-        market_variance = np.var(market_returns)
-        beta = covariance / market_variance if market_variance != 0 else 0
+        if signal == 1 and cash > price: # شراء
+            shares_to_buy = cash // price
+            position += shares_to_buy
+            cash -= shares_to_buy * price
+        elif signal == -1 and position > 0: # بيع
+            cash += position * price
+            position = 0
+            
+        current_val = cash + (position * price)
+        portfolio_values.append(current_val)
         
-        # 2. Sharpe Ratio (العائد مقابل المخاطرة)
-        risk_free_rate = 0.05 / 252 # فرضية 5% سنوياً
-        excess_returns = port_returns - risk_free_rate
-        sharpe = (excess_returns.mean() / excess_returns.std()) * np.sqrt(252) if excess_returns.std() != 0 else 0
-        
-        # 3. Max Drawdown
-        cumulative = (1 + port_returns).cumprod()
-        peak = cumulative.cummax()
-        drawdown = (cumulative - peak) / peak
-        max_dd = drawdown.min() * 100
-        
-        return {
-            "beta": round(beta, 2),
-            "sharpe": round(sharpe, 2),
-            "max_drawdown": round(max_dd, 2)
-        }
-    except Exception as e:
-        logger.error(f"Risk Metrics Error: {e}")
-        return {"beta": 0, "sharpe": 0, "max_drawdown": 0}
+    df['Portfolio_Value'] = portfolio_values
+    final_val = portfolio_values[-1]
+    return {
+        'final_value': final_val,
+        'return_pct': ((final_val - initial_capital) / initial_capital) * 100,
+        'df': df
+    }
 
-# دالة لتوليد منحنى السيولة (موجودة سابقاً لكن تأكد من وجودها)
+# --- 4. دوال مساعدة ---
 def generate_equity_curve(trades_df):
     if trades_df.empty: return pd.DataFrame()
     df = trades_df[['date', 'total_cost']].copy()
@@ -138,7 +131,6 @@ def generate_equity_curve(trades_df):
     df['cumulative_invested'] = df['total_cost'].cumsum()
     return df
 
-# دالة تحديث الأسعار (ضرورية)
 def update_prices():
     from market_data import fetch_batch_data
     trades = fetch_table("Trades")
