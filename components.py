@@ -4,12 +4,17 @@ from config import APP_NAME, APP_ICON, DEFAULT_COLORS
 
 def render_navbar():
     # التأكد من تحميل الألوان
-    C = DEFAULT_COLORS
+    if 'custom_colors' not in st.session_state:
+        from config import DEFAULT_COLORS
+        C = DEFAULT_COLORS
+    else:
+        C = st.session_state.custom_colors
+        
     u = st.session_state.get('username', 'مستثمر')
     
-    # === الصندوق العلوي (الهيدر) - تصميمك المفضل ===
+    # === الصندوق العلوي (الهيدر) ===
     st.markdown(f"""
-    <div class="navbar-box">
+    <div class="navbar-box" style="background-color: {C['card_bg']}; padding: 15px 20px; border-radius: 16px; border: 1px solid {C['border']}; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 4px 15px rgba(0,0,0,0.03);">
         <div style="display: flex; align-items: center; gap: 15px;">
             <div style="font-size: 2.2rem;">{APP_ICON}</div>
             <div>
@@ -47,8 +52,8 @@ def render_navbar():
         
         if col.button(label, key=f"nav_{key}", type=btn_type, use_container_width=True):
             if key == 'logout':
-                st.session_state.clear()
-                st.rerun()
+                from security import logout
+                logout()
             else:
                 st.session_state.page = key
                 st.rerun()
@@ -70,6 +75,35 @@ def render_kpi(label, value, color_condition=None):
     </div>
     """, unsafe_allow_html=True)
 
+# === الدالة التي كانت ناقصة وتسبب الخطأ ===
+def render_ticker_card(symbol, name, price, change):
+    C = DEFAULT_COLORS
+    
+    # تحديد اللون والسهم
+    if change >= 0:
+        color = C['success']
+        arrow = "🔼"
+        bg_color = "#DCFCE7" # خلفية خضراء فاتحة جداً
+    else:
+        color = C['danger']
+        arrow = "🔽"
+        bg_color = "#FEE2E2" # خلفية حمراء فاتحة جداً
+
+    st.markdown(f"""
+    <div style="background-color: {C['card_bg']}; padding: 15px; border-radius: 12px; border: 1px solid {C['border']}; margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <div style="font-weight: 800; color: {C['primary']}; font-size: 1.1rem;">{symbol}</div>
+            <div style="font-size: 0.8rem; color: {C['sub_text']};">{name}</div>
+        </div>
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div style="font-size: 1.4rem; font-weight: 900; color: {C['main_text']};">{price:,.2f}</div>
+            <div style="background-color: {bg_color}; color: {color}; padding: 4px 10px; border-radius: 8px; font-weight: bold; font-size: 0.9rem; direction: ltr;">
+                {arrow} {change:.2f}%
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
 def render_table(df, cols_def):
     if df.empty:
         st.info("لا توجد بيانات للعرض")
@@ -88,14 +122,18 @@ def render_table(df, cols_def):
             val = row.get(k, "-")
             disp = val
             
-            # تنسيقات ذكية
+            # تنسيق التاريخ
             if 'date' in k and val: disp = str(val)[:10]
+            
+            # تنسيق الحالة
             elif k == 'status':
                 if is_closed:
                     bg, fg, txt = ("#F3F4F6", "#4B5563", "مغلقة")
                 else:
                     bg, fg, txt = ("#DCFCE7", "#166534", "مفتوحة")
                 disp = f"<span style='background:{bg}; color:{fg}; padding:4px 10px; border-radius:12px; font-size:0.75rem; font-weight:800;'>{txt}</span>"
+            
+            # تنسيق الأرقام الملونة (أرباح/خسائر)
             elif k in ['gain', 'gain_pct', 'daily_change', 'return_pct']:
                 try:
                     num_val = float(val)
@@ -103,9 +141,13 @@ def render_table(df, cols_def):
                     suffix = "%" if 'pct' in k or 'change' in k else ""
                     disp = f"<span style='color:{c}; direction:ltr; font-weight:bold;'>{num_val:,.2f}{suffix}</span>"
                 except: disp = val
-            elif isinstance(val, (int, float)) and k != 'quantity':
+
+            # تنسيق المبالغ المالية
+            elif k in ['market_value', 'total_cost', 'entry_price', 'current_price', 'amount']:
                 try: disp = f"{float(val):,.2f}"
                 except: disp = val
+            
+            # تنسيق الكميات
             elif k == 'quantity':
                 try: disp = f"{float(val):,.0f}"
                 except: disp = val
