@@ -1,16 +1,17 @@
 import psycopg2
-from psycopg2 import pool
 import pandas as pd
 import streamlit as st
 import bcrypt
 from contextlib import contextmanager
 import logging
 
+# إعداد السجل
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 @st.cache_resource
 def get_connection_pool():
+    # التحقق من وجود الرابط
     if "DATABASE_URL" not in st.secrets:
         st.error("⚠️ لم يتم العثور على رابط قاعدة البيانات.")
         return None
@@ -18,26 +19,29 @@ def get_connection_pool():
     db_url = st.secrets["DATABASE_URL"]
     
     try:
-        # للمنفذ 6543: نستخدم اتصال مباشر لأن السيرفر يدير الـ Pool
-        # هذا يمنع تعارض "Transaction Mode"
-        return psycopg2.connect(db_url)
+        # للمنفذ 6543: نستخدم اتصال مباشر (بدون Pool محلي)
+        # لأن Supabase تدير الـ Pool في هذا المنفذ
+        conn = psycopg2.connect(db_url)
+        return conn
     except Exception as e:
-        st.error(f"❌ فشل الاتصال بقاعدة البيانات.")
+        # طباعة الخطأ بوضوح
+        st.error(f"❌ خطأ في الاتصال بقاعدة البيانات.")
         st.code(str(e))
         return None
 
 @contextmanager
 def get_db():
-    # هنا نطلب الاتصال من الدالة أعلاه
-    # ملاحظة: في حالة 6543، الدالة تعيد connection مباشرة وليس pool
+    # نطلب الاتصال
     conn = get_connection_pool()
     
-    # إذا كان الاتصال مغلقاً (بسبب الكاش)، نعيد الاتصال
-    if conn and conn.closed:
-        try:
-             db_url = st.secrets["DATABASE_URL"]
-             conn = psycopg2.connect(db_url)
-        except: conn = None
+    # التحقق من أن الاتصال ما زال حياً
+    if conn is not None:
+        if conn.closed:
+             try:
+                 # إعادة الاتصال إذا انقطع
+                 db_url = st.secrets["DATABASE_URL"]
+                 conn = psycopg2.connect(db_url)
+             except: conn = None
 
     if not conn:
         yield None
@@ -49,9 +53,7 @@ def get_db():
         logger.error(f"DB Error: {e}")
         conn.rollback() # تراجع عند الخطأ
         yield None
-    # لا نغلق الاتصال هنا لأننا نستخدم cache_resource، 
-    # ولكن في حالة Transaction Pooler يفضل تركه مفتوحاً أو إدارته بحرص
-    # للتبسيط هنا: سنعتمد على إدارة Streamlit للكاش
+    # لا نغلق الاتصال هنا لأننا نستخدم cache_resource
 
 def execute_query(query, params=()):
     with get_db() as conn:
@@ -62,7 +64,7 @@ def execute_query(query, params=()):
                     conn.commit()
             except psycopg2.Error as e:
                 conn.rollback()
-                st.toast(f"خطأ في التنفيذ: {e}")
+                print(f"Query Error: {e}")
 
 def fetch_table(table_name):
     allowed = ['Users', 'Trades', 'Deposits', 'Withdrawals', 'ReturnsGrants', 'Watchlist', 'SectorTargets', 'FinancialStatements', 'InvestmentThesis']
@@ -76,8 +78,7 @@ def fetch_table(table_name):
                 return pd.DataFrame()
     return pd.DataFrame()
 
-# ... (باقي دوال init_db, db_create_user, etc. تبقى كما هي في الكود السابق)
-# فقط تأكد من نسخ دالة init_db وباقي الدوال التي أرسلتها لك سابقاً
+# === دوال التهيئة والمستخدمين (مهمة جداً) ===
 def init_db():
     tables = [
         """CREATE TABLE IF NOT EXISTS Users (username VARCHAR(50) PRIMARY KEY, password TEXT, email TEXT, created_at TIMESTAMP DEFAULT NOW())""",
@@ -127,3 +128,14 @@ def clear_all_data():
                     try: cur.execute(f"TRUNCATE TABLE {t} RESTART IDENTITY CASCADE;")
                     except: pass
                 conn.commit()
+    st.cache_data.clear()
+
+def get_user_details(username):
+    with get_db() as conn:
+        if conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT email, created_at FROM Users WHERE username = %s", (username,))
+                    return cur.fetchone()
+            except: pass
+    return None
