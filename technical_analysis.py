@@ -64,3 +64,7 @@ def render_technical_chart(symbol, period='1y', interval='1d'):
 
     fig.update_layout(height=800, xaxis_rangeslider_visible=False, paper_bgcolor=C['card_bg'], plot_bgcolor=C['card_bg'], font=dict(family="Cairo", color=C['main_text']), showlegend=False)
     st.plotly_chart(fig, use_container_width=True)
+
+# === الحل الجذري لمشكلة الاستيراد ===
+# هذا السطر يجعل الدالة متاحة بالاسمين، فلا يتعطل views.py
+view_advanced_chart = render_technical_chart
