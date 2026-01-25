@@ -195,16 +195,23 @@ def view_portfolio(fin, page_key):
         df = all_d[all_d['strategy'].astype(str).str.contains(ts, na=False)].copy()
     
     if not df.empty:
+        # 1. إحصائيات المفتوحة
         op = df[df['status']=='Open'].copy()
         market_val = op['quantity'].mul(op['current_price']).sum() if not op.empty else 0
         total_cost = op['quantity'].mul(op['entry_price']).sum() if not op.empty else 0
         unrealized = market_val - total_cost
         
+        # 2. إحصائيات المغلقة (أرشيف)
+        cl = df[df['status']=='Close'].copy()
+        realized_profit = 0
+        if not cl.empty:
+            realized_profit = ((cl['exit_price'] - cl['entry_price']) * cl['quantity']).sum()
+
         c1, c2, c3, c4 = st.columns(4)
-        with c1: render_kpi("قيمة المحفظة", f"{market_val:,.2f}", "blue")
-        with c2: render_kpi("التكلفة", f"{total_cost:,.2f}")
+        with c1: render_kpi("القيمة السوقية (مفتوح)", f"{market_val:,.2f}", "blue")
+        with c2: render_kpi("التكلفة (مفتوح)", f"{total_cost:,.2f}")
         with c3: render_kpi("الربح غير المحقق", f"{unrealized:,.2f}", unrealized)
-        with c4: render_kpi("عدد الشركات", f"{len(op)}")
+        with c4: render_kpi("الربح المحقق (أرشيف)", f"{realized_profit:,.2f}", realized_profit)
         st.markdown("---")
 
     if df.empty: st.info(f"محفظة {ts} فارغة."); return
@@ -241,21 +248,25 @@ def view_portfolio(fin, page_key):
             st.plotly_chart(fig, use_container_width=True)
     with t3:
         if not closed_df.empty: 
-            # --- حسابات الأرشيف (الجديدة) ---
-            closed_df['net_sales'] = closed_df['quantity'] * closed_df['exit_price']
-            closed_df['total_cost'] = closed_df['quantity'] * closed_df['entry_price']
-            closed_df['realized_gain'] = closed_df['net_sales'] - closed_df['total_cost']
-            closed_df['gain_pct'] = (closed_df['realized_gain'] / closed_df['total_cost'] * 100).fillna(0)
+            # === حسابات الأرشيف التفصيلية ===
+            closed_df['net_sales'] = closed_df['quantity'] * closed_df['exit_price'] # صافي البيع
+            closed_df['total_cost_closed'] = closed_df['quantity'] * closed_df['entry_price']
+            closed_df['realized_gain'] = closed_df['net_sales'] - closed_df['total_cost_closed'] # الربح/الخسارة
+            closed_df['gain_pct'] = (closed_df['realized_gain'] / closed_df['total_cost_closed'] * 100).fillna(0) # النسبة
             
-            # --- ملخص الأرشيف (KPIs) ---
-            sum_gain = closed_df['realized_gain'].sum()
-            sum_sales = closed_df['net_sales'].sum()
+            # --- شريط إجمالي الأرشيف ---
+            total_net_sales = closed_df['net_sales'].sum()
+            total_realized_pl = closed_df['realized_gain'].sum()
+            total_pct_avg = (total_realized_pl / closed_df['total_cost_closed'].sum() * 100) if closed_df['total_cost_closed'].sum() else 0
             
-            c_a, c_b = st.columns(2)
-            with c_a: render_kpi("صافي الربح المحقق", f"{sum_gain:,.2f}", sum_gain)
-            with c_b: render_kpi("إجمالي المبيعات (كاش عائد)", f"{sum_sales:,.2f}", "blue")
+            # عرض البطاقات داخل التبويب
+            c_a, c_b, c_c = st.columns(3)
+            with c_a: render_kpi("إجمالي صافي البيع", f"{total_net_sales:,.2f}", "blue")
+            with c_b: render_kpi("إجمالي الربح/الخسارة", f"{total_realized_pl:,.2f}", total_realized_pl)
+            with c_c: render_kpi("نسبة الربح الكلية", f"{total_pct_avg:,.2f}%", total_realized_pl)
             st.markdown("<br>", unsafe_allow_html=True)
-
+            
+            # الجدول التفصيلي
             render_table(closed_df, [
                 ('company_name', 'الشركة'), ('symbol', 'الرمز'), 
                 ('quantity', 'الكمية'), ('entry_price', 'شراء'), 
@@ -263,6 +274,8 @@ def view_portfolio(fin, page_key):
                 ('realized_gain', 'الربح/الخسارة'), ('gain_pct', '%'), 
                 ('exit_date', 'تاريخ')
             ])
+        else:
+            st.info("الأرشيف فارغ.")
 
 def view_cash_log():
     st.header("💵 سجل السيولة")
@@ -422,33 +435,42 @@ def view_sukuk_portfolio(fin):
     if not df.empty:
         sk = df[df['asset_type']=='Sukuk']
         if not sk.empty:
-            # === الصكوك المفتوحة ===
             op_sk = sk[sk['status'] == 'Open'].copy()
-            if not op_sk.empty:
-                total_val = op_sk['quantity'].mul(op_sk['entry_price']).sum()
-                render_kpi("إجمالي الصكوك الحالية", f"{total_val:,.2f}", "blue")
-                st.markdown("---")
-                render_table(op_sk, [('company_name','الاسم'), ('quantity','العدد'), ('entry_price','الشراء')])
-            
-            # === الصكوك المغلقة (أرشيف) ===
             cl_sk = sk[sk['status'] == 'Close'].copy()
-            if not cl_sk.empty:
-                st.markdown("### 🗄️ أرشيف الصكوك")
-                cl_sk['net_sales'] = cl_sk['quantity'] * cl_sk['exit_price']
-                cl_sk['total_cost'] = cl_sk['quantity'] * cl_sk['entry_price']
-                cl_sk['realized_gain'] = cl_sk['net_sales'] - cl_sk['total_cost']
-                cl_sk['gain_pct'] = (cl_sk['realized_gain'] / cl_sk['total_cost'] * 100).fillna(0)
-                
-                sum_gain = cl_sk['realized_gain'].sum()
-                render_kpi("إجمالي ربح الصكوك المغلقة", f"{sum_gain:,.2f}", sum_gain)
-                
-                render_table(cl_sk, [
-                    ('company_name', 'الاسم'), ('quantity', 'العدد'), 
-                    ('entry_price', 'شراء'), ('exit_price', 'بيع'), 
-                    ('net_sales', 'صافي البيع'), ('realized_gain', 'الربح'), ('gain_pct', '%')
-                ])
+            
+            t1, t2 = st.tabs(["الصكوك الحالية", "أرشيف الصكوك"])
+            
+            with t1:
+                if not op_sk.empty:
+                    total_val = op_sk['quantity'].mul(op_sk['entry_price']).sum()
+                    render_kpi("إجمالي الصكوك الحالية", f"{total_val:,.2f}", "blue")
+                    st.markdown("---")
+                    render_table(op_sk, [('company_name','الاسم'), ('quantity','العدد'), ('entry_price','الشراء')])
+                else: st.info("لا توجد صكوك قائمة")
+            
+            with t2:
+                if not cl_sk.empty:
+                    # === حسابات أرشيف الصكوك ===
+                    cl_sk['net_sales'] = cl_sk['quantity'] * cl_sk['exit_price']
+                    cl_sk['total_cost'] = cl_sk['quantity'] * cl_sk['entry_price']
+                    cl_sk['realized_gain'] = cl_sk['net_sales'] - cl_sk['total_cost']
+                    cl_sk['gain_pct'] = (cl_sk['realized_gain'] / cl_sk['total_cost'] * 100).fillna(0)
+                    
+                    sum_gain = cl_sk['realized_gain'].sum()
+                    sum_sales = cl_sk['net_sales'].sum()
+                    
+                    c_a, c_b = st.columns(2)
+                    with c_a: render_kpi("صافي بيع الصكوك", f"{sum_sales:,.2f}", "blue")
+                    with c_b: render_kpi("إجمالي الربح المحقق", f"{sum_gain:,.2f}", sum_gain)
+                    
+                    render_table(cl_sk, [
+                        ('company_name', 'الاسم'), ('quantity', 'العدد'), 
+                        ('entry_price', 'شراء'), ('exit_price', 'بيع'), 
+                        ('net_sales', 'صافي البيع'), ('realized_gain', 'الربح'), ('gain_pct', '%')
+                    ])
+                else: st.info("الأرشيف فارغ")
             return
-    st.info("لا توجد صكوك")
+    st.info("لا توجد بيانات صكوك")
 
 def view_tools():
     st.header("🛠️ الأدوات")
