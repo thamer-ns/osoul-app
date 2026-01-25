@@ -18,6 +18,12 @@ try:
 except ImportError:
     def run_backtest(*args): return None
 
+# === استيراد ملف نبض السوق (الجديد) ===
+try:
+    from pulse import render_pulse_dashboard
+except ImportError:
+    def render_pulse_dashboard(): st.info("وحدة النبض قيد الإنشاء")
+
 # === دوال مساعدة ===
 def safe_fmt(val, suffix=""):
     if val is None: return "غير متاح"
@@ -41,6 +47,42 @@ def apply_sorting(df, cols_definition, key_suffix):
     except: return df
 
 # === الصفحات ===
+
+def render_navbar():
+    # تم زيادة الأعمدة إلى 10 لإضافة زر "نبض"
+    c1, c2, c3, c4, c5, c6, c7, c8, c9, c10 = st.columns([1, 1, 1, 1, 1, 1, 1.2, 1, 1, 1])
+    
+    with c1:
+        if st.button("🏠 الرئيسية", use_container_width=True): st.session_state.page = 'home'; st.rerun()
+    with c2:
+        if st.button("⚡ مضاربة", use_container_width=True): st.session_state.page = 'spec'; st.rerun()
+    with c3:
+        if st.button("💎 استثمار", use_container_width=True): st.session_state.page = 'invest'; st.rerun()
+    with c4:
+        # === الزر الجديد ===
+        if st.button("💓 نبض", use_container_width=True): st.session_state.page = 'pulse'; st.rerun()
+    with c5:
+        if st.button("📜 صكوك", use_container_width=True): st.session_state.page = 'sukuk'; st.rerun()
+    with c6:
+        if st.button("🔍 تحليل", use_container_width=True): st.session_state.page = 'analysis'; st.rerun()
+    with c7:
+        if st.button("🧪 المختبر", use_container_width=True): st.session_state.page = 'backtest'; st.rerun()
+    with c8:
+        if st.button("📂 سجلات", use_container_width=True): st.session_state.page = 'cash'; st.rerun()
+    with c9:
+        if st.button("🔄 تحديث", use_container_width=True): st.session_state.page = 'update'; st.rerun()
+        
+    with c10:
+        with st.popover("👤 القائمة"):
+            st.write(f"مرحباً، {st.session_state.get('username', 'زائر')}")
+            if st.button("➕ إضافة صفقة", use_container_width=True): st.session_state.page = 'add'; st.rerun()
+            if st.button("🛠️ أدوات", use_container_width=True): st.session_state.page = 'tools'; st.rerun()
+            if st.button("⚙️ الإعدادات", use_container_width=True): st.session_state.page = 'settings'; st.rerun()
+            if st.button("🚪 خروج", use_container_width=True): 
+                st.session_state.clear()
+                st.rerun()
+    
+    st.markdown("---")
 
 def view_dashboard(fin):
     try: t_price, t_change = get_tasi_data()
@@ -404,11 +446,12 @@ def router():
     fin = calculate_portfolio_metrics()
     
     if pg == 'home': view_dashboard(fin)
+    elif pg == 'pulse': render_pulse_dashboard()
     elif pg in ['spec', 'invest']: view_portfolio(fin, pg)
     elif pg == 'sukuk': view_sukuk_portfolio(fin)
     elif pg == 'cash': view_cash_log()
     elif pg == 'analysis': view_analysis(fin)
-    elif pg == 'backtest': view_backtester_ui(fin) # <-- هنا تم ربط الصفحة الجديدة
+    elif pg == 'backtest': view_backtester_ui(fin)
     elif pg == 'tools': view_tools()
     elif pg == 'add': view_add_trade()
     elif pg == 'settings': view_settings()
