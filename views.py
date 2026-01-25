@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.express as px
 from datetime import date
 import time
@@ -18,17 +19,17 @@ except ImportError:
     render_financial_dashboard_ui = lambda s: None
 
 # ==========================================
-# 1. شريط التنقل (تم إصلاح الأزرار)
+# 1. شريط التنقل (تم إزالة زر المختبر المستقل)
 # ==========================================
 def render_navbar_custom():
-    render_navbar() # استدعاء الهيدر الأساسي
+    render_navbar()
     
-    # القائمة الرئيسية - تم إصلاح عدد الأعمدة وإضافة المختبر
     c_nav = st.container()
     with c_nav:
-        cols = st.columns(8) # زدنا العدد إلى 8 لاستيعاب المختبر
-        labels = ['الرئيسية', 'مضاربة', 'استثمار', 'السيولة', 'التحليل', 'المختبر', 'إضافة', 'الإعدادات']
-        keys = ['home', 'spec', 'invest', 'cash', 'analysis', 'backtest', 'add', 'settings']
+        # عدنا لـ 7 أعمدة لأن المختبر أصبح داخل التحليل
+        cols = st.columns(7)
+        labels = ['الرئيسية', 'مضاربة', 'استثمار', 'السيولة', 'التحليل', 'إضافة', 'الإعدادات']
+        keys = ['home', 'spec', 'invest', 'cash', 'analysis', 'add', 'settings']
         
         for i, (col, label, key) in enumerate(zip(cols, labels, keys)):
             is_active = (st.session_state.page == key)
@@ -166,13 +167,12 @@ def view_portfolio(fin, page_key):
         else: st.info("سجل الصفقات المغلقة فارغ")
 
 # ==========================================
-# 5. سجل السيولة (تم إصلاح خطأ KeyError)
+# 5. سجل السيولة
 # ==========================================
 def view_cash_log():
     st.header("💵 سجل السيولة")
     fin = calculate_portfolio_metrics()
     
-    # حماية من البيانات الفارغة
     dep_sum = fin['deposits']['amount'].sum() if not fin['deposits'].empty else 0
     wit_sum = fin['withdrawals']['amount'].sum() if not fin['withdrawals'].empty else 0
     net = dep_sum - wit_sum
@@ -263,14 +263,15 @@ def view_add_operations():
                     st.rerun()
 
 # ==========================================
-# 7. التحليل
+# 7. التحليل (تم دمج المختبر هنا)
 # ==========================================
 def view_analysis(fin):
-    st.header("🔬 مركز التحليل")
+    st.header("🔬 مركز التحليل والمختبر")
     trades = fin['all_trades']
     wl = fetch_table("Watchlist")
     symbols = list(set(trades['symbol'].unique().tolist() + wl['symbol'].unique().tolist())) if not trades.empty else []
     
+    # إضافة "المختبر" كخيار رابع
     c1, c2 = st.columns([1, 2])
     with c1: 
         ns = st.text_input("بحث عن سهم", label_visibility="collapsed")
@@ -282,49 +283,43 @@ def view_analysis(fin):
     if sym:
         n, s = get_company_details(sym)
         st.markdown(f"### {n} ({sym})")
-        t1, t2, t3 = st.tabs(["📊 المؤشرات الفنية", "📑 القوائم المالية", "📈 الشارت"])
+        
+        # === هنا التغيير الجذري: دمجنا المختبر ===
+        t1, t2, t3, t4 = st.tabs(["📊 المؤشرات الفنية", "📑 القوائم المالية", "📈 الشارت", "🧪 المختبر (Backtest)"])
+        
         with t1:
             d = get_fundamental_ratios(sym)
             st.metric("التقييم العام", f"{d.get('Score', 0)}/10")
             render_financial_dashboard_ui(sym)
-        with t2: st.info("سيتم ربط القوائم المالية قريباً")
-        with t3: view_advanced_chart(sym)
-
-# ==========================================
-# 8. المختبر (تم إضافته كما طلبت)
-# ==========================================
-def view_backtester_ui(fin):
-    st.header("🧪 مختبر الاستراتيجيات")
-    st.info("قم باختبار استراتيجيات التداول على بيانات تاريخية للتأكد من فعاليتها.")
-    
-    with st.form("backtest_form"):
-        c1, c2, c3 = st.columns(3)
-        sym = c1.text_input("رمز السهم (مثال: 1120)", value="1120")
-        strat = c2.selectbox("الاستراتيجية", ["Trend Follower", "Sniper"])
-        cap = c3.number_input("رأس المال الافتراضي", value=100000)
         
-        if st.form_submit_button("🚀 بدء المحاكاة"):
-            with st.spinner("جاري تحليل البيانات التاريخية..."):
-                df = get_chart_history(sym, "2y")
-                if df is not None and not df.empty:
-                    res = run_backtest(df, strat, cap)
-                    if res:
-                        st.markdown("---")
-                        c_res1, c_res2 = st.columns(2)
-                        ret_color = "blue" if res['return_pct'] > 0 else "red"
-                        c_res1.metric("صافي العائد %", f"{res['return_pct']:.2f}%", delta_color="normal")
-                        c_res2.metric("الرصيد النهائي", f"{res['final_value']:,.2f}")
-                        
-                        st.markdown("#### 📈 نمو المحفظة الافتراضي")
-                        st.line_chart(res['df']['Portfolio_Value'])
-                        
-                        st.markdown("#### 📝 سجل العمليات")
-                        st.dataframe(res['df'][res['df']['Signal'] != 0][['Close', 'Signal', 'Portfolio_Value']], use_container_width=True)
-                    else: st.error("فشل في تطبيق الاستراتيجية.")
-                else: st.error("لا توجد بيانات لهذا السهم.")
+        with t2: st.info("سيتم ربط القوائم المالية قريباً")
+        
+        with t3: view_advanced_chart(sym)
+        
+        # === محتوى تبويب المختبر ===
+        with t4:
+            st.markdown("#### اختبار الاستراتيجيات على هذا السهم")
+            c_bt1, c_bt2 = st.columns(2)
+            strat = c_bt1.selectbox("الاستراتيجية", ["Trend Follower", "Sniper"], label_visibility="collapsed")
+            cap = c_bt2.number_input("رأس المال الافتراضي", value=100000, label_visibility="collapsed")
+            
+            if st.button("🚀 تشغيل المحاكاة"):
+                with st.spinner(f"جاري اختبار {sym}..."):
+                    df_bt = get_chart_history(sym, "2y")
+                    if df_bt is not None and not df_bt.empty:
+                        res = run_backtest(df_bt, strat, cap)
+                        if res:
+                            st.success("تمت المحاكاة بنجاح")
+                            cb1, cb2 = st.columns(2)
+                            ret_color = "green" if res['return_pct'] > 0 else "red"
+                            cb1.markdown(f"**العائد الصافي:** :{ret_color}[{res['return_pct']:.2f}%]")
+                            cb2.markdown(f"**الرصيد النهائي:** {res['final_value']:,.2f}")
+                            st.line_chart(res['df']['Portfolio_Value'])
+                        else: st.error("فشل الحساب")
+                    else: st.error("لا توجد بيانات تاريخية كافية")
 
 # ==========================================
-# 9. الإعدادات
+# 8. الإعدادات
 # ==========================================
 def view_settings():
     st.header("⚙️ الإعدادات")
@@ -345,6 +340,5 @@ def router():
     elif pg in ['spec', 'invest']: view_portfolio(fin, pg)
     elif pg == 'cash': view_cash_log()
     elif pg == 'analysis': view_analysis(fin)
-    elif pg == 'backtest': view_backtester_ui(fin)
     elif pg == 'settings': view_settings()
     elif pg == 'add': view_add_operations()
