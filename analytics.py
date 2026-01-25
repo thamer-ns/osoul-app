@@ -7,79 +7,97 @@ import logging
 logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 
-# --- 1. التحليل المالي السريع ---
 def get_portfolio_summary_sql():
+    # استعلام SQL آمن يرجع أصفاراً في حال عدم وجود بيانات
     query = """
     SELECT 
-        (SELECT COALESCE(SUM(amount), 0) FROM Deposits) as total_dep,
-        (SELECT COALESCE(SUM(amount), 0) FROM Withdrawals) as total_wit,
-        (SELECT COALESCE(SUM(amount), 0) FROM ReturnsGrants) as total_ret,
-        (SELECT COALESCE(SUM((exit_price - entry_price) * quantity), 0) FROM Trades WHERE status = 'Close') as realized_pl,
-        (SELECT COALESCE(SUM(quantity * entry_price), 0) FROM Trades WHERE status = 'Open') as cost_open
+        COALESCE((SELECT SUM(amount) FROM Deposits), 0),
+        COALESCE((SELECT SUM(amount) FROM Withdrawals), 0),
+        COALESCE((SELECT SUM(amount) FROM ReturnsGrants), 0),
+        COALESCE((SELECT SUM((exit_price - entry_price) * quantity) FROM Trades WHERE status = 'Close'), 0),
+        COALESCE((SELECT SUM(quantity * entry_price) FROM Trades WHERE status = 'Open'), 0)
     """
     with get_db() as conn:
         if conn:
             with conn.cursor() as cur:
-                cur.execute(query)
-                row = cur.fetchone()
-                if row:
-                    return {
-                        "total_deposited": row[0], "total_withdrawn": row[1],
-                        "total_returns": row[2], "realized_pl": row[3], "cost_open": row[4]
-                    }
-    return {"total_deposited": 0, "total_withdrawn": 0, "total_returns": 0, "realized_pl": 0, "cost_open": 0}
+                try:
+                    cur.execute(query)
+                    row = cur.fetchone()
+                    if row:
+                        return {
+                            "total_deposited": float(row[0]), "total_withdrawn": float(row[1]),
+                            "total_returns": float(row[2]), "realized_pl": float(row[3]), "cost_open": float(row[4])
+                        }
+                except: pass
+    return {"total_deposited": 0.0, "total_withdrawn": 0.0, "total_returns": 0.0, "realized_pl": 0.0, "cost_open": 0.0}
 
-# --- 2. المحرك الأساسي ---
 def calculate_portfolio_metrics():
     sql_sums = get_portfolio_summary_sql()
+    
+    # جلب البيانات باستخدام الدالة المحدثة في database.py (التي تضمن وجود الأعمدة)
     trades = fetch_table("Trades")
     dep = fetch_table("Deposits")
     wit = fetch_table("Withdrawals")
     ret = fetch_table("ReturnsGrants")
     
+    # ضمان وجود الأعمدة الحسابية حتى لو الجدول فارغ
+    if 'amount' not in dep.columns: dep['amount'] = 0.0
+    if 'amount' not in wit.columns: wit['amount'] = 0.0
+    if 'amount' not in ret.columns: ret['amount'] = 0.0
+
     if trades.empty:
         return {
-            **sql_sums, "market_val_open": 0, "unrealized_pl": 0, "cash": 0,
-            "all_trades": pd.DataFrame(), "deposits": dep, "withdrawals": wit, "returns": ret, "equity": 0
+            **sql_sums, "market_val_open": 0, "unrealized_pl": 0, "cash": 0, "equity": 0,
+            "all_trades": pd.DataFrame(columns=trades.columns), 
+            "deposits": dep, "withdrawals": wit, "returns": ret,
+            "cost_closed": 0, "sales_closed": 0, "projected_dividend_income": 0
         }
 
-    trades['current_price'] = pd.to_numeric(trades['current_price'], errors='coerce').fillna(0.0)
-    trades['entry_price'] = pd.to_numeric(trades['entry_price'], errors='coerce').fillna(0.0)
-    trades['quantity'] = pd.to_numeric(trades['quantity'], errors='coerce').fillna(0.0)
-    trades['dividend_yield'] = pd.to_numeric(trades.get('dividend_yield', 0), errors='coerce').fillna(0.0)
-
+    # تحويل الأرقام لضمان عدم حدوث خطأ
+    cols_to_numeric = ['quantity', 'entry_price', 'current_price', 'exit_price', 'dividend_yield']
+    for col in cols_to_numeric:
+        if col in trades.columns:
+            trades[col] = pd.to_numeric(trades[col], errors='coerce').fillna(0.0)
+    
+    # الحسابات
     open_trades = trades[trades['status'] == 'Open'].copy()
     market_val_open = (open_trades['quantity'] * open_trades['current_price']).sum()
     unrealized_pl = market_val_open - sql_sums['cost_open']
     
-    # حساب الدخل المتوقع
-    trades['projected_annual_income'] = trades['market_value'] * trades['dividend_yield'] if 'market_value' in trades else 0
-    projected_dividend_income = open_trades['quantity'].mul(open_trades['current_price']).mul(open_trades['dividend_yield']).sum()
+    # التوزيعات المتوقعة
+    trades['projected_annual_income'] = trades['quantity'] * trades['current_price'] * trades['dividend_yield']
+    projected_dividend_income = open_trades['projected_annual_income'].sum()
 
-    # حساب الكاش
-    total_sales_value = trades[trades['status'] == 'Close'].apply(lambda x: x['quantity'] * x['exit_price'], axis=1).sum()
-    total_buy_cost_all = (trades['quantity'] * trades['entry_price']).sum()
-    cash = (sql_sums['total_deposited'] + sql_sums['total_ret'] + total_sales_value) - (sql_sums['total_withdrawn'] + total_buy_cost_all)
+    # الكاش = (إيداع - سحب) + عوائد + (بيع - شراء)
+    # الطريقة الأدق: صافي التمويل + الأرباح المحققة + العوائد - تكلفة الأسهم القائمة
+    # أو ببساطة: (إيداع + عوائد + مبيعات كاملة) - (سحب + مشتريات كاملة)
     
-    # تحسينات التوافق مع views.py
-    # نضيف الأعمدة المطلوبة
+    total_sales = trades[trades['status'] == 'Close'].apply(lambda x: x['quantity'] * x['exit_price'], axis=1).sum()
+    total_purchases = (trades['quantity'] * trades['entry_price']).sum()
+    
+    cash = (sql_sums['total_deposited'] + sql_sums['total_ret'] + total_sales) - (sql_sums['total_withdrawn'] + total_purchases)
+    
+    # أعمدة العرض
     trades['market_value'] = trades['quantity'] * trades['current_price']
     trades['total_cost'] = trades['quantity'] * trades['entry_price']
     trades['gain'] = trades['market_value'] - trades['total_cost']
     
-    # إغلاق العمليات
-    closed_mask = trades['status'] == 'Close'
-    trades.loc[closed_mask, 'current_price'] = trades.loc[closed_mask, 'exit_price']
-    trades.loc[closed_mask, 'market_value'] = trades.loc[closed_mask, 'quantity'] * trades.loc[closed_mask, 'exit_price']
+    # نسب الربح
+    trades['gain_pct'] = 0.0
+    mask_cost = trades['total_cost'] != 0
+    trades.loc[mask_cost, 'gain_pct'] = (trades.loc[mask_cost, 'gain'] / trades.loc[mask_cost, 'total_cost']) * 100
 
+    closed_mask = trades['status'] == 'Close'
+    cost_closed = trades.loc[closed_mask, 'total_cost'].sum()
+    
     return {
         **sql_sums,
         "market_val_open": market_val_open,
         "unrealized_pl": unrealized_pl,
         "cash": cash,
         "equity": cash + market_val_open,
-        "cost_closed": trades[closed_mask]['total_cost'].sum(),
-        "sales_closed": trades[closed_mask]['market_value'].sum(),
+        "cost_closed": cost_closed,
+        "sales_closed": total_sales,
         "projected_dividend_income": projected_dividend_income,
         "all_trades": trades,
         "deposits": dep,
@@ -87,7 +105,7 @@ def calculate_portfolio_metrics():
         "returns": ret
     }
 
-# --- 3. دالة المختبر (هذه هي الدالة المفقودة التي تسبب الخطأ) ---
+# دالة المختبر (Backtest) - ضرورية لمنع ImportError
 def run_backtest(df, strategy_name, initial_capital=100000):
     if df is None or df.empty: return None
     df = df.copy()
@@ -136,4 +154,4 @@ def update_prices():
                     cur.execute("UPDATE Trades SET current_price=%s, prev_close=%s, year_high=%s, year_low=%s, dividend_yield=%s WHERE symbol=%s AND status='Open'", 
                                 (d['price'], d['prev_close'], d['year_high'], d['year_low'], d.get('dividend_yield',0), s))
             conn.commit()
-def generate_equity_curve(df): return pd.DataFrame() # Placeholder
+def generate_equity_curve(df): return pd.DataFrame()
