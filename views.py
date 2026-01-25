@@ -10,7 +10,7 @@ from config import DEFAULT_COLORS, BACKUP_DIR
 from components import render_navbar, render_kpi, render_table
 from analytics import (calculate_portfolio_metrics, update_prices, create_smart_backup, 
                        generate_equity_curve, calculate_historical_drawdown)
-# هنا نستدعي الشارت من الملف الذي صححناه
+# الاستيراد الآن سيعمل لأننا أضفنا الدالتين في charts.py
 from charts import view_advanced_chart, render_technical_chart
 from financial_analysis import get_fundamental_ratios, render_financial_dashboard_ui, get_thesis, save_thesis
 from market_data import get_static_info, get_tasi_data, get_chart_history 
@@ -77,15 +77,12 @@ def view_dashboard(fin):
 
     st.markdown("### 🏦 الملخص المالي")
     c1, c2, c3, c4 = st.columns(4)
-    
     total_invested_pocket = fin['total_deposited'] - fin['total_withdrawn']
     total_pl = fin['unrealized_pl'] + fin['realized_pl'] + fin['total_returns']
-    
     with c1: render_kpi("النقد المتوفر", f"{fin['cash']:,.2f}", "blue")
     with c2: render_kpi("رأس المال المستثمر", f"{total_invested_pocket:,.2f}")
     with c3: render_kpi("القيمة السوقية", f"{fin['market_val_open']:,.2f}")
-    with c4: render_kpi("صافي الأرباح الكلية", f"{total_pl:,.2f}", total_pl) 
-    
+    with c4: render_kpi("صافي الأرباح الكلية", f"{total_pl:,.2f}", total_pl)
     st.markdown("---")
     
     st.markdown("### 📈 نمو المحفظة")
@@ -100,10 +97,8 @@ def view_dashboard(fin):
 def view_portfolio(fin, page_key):
     target_strat = "مضاربة" if page_key == 'spec' else "استثمار"
     st.header(f"💼 محفظة {target_strat}")
-    
     all_data = fin['all_trades']
     df_strat = pd.DataFrame()
-    
     if not all_data.empty and 'strategy' in all_data.columns:
         all_data['strategy'] = all_data['strategy'].astype(str).str.strip()
         df_strat = all_data[(all_data['strategy'] == target_strat) & (all_data['asset_type'] != 'Sukuk')].copy()
@@ -121,7 +116,6 @@ def view_portfolio(fin, page_key):
         open_df['gain_pct'] = open_df.apply(lambda row: (row['gain']/row['total_cost']*100) if row['total_cost']>0 else 0, axis=1)
 
     t1, t2, t3 = st.tabs([f"القائمة ({len(open_df)})", "تحليل الأداء", f"الأرشيف ({len(closed_df)})"])
-    
     with t1:
         if page_key == 'invest':
             st.markdown("#### 🎯 التوزيع القطاعي")
@@ -139,7 +133,6 @@ def view_portfolio(fin, page_key):
                 ('gain', 'الربح'), ('gain_pct', '%'), ('weight', 'الوزن'), ('daily_change', 'يومي')
             ]
             render_table(apply_sorting(open_df, cols_op, page_key), cols_op)
-            
             with st.expander("🔴 تسجيل بيع"):
                 with st.form(f"sell_{page_key}"):
                     c1, c2, c3 = st.columns(3)
@@ -175,23 +168,17 @@ def view_analysis(fin):
     st.header("🔬 مركز التحليل الشامل")
     trades = fin['all_trades']
     wl = fetch_table("Watchlist")
-    
-    symbols = []
-    if not trades.empty: symbols.extend(trades['symbol'].unique().tolist())
-    if not wl.empty: symbols.extend(wl['symbol'].unique().tolist())
-    symbols = list(set(symbols))
+    symbols = list(set(trades['symbol'].unique().tolist() + wl['symbol'].unique().tolist())) if not trades.empty else []
     
     c_search, c_sel = st.columns([1, 2])
     with c_search: new_search = st.text_input("بحث عن رمز جديد")
     if new_search and new_search not in symbols: symbols.insert(0, new_search)
-    
     with c_sel: symbol = st.selectbox("اختر الشركة", symbols) if symbols else None
     
     if symbol:
         n, s = get_static_info(symbol)
         st.markdown(f"### {n} ({symbol})")
         t1, t2, t3, t4, t5 = st.tabs(["📊 المؤشرات", "📑 القوائم المالية", "📝 الأطروحة", "📈 فني", "🏛️ كلاسيكي"])
-        
         with t1:
             d = get_fundamental_ratios(symbol)
             c_sc, c_det = st.columns([1, 3])
@@ -206,7 +193,6 @@ def view_analysis(fin):
             k2.metric("P/B", safe_fmt(d['P/B']))
             k3.metric("ROE", safe_fmt(d['ROE'], "%"))
             k4.metric("Fair Value", safe_fmt(d['Fair_Value']))
-            
         with t2: render_financial_dashboard_ui(symbol)
         with t3:
             curr = get_thesis(symbol)
@@ -285,12 +271,12 @@ def view_tools():
     fin = calculate_portfolio_metrics()
     st.info("زكاة تقديرية (2.5775%): " + str(fin['market_val_open'] * 0.025775))
 
-# === دوال الاستيراد الذكية (تم التصحيح لمنع أخطاء القاعدة) ===
+# === دوال الاستيراد الذكية (Fix: Column Mapping & Filtering) ===
 def clean_data_for_import(df):
     if df is None: return None
     df.columns = df.columns.str.strip().str.lower()
     
-    # تصحيح أسماء الأعمدة لتطابق قاعدة البيانات
+    # 1. خرائط تصحيح أسماء الأعمدة (Mapping)
     column_mapping = {
         'source': 'note',   # في ملفات الودائع
         'reason': 'note',   # في ملفات السحب
@@ -301,13 +287,11 @@ def clean_data_for_import(df):
     df.rename(columns=column_mapping, inplace=True)
 
     if 'id' in df.columns: df = df.drop(columns=['id'])
-    
     df = df.where(pd.notnull(df), None)
     
     for col in df.columns:
         if df[col].dtype == 'object':
-            try:
-                df[col] = df[col].apply(lambda x: str(x).replace('٫', '.').replace(',', '') if x is not None else x)
+            try: df[col] = df[col].apply(lambda x: str(x).replace('٫', '.').replace(',', '') if x is not None else x)
             except: pass
             
     for date_col in ['date', 'exit_date']:
@@ -322,8 +306,7 @@ def save_dataframe_to_db(df, table_name):
     df_clean = clean_data_for_import(df)
     if df_clean is None or df_clean.empty: return
     
-    # === الفلترة الذكية للأعمدة (الحل الجذري) ===
-    # نحدد الأعمدة المقبولة في كل جدول، ونتجاهل الباقي (مثل type و source)
+    # 2. الفلترة الذكية: السماح فقط بالأعمدة الموجودة في القاعدة
     allowed_columns = {
         'Trades': ['symbol', 'company_name', 'sector', 'asset_type', 'date', 'quantity', 'entry_price', 'strategy', 'status', 'exit_date', 'exit_price', 'current_price'],
         'Deposits': ['date', 'amount', 'note'],
@@ -334,10 +317,11 @@ def save_dataframe_to_db(df, table_name):
     
     if table_name not in allowed_columns: return
     
-    # نحتفظ فقط بالأعمدة الموجودة في القائمة المسموحة
+    # فلترة الأعمدة الزائدة (مثل source و type)
     valid_cols = [c for c in df_clean.columns if c in allowed_columns[table_name]]
-    df_final = df_clean[valid_cols].copy()
+    if not valid_cols: return
     
+    df_final = df_clean[valid_cols].copy()
     records = df_final.to_dict('records')
     
     with get_db() as conn:
@@ -351,14 +335,12 @@ def save_dataframe_to_db(df, table_name):
                 query = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
                 try: cur.execute(query, vals)
                 except Exception as e: 
-                    # نطبع الخطأ في الكونسول فقط لتجنب إيقاف البرنامج
                     print(f"Skipped row in {table_name}: {e}")
                     conn.rollback()
             conn.commit()
 
 def view_settings():
     st.header("⚙️ الإعدادات العامة")
-    
     st.markdown("### 📤 النسخ الاحتياطي")
     if st.button("📦 حفظ نسخة احتياطية"):
         if create_smart_backup(): st.success("تم الحفظ في backups")
@@ -433,7 +415,6 @@ def router():
     if 'page' not in st.session_state: st.session_state.page = 'home'
     pg = st.session_state.page
     
-    # حساب البيانات مرة واحدة للصفحة
     fin = calculate_portfolio_metrics()
     
     if pg == 'home': view_dashboard(fin)
@@ -441,7 +422,7 @@ def router():
     elif pg in ['spec', 'invest']: view_portfolio(fin, pg)
     elif pg == 'sukuk': view_sukuk_portfolio(fin)
     elif pg == 'cash': view_cash_log()
-    elif pg == 'analysis': view_advanced_chart(fin) # تم التصحيح
+    elif pg == 'analysis': view_analysis(fin)
     elif pg == 'backtest': view_backtester_ui(fin)
     elif pg == 'tools': view_tools()
     elif pg == 'add': view_add_trade()
