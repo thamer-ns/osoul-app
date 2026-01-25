@@ -9,13 +9,11 @@ import logging
 logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 
-# --- 1. إعداد الاتصال الآمن ---
 try:
     DB_URL = st.secrets["postgres"]["url"]
 except Exception as e:
     DB_URL = "" 
 
-# --- 2. إدارة الاتصال ---
 @st.cache_resource
 def get_connection_pool():
     if not DB_URL: return None
@@ -34,9 +32,8 @@ def get_db():
     finally:
         if conn: pool.putconn(conn)
 
-# --- 3. الجلب الآمن (هنا كان سبب المشكلة وتم إصلاحه) ---
 def fetch_table(table_name):
-    # تعريف الأعمدة الافتراضية لمنع KeyError
+    # تعريف الأعمدة لضمان عدم حدوث KeyError
     STANDARD_COLS = {
         'Trades': ['id', 'symbol', 'company_name', 'sector', 'status', 'strategy', 'date', 'quantity', 'entry_price', 'exit_price', 'current_price', 'market_value', 'total_cost', 'gain', 'dividend_yield'],
         'Deposits': ['id', 'date', 'amount', 'note'],
@@ -44,7 +41,6 @@ def fetch_table(table_name):
         'ReturnsGrants': ['id', 'date', 'amount', 'symbol', 'company_name', 'note'],
         'Watchlist': ['symbol'],
         'SectorTargets': ['sector', 'target_percentage'],
-        'InvestmentThesis': ['symbol', 'thesis_text', 'target_price', 'recommendation'],
         'FinancialStatements': ['symbol', 'date', 'revenue', 'net_income'],
         'Documents': ['id', 'trade_id', 'file_name']
     }
@@ -53,14 +49,12 @@ def fetch_table(table_name):
         if conn:
             try:
                 df = pd.read_sql(f"SELECT * FROM {table_name}", conn)
-                # الإصلاح: إذا كان الجدول فارغاً، نعيد هيكلاً فارغاً بالأعمدة الصحيحة
                 if df.empty and table_name in STANDARD_COLS:
                     return pd.DataFrame(columns=STANDARD_COLS[table_name])
                 return df
             except Exception as e:
-                logger.error(f"Fetch {table_name} Error: {e}")
+                pass # Silently fail and return empty df
                 
-    # في حال الفشل التام، نرجع جدولاً فارغاً بالأعمدة الافتراضية
     if table_name in STANDARD_COLS:
         return pd.DataFrame(columns=STANDARD_COLS[table_name])
     return pd.DataFrame()
@@ -76,7 +70,6 @@ def execute_query(query, params=()):
             except Exception as e: conn.rollback(); return False
     return False
 
-# --- 4. المستخدمين ---
 def db_create_user(username, password, email=""):
     try:
         hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
@@ -92,8 +85,8 @@ def db_verify_user(username, password):
                 if res: return bcrypt.checkpw(password.encode('utf-8'), res[0].encode('utf-8'))
     return False
 
-# --- 5. التهيئة ---
 def init_db():
+    # تمت إضافة dividend_yield لجدول Trades
     tables = [
         """CREATE TABLE IF NOT EXISTS Users (username VARCHAR(50) PRIMARY KEY, password TEXT, email TEXT)""",
         """CREATE TABLE IF NOT EXISTS Trades (id SERIAL PRIMARY KEY, symbol VARCHAR(20), company_name TEXT, sector TEXT, asset_type VARCHAR(20) DEFAULT 'Stock', date DATE, quantity DOUBLE PRECISION, entry_price DOUBLE PRECISION, strategy VARCHAR(20), status VARCHAR(10), exit_date DATE, exit_price DOUBLE PRECISION, current_price DOUBLE PRECISION, prev_close DOUBLE PRECISION, year_high DOUBLE PRECISION, year_low DOUBLE PRECISION, dividend_yield DOUBLE PRECISION, note TEXT)""",
