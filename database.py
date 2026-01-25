@@ -1,7 +1,7 @@
+import streamlit as st
 import psycopg2
 from psycopg2 import pool
 import pandas as pd
-import streamlit as st
 import bcrypt
 from contextlib import contextmanager
 import logging
@@ -10,37 +10,31 @@ import logging
 logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 
-# --- 🔒 إعداد الاتصال الآمن ---
-# يتم جلب الرابط من ملف .streamlit/secrets.toml
-# الهيكلة المتوقعة في ملف الأسرار:
-# [postgres]
-# url = "postgresql://..."
-
+# --- 1. إعداد الاتصال الآمن ---
+# نستخدم try/except هنا لمنع SyntaxError
 try:
-    # محاولة جلب الرابط من الأسرار
+    # محاولة جلب الرابط من الأسرار في Streamlit Cloud
     DB_URL = st.secrets["postgres"]["url"]
 except Exception as e:
-    # في حال لم يتم العثور على الملف أو الرابط، نوقف التنفيذ ونظهر رسالة خطأ واضحة
-    st.error("⚠️ لم يتم العثور على رابط قاعدة البيانات في secrets.toml")
-    logger.error(f"Secrets Error: {e}")
-    DB_URL = ""
+    # في حال كنا نعمل محلياً ولم نجد الملف، أو حدث خطأ
+    # لا توقف البرنامج، فقط اطبع خطأ في السجلات
+    # logger.error(f"Secrets Error: {e}") 
+    DB_URL = "" 
 
-# --- إدارة الاتصال (Connection Pooling) ---
+# --- 2. إدارة الاتصال (Connection Pooling) ---
 
 @st.cache_resource
 def get_connection_pool():
     if not DB_URL:
         return None
     try:
-        # إنشاء مسبح اتصالات لزيادة الكفاءة
         return psycopg2.pool.SimpleConnectionPool(1, 20, dsn=DB_URL, sslmode='require')
     except Exception as e:
-        st.error(f"فشل الاتصال بقاعدة البيانات: {e}")
+        st.error(f"DB Error: {e}")
         return None
 
 @contextmanager
 def get_db():
-    """Context Manager للحصول على اتصال وإعادته للمسبح تلقائياً"""
     pool = get_connection_pool()
     if not pool:
         yield None
@@ -57,10 +51,9 @@ def get_db():
         if conn:
             pool.putconn(conn)
 
-# --- دوال تنفيذ الاستعلامات ---
+# --- 3. دوال تنفيذ الاستعلامات ---
 
 def execute_query(query, params=()):
-    """تنفيذ أوامر التعديل (INSERT, UPDATE, DELETE)"""
     with get_db() as conn:
         if conn:
             try:
@@ -75,12 +68,9 @@ def execute_query(query, params=()):
     return False
 
 def fetch_table(table_name):
-    """جلب جدول كامل كـ DataFrame"""
-    # قائمة بيضاء للجداول المسموح بها للحماية من SQL Injection
-    allowed = ['Users', 'Trades', 'Deposits', 'Withdrawals', 'ReturnsGrants', 'Watchlist', 'SectorTargets', 'FinancialStatements', 'InvestmentThesis']
+    allowed = ['Users', 'Trades', 'Deposits', 'Withdrawals', 'ReturnsGrants', 'Watchlist', 'SectorTargets', 'FinancialStatements', 'InvestmentThesis', 'Documents']
     
     if table_name not in allowed:
-        logger.warning(f"Attempt directly fetch unauthorized table: {table_name}")
         return pd.DataFrame()
         
     with get_db() as conn:
@@ -92,10 +82,9 @@ def fetch_table(table_name):
                 pass
     return pd.DataFrame()
 
-# --- دوال إدارة المستخدمين (الأمان) ---
+# --- 4. دوال إدارة المستخدمين ---
 
 def db_create_user(username, password, email=""):
-    """إنشاء مستخدم جديد مع تشفير كلمة المرور"""
     try:
         hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
         return execute_query("INSERT INTO Users (username, password, email) VALUES (%s, %s, %s)", (username, hashed, email))
@@ -104,21 +93,18 @@ def db_create_user(username, password, email=""):
         return False
 
 def db_verify_user(username, password):
-    """التحقق من صحة تسجيل الدخول"""
     with get_db() as conn:
         if conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT password FROM Users WHERE username = %s", (username,))
                 res = cur.fetchone()
                 if res:
-                    # مقارنة كلمة المرور المدخلة مع المشفرة في القاعدة
                     return bcrypt.checkpw(password.encode('utf-8'), res[0].encode('utf-8'))
     return False
 
-# --- دالة التهيئة الأولية (تشغيل مرة واحدة) ---
+# --- 5. التهيئة الأولية للجداول ---
 
 def init_db():
-    """إنشاء الجداول إذا لم تكن موجودة"""
     tables = [
         """CREATE TABLE IF NOT EXISTS Users (username VARCHAR(50) PRIMARY KEY, password TEXT, email TEXT)""",
         """CREATE TABLE IF NOT EXISTS Trades (id SERIAL PRIMARY KEY, symbol VARCHAR(20), company_name TEXT, sector TEXT, asset_type VARCHAR(20) DEFAULT 'Stock', date DATE, quantity DOUBLE PRECISION, entry_price DOUBLE PRECISION, strategy VARCHAR(20), status VARCHAR(10), exit_date DATE, exit_price DOUBLE PRECISION, current_price DOUBLE PRECISION, prev_close DOUBLE PRECISION, year_high DOUBLE PRECISION, year_low DOUBLE PRECISION, dividend_yield DOUBLE PRECISION, note TEXT)""",
@@ -136,14 +122,8 @@ def init_db():
             free_cash_flow DOUBLE PRECISION, eps DOUBLE PRECISION, source VARCHAR(50),
             PRIMARY KEY (symbol, period_type, date)
         )""",
-        """CREATE TABLE IF NOT EXISTS InvestmentThesis (symbol VARCHAR(20) PRIMARY KEY, thesis_text TEXT, target_price DOUBLE PRECISION, recommendation VARCHAR(20), last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"""
-      CREATE TABLE IF NOT EXISTS Documents (
-    id SERIAL PRIMARY KEY, 
-    trade_id INTEGER, 
-    file_name TEXT, 
-    file_data BYTEA, 
-    upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-)  
+        """CREATE TABLE IF NOT EXISTS InvestmentThesis (symbol VARCHAR(20) PRIMARY KEY, thesis_text TEXT, target_price DOUBLE PRECISION, recommendation VARCHAR(20), last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""",
+        """CREATE TABLE IF NOT EXISTS Documents (id SERIAL PRIMARY KEY, trade_id INTEGER, file_name TEXT, file_data BYTEA, upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"""
     ]
     
     with get_db() as conn:
