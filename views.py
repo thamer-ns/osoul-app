@@ -1,7 +1,9 @@
+# views.py
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 from datetime import date
+import time
 import io
 
 # === الاستيرادات ===
@@ -45,34 +47,7 @@ def apply_sorting(df, cols_definition, key_suffix):
     except: return df
 
 # === مكونات الواجهة (Navbar) ===
-def render_navbar():
-    c1, c2, c3, c4, c5, c6, c7, c8, c9, c10 = st.columns([1, 1, 1, 1, 1, 1, 1.2, 1, 1, 1])
-    with c1:
-        if st.button("🏠 الرئيسية", use_container_width=True): st.session_state.page = 'home'; st.rerun()
-    with c2:
-        if st.button("⚡ مضاربة", use_container_width=True): st.session_state.page = 'spec'; st.rerun()
-    with c3:
-        if st.button("💎 استثمار", use_container_width=True): st.session_state.page = 'invest'; st.rerun()
-    with c4:
-        if st.button("💓 نبض", use_container_width=True): st.session_state.page = 'pulse'; st.rerun()
-    with c5:
-        if st.button("📜 صكوك", use_container_width=True): st.session_state.page = 'sukuk'; st.rerun()
-    with c6:
-        if st.button("🔍 تحليل", use_container_width=True): st.session_state.page = 'analysis'; st.rerun()
-    with c7:
-        if st.button("🧪 المختبر", use_container_width=True): st.session_state.page = 'backtest'; st.rerun()
-    with c8:
-        if st.button("📂 سجلات", use_container_width=True): st.session_state.page = 'cash'; st.rerun()
-    with c9:
-        if st.button("🔄 تحديث", use_container_width=True): st.session_state.page = 'update'; st.rerun()
-    with c10:
-        with st.popover("👤 القائمة"):
-            st.write(f"مرحباً، {st.session_state.get('username', 'زائر')}")
-            if st.button("➕ إضافة صفقة", use_container_width=True): st.session_state.page = 'add'; st.rerun()
-            if st.button("🛠️ أدوات", use_container_width=True): st.session_state.page = 'tools'; st.rerun()
-            if st.button("⚙️ الإعدادات", use_container_width=True): st.session_state.page = 'settings'; st.rerun()
-            if st.button("🚪 خروج", use_container_width=True): st.session_state.clear(); st.rerun()
-    st.markdown("---")
+# يتم استدعاؤها داخل router
 
 # === الصفحات الرئيسية ===
 def view_dashboard(fin):
@@ -317,7 +292,67 @@ def view_tools():
     fin = calculate_portfolio_metrics()
     st.info("زكاة تقديرية (2.5775%): " + str(fin['market_val_open'] * 0.025775))
 
-# === صفحة الإعدادات (الحل النهائي 100% لمشاكل الاستيراد) ===
+# === صفحة الإعدادات (المحدثة والمصلحة) ===
+def clean_data_for_import(df):
+    """دالة تنظيف البيانات وتوحيد الأسماء ومعالجة NaN"""
+    if df is None: return None
+    df.columns = df.columns.str.strip().str.lower()
+    
+    if 'id' in df.columns: df = df.drop(columns=['id'])
+    
+    # تحويل القيم الفارغة إلى None (NULL in SQL)
+    df = df.where(pd.notnull(df), None)
+
+    for col in df.columns:
+        # تحويل الأرقام النصية
+        if df[col].dtype == 'object':
+            try:
+                # التأكد من أن القيمة ليست None قبل المعالجة النصية
+                df[col] = df[col].apply(lambda x: str(x).replace('٫', '.').replace(',', '') if x is not None else x)
+            except: pass
+            
+    # معالجة التواريخ إذا وجدت
+    for date_col in ['date', 'exit_date']:
+        if date_col in df.columns:
+            try:
+                df[date_col] = pd.to_datetime(df[date_col], errors='coerce').dt.strftime('%Y-%m-%d')
+                df[date_col] = df[date_col].replace({pd.NaT: None, 'NaT': None})
+            except: pass
+            
+    return df
+
+def save_dataframe_to_db(df, table_name):
+    """حفظ البيانات في الجدول المحدد"""
+    df_clean = clean_data_for_import(df)
+    if df_clean is None or df_clean.empty: return
+    
+    records = df_clean.to_dict('records')
+    
+    # الاتصال بالقاعدة
+    with get_db() as conn:
+        if not conn:
+            st.error("فشل الاتصال بقاعدة البيانات.")
+            return
+
+        with conn.cursor() as cur:
+            for row in records:
+                cols = list(row.keys())
+                # تجهيز القيم (None مكان NaN)
+                vals = [None if pd.isna(v) else v for v in row.values()]
+                
+                placeholders = ', '.join(['%s'] * len(vals))
+                columns = ', '.join(cols)
+                
+                # جملة الحفظ
+                query = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
+                try:
+                    cur.execute(query, vals)
+                except Exception as e:
+                    # طباعة الخطأ في الكونسول وتجاهل السطر
+                    print(f"Error inserting row in {table_name}: {e}")
+                    conn.rollback() # تراجع عن السطر الحالي فقط
+            conn.commit()
+
 def view_settings():
     st.header("⚙️ الإعدادات العامة")
     
@@ -333,114 +368,90 @@ def view_settings():
         clear_all_data()
         st.warning("تم مسح البيانات!"); st.cache_data.clear(); st.rerun()
 
-    uploaded_files = st.file_uploader("ارفع ملفات CSV/Excel", type=['csv', 'xlsx'], accept_multiple_files=True)
+    uploaded_files = st.file_uploader(
+        "ارفع ملفات (CSV) أو (Excel شامل backup_latest.xlsx)", 
+        type=['csv', 'xlsx'], 
+        accept_multiple_files=True
+    )
     
     if uploaded_files and st.button("🚀 بدء الاستيراد"):
         success_count = 0
         progress = st.progress(0)
         status = st.empty()
         
+        # خريطة الجداول
         table_map = {
-            'Trades': 'Trades', 'Deposits': 'Deposits', 
-            'Withdrawals': 'Withdrawals', 'ReturnsGrants': 'ReturnsGrants',
-            'Watchlist': 'Watchlist', 'SectorTargets': 'SectorTargets',
-            'InvestmentThesis': 'InvestmentThesis'
+            'trades': 'Trades', 'deposits': 'Deposits', 
+            'withdrawals': 'Withdrawals', 'returns': 'ReturnsGrants',
+            'watchlist': 'Watchlist', 'sector': 'SectorTargets',
+            'thesis': 'InvestmentThesis'
         }
 
-        # دالة التنظيف (تعالج جميع مشاكل الملفات العربية)
-        def clean_data_for_import(df):
-            if 'id' in df.columns: df = df.drop(columns=['id'])
-            for col in df.columns:
-                if df[col].dtype == 'object':
-                    # تحويل القيم لنص أولاً لضمان عدم وجود أخطاء
-                    df[col] = df[col].astype(str)
-                    # استبدال الفاصلة العربية ٫ بالنقطة .
-                    df[col] = df[col].str.replace('٫', '.', regex=False)
-                    # استبدال الفاصلة العادية للألوف
-                    df[col] = df[col].str.replace(',', '', regex=False)
-                    # محاولة التحويل لرقم مرة أخرى
-                    df[col] = pd.to_numeric(df[col], errors='ignore')
-            return df
-
-        # دالة القراءة الذكية التي تجرب كل شيء
-        def load_file_content(file, filename):
-            df = None
-            
-            # المحاولة 1: قراءة كـ Excel (حتى لو كان اسمه غير ذلك، قد يكون Excel مقنع)
-            try:
-                file.seek(0)
-                df = pd.read_excel(file)
-                return df
-            except: pass
-
-            # المحاولة 2: قراءة كـ CSV عادي (UTF-8)
-            try:
-                file.seek(0)
-                df = pd.read_csv(file, encoding='utf-8')
-                return df
-            except: pass
-
-            # المحاولة 3: قراءة كـ CSV عربي (cp1256 - هذا هو الحل لمشكلتك)
-            try:
-                file.seek(0)
-                df = pd.read_csv(file, encoding='cp1256')
-                return df
-            except: pass
-            
-            # المحاولة 4: قراءة كـ CSV بفاصل منقوطة
-            try:
-                file.seek(0)
-                df = pd.read_csv(file, sep=';', encoding='utf-8-sig')
-                return df
-            except: pass
-
-            return None
+        # التأكد من الاتصال أولاً
+        conn_check = get_db()
+        with conn_check as conn:
+            if conn is None:
+                st.error("❌ لا يوجد اتصال بقاعدة البيانات! تأكد من ملف secrets.toml")
+                st.stop()
 
         for i, file in enumerate(uploaded_files):
             try:
-                fname = file.name
-                target_table = None
-                for keyword, table_name in table_map.items():
-                    if keyword in fname:
-                        target_table = table_name
-                        break
+                fname = file.name.lower()
                 
-                if target_table:
-                    # استخدمنا دالة التحميل الذكية هنا
-                    df = load_file_content(file, fname)
+                # 1. معالجة ملفات الإكسل (متعددة الصفحات)
+                if fname.endswith('.xlsx'):
+                    xls = pd.ExcelFile(file)
+                    for sheet in xls.sheet_names:
+                        sheet_lower = sheet.lower()
+                        target_table = None
+                        
+                        # البحث عن اسم الجدول المناسب للورقة
+                        for key, t_name in table_map.items():
+                            if key in sheet_lower:
+                                target_table = t_name
+                                break
+                        
+                        if target_table:
+                            df = pd.read_excel(file, sheet_name=sheet)
+                            if not df.empty:
+                                status.text(f"جاري معالجة ورقة {sheet} كـ {target_table}...")
+                                save_dataframe_to_db(df, target_table)
+                                success_count += 1
+                
+                # 2. معالجة ملفات CSV
+                elif fname.endswith('.csv'):
+                    target_table = None
+                    for key, t_name in table_map.items():
+                        if key in fname:
+                            target_table = t_name
+                            break
                     
-                    if df is not None and not df.empty:
-                        df_clean = clean_data_for_import(df)
-                        records = df_clean.to_dict('records')
+                    if target_table:
+                        try:
+                            # محاولة utf-8
+                            df = pd.read_csv(file, encoding='utf-8')
+                        except UnicodeDecodeError:
+                            # محاولة cp1256 للعربي
+                            file.seek(0)
+                            df = pd.read_csv(file, encoding='cp1256')
                         
-                        with get_db() as conn:
-                            with conn.cursor() as cur:
-                                for row in records:
-                                    cols = list(row.keys())
-                                    vals = [None if pd.isna(v) or str(v) == 'nan' else v for v in row.values()]
-                                    
-                                    q = f"INSERT INTO {target_table} ({', '.join(cols)}) VALUES ({', '.join(['%s']*len(vals))})"
-                                    try: cur.execute(q, vals)
-                                    except Exception as e: 
-                                        print(f"Skipped row: {e}")
-                                        conn.rollback()
-                                conn.commit()
-                        
-                        success_count += 1
-                        status.text(f"✅ تم استيراد: {target_table}")
+                        if not df.empty:
+                            save_dataframe_to_db(df, target_table)
+                            success_count += 1
+                            status.text(f"✅ تم استيراد الملف: {fname}")
                     else:
-                        status.warning(f"⚠️ فشل قراءة محتوى الملف: {fname}")
-                else:
-                    status.warning(f"⚠️ ملف غير معروف: {fname}")
-            
+                        status.warning(f"⚠️ لم يتم التعرف على الجدول المناسب للملف: {fname}")
+
             except Exception as e:
-                status.error(f"❌ خطأ غير متوقع في {file.name}: {e}")
+                status.error(f"❌ خطأ في الملف {file.name}: {e}")
             
             progress.progress((i + 1) / len(uploaded_files))
         
         if success_count > 0:
-            st.success(f"تم الانتهاء! تم استيراد {success_count} ملفات بنجاح.")
+            st.success(f"تم الانتهاء! تمت معالجة {success_count} جداول/ملفات بنجاح.")
             st.cache_data.clear()
+            time.sleep(2)
+            st.rerun()
 
 def router():
     render_navbar()
@@ -458,6 +469,7 @@ def router():
     elif pg == 'tools': view_tools()
     elif pg == 'add': view_add_trade()
     elif pg == 'settings': view_settings()
+    elif pg == 'profile': st.info("صفحة الملف الشخصي (قيد التطوير)")
     elif pg == 'update':
         with st.spinner("تحديث..."): update_prices()
         st.session_state.page = 'home'; st.rerun()
