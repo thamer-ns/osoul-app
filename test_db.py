@@ -1,7 +1,7 @@
 import psycopg2
 
 # ضع الرابط كاملاً بكلمة المرور هنا للتجربة
-DB_URL = "ضع_الرابط_هنا_مع_كلمة_المرور_للتحقق"
+DB_URL ="postgresql://postgres.uxcdbjqnbphlzftpfajm:Tm1074844687@aws-1-ap-northeast-2.pooler.supabase.com:6543/postgres"
 
 try:
     print("جاري محاولة الاتصال...")
