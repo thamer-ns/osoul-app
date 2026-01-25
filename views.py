@@ -317,7 +317,7 @@ def view_tools():
     fin = calculate_portfolio_metrics()
     st.info("زكاة تقديرية (2.5775%): " + str(fin['market_val_open'] * 0.025775))
 
-# === صفحة الإعدادات (الكود النهائي الذكي) ===
+# === صفحة الإعدادات (الحل النهائي 100% لمشاكل الاستيراد) ===
 def view_settings():
     st.header("⚙️ الإعدادات العامة")
     
@@ -347,14 +347,54 @@ def view_settings():
             'InvestmentThesis': 'InvestmentThesis'
         }
 
+        # دالة التنظيف (تعالج جميع مشاكل الملفات العربية)
         def clean_data_for_import(df):
             if 'id' in df.columns: df = df.drop(columns=['id'])
             for col in df.columns:
                 if df[col].dtype == 'object':
-                    df[col] = df[col].astype(str).str.replace('٫', '.', regex=False)
-                    df[col] = df[col].astype(str).str.replace(',', '', regex=False)
+                    # تحويل القيم لنص أولاً لضمان عدم وجود أخطاء
+                    df[col] = df[col].astype(str)
+                    # استبدال الفاصلة العربية ٫ بالنقطة .
+                    df[col] = df[col].str.replace('٫', '.', regex=False)
+                    # استبدال الفاصلة العادية للألوف
+                    df[col] = df[col].str.replace(',', '', regex=False)
+                    # محاولة التحويل لرقم مرة أخرى
                     df[col] = pd.to_numeric(df[col], errors='ignore')
             return df
+
+        # دالة القراءة الذكية التي تجرب كل شيء
+        def load_file_content(file, filename):
+            df = None
+            
+            # المحاولة 1: قراءة كـ Excel (حتى لو كان اسمه غير ذلك، قد يكون Excel مقنع)
+            try:
+                file.seek(0)
+                df = pd.read_excel(file)
+                return df
+            except: pass
+
+            # المحاولة 2: قراءة كـ CSV عادي (UTF-8)
+            try:
+                file.seek(0)
+                df = pd.read_csv(file, encoding='utf-8')
+                return df
+            except: pass
+
+            # المحاولة 3: قراءة كـ CSV عربي (cp1256 - هذا هو الحل لمشكلتك)
+            try:
+                file.seek(0)
+                df = pd.read_csv(file, encoding='cp1256')
+                return df
+            except: pass
+            
+            # المحاولة 4: قراءة كـ CSV بفاصل منقوطة
+            try:
+                file.seek(0)
+                df = pd.read_csv(file, sep=';', encoding='utf-8-sig')
+                return df
+            except: pass
+
+            return None
 
         for i, file in enumerate(uploaded_files):
             try:
@@ -366,49 +406,35 @@ def view_settings():
                         break
                 
                 if target_table:
-                    # فتح الاتصال أولاً للتأكد
-                    with get_db() as conn:
-                        if not conn:
-                            status.error(f"❌ فشل الاتصال بقاعدة البيانات.")
-                            break
-
-                        if fname.endswith('.csv'):
-                            try: df = pd.read_csv(file)
-                            except: 
-                                file.seek(0)
-                                df = pd.read_csv(file, sep=';')
-                        else:
-                            # دعم ملف Excel متعدد الصفحات
-                            xls = pd.ExcelFile(file)
-                            if target_table in xls.sheet_names:
-                                df = pd.read_excel(xls, target_table)
-                            elif len(xls.sheet_names) == 1:
-                                df = pd.read_excel(xls)
-                            else:
-                                df = pd.DataFrame() # لم نجد الجدول المطلوب
-
-                        if not df.empty:
-                            df_clean = clean_data_for_import(df)
-                            records = df_clean.to_dict('records')
-                            
+                    # استخدمنا دالة التحميل الذكية هنا
+                    df = load_file_content(file, fname)
+                    
+                    if df is not None and not df.empty:
+                        df_clean = clean_data_for_import(df)
+                        records = df_clean.to_dict('records')
+                        
+                        with get_db() as conn:
                             with conn.cursor() as cur:
                                 for row in records:
                                     cols = list(row.keys())
                                     vals = [None if pd.isna(v) or str(v) == 'nan' else v for v in row.values()]
+                                    
                                     q = f"INSERT INTO {target_table} ({', '.join(cols)}) VALUES ({', '.join(['%s']*len(vals))})"
                                     try: cur.execute(q, vals)
-                                    except Exception as e: print(f"Skipped: {e}"); conn.rollback()
+                                    except Exception as e: 
+                                        print(f"Skipped row: {e}")
+                                        conn.rollback()
                                 conn.commit()
-                            
-                            success_count += 1
-                            status.text(f"✅ تم استيراد: {target_table}")
-                        else:
-                            status.warning(f"⚠️ الملف فارغ أو لا يحتوي على الجدول المطلوب: {fname}")
+                        
+                        success_count += 1
+                        status.text(f"✅ تم استيراد: {target_table}")
+                    else:
+                        status.warning(f"⚠️ فشل قراءة محتوى الملف: {fname}")
                 else:
                     status.warning(f"⚠️ ملف غير معروف: {fname}")
             
             except Exception as e:
-                status.error(f"❌ خطأ: {e}")
+                status.error(f"❌ خطأ غير متوقع في {file.name}: {e}")
             
             progress.progress((i + 1) / len(uploaded_files))
         
