@@ -1,59 +1,35 @@
 import psycopg2
+from psycopg2 import pool
 import pandas as pd
 import streamlit as st
 import bcrypt
 from contextlib import contextmanager
 import logging
 
-# إعداد السجل
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 
 @st.cache_resource
 def get_connection_pool():
-    # التحقق من وجود الرابط
-    if "DATABASE_URL" not in st.secrets:
-        st.error("⚠️ لم يتم العثور على رابط قاعدة البيانات.")
-        return None
-    
-    db_url = st.secrets["DATABASE_URL"]
-    
+    # استخدام الرابط المباشر الذي زودتني به
+    DB_URL = "postgresql://postgres.uxcdbjqnbphlzftpfajm:Tm1074844687@aws-1-ap-northeast-2.pooler.supabase.com:6543/postgres"
     try:
-        # للمنفذ 6543: نستخدم اتصال مباشر (بدون Pool محلي)
-        # لأن Supabase تدير الـ Pool في هذا المنفذ
-        conn = psycopg2.connect(db_url)
-        return conn
+        return psycopg2.pool.SimpleConnectionPool(1, 20, dsn=DB_URL, sslmode='require')
     except Exception as e:
-        # طباعة الخطأ بوضوح
-        st.error(f"❌ خطأ في الاتصال بقاعدة البيانات.")
-        st.code(str(e))
+        logger.error(f"Pool Error: {e}")
         return None
 
 @contextmanager
 def get_db():
-    # نطلب الاتصال
-    conn = get_connection_pool()
-    
-    # التحقق من أن الاتصال ما زال حياً
-    if conn is not None:
-        if conn.closed:
-             try:
-                 # إعادة الاتصال إذا انقطع
-                 db_url = st.secrets["DATABASE_URL"]
-                 conn = psycopg2.connect(db_url)
-             except: conn = None
-
-    if not conn:
-        yield None
-        return
-        
+    pool = get_connection_pool()
+    if not pool: yield None; return
+    conn = None
     try:
+        conn = pool.getconn()
         yield conn
-    except psycopg2.Error as e:
-        logger.error(f"DB Error: {e}")
-        conn.rollback() # تراجع عند الخطأ
-        yield None
-    # لا نغلق الاتصال هنا لأننا نستخدم cache_resource
+    except Exception: yield None
+    finally:
+        if conn: pool.putconn(conn)
 
 def execute_query(query, params=()):
     with get_db() as conn:
@@ -62,80 +38,45 @@ def execute_query(query, params=()):
                 with conn.cursor() as cur:
                     cur.execute(query, params)
                     conn.commit()
-            except psycopg2.Error as e:
+                return True
+            except Exception as e:
                 conn.rollback()
-                print(f"Query Error: {e}")
+                st.error(f"Database Error: {e}")
+                return False
+    return False
 
 def fetch_table(table_name):
-    allowed = ['Users', 'Trades', 'Deposits', 'Withdrawals', 'ReturnsGrants', 'Watchlist', 'SectorTargets', 'FinancialStatements', 'InvestmentThesis']
-    if table_name not in allowed: return pd.DataFrame()
-    
     with get_db() as conn:
         if conn:
-            try:
-                return pd.read_sql(f"SELECT * FROM {table_name}", conn)
-            except Exception as e:
-                return pd.DataFrame()
+            try: return pd.read_sql(f"SELECT * FROM {table_name}", conn)
+            except: pass
     return pd.DataFrame()
 
-# === دوال التهيئة والمستخدمين (مهمة جداً) ===
 def init_db():
-    tables = [
-        """CREATE TABLE IF NOT EXISTS Users (username VARCHAR(50) PRIMARY KEY, password TEXT, email TEXT, created_at TIMESTAMP DEFAULT NOW())""",
-        """CREATE TABLE IF NOT EXISTS Trades (id SERIAL PRIMARY KEY, symbol VARCHAR(20), company_name TEXT, sector TEXT, asset_type VARCHAR(20) DEFAULT 'Stock', date DATE, quantity DOUBLE PRECISION, entry_price DOUBLE PRECISION, strategy VARCHAR(20), status VARCHAR(10), exit_date DATE, exit_price DOUBLE PRECISION, current_price DOUBLE PRECISION, prev_close DOUBLE PRECISION, year_high DOUBLE PRECISION, year_low DOUBLE PRECISION, dividend_yield DOUBLE PRECISION)""",
-        """CREATE TABLE IF NOT EXISTS Deposits (id SERIAL PRIMARY KEY, date DATE, amount DOUBLE PRECISION, note TEXT)""",
-        """CREATE TABLE IF NOT EXISTS Withdrawals (id SERIAL PRIMARY KEY, date DATE, amount DOUBLE PRECISION, note TEXT)""",
-        """CREATE TABLE IF NOT EXISTS ReturnsGrants (id SERIAL PRIMARY KEY, date DATE, symbol VARCHAR(20), company_name TEXT, amount DOUBLE PRECISION)""",
+    queries = [
+        """CREATE TABLE IF NOT EXISTS Users (username VARCHAR(50) PRIMARY KEY, password TEXT)""",
+        """CREATE TABLE IF NOT EXISTS Trades (id SERIAL PRIMARY KEY, symbol VARCHAR(20), company_name TEXT, sector TEXT, asset_type VARCHAR(20), date DATE, quantity NUMERIC, entry_price NUMERIC, strategy VARCHAR(20), status VARCHAR(10), exit_date DATE, exit_price NUMERIC, current_price NUMERIC, note TEXT)""",
+        """CREATE TABLE IF NOT EXISTS Deposits (id SERIAL PRIMARY KEY, date DATE, amount NUMERIC, note TEXT)""",
+        """CREATE TABLE IF NOT EXISTS Withdrawals (id SERIAL PRIMARY KEY, date DATE, amount NUMERIC, note TEXT)""",
+        """CREATE TABLE IF NOT EXISTS ReturnsGrants (id SERIAL PRIMARY KEY, date DATE, symbol VARCHAR(20), company_name TEXT, amount NUMERIC)""",
         """CREATE TABLE IF NOT EXISTS Watchlist (symbol VARCHAR(20) PRIMARY KEY)""",
-        """CREATE TABLE IF NOT EXISTS SectorTargets (sector VARCHAR(50) PRIMARY KEY, target_percentage DOUBLE PRECISION)""",
-        """CREATE TABLE IF NOT EXISTS FinancialStatements (id SERIAL PRIMARY KEY, symbol VARCHAR(20), period_type VARCHAR(20), date DATE, revenue DOUBLE PRECISION, net_income DOUBLE PRECISION, gross_profit DOUBLE PRECISION, operating_income DOUBLE PRECISION, total_assets DOUBLE PRECISION, total_liabilities DOUBLE PRECISION, total_equity DOUBLE PRECISION, operating_cash_flow DOUBLE PRECISION, free_cash_flow DOUBLE PRECISION, eps DOUBLE PRECISION, source VARCHAR(50), UNIQUE(symbol, period_type, date))""",
-        """CREATE TABLE IF NOT EXISTS InvestmentThesis (symbol VARCHAR(20) PRIMARY KEY, thesis_text TEXT, target_price DOUBLE PRECISION, recommendation VARCHAR(20), last_updated TIMESTAMP DEFAULT NOW())"""
+        """CREATE TABLE IF NOT EXISTS SectorTargets (sector VARCHAR(50) PRIMARY KEY, target_percentage NUMERIC)""",
+        """CREATE TABLE IF NOT EXISTS InvestmentThesis (symbol VARCHAR(20) PRIMARY KEY, thesis_text TEXT, target_price NUMERIC, recommendation VARCHAR(20))"""
     ]
     with get_db() as conn:
         if conn:
             with conn.cursor() as cur:
-                for t in tables: 
-                    try: cur.execute(t)
+                for q in queries: 
+                    try: cur.execute(q)
                     except: pass
-                try: cur.execute("ALTER TABLE Users ADD COLUMN IF NOT EXISTS email TEXT;")
-                except: pass
                 conn.commit()
 
-def db_create_user(username, password, email=""):
-    hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-    try: 
-        execute_query("INSERT INTO Users (username, password, email) VALUES (%s, %s, %s)", (username, hashed, email))
-        return True, "تم"
-    except: return False, "خطأ"
-
-def db_verify_user(username, password):
-    with get_db() as conn:
-        if conn:
-            try:
-                with conn.cursor() as cur:
-                    cur.execute("SELECT password FROM Users WHERE username = %s", (username,))
-                    user = cur.fetchone()
-                    if user: return bcrypt.checkpw(password.encode('utf-8'), user[0].encode('utf-8'))
-            except: pass
-    return False
-
 def clear_all_data():
-    tables = ['Trades', 'Deposits', 'Withdrawals', 'ReturnsGrants', 'Watchlist', 'SectorTargets', 'FinancialStatements', 'InvestmentThesis']
+    tables = ['Trades', 'Deposits', 'Withdrawals', 'ReturnsGrants', 'Watchlist', 'SectorTargets', 'InvestmentThesis']
     with get_db() as conn:
         if conn:
             with conn.cursor() as cur:
-                for t in tables:
+                for t in tables: 
                     try: cur.execute(f"TRUNCATE TABLE {t} RESTART IDENTITY CASCADE;")
                     except: pass
                 conn.commit()
-    st.cache_data.clear()
-
-def get_user_details(username):
-    with get_db() as conn:
-        if conn:
-            try:
-                with conn.cursor() as cur:
-                    cur.execute("SELECT email, created_at FROM Users WHERE username = %s", (username,))
-                    return cur.fetchone()
-            except: pass
-    return None
