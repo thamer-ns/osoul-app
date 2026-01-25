@@ -6,16 +6,16 @@ APP_ICON = "💎"
 BACKUP_DIR = Path("backups")
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
-# --- الهوية البصرية (Theme من ملفاتك) ---
+# --- الهوية البصرية ---
 DEFAULT_COLORS = {
-    'page_bg': '#F4F6F8',       # رمادي فاتح جداً للخلفية
-    'card_bg': '#FFFFFF',       # أبيض للبطاقات
-    'main_text': '#172B4D',     # كحلي غامق للنصوص
-    'sub_text': '#5E6C84',      # رمادي متوسط للعناوين الفرعية
-    'primary': '#0052CC',       # أزرق ترايدنت (اللون الرئيسي)
-    'success': '#36B37E',       # أخضر ناعم
-    'danger': '#FF5630',        # أحمر ناعم
-    'border': '#DFE1E6',        # حدود رمادية خفيفة
-    'input_bg': '#FFFFFF',      # خلفية الحقول
-    'header_bg': '#FAFBFC'      # خلفية الهيدر
+    'page_bg': '#F4F6F8',       
+    'card_bg': '#FFFFFF',       
+    'main_text': '#172B4D',     
+    'sub_text': '#5E6C84',      
+    'primary': '#0052CC',       
+    'success': '#36B37E',       
+    'danger': '#FF5630',        
+    'border': '#DFE1E6',        
+    'input_bg': '#FFFFFF',
+    'header_bg': '#FAFBFC'
 }
