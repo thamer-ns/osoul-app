@@ -1,13 +1,13 @@
 import streamlit as st
+import pandas as pd  # <--- تم الإصلاح: استيراد المكتبة المفقودة
 from datetime import date
 from config import APP_NAME, APP_ICON, DEFAULT_COLORS
 
-# === دالة التقريب الموحدة (الحل النهائي للفاصلة الطويلة) ===
+# === دالة التقريب وتنسيق الأرقام ===
 def safe_fmt(val, suffix=""):
     if val is None or pd.isna(val) or val == "": return "-"
     try:
         f_val = float(val)
-        # تقريب لأقرب منزلتين مع فواصل الآلاف
         return f"{f_val:,.2f}{suffix}"
     except:
         return str(val)
@@ -21,9 +21,9 @@ def render_navbar():
         
     u = st.session_state.get('username', 'مستثمر')
     
-    # 1. الهيدر الجميل (التصميم القديم الذي أعجبك)
+    # 1. الهيدر (التصميم القديم الجميل)
     st.markdown(f"""
-    <div style="background-color: {C['card_bg']}; padding: 15px 25px; border-radius: 16px; border: 1px solid {C['border']}; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
+    <div class="navbar-box" style="background-color: {C['card_bg']}; padding: 15px 25px; border-radius: 16px; border: 1px solid {C['border']}; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
         <div style="display: flex; align-items: center; gap: 15px;">
             <div style="font-size: 2.2rem; background: #EFF6FF; width:50px; height:50px; display:flex; align-items:center; justify-content:center; border-radius:12px;">{APP_ICON}</div>
             <div>
@@ -38,7 +38,7 @@ def render_navbar():
     </div>
     """, unsafe_allow_html=True)
 
-    # 2. القوائم (مقسمة: أزرار التنقل + قائمة خيارات المستخدم)
+    # 2. القوائم (أزرار التنقل + القائمة المنسدلة المجمعة)
     c_menu, c_user = st.columns([3, 1])
     
     with c_menu:
@@ -55,21 +55,15 @@ def render_navbar():
                 st.rerun()
 
     with c_user:
-        # === القائمة المنسدلة المدمجة (الحل لطلبك) ===
-        # نستخدم selectbox مخفي العنوان ليقوم مقام القائمة المنسدلة
-        st.markdown("""
-            <style>
-            div[data-testid="stSelectbox"] > div > div {min-height: 40px;}
-            </style>
-        """, unsafe_allow_html=True)
+        # === القائمة المنسدلة المجمعة (كما طلبت) ===
+        # نخفي العنوان الإنجليزي تماماً
+        st.markdown("""<style>div[data-testid="stSelectbox"] > label {display: none;}</style>""", unsafe_allow_html=True)
         
-        user_choice = st.selectbox(
-            "user_menu", 
-            ["⚙️ خيارات القائمة", "➕ إضافة صفقة", "🧪 المختبر", "🛠️ الأدوات", "⚙️ الإعدادات", "🚪 خروج"],
-            label_visibility="collapsed" # إخفاء العنوان الإنجليزي
-        )
+        # قائمة الخيارات
+        opts = ["☰ القائمة الشخصية", "➕ إضافة صفقة", "🧪 المختبر", "🛠️ الأدوات", "⚙️ الإعدادات", "🚪 خروج"]
+        user_choice = st.selectbox("user_menu_hidden", opts, label_visibility="collapsed")
         
-        # تنفيذ التوجيه فوراً عند التغيير (باستثناء الخيار الأول)
+        # التوجيه الفوري
         if user_choice == "➕ إضافة صفقة" and st.session_state.get('page') != 'add':
             st.session_state.page = 'add'; st.rerun()
         elif user_choice == "🧪 المختبر" and st.session_state.get('page') != 'backtest':
@@ -112,7 +106,7 @@ def render_ticker_card(symbol, name, price, change):
     bg_color = "#DCFCE7" if change >= 0 else "#FEE2E2"
 
     st.markdown(f"""
-    <div style="background-color: {C['card_bg']}; padding: 16px; border-radius: 14px; border: 1px solid {C['border']}; margin-bottom: 12px;">
+    <div style="background-color: {C['card_bg']}; padding: 16px; border-radius: 14px; border: 1px solid {C['border']}; margin-bottom: 12px; transition: transform 0.2s;">
         <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
             <div>
                 <div style="font-weight: 800; color: {C['main_text']}; font-size: 1.1rem;">{symbol}</div>
@@ -143,9 +137,10 @@ def render_table(df, cols_def):
         for k, _ in cols_def:
             val = row.get(k)
             
-            # معالجة الفراغات بـ "غير موجود"
-            if pd.isna(val) or val == "" or val is None:
-                disp = "<span style='color:#ccc; font-size:0.8rem;'>غير موجود</span>"
+            # === منطق "غير موجود" ===
+            # إذا كانت القيمة فارغة أو صفر لبعض الأعمدة المحددة
+            if pd.isna(val) or val == "" or val is None or (k in ['year_high', 'year_low', 'prev_close'] and float(val or 0) == 0):
+                disp = "<span style='color:#CBD5E1; font-size:0.8rem; font-style:italic;'>غير موجود</span>"
             else:
                 disp = val
                 
@@ -157,16 +152,18 @@ def render_table(df, cols_def):
                     bg, fg, txt = ("#F3F4F6", "#4B5563", "مغلقة") if is_closed else ("#DCFCE7", "#166534", "مفتوحة")
                     disp = f"<span style='background:{bg}; color:{fg}; padding:4px 10px; border-radius:8px; font-size:0.75rem; font-weight:800;'>{txt}</span>"
                 
-                # === هنا يتم استخدام دالة التقريب safe_fmt ===
-                elif k in ['gain', 'gain_pct', 'daily_change', 'return_pct', 'net_sales', 'realized_gain', 'amount', 'market_value', 'total_cost', 'entry_price', 'current_price', 'exit_price']:
+                # تنسيق الأرقام والنسب
+                elif k in ['gain', 'gain_pct', 'daily_change', 'return_pct', 'net_sales', 'realized_gain', 'amount', 'market_value', 'total_cost', 'entry_price', 'current_price', 'exit_price', 'year_high', 'year_low', 'prev_close']:
                     try:
                         num_val = float(val)
-                        formatted = safe_fmt(num_val) # استخدام الدالة الموحدة
+                        formatted = f"{num_val:,.2f}"
                         
                         if k in ['gain', 'gain_pct', 'daily_change', 'unrealized_pl', 'realized_pl']:
                             c = C['success'] if num_val >= 0 else C['danger']
                             suffix = "%" if 'pct' in k or 'change' in k else ""
                             disp = f"<span style='color:{c}; direction:ltr; font-weight:bold;'>{formatted}{suffix}</span>"
+                        elif k == 'weight':
+                             disp = f"<span style='color:{C['primary']}; direction:ltr; font-weight:bold;'>{formatted}%</span>"
                         else:
                             disp = f"<span style='direction:ltr; font-weight:600;'>{formatted}</span>"
                     except: disp = val
