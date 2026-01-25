@@ -11,14 +11,11 @@ logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 
 # --- 1. إعداد الاتصال الآمن ---
-# نستخدم try/except هنا لمنع SyntaxError
 try:
     # محاولة جلب الرابط من الأسرار في Streamlit Cloud
     DB_URL = st.secrets["postgres"]["url"]
 except Exception as e:
-    # في حال كنا نعمل محلياً ولم نجد الملف، أو حدث خطأ
-    # لا توقف البرنامج، فقط اطبع خطأ في السجلات
-    # logger.error(f"Secrets Error: {e}") 
+    # في حال كنا نعمل محلياً ولم نجد الملف
     DB_URL = "" 
 
 # --- 2. إدارة الاتصال (Connection Pooling) ---
@@ -107,12 +104,19 @@ def db_verify_user(username, password):
 def init_db():
     tables = [
         """CREATE TABLE IF NOT EXISTS Users (username VARCHAR(50) PRIMARY KEY, password TEXT, email TEXT)""",
+        
         """CREATE TABLE IF NOT EXISTS Trades (id SERIAL PRIMARY KEY, symbol VARCHAR(20), company_name TEXT, sector TEXT, asset_type VARCHAR(20) DEFAULT 'Stock', date DATE, quantity DOUBLE PRECISION, entry_price DOUBLE PRECISION, strategy VARCHAR(20), status VARCHAR(10), exit_date DATE, exit_price DOUBLE PRECISION, current_price DOUBLE PRECISION, prev_close DOUBLE PRECISION, year_high DOUBLE PRECISION, year_low DOUBLE PRECISION, dividend_yield DOUBLE PRECISION, note TEXT)""",
+        
         """CREATE TABLE IF NOT EXISTS Deposits (id SERIAL PRIMARY KEY, date DATE, amount DOUBLE PRECISION, note TEXT)""",
+        
         """CREATE TABLE IF NOT EXISTS Withdrawals (id SERIAL PRIMARY KEY, date DATE, amount DOUBLE PRECISION, note TEXT)""",
+        
         """CREATE TABLE IF NOT EXISTS ReturnsGrants (id SERIAL PRIMARY KEY, date DATE, symbol VARCHAR(20), company_name TEXT, amount DOUBLE PRECISION, note TEXT)""",
+        
         """CREATE TABLE IF NOT EXISTS Watchlist (symbol VARCHAR(20) PRIMARY KEY)""",
+        
         """CREATE TABLE IF NOT EXISTS SectorTargets (sector VARCHAR(50) PRIMARY KEY, target_percentage DOUBLE PRECISION)""",
+        
         """CREATE TABLE IF NOT EXISTS FinancialStatements (
             symbol VARCHAR(20), period_type VARCHAR(20), date DATE, 
             revenue DOUBLE PRECISION, net_income DOUBLE PRECISION, 
@@ -121,8 +125,10 @@ def init_db():
             total_equity DOUBLE PRECISION, operating_cash_flow DOUBLE PRECISION, 
             free_cash_flow DOUBLE PRECISION, eps DOUBLE PRECISION, source VARCHAR(50),
             PRIMARY KEY (symbol, period_type, date)
-        )""",
+        )""",  # <--- هنا كانت الفاصلة المفقودة التي سببت المشكلة
+        
         """CREATE TABLE IF NOT EXISTS InvestmentThesis (symbol VARCHAR(20) PRIMARY KEY, thesis_text TEXT, target_price DOUBLE PRECISION, recommendation VARCHAR(20), last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""",
+        
         """CREATE TABLE IF NOT EXISTS Documents (id SERIAL PRIMARY KEY, trade_id INTEGER, file_name TEXT, file_data BYTEA, upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"""
     ]
     
