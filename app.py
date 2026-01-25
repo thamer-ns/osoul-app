@@ -12,14 +12,14 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# 2. تطبيق التصميم المفضل
+# 2. تطبيق التصميم
 apply_custom_css()
 
-# 3. تهيئة حالة الصفحة
+# 3. الحالة
 if 'page' not in st.session_state:
     st.session_state.page = 'home'
 
-# 4. نظام الدخول والتوجيه
+# 4. التوجيه الأمني
 if login_system():
     if st.session_state.page == 'logout':
         logout()
