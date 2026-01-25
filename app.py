@@ -1,27 +1,15 @@
 import streamlit as st
-from config import APP_NAME, APP_ICON
-from styles import apply_custom_css # التأكد من استدعاء التصميم
-from security import login_system, logout
+from config import get_css, APP_NAME, APP_ICON
+from database import init_db
 from views import router
 
-# 1. إعداد الصفحة
-st.set_page_config(
-    page_title=APP_NAME, 
-    page_icon=APP_ICON, 
-    layout="wide", 
-    initial_sidebar_state="collapsed"
-)
+st.set_page_config(page_title=APP_NAME, page_icon=APP_ICON, layout="wide")
+st.markdown(get_css(), unsafe_allow_html=True)
 
-# 2. تطبيق التصميم المفضل (خط Cairo + RTL)
-apply_custom_css()
+if 'init' not in st.session_state:
+    init_db()
+    st.session_state.init = True
 
-# 3. تهيئة حالة الصفحة
-if 'page' not in st.session_state:
-    st.session_state.page = 'home'
+if 'page' not in st.session_state: st.session_state.page = 'home'
 
-# 4. نظام الدخول والتوجيه
-if login_system():
-    if st.session_state.page == 'logout':
-        logout()
-    else:
-        router()
+router()
