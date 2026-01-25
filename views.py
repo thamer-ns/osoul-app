@@ -317,7 +317,7 @@ def view_tools():
     fin = calculate_portfolio_metrics()
     st.info("زكاة تقديرية (2.5775%): " + str(fin['market_val_open'] * 0.025775))
 
-# === صفحة الإعدادات (الحل النهائي والذكي) ===
+# === صفحة الإعدادات (الكود النهائي الذكي) ===
 def view_settings():
     st.header("⚙️ الإعدادات العامة")
     
@@ -327,33 +327,19 @@ def view_settings():
         else: st.error("فشل النسخ")
     st.markdown("---")
 
-    st.markdown("### 📥 استعادة البيانات")
-    st.warning("هنا يمكنك رفع ملفاتك السابقة (Trades, Deposits, ...).")
+    st.markdown("### 📥 إدارة البيانات (الاستيراد)")
     
-    if st.button("🗑️ تهيئة النظام (مسح كل شيء)", type="primary"):
+    if st.button("🗑️ حذف جميع البيانات الحالية (تهيئة)", type="primary"):
         clear_all_data()
-        st.warning("تم المسح!"); st.cache_data.clear(); st.rerun()
+        st.warning("تم مسح البيانات!"); st.cache_data.clear(); st.rerun()
 
-    uploaded_files = st.file_uploader("ارفع الملفات (CSV/Excel)", type=['csv', 'xlsx'], accept_multiple_files=True)
+    uploaded_files = st.file_uploader("ارفع ملفات CSV/Excel", type=['csv', 'xlsx'], accept_multiple_files=True)
     
-    if uploaded_files and st.button("🚀 بدء الاستيراد الشامل"):
+    if uploaded_files and st.button("🚀 بدء الاستيراد"):
         success_count = 0
         progress = st.progress(0)
         status = st.empty()
         
-        # 1. تحديد الأعمدة المسموح بها لكل جدول بالضبط لتجنب الأخطاء
-        # هذا هو "الفلتر" الذي سيمنع أي عمود غريب من تدمير العملية
-        valid_columns = {
-            'Trades': ['symbol', 'company_name', 'sector', 'status', 'date', 'quantity', 'entry_price', 'exit_price', 'current_price', 'strategy', 'asset_type', 'exit_date', 'prev_close', 'year_high', 'year_low'],
-            'Deposits': ['date', 'amount', 'note'], # لاحظ أننا تجاهلنا source لأنه غير موجود في قاعدة البيانات
-            'Withdrawals': ['date', 'amount', 'note'],
-            'ReturnsGrants': ['date', 'symbol', 'amount', 'company_name'],
-            'Watchlist': ['symbol'],
-            'SectorTargets': ['sector', 'target_percentage'],
-            'InvestmentThesis': ['symbol', 'thesis_text', 'target_price', 'recommendation']
-        }
-
-        # 2. خريطة الملفات
         table_map = {
             'Trades': 'Trades', 'Deposits': 'Deposits', 
             'Withdrawals': 'Withdrawals', 'ReturnsGrants': 'ReturnsGrants',
@@ -361,81 +347,85 @@ def view_settings():
             'InvestmentThesis': 'InvestmentThesis'
         }
 
-        # 3. دالة التنظيف الذكية
-        def process_df(df, table_name):
-            # أ. حذف الأعمدة الزائدة (مثل id)
+        # الدالة السحرية لحل مشكلة قوقل شيت العربية واستخراج البيانات من ملف الإكسل المجمع
+        def clean_data_for_import(df):
             if 'id' in df.columns: df = df.drop(columns=['id'])
             
-            # ب. معالجة الأرقام العربية
             for col in df.columns:
                 if df[col].dtype == 'object':
-                    try:
-                        df[col] = df[col].astype(str).str.replace('٫', '.', regex=False)
-                        df[col] = df[col].astype(str).str.replace(',', '', regex=False)
-                    except: pass
-            
-            # ج. الاحتفاظ فقط بالأعمدة الصالحة للجدول الحالي
-            allowed_cols = valid_columns.get(table_name, [])
-            final_cols = [c for c in df.columns if c in allowed_cols]
-            df = df[final_cols]
-            
-            # د. إضافة القيم الناقصة الضرورية
-            if table_name == 'Trades' and 'asset_type' not in df.columns:
-                df['asset_type'] = 'Stock' # قيمة افتراضية
-            
+                    # تحويل القيم لنص، ثم استبدال الفاصلة العربية ٫ بالنقطة
+                    df[col] = df[col].astype(str).str.replace('٫', '.', regex=False)
+                    df[col] = df[col].astype(str).str.replace(',', '', regex=False) # إزالة فاصلة الألوف
+                    # محاولة التحويل لرقم
+                    df[col] = pd.to_numeric(df[col], errors='ignore')
             return df
+
+        def insert_df_to_db(df, table_name):
+            if df.empty: return False
+            records = df.to_dict('records')
+            with get_db() as conn:
+                with conn.cursor() as cur:
+                    for row in records:
+                        cols = list(row.keys())
+                        vals = [None if pd.isna(v) or str(v) == 'nan' else v for v in row.values()]
+                        
+                        q = f"INSERT INTO {table_name} ({', '.join(cols)}) VALUES ({', '.join(['%s']*len(vals))})"
+                        try: cur.execute(q, vals)
+                        except Exception as e: 
+                            print(f"Skipped row: {e}")
+                            conn.rollback()
+                    conn.commit()
+            return True
 
         for i, file in enumerate(uploaded_files):
             try:
                 fname = file.name
-                target_table = None
-                for keyword, table_name in table_map.items():
-                    if keyword in fname:
-                        target_table = table_name
-                        break
                 
-                if target_table:
-                    # قراءة الملف
-                    if fname.endswith('.csv'):
-                        try: df = pd.read_csv(file)
-                        except: 
-                            file.seek(0)
-                            df = pd.read_csv(file, sep=';')
-                    else:
-                        df = pd.read_excel(file)
-                    
-                    if not df.empty:
-                        # المعالجة
-                        df_clean = process_df(df, target_table)
-                        
-                        # الإدخال
-                        records = df_clean.to_dict('records')
-                        with get_db() as conn:
-                            with conn.cursor() as cur:
-                                for row in records:
-                                    cols = list(row.keys())
-                                    vals = [None if pd.isna(v) or str(v) == 'nan' else v for v in row.values()]
-                                    
-                                    q = f"INSERT INTO {target_table} ({', '.join(cols)}) VALUES ({', '.join(['%s']*len(vals))})"
-                                    try: cur.execute(q, vals)
-                                    except Exception as e: 
-                                        # طباعة الخطأ في الكونسول فقط للمطور
-                                        print(f"Skipped: {e}")
-                                        conn.rollback()
-                                conn.commit()
-                        
-                        success_count += 1
-                        status.text(f"✅ تم استيراد: {target_table}")
+                # السيناريو 1: ملف Excel مجمع (مثل backup_latest.xlsx)
+                if fname.endswith('.xlsx'):
+                    xls = pd.ExcelFile(file)
+                    # نفحص كل ورقة في الملف
+                    for sheet_name in xls.sheet_names:
+                        # هل اسم الورقة يطابق اسم جدول معروف؟
+                        if sheet_name in table_map: # لاحظ: table_map Keys هي نفسها Values في حالتك
+                            df = pd.read_excel(xls, sheet_name)
+                            df_clean = clean_data_for_import(df)
+                            if insert_df_to_db(df_clean, sheet_name):
+                                success_count += 1
+                                status.text(f"✅ تم استيراد الورقة: {sheet_name} من الملف {fname}")
+                
+                # السيناريو 2: ملف CSV أو Excel مفرد باسم محدد
                 else:
-                    status.warning(f"⚠️ ملف غير مدعوم: {fname}")
+                    target_table = None
+                    for keyword, table_name in table_map.items():
+                        if keyword in fname:
+                            target_table = table_name
+                            break
+                    
+                    if target_table:
+                        if fname.endswith('.csv'):
+                            try: df = pd.read_csv(file)
+                            except: 
+                                file.seek(0)
+                                df = pd.read_csv(file, sep=';')
+                        else: # xlsx مفرد (نادر)
+                            df = pd.read_excel(file)
+                        
+                        df_clean = clean_data_for_import(df)
+                        if insert_df_to_db(df_clean, target_table):
+                            success_count += 1
+                            status.text(f"✅ تم استيراد الملف: {fname}")
+                    else:
+                        # تجاهل الملفات غير المعروفة بصمت أو تحذير خفيف
+                        pass
             
             except Exception as e:
-                status.error(f"❌ خطأ: {e}")
+                status.error(f"❌ خطأ في الملف {file.name}: {e}")
             
             progress.progress((i + 1) / len(uploaded_files))
         
         if success_count > 0:
-            st.success(f"انتهى! تم استيراد {success_count} ملفات بنجاح.")
+            st.success(f"تم الانتهاء! تم استيراد {success_count} جداول/ملفات بنجاح.")
             st.cache_data.clear()
 
 def router():
