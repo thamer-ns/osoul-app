@@ -5,16 +5,15 @@ import numpy as np
 from market_data import get_chart_history
 from config import DEFAULT_COLORS
 
-# تعريف دالة الرسم
-def render_technical_chart(symbol, period='1y', interval='1d'):
-    """عرض الشارت الفني مع المؤشرات"""
+def view_advanced_chart(symbol, period='1y', interval='1d'):
+    """عرض الشارت الفني مع المؤشرات (الاسم الموحد)"""
     if 'custom_colors' not in st.session_state:
         C = DEFAULT_COLORS
     else: C = st.session_state.custom_colors
 
     df = get_chart_history(symbol, period, interval)
     if df is None or df.empty:
-        st.warning("لا توجد بيانات فنية متاحة")
+        st.warning("لا توجد بيانات فنية متاحة لهذا السهم")
         return
 
     # الحسابات الفنية
@@ -65,6 +64,3 @@ def render_technical_chart(symbol, period='1y', interval='1d'):
 
     fig.update_layout(height=800, xaxis_rangeslider_visible=False, paper_bgcolor=C['card_bg'], plot_bgcolor=C['card_bg'], font=dict(family="Cairo", color=C['main_text']), showlegend=False)
     st.plotly_chart(fig, use_container_width=True)
-
-# الاسم البديل لضمان التوافق مع views.py
-view_advanced_chart = render_technical_chart
