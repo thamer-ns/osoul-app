@@ -5,14 +5,14 @@ from datetime import date
 import time
 
 # === الاستيرادات ===
-from config import DEFAULT_COLORS
+from config import DEFAULT_COLORS, BACKUP_DIR
 from components import render_navbar, render_kpi, render_table, render_ticker_card
 from analytics import (calculate_portfolio_metrics, update_prices, generate_equity_curve, calculate_historical_drawdown)
 from database import execute_query, fetch_table, get_db, clear_all_data
 from market_data import get_static_info, get_tasi_data, get_chart_history
 from data_source import get_company_details
 
-# دوال وهمية للحماية
+# === دوال وهمية للحماية ===
 try: from backtester import run_backtest
 except ImportError: run_backtest = lambda *a: None
 try: from financial_analysis import get_fundamental_ratios, render_financial_dashboard_ui, get_thesis, save_thesis
@@ -26,16 +26,18 @@ except ImportError: view_advanced_chart = lambda s: st.info("الشارت غير
 try: from classical_analysis import render_classical_analysis
 except ImportError: render_classical_analysis = lambda s: st.info("التحليل الكلاسيكي غير متوفر")
 
-# === أدوات مساعدة (تم وضعها في البداية لمنع الأخطاء) ===
+# ==========================================
+# 1. الدوال المساعدة (تم رفعها للأعلى لمنع NameError)
+# ==========================================
+
 def safe_fmt(val, suffix=""):
     try: return f"{float(val):,.2f}{suffix}"
     except: return "-"
 
 def apply_sorting(df, cols_definition, key_suffix):
-    """دالة الفرز التي كانت تسبب المشكلة - تم وضعها في الأعلى"""
+    """ترتيب الجداول"""
     if df.empty: return df
     with st.expander("🔍 خيارات الفرز", expanded=False):
-        # استخراج أسماء الأعمدة من التعريف
         label_to_col = {label: col for col, label in cols_definition}
         c1, c2 = st.columns([2, 1])
         with c1: selected = st.selectbox("فرز حسب:", list(label_to_col.keys()), key=f"sc_{key_suffix}")
@@ -44,18 +46,16 @@ def apply_sorting(df, cols_definition, key_suffix):
     try: return df.sort_values(by=target, ascending=(order == "تصاعدي"))
     except: return df
 
-# === منطق الاستيراد (الحل النهائي لملفاتك) ===
 def clean_and_fix_columns(df, table_name):
-    """تنظيف البيانات وتجهيزها لقاعدة البيانات"""
+    """تنظيف البيانات وحل مشاكل الاستيراد"""
     if df is None or df.empty: return None
     
-    # 1. توحيد أسماء الأعمدة
+    # توحيد أسماء الأعمدة
     df.columns = df.columns.astype(str).str.strip().str.lower()
     
-    # 2. حذف عمود ID
     if 'id' in df.columns: df = df.drop(columns=['id'])
 
-    # --- معالجة جدول الصفقات (Trades) ---
+    # --- معالجة الصفقات ---
     if table_name == 'Trades':
         mapping = {
             'الرمز': 'symbol', 'ticker': 'symbol', 
@@ -69,57 +69,55 @@ def clean_and_fix_columns(df, table_name):
         }
         df.rename(columns=mapping, inplace=True)
         
-        # تنظيف الرموز
         if 'symbol' in df.columns:
             df['symbol'] = df['symbol'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
             
-            # إكمال البيانات الناقصة من قاعدة البيانات
+            # إكمال البيانات الناقصة
             for idx, row in df.iterrows():
+                # إذا الاستراتيجية فارغة -> اجعلها استثمار
+                if 'strategy' not in df.columns or pd.isna(row.get('strategy')):
+                    df.at[idx, 'strategy'] = 'استثمار'
+                
+                # إكمال الاسم والقطاع
                 if 'company_name' not in df.columns or pd.isna(row.get('company_name')):
                     name, sector = get_company_details(row['symbol'])
                     if name: df.at[idx, 'company_name'] = name
                     if sector and ('sector' not in df.columns or pd.isna(row.get('sector'))):
                         df.at[idx, 'sector'] = sector
 
-        # تعبئة القيم الافتراضية
+        # تعبئة القيم الافتراضية للأعمدة غير الموجودة
         if 'status' not in df.columns: df['status'] = 'Open'
-        if 'strategy' not in df.columns: df['strategy'] = 'استثمار' # الافتراضي استثمار
+        if 'strategy' not in df.columns: df['strategy'] = 'استثمار'
         if 'asset_type' not in df.columns: df['asset_type'] = 'Stock'
         
-        # التأكد من الأعمدة
         target_cols = ['symbol', 'company_name', 'sector', 'asset_type', 'date', 'quantity', 'entry_price', 'strategy', 'status', 'exit_date', 'exit_price', 'current_price']
         for c in target_cols:
             if c not in df.columns: df[c] = None
             
         return df[target_cols]
 
-    # --- معالجة جدول الإيداعات (Deposits) ---
-    elif table_name == 'Deposits':
-        # دمج source و note
+    # --- معالجة الإيداع/السحب ---
+    elif table_name in ['Deposits', 'Withdrawals']:
+        # دمج الملاحظات
         df['final_note'] = ''
-        if 'source' in df.columns: df['final_note'] = df['source'].astype(str).replace('nan', '')
-        if 'note' in df.columns: df['final_note'] = df['final_note'] + ' ' + df['note'].astype(str).replace('nan', '')
+        note_cols = ['source', 'reason', 'note', 'notes', 'statement']
+        for col in note_cols:
+            if col in df.columns:
+                df['final_note'] = df['final_note'] + ' ' + df[col].astype(str).replace('nan', '')
+        
         df['note'] = df['final_note'].str.strip()
         
-        target_cols = ['date', 'amount', 'note']
-        for c in target_cols:
-            if c not in df.columns: df[c] = None
-        return df[target_cols]
-
-    # --- معالجة جدول السحوبات (Withdrawals) ---
-    elif table_name == 'Withdrawals':
-        # دمج reason و note
-        df['final_note'] = ''
-        if 'reason' in df.columns: df['final_note'] = df['reason'].astype(str).replace('nan', '')
-        if 'note' in df.columns: df['final_note'] = df['final_note'] + ' ' + df['note'].astype(str).replace('nan', '')
-        df['note'] = df['final_note'].str.strip()
+        # توحيد المبلغ
+        if 'amount' not in df.columns:
+            for c in ['cost', 'value', 'المبلغ']:
+                if c in df.columns: df['amount'] = df[c]; break
         
         target_cols = ['date', 'amount', 'note']
         for c in target_cols:
             if c not in df.columns: df[c] = None
         return df[target_cols]
     
-    # --- معالجة التوزيعات (ReturnsGrants) ---
+    # --- معالجة التوزيعات ---
     elif table_name == 'ReturnsGrants':
         target_cols = ['date', 'symbol', 'company_name', 'amount']
         if 'symbol' in df.columns: df['symbol'] = df['symbol'].astype(str).str.replace(r'\.0$', '', regex=True)
@@ -131,9 +129,8 @@ def clean_and_fix_columns(df, table_name):
 
 def save_dataframe_to_db(df, table_name):
     clean_df = clean_and_fix_columns(df, table_name)
-    if clean_df is None or clean_df.empty: return False, "الملف فارغ أو الأعمدة غير معروفة"
+    if clean_df is None or clean_df.empty: return False, "لا بيانات صالحة"
     
-    # تنظيف التواريخ والأرقام
     for col in clean_df.columns:
         if 'date' in col:
             clean_df[col] = pd.to_datetime(clean_df[col], errors='coerce').dt.strftime('%Y-%m-%d')
@@ -151,11 +148,13 @@ def save_dataframe_to_db(df, table_name):
                 placeholders = ', '.join(['%s'] * len(vals))
                 q = f"INSERT INTO {table_name} ({', '.join(cols)}) VALUES ({placeholders})"
                 try: cur.execute(q, vals); count += 1
-                except Exception as e: conn.rollback(); print(f"Error: {e}")
+                except: conn.rollback()
             conn.commit()
-    return True, f"تم {count} صف"
+    return True, f"تم {count}"
 
-# === 2. الصفحات ===
+# ==========================================
+# 2. الصفحات (Views)
+# ==========================================
 
 def view_dashboard(fin):
     try: t_price, t_change = get_tasi_data()
@@ -207,7 +206,7 @@ def view_portfolio(fin, page_key):
     
     df = pd.DataFrame()
     if not all_d.empty:
-        # البحث بذكاء: هل الخلية تحتوي على الكلمة؟ (لحل مشكلة المسافات)
+        # تحسين الفلترة لتكون مرنة مع "استثمار" و "Investment"
         df = all_d[all_d['strategy'].astype(str).str.contains(ts, na=False)].copy()
     
     if df.empty: st.info("المحفظة فارغة."); return
@@ -224,8 +223,7 @@ def view_portfolio(fin, page_key):
     with t1:
         if not op.empty:
             cols = [('company_name', 'الشركة'), ('symbol', 'الرمز'), ('quantity', 'الكمية'), ('entry_price', 'التكلفة'), ('current_price', 'السعر'), ('market_value', 'القيمة'), ('gain', 'الربح'), ('gain_pct', '%')]
-            # هنا يتم استدعاء apply_sorting وهي معرفة في الأعلى الآن
-            render_table(apply_sorting(op, cols, page_key), cols)
+            render_table(apply_sorting(op, cols, page_key), cols) # الآن apply_sorting معرفة
             
             with st.expander("بيع"):
                 with st.form("sell"):
@@ -260,7 +258,6 @@ def view_cash_log():
         st.markdown(f"**إجمالي التوزيعات:** {fin['returns']['amount'].sum():,.2f}")
         render_table(fin['returns'], [('date','التاريخ'), ('symbol','الرمز'), ('amount','المبلغ')])
 
-# === استرجاع التحليل القديم (الكامل) ===
 def view_analysis(fin):
     st.header("🔬 مركز التحليل الشامل")
     trades = fin['all_trades']
@@ -268,14 +265,14 @@ def view_analysis(fin):
     syms = list(set(trades['symbol'].unique().tolist() + wl['symbol'].unique().tolist())) if not trades.empty else []
     
     c1, c2 = st.columns([1, 2])
-    ns = c1.text_input("بحث")
+    ns = c1.text_input("بحث عن رمز")
     if ns and ns not in syms: syms.insert(0, ns)
-    sym = c2.selectbox("اختر", syms) if syms else None
+    sym = c2.selectbox("اختر الشركة", syms) if syms else None
     
     if sym:
         n, s = get_company_details(sym)
         st.markdown(f"### {n if n else sym} ({sym})")
-        # التبويبات الخمسة كما كانت
+        # التبويبات التي طلبتها
         t1, t2, t3, t4, t5 = st.tabs(["📊 المؤشرات", "📑 القوائم", "📝 الأطروحة", "📈 الشارت", "🏛️ كلاسيكي"])
         
         with t1:
