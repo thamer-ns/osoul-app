@@ -9,16 +9,22 @@ from config import DEFAULT_COLORS, BACKUP_DIR
 from components import render_navbar, render_kpi, render_table
 from analytics import (calculate_portfolio_metrics, update_prices, create_smart_backup, 
                        generate_equity_curve, calculate_historical_drawdown)
-# استيراد الشارت (تأكد أن charts.py سليم)
+# استيراد الشارت
 from charts import view_advanced_chart
-from financial_analysis import get_fundamental_ratios, render_financial_dashboard_ui, get_thesis, save_thesis
 from market_data import get_static_info, get_tasi_data, get_chart_history 
 from database import execute_query, fetch_table, get_db, clear_all_data
 
-# === استيراد الوحدات الاختيارية ===
+# === معالجة الاستيرادات الناقصة (Fallback) ===
 try: from backtester import run_backtest
 except ImportError: 
     def run_backtest(*args): return None
+
+try: from financial_analysis import get_fundamental_ratios, render_financial_dashboard_ui, get_thesis, save_thesis
+except ImportError:
+    def get_fundamental_ratios(*args): return {'Score': 0, 'Rating': '-', 'Opinions': [], 'P/E':0, 'P/B':0, 'ROE':0, 'Fair_Value':0}
+    def render_financial_dashboard_ui(*args): st.info("التحليل المالي قيد التجهيز")
+    def get_thesis(*args): return None
+    def save_thesis(*args): pass
 
 try: from pulse import render_pulse_dashboard
 except ImportError: 
@@ -28,7 +34,7 @@ try: from classical_analysis import render_classical_analysis
 except ImportError:
     def render_classical_analysis(s): st.info("التحليل الكلاسيكي غير متاح")
 
-# === أدوات مساعدة للعرض ===
+# === أدوات مساعدة ===
 def safe_fmt(val, suffix=""):
     try: return f"{float(val):,.2f}{suffix}"
     except: return "-"
@@ -212,7 +218,7 @@ def view_analysis(fin):
                 target = st.number_input("الهدف", value=(curr['target_price'] if curr is not None else 0.0))
                 text = st.text_area("الأطروحة", value=(curr['thesis_text'] if curr is not None else ""))
                 if st.form_submit_button("حفظ"): save_thesis(symbol, text, target, "Hold"); st.success("تم")
-        with t4: render_technical_chart(symbol)
+        with t4: view_advanced_chart(symbol)
         with t5: render_classical_analysis(symbol)
 
 def view_backtester_ui(fin):
@@ -252,49 +258,32 @@ def view_add_trade():
             execute_query("INSERT INTO Trades (symbol, company_name, sector, asset_type, date, quantity, entry_price, strategy, status, current_price) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'Open', %s)", (sym, n, s, atype, str(date_ex), qty, price, strat, price))
             st.success("تم"); st.cache_data.clear()
 
-def view_tools():
-    st.header("🛠️ الأدوات")
-    fin = calculate_portfolio_metrics()
-    st.info("زكاة تقديرية: " + str(fin['market_val_open'] * 0.025775))
-
-# === حل مشكلة السيولة والاستيراد (Mapping Fix) ===
 def clean_and_fix_columns(df, table_name):
     """دالة تقوم بتنظيف وتصحيح أسماء الأعمدة لتطابق قاعدة البيانات بدقة"""
     if df is None: return None
     df.columns = df.columns.str.strip().str.lower()
     
-    # 1. خرائط تصحيح (Mapping)
-    # هذا يحل مشكلة: source/reason في ملفاتك -> note في قاعدة البيانات
     rename_map = {
-        'source': 'note',
-        'reason': 'note',
-        'notes': 'note',
-        'cost': 'amount',
-        'value': 'amount'
+        'source': 'note', 'reason': 'note', 'notes': 'note',
+        'cost': 'amount', 'value': 'amount'
     }
     df.rename(columns=rename_map, inplace=True)
     
-    # 2. حذف الأعمدة غير المرغوبة (ID)
     if 'id' in df.columns: df = df.drop(columns=['id'])
     
-    # 3. الفلترة الصارمة (Strict Filtering)
-    # نحتفظ فقط بالأعمدة التي تقبلها قاعدة البيانات لهذا الجدول
-    # ونحذف أي عمود زائد (مثل type في ReturnsGrants) الذي سبب المشكلة
     allowed_cols = {
         'Trades': ['symbol', 'company_name', 'sector', 'asset_type', 'date', 'quantity', 'entry_price', 'strategy', 'status', 'exit_date', 'exit_price', 'current_price'],
         'Deposits': ['date', 'amount', 'note'],
         'Withdrawals': ['date', 'amount', 'note'],
-        'ReturnsGrants': ['date', 'symbol', 'company_name', 'amount'], # لا يوجد type هنا
+        'ReturnsGrants': ['date', 'symbol', 'company_name', 'amount'],
         'Watchlist': ['symbol']
     }
     
     if table_name in allowed_cols:
         target_cols = allowed_cols[table_name]
-        # احتفظ فقط بالأعمدة الموجودة في القائمة
         existing_cols = [c for c in df.columns if c in target_cols]
         df = df[existing_cols]
     
-    # 4. تنظيف البيانات (تواريخ وأرقام)
     for col in df.columns:
         if 'date' in col:
             try: df[col] = pd.to_datetime(df[col], errors='coerce').dt.strftime('%Y-%m-%d')
@@ -303,16 +292,12 @@ def clean_and_fix_columns(df, table_name):
             try: df[col] = df[col].astype(str).str.replace(',', '')
             except: pass
             
-    # تحويل NaN إلى None
     df = df.where(pd.notnull(df), None)
     return df
 
 def save_dataframe_to_db(df, table_name):
-    # نستخدم الدالة الجديدة للتنظيف والفلترة
     df_clean = clean_and_fix_columns(df, table_name)
-    
     if df_clean is None or df_clean.empty: return
-    
     records = df_clean.to_dict('records')
     
     with get_db() as conn:
@@ -323,15 +308,17 @@ def save_dataframe_to_db(df, table_name):
                 vals = [v for v in row.values()]
                 placeholders = ', '.join(['%s'] * len(vals))
                 columns = ', '.join(cols)
-                
-                # جملة الإدخال
                 query = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
-                
                 try: cur.execute(query, vals)
                 except Exception as e: 
                     print(f"Skipped row in {table_name}: {e}")
                     conn.rollback()
             conn.commit()
+
+def view_tools():
+    st.header("🛠️ الأدوات")
+    fin = calculate_portfolio_metrics()
+    st.info("زكاة تقديرية: " + str(fin['market_val_open'] * 0.025775))
 
 def view_settings():
     st.header("⚙️ الإعدادات")
@@ -346,8 +333,6 @@ def view_settings():
     if uploaded_files and st.button("🚀 بدء الاستيراد"):
         success = 0
         status = st.empty()
-        
-        # خريطة الربط (اسم الملف -> اسم الجدول)
         table_map = {
             'trades': 'Trades', 'deposits': 'Deposits', 
             'withdrawals': 'Withdrawals', 'returns': 'ReturnsGrants',
@@ -362,8 +347,6 @@ def view_settings():
             try:
                 fname = file.name.lower()
                 target = None
-                
-                # تحديد الجدول المستهدف
                 if fname.endswith('.xlsx'):
                     xls = pd.ExcelFile(file)
                     for sheet in xls.sheet_names:
@@ -383,14 +366,12 @@ def view_settings():
                         save_dataframe_to_db(df, target)
                         success += 1
                         status.text(f"تم: {fname}")
-                        
             except Exception as e: status.error(f"خطأ: {e}")
         
         if success > 0:
             st.success(f"تم استيراد {success} جداول بنجاح.")
             st.cache_data.clear(); time.sleep(2); st.rerun()
 
-# === الموجه (Router) ===
 def router():
     render_navbar()
     if 'page' not in st.session_state: st.session_state.page = 'home'
@@ -408,7 +389,7 @@ def router():
     elif pg == 'tools': view_tools()
     elif pg == 'add': view_add_trade()
     elif pg == 'settings': view_settings()
-    elif pg == 'profile': st.info("الملف الشخصي") # صفحة بسيطة للملف الشخصي
+    elif pg == 'profile': st.info("الملف الشخصي") 
     elif pg == 'update':
         with st.spinner("تحديث..."): update_prices()
         st.session_state.page = 'home'; st.rerun()
