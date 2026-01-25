@@ -355,3 +355,11 @@ TADAWUL_DB = {
     '9641': {'name': 'هوية', 'sector': 'إدارة وتطوير العقارات (موازي)'},
     '9642': {'name': 'تايم', 'sector': 'الإعلام والترفيه (موازي)'},
 }
+
+def get_company_details(symbol):
+    """دالة لجلب تفاصيل الشركة بناء على الرمز"""
+    clean_sym = str(symbol).replace('.SR', '').strip()
+    data = TADAWUL_DB.get(clean_sym)
+    if data:
+        return data['name'], data['sector']
+    return None, None # غير موجود
