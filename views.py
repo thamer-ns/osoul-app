@@ -347,95 +347,73 @@ def view_settings():
             'InvestmentThesis': 'InvestmentThesis'
         }
 
-        # الدالة السحرية لحل مشكلة الترميز (Unicode) والفاصلة العربية
         def clean_data_for_import(df):
             if 'id' in df.columns: df = df.drop(columns=['id'])
-            
             for col in df.columns:
                 if df[col].dtype == 'object':
-                    # تحويل القيم لنص، ثم استبدال الفاصلة العربية ٫ بالنقطة
                     df[col] = df[col].astype(str).str.replace('٫', '.', regex=False)
-                    df[col] = df[col].astype(str).str.replace(',', '', regex=False) # إزالة فاصلة الألوف
-                    # محاولة التحويل لرقم
+                    df[col] = df[col].astype(str).str.replace(',', '', regex=False)
                     df[col] = pd.to_numeric(df[col], errors='ignore')
             return df
-
-        def insert_df_to_db(df, table_name):
-            if df.empty: return False
-            records = df.to_dict('records')
-            with get_db() as conn:
-                with conn.cursor() as cur:
-                    for row in records:
-                        cols = list(row.keys())
-                        vals = [None if pd.isna(v) or str(v) == 'nan' else v for v in row.values()]
-                        
-                        q = f"INSERT INTO {table_name} ({', '.join(cols)}) VALUES ({', '.join(['%s']*len(vals))})"
-                        try: cur.execute(q, vals)
-                        except Exception as e: 
-                            # تجاهل أخطاء التكرار، لكن سجلها في الكونسول
-                            print(f"Skipped row: {e}")
-                            conn.rollback()
-                    conn.commit()
-            return True
 
         for i, file in enumerate(uploaded_files):
             try:
                 fname = file.name
+                target_table = None
+                for keyword, table_name in table_map.items():
+                    if keyword in fname:
+                        target_table = table_name
+                        break
                 
-                # السيناريو 1: ملف Excel مجمع
-                if fname.endswith('.xlsx'):
-                    xls = pd.ExcelFile(file)
-                    for sheet_name in xls.sheet_names:
-                        if sheet_name in table_map:
-                            df = pd.read_excel(xls, sheet_name)
-                            df_clean = clean_data_for_import(df)
-                            if insert_df_to_db(df_clean, sheet_name):
-                                success_count += 1
-                                status.text(f"✅ تم استيراد الورقة: {sheet_name}")
-                
-                # السيناريو 2: ملف CSV (مع معالجة الترميز)
-                else:
-                    target_table = None
-                    for keyword, table_name in table_map.items():
-                        if keyword in fname:
-                            target_table = table_name
+                if target_table:
+                    # فتح الاتصال أولاً للتأكد
+                    with get_db() as conn:
+                        if not conn:
+                            status.error(f"❌ فشل الاتصال بقاعدة البيانات.")
                             break
-                    
-                    if target_table:
-                        # محاولة قراءة CSV بعدة ترميزات لتجنب خطأ Unicode
-                        encodings = ['utf-8', 'utf-8-sig', 'cp1256', 'iso-8859-1']
-                        df = None
-                        for enc in encodings:
-                            try:
-                                file.seek(0)
-                                df = pd.read_csv(file, encoding=enc)
-                                break
-                            except: continue
-                        
-                        # محاولة أخيرة بفاصل منقوطة
-                        if df is None:
-                            try:
-                                file.seek(0)
-                                df = pd.read_csv(file, sep=';', encoding='utf-8-sig')
-                            except: pass
 
-                        if df is not None:
-                            df_clean = clean_data_for_import(df)
-                            if insert_df_to_db(df_clean, target_table):
-                                success_count += 1
-                                status.text(f"✅ تم استيراد الملف: {fname}")
+                        if fname.endswith('.csv'):
+                            try: df = pd.read_csv(file)
+                            except: 
+                                file.seek(0)
+                                df = pd.read_csv(file, sep=';')
                         else:
-                            status.error(f"❌ فشل قراءة الملف {fname} بكل الترميزات")
-                    else:
-                        pass # ملف غير معروف
+                            # دعم ملف Excel متعدد الصفحات
+                            xls = pd.ExcelFile(file)
+                            if target_table in xls.sheet_names:
+                                df = pd.read_excel(xls, target_table)
+                            elif len(xls.sheet_names) == 1:
+                                df = pd.read_excel(xls)
+                            else:
+                                df = pd.DataFrame() # لم نجد الجدول المطلوب
+
+                        if not df.empty:
+                            df_clean = clean_data_for_import(df)
+                            records = df_clean.to_dict('records')
+                            
+                            with conn.cursor() as cur:
+                                for row in records:
+                                    cols = list(row.keys())
+                                    vals = [None if pd.isna(v) or str(v) == 'nan' else v for v in row.values()]
+                                    q = f"INSERT INTO {target_table} ({', '.join(cols)}) VALUES ({', '.join(['%s']*len(vals))})"
+                                    try: cur.execute(q, vals)
+                                    except Exception as e: print(f"Skipped: {e}"); conn.rollback()
+                                conn.commit()
+                            
+                            success_count += 1
+                            status.text(f"✅ تم استيراد: {target_table}")
+                        else:
+                            status.warning(f"⚠️ الملف فارغ أو لا يحتوي على الجدول المطلوب: {fname}")
+                else:
+                    status.warning(f"⚠️ ملف غير معروف: {fname}")
             
             except Exception as e:
-                status.error(f"❌ خطأ في الملف {file.name}: {e}")
+                status.error(f"❌ خطأ: {e}")
             
             progress.progress((i + 1) / len(uploaded_files))
         
         if success_count > 0:
-            st.success(f"تم الانتهاء! تم استيراد {success_count} جداول/ملفات بنجاح.")
+            st.success(f"تم الانتهاء! تم استيراد {success_count} ملفات بنجاح.")
             st.cache_data.clear()
 
 def router():
