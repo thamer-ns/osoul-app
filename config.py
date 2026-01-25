@@ -1,108 +1,132 @@
 from pathlib import Path
-from data_source import TADAWUL_DB 
 
-# --- إعدادات الهوية ---
+# --- إعدادات أساسية ---
 APP_NAME = "أصولي"
 APP_ICON = "🏛️"
-DB_PATH = Path("stocks.db")
 BACKUP_DIR = Path("backups")
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
-# --- الألوان الموحدة ---
+# --- الهوية البصرية (نفس الألوان التي طلبتها) ---
 DEFAULT_COLORS = {
-    'primary': '#0052CC',       # الأزرق (للعناوين والأزرار)
-    'page_bg': '#F4F5F7',       # خلفية الصفحة (رمادي مائل للأزرق خفيف جداً)
-    'card_bg': '#FFFFFF',       # خلفية الجداول والكروت
-    'main_text': '#172B4D',     # لون النص الأساسي (كحلي غامق)
-    'sub_text': '#5E6C84',      # لون النص الفرعي
-    'success': '#006644',       # أخضر (للأرباح)
-    'danger': '#DE350B',        # أحمر (للخسائر)
-    'border': '#DFE1E6',        # لون الحدود
+    'page_bg': '#F5F7FA',      # خلفية الصفحة (رمادي فاتح جداً)
+    'card_bg': '#FFFFFF',      # خلفية البطاقات (أبيض)
+    'main_text': '#1F2937',    # النص الأساسي (رمادي غامق)
+    'sub_text': '#6B7280',     # النص الفرعي (رمادي متوسط)
+    'primary': '#2563EB',      # اللون الرئيسي (أزرق)
+    'success': '#10B981',      # أخضر للأرباح
+    'danger': '#EF4444',       # أحمر للخسائر
+    'border': '#E5E7EB',       # لون الحدود
+    'input_bg': '#F9FAFB'      # خلفية الحقول
 }
 
-def get_css(C):
+# --- دالة الستايل (CSS) ---
+def get_css():
+    C = DEFAULT_COLORS
     return f"""
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap');
         
-        html, body, [class*="css"], p, div, label, input, textarea, th, td, h1, h2, h3, button {{
+        html, body, [class*="css"], p, h1, h2, h3, h4, div, label, button, input, textarea, span {{
             font-family: 'Cairo', sans-serif !important; 
-            direction: rtl;
+            direction: rtl; 
             color: {C['main_text']};
         }}
         
         .stApp {{ background-color: {C['page_bg']} !important; }}
         
-        /* --- 1. حاوية الجدول الموحدة (The Container) --- */
-        .finance-table-container {{
-            background-color: {C['card_bg']};
+        /* تحسين الحقول والأزرار */
+        input, .stTextInput input, .stNumberInput input, .stSelectbox, .stDateInput input {{
+            background-color: {C['input_bg']} !important; 
+            border-radius: 12px !important; 
+            border: 1px solid {C['border']} !important;
+            padding: 10px !important;
+        }}
+        
+        /* تصميم بطاقة المؤشر (TASI Box) */
+        .tasi-box {{
+            background: linear-gradient(135deg, {C['card_bg']} 0%, #F8FAFC 100%);
+            padding: 20px; 
+            border-radius: 16px; 
             border: 1px solid {C['border']};
-            border-radius: 8px;          /* زوايا دائرية */
-            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05); /* ظل خفيف */
-            overflow: hidden;            /* لضمان قص الزوايا */
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05); 
             margin-bottom: 20px;
         }}
-
-        /* --- 2. الجدول نفسه --- */
-        .finance-table {{
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.9rem;
+        
+        /* تصميم البطاقات الرقمية (KPI Box) */
+        .kpi-box {{
+            background-color: {C['card_bg']}; 
+            border: 1px solid {C['border']}; 
+            border-radius: 16px;
+            padding: 20px; 
+            text-align: right; 
+            margin-bottom: 15px; 
+            box-shadow: 0 2px 5px rgba(0,0,0,0.02); 
+            transition: transform 0.2s;
         }}
-
-        /* --- 3. رأس الجدول (Header) --- */
-        .finance-table th {{
-            background-color: #FAFBFC;   /* رمادي فاتح جداً */
-            color: {C['sub_text']} !important;
-            font-weight: 700 !important;
-            padding: 12px 16px !important;
-            text-align: right;
-            border-bottom: 2px solid {C['border']};
-            white-space: nowrap;         /* منع التفاف النص */
+        .kpi-box:hover {{ transform: translateY(-2px); }}
+        .kpi-value {{ 
+            font-size: 1.4rem; 
+            font-weight: 900; 
+            direction: ltr; 
+            display: inline-block; 
         }}
-
-        /* --- 4. خلايا الجدول (Rows) --- */
-        .finance-table td {{
+        
+        /* الجداول (Table Styling) */
+        .finance-table-container {{
             background-color: {C['card_bg']};
-            padding: 12px 16px !important;
-            text-align: right;
+            border-radius: 16px;
+            border: 1px solid {C['border']};
+            overflow: hidden;
+            margin-bottom: 25px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.02);
+        }}
+        .finance-table {{ 
+            width: 100%; 
+            border-collapse: separate; 
+            border-spacing: 0;
+        }}
+        .finance-table th {{ 
+            background-color: #F9FAFB; 
+            padding: 15px; 
+            text-align: right; 
+            color: {C['sub_text']}; 
+            font-size: 0.9rem; 
+            font-weight: 700;
             border-bottom: 1px solid {C['border']};
-            color: {C['main_text']};
-            font-weight: 600;
+        }}
+        .finance-table td {{ 
+            padding: 12px 15px; 
+            text-align: right; 
+            border-bottom: 1px solid {C['border']}; 
+            font-size: 0.9rem; 
             vertical-align: middle;
         }}
-
-        /* تأثير عند مرور الماوس */
-        .finance-table tr:hover td {{
-            background-color: #F4F5F7 !important;
-        }}
-
-        /* إزالة الخط من آخر صف */
-        .finance-table tr:last-child td {{
-            border-bottom: none;
-        }}
-
-        /* --- عناصر أخرى (كروت KPI والناف بار) --- */
-        .app-logo-box {{
-            background: linear-gradient(135deg, {C['primary']}, #0065FF);
-            width: 48px; height: 48px; border-radius: 8px;
-            display: flex; align-items: center; justify-content: center;
-            font-size: 1.8rem; color: white;
-            box-shadow: 0 4px 6px -1px rgba(0, 82, 204, 0.3);
-            margin-left: 10px;
-        }}
-        .logo-text {{ font-size: 1.6rem; font-weight: 900; color: {C['primary']}; }}
+        .finance-table tr:last-child td {{ border-bottom: none; }}
         
-        .kpi-box {{
-            background-color: {C['card_bg']}; border: 1px solid {C['border']}; 
-            border-radius: 8px; padding: 16px; text-align: right; 
-            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+        /* الناف بار (Navbar) */
+        .navbar-box {{
+            background-color: {C['card_bg']};
+            padding: 15px 20px;
+            border-radius: 16px;
+            border: 1px solid {C['border']};
+            margin-bottom: 25px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.03);
         }}
-        .kpi-value {{ font-size: 1.4rem; font-weight: 800; color: {C['main_text']}; direction: ltr; }}
         
+        /* الأزرار المخصصة */
+        div.stButton > button:first-child {{
+            border-radius: 10px;
+            font-weight: 600;
+            height: auto;
+            padding: 0.5rem 1rem;
+        }}
+
         [data-testid="stSidebar"] {{ display: none !important; }}
-        .stTabs [data-baseweb="tab-list"] {{ gap: 20px; }}
-        .stTabs [data-baseweb="tab"] {{ height: 40px; border: none; font-weight: bold; }}
-        .stTabs [aria-selected="true"] {{ color: {C['primary']} !important; border-bottom: 3px solid {C['primary']} !important; background: transparent !important; }}
     </style>
     """
