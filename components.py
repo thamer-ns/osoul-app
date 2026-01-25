@@ -10,7 +10,6 @@ def render_navbar():
         C = st.session_state.custom_colors
         
     u = st.session_state.get('username', 'مستثمر')
-    
     st.markdown(f"""
     <div class="navbar-box" style="background-color: {C['card_bg']}; padding: 15px 20px; border-radius: 16px; border: 1px solid {C['border']}; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 4px 15px rgba(0,0,0,0.03);">
         <div style="display: flex; align-items: center; gap: 15px;">
@@ -34,17 +33,13 @@ def render_navbar():
         ('التحليل', 'analysis'), ('المختبر', 'backtest'), ('أدوات', 'tools'),
         ('إعدادات', 'settings'), ('خروج', 'logout')
     ]
-    
     for col, (label, key) in zip(cols, menu_items):
         active = (st.session_state.get('page') == key)
         btn_type = "primary" if active else "secondary"
         if col.button(label, key=f"nav_{key}", type=btn_type, use_container_width=True):
-            if key == 'logout':
-                from security import logout
-                logout()
-            else:
-                st.session_state.page = key
-                st.rerun()
+            if key == 'logout': 
+                from security import logout; logout()
+            else: st.session_state.page = key; st.rerun()
     st.markdown("---")
 
 def render_kpi(label, value, color_condition=None):
@@ -60,26 +55,14 @@ def render_kpi(label, value, color_condition=None):
     </div>
     """, unsafe_allow_html=True)
 
-# === تم إصلاح هذا الجزء لمنع الخطأ TypeError ===
 def render_ticker_card(symbol, name, price, change):
     C = DEFAULT_COLORS
+    try: price = float(price); change = float(change)
+    except: price=0.0; change=0.0
     
-    # حماية من القيم الفارغة
-    try:
-        price = float(price) if price is not None else 0.0
-        change = float(change) if change is not None else 0.0
-    except:
-        price = 0.0
-        change = 0.0
-
-    if change >= 0:
-        color = C['success']
-        arrow = "🔼"
-        bg_color = "#DCFCE7"
-    else:
-        color = C['danger']
-        arrow = "🔽"
-        bg_color = "#FEE2E2"
+    color = C['success'] if change >= 0 else C['danger']
+    arrow = "🔼" if change >= 0 else "🔽"
+    bg = "#DCFCE7" if change >= 0 else "#FEE2E2"
 
     st.markdown(f"""
     <div style="background-color: {C['card_bg']}; padding: 15px; border-radius: 12px; border: 1px solid {C['border']}; margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
@@ -89,7 +72,7 @@ def render_ticker_card(symbol, name, price, change):
         </div>
         <div style="display: flex; justify-content: space-between; align-items: center;">
             <div style="font-size: 1.4rem; font-weight: 900; color: {C['main_text']};">{price:,.2f}</div>
-            <div style="background-color: {bg_color}; color: {color}; padding: 4px 10px; border-radius: 8px; font-weight: bold; font-size: 0.9rem; direction: ltr;">
+            <div style="background-color: {bg}; color: {color}; padding: 4px 10px; border-radius: 8px; font-weight: bold; font-size: 0.9rem; direction: ltr;">
                 {arrow} {change:.2f}%
             </div>
         </div>
@@ -97,30 +80,26 @@ def render_ticker_card(symbol, name, price, change):
     """, unsafe_allow_html=True)
 
 def render_table(df, cols_def):
-    if df.empty:
-        st.info("لا توجد بيانات للعرض")
-        return
+    if df.empty: st.info("لا توجد بيانات"); return
     C = DEFAULT_COLORS
     headers = "".join([f"<th>{label}</th>" for _, label in cols_def])
     rows_html = ""
     for _, row in df.iterrows():
         cells = ""
-        status_val = str(row.get('status', '')).lower()
-        is_closed = status_val in ['close', 'sold', 'مغلقة', 'مباعة']
+        is_cl = str(row.get('status', '')).lower() in ['close', 'sold', 'مغلقة']
         for k, _ in cols_def:
             val = row.get(k, "-")
             disp = val
             if 'date' in k and val: disp = str(val)[:10]
             elif k == 'status':
-                if is_closed: bg, fg, txt = ("#F3F4F6", "#4B5563", "مغلقة")
-                else: bg, fg, txt = ("#DCFCE7", "#166534", "مفتوحة")
+                bg, fg, txt = ("#F3F4F6", "#4B5563", "مغلقة") if is_cl else ("#DCFCE7", "#166534", "مفتوحة")
                 disp = f"<span style='background:{bg}; color:{fg}; padding:4px 10px; border-radius:12px; font-size:0.75rem; font-weight:800;'>{txt}</span>"
             elif k in ['gain', 'gain_pct', 'daily_change', 'return_pct']:
                 try:
-                    num_val = float(val)
-                    c = C['success'] if num_val >= 0 else C['danger']
-                    suffix = "%" if 'pct' in k or 'change' in k else ""
-                    disp = f"<span style='color:{c}; direction:ltr; font-weight:bold;'>{num_val:,.2f}{suffix}</span>"
+                    n = float(val)
+                    c = C['success'] if n >= 0 else C['danger']
+                    s = "%" if 'pct' in k else ""
+                    disp = f"<span style='color:{c}; direction:ltr; font-weight:bold;'>{n:,.2f}{s}</span>"
                 except: disp = val
             elif isinstance(val, (int, float)) and k != 'quantity':
                 try: disp = f"{float(val):,.2f}"
@@ -130,13 +109,4 @@ def render_table(df, cols_def):
                 except: disp = val
             cells += f"<td>{disp}</td>"
         rows_html += f"<tr>{cells}</tr>"
-    st.markdown(f"""
-    <div class="finance-table-container">
-        <div style="overflow-x: auto;">
-            <table class="finance-table">
-                <thead><tr>{headers}</tr></thead>
-                <tbody>{rows_html}</tbody>
-            </table>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown(f"""<div class="finance-table-container"><div style="overflow-x: auto;"><table class="finance-table"><thead><tr>{headers}</tr></thead><tbody>{rows_html}</tbody></table></div></div>""", unsafe_allow_html=True)
