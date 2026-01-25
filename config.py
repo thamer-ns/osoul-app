@@ -1,12 +1,10 @@
 from pathlib import Path
 
-# --- إعدادات النظام ---
 APP_NAME = "أصولي"
 APP_ICON = "📈"
 BACKUP_DIR = Path("backups")
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
-# --- الهوية البصرية (Theme) ---
 DEFAULT_COLORS = {
     'page_bg': '#F4F6F8',       # خلفية رمادية فاتحة جداً
     'card_bg': '#FFFFFF',       # بطاقات بيضاء
