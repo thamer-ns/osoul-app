@@ -6,10 +6,11 @@ import bcrypt
 from contextlib import contextmanager
 import logging
 
+# إعداد السجل
 logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 
-# رابط قاعدة البيانات (Supabase)
+# رابط قاعدة البيانات
 DB_URL = "postgresql://postgres.uxcdbjqnbphlzftpfajm:Tm1074844687@aws-1-ap-northeast-2.pooler.supabase.com:6543/postgres"
 
 @st.cache_resource
@@ -17,7 +18,7 @@ def get_connection_pool():
     try:
         return psycopg2.pool.SimpleConnectionPool(1, 20, dsn=DB_URL, sslmode='require')
     except Exception as e:
-        st.error(f"اتصال القاعدة فشل: {e}")
+        st.error(f"❌ فشل الاتصال بقاعدة البيانات: {e}")
         return None
 
 @contextmanager
@@ -28,7 +29,9 @@ def get_db():
     try:
         conn = pool.getconn()
         yield conn
-    except: yield None
+    except Exception as e:
+        if conn: conn.rollback()
+        yield None
     finally:
         if conn: pool.putconn(conn)
 
@@ -42,23 +45,25 @@ def execute_query(query, params=()):
                 return True
             except Exception as e:
                 conn.rollback()
-                st.error(f"خطأ تنفيذ: {e}")
+                st.error(f"خطأ في التنفيذ: {e}")
                 return False
     return False
 
 def fetch_table(table_name):
     allowed = ['Users', 'Trades', 'Deposits', 'Withdrawals', 'ReturnsGrants', 'Watchlist', 'SectorTargets', 'FinancialStatements', 'InvestmentThesis']
     if table_name not in allowed: return pd.DataFrame()
+    
     with get_db() as conn:
         if conn:
-            try: return pd.read_sql(f"SELECT * FROM {table_name}", conn)
+            try:
+                return pd.read_sql(f"SELECT * FROM {table_name}", conn)
             except: pass
     return pd.DataFrame()
 
 def init_db():
     # جداول النظام
     tables = [
-        """CREATE TABLE IF NOT EXISTS Users (username VARCHAR(50) PRIMARY KEY, password TEXT, email TEXT)""",
+        """CREATE TABLE IF NOT EXISTS Users (username VARCHAR(50) PRIMARY KEY, password TEXT, email TEXT, created_at TIMESTAMP DEFAULT NOW())""",
         """CREATE TABLE IF NOT EXISTS Trades (id SERIAL PRIMARY KEY, symbol VARCHAR(20), company_name TEXT, sector TEXT, asset_type VARCHAR(20) DEFAULT 'Stock', date DATE, quantity DOUBLE PRECISION, entry_price DOUBLE PRECISION, strategy VARCHAR(20), status VARCHAR(10), exit_date DATE, exit_price DOUBLE PRECISION, current_price DOUBLE PRECISION, prev_close DOUBLE PRECISION, year_high DOUBLE PRECISION, year_low DOUBLE PRECISION, dividend_yield DOUBLE PRECISION, note TEXT)""",
         """CREATE TABLE IF NOT EXISTS Deposits (id SERIAL PRIMARY KEY, date DATE, amount DOUBLE PRECISION, note TEXT)""",
         """CREATE TABLE IF NOT EXISTS Withdrawals (id SERIAL PRIMARY KEY, date DATE, amount DOUBLE PRECISION, note TEXT)""",
@@ -73,11 +78,6 @@ def init_db():
                 for t in tables: 
                     try: cur.execute(t)
                     except: pass
-                
-                # تحديث الجداول القديمة بإضافة الأعمدة الناقصة
-                try: cur.execute("ALTER TABLE ReturnsGrants ADD COLUMN IF NOT EXISTS note TEXT;")
-                except: pass
-                
                 conn.commit()
 
 def clear_all_data():
@@ -91,16 +91,18 @@ def clear_all_data():
                 conn.commit()
     st.cache_data.clear()
 
-# إدارة المستخدمين
 def db_create_user(username, password, email=""):
     hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-    return execute_query("INSERT INTO Users (username, password, email) VALUES (%s, %s, %s)", (username, hashed, email))
+    try: return execute_query("INSERT INTO Users (username, password, email) VALUES (%s, %s, %s)", (username, hashed, email))
+    except: return False
 
 def db_verify_user(username, password):
     with get_db() as conn:
         if conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT password FROM Users WHERE username = %s", (username,))
-                res = cur.fetchone()
-                if res: return bcrypt.checkpw(password.encode('utf-8'), res[0].encode('utf-8'))
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT password FROM Users WHERE username = %s", (username,))
+                    user = cur.fetchone()
+                    if user: return bcrypt.checkpw(password.encode('utf-8'), user[0].encode('utf-8'))
+            except: pass
     return False
