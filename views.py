@@ -25,7 +25,7 @@ except ImportError:
 # ==========================================
 
 def apply_sorting(df, cols_definition, key_suffix):
-    """واجهة فرز عربية نقية"""
+    """واجهة فرز عربية بدون عناوين إنجليزية"""
     if df.empty: return df
     
     with st.expander("🔍 خيارات الترتيب", expanded=False):
@@ -33,21 +33,20 @@ def apply_sorting(df, cols_definition, key_suffix):
         c1, c2 = st.columns([2, 1])
         
         with c1:
-            st.markdown("<p style='font-size:0.8rem; font-weight:bold; margin-bottom:5px;'>رتب حسب:</p>", unsafe_allow_html=True)
-            sort_col_label = st.selectbox("s_c", options=list(label_map.keys()), key=f"sc_{key_suffix}", label_visibility="collapsed")
+            st.markdown("<p style='font-size:0.8rem; font-weight:bold; margin-bottom:0px;'>رتب حسب:</p>", unsafe_allow_html=True)
+            sort_col_label = st.selectbox("sc", options=list(label_map.keys()), key=f"sc_{key_suffix}", label_visibility="collapsed")
         
         with c2:
-            st.markdown("<p style='font-size:0.8rem; font-weight:bold; margin-bottom:5px;'>الاتجاه:</p>", unsafe_allow_html=True)
-            sort_order = st.radio("s_o", options=["تنازلي", "تصاعدي"], horizontal=True, key=f"so_{key_suffix}", label_visibility="collapsed")
+            st.markdown("<p style='font-size:0.8rem; font-weight:bold; margin-bottom:0px;'>الاتجاه:</p>", unsafe_allow_html=True)
+            sort_order = st.radio("so", options=["تنازلي", "تصاعدي"], horizontal=True, key=f"so_{key_suffix}", label_visibility="collapsed")
             
     target_col = label_map[sort_col_label]
     try: return df.sort_values(by=target_col, ascending=(sort_order == "تصاعدي"))
     except: return df
 
 # ==========================================
-# 2. منطق الاستيراد (التنظيف القوي)
+# 2. منطق الاستيراد (تنظيف صارم)
 # ==========================================
-# ... (نفس دالة الاستيراد السابقة القوية التي تحذف الـ ID وتعالج البيانات) ...
 def clean_and_fix_columns(df, table_name):
     if df is None or df.empty: return None
     df.columns = df.columns.astype(str).str.strip().str.lower()
@@ -129,7 +128,7 @@ def save_dataframe_to_db(df, table_name):
     return True, f"تم استيراد {count} سجل"
 
 # ==========================================
-# 3. الصفحات (الخالية من الإنجليزي والمقربة)
+# 3. الصفحات
 # ==========================================
 
 def view_dashboard(fin):
@@ -182,12 +181,30 @@ def view_portfolio(fin, page_key):
     if not all_d.empty:
         df = all_d[all_d['strategy'].astype(str).str.contains(ts, na=False)].copy()
     
+    # === الحسابات الديناميكية للأعمدة ===
+    if not df.empty:
+        # حساب الوزن (للمفتوح فقط)
+        total_market = df[df['status']=='Open']['market_value'].sum()
+        df['weight'] = df.apply(lambda x: (x['market_value'] / total_market * 100) if x['status']=='Open' and total_market > 0 else 0, axis=1)
+        
+        # حساب التغير اليومي
+        df['daily_change'] = df.apply(lambda x: ((x['current_price'] - x['prev_close']) / x['prev_close'] * 100) if pd.notna(x['prev_close']) and x['prev_close'] > 0 else 0, axis=1)
+
+    # === قائمة الأعمدة المطلوبة ===
+    COLS_FULL = [
+        ('company_name', 'اسم الشركة'), ('sector', 'القطاع'), ('status', 'الحالة'),
+        ('symbol', 'رمز الشركة'), ('date', 'تاريخ الشراء'), ('exit_date', 'تاريخ البيع'),
+        ('quantity', 'الكمية'), ('entry_price', 'سعر الشراء'), ('total_cost', 'التكلفة'),
+        ('year_high', 'اعلى سنوي'), ('current_price', 'السعر الحالي'), ('year_low', 'ادنى سنوي'),
+        ('market_value', 'سعر السوق'), ('gain', 'الربح والخسارة'), ('gain_pct', 'نسبة الربح والخسارة'),
+        ('weight', 'وزن السهم'), ('daily_change', 'نسبة التغير اليومي'), ('prev_close', 'اغلاق الامس')
+    ]
+
     if not df.empty:
         op = df[df['status']=='Open'].copy()
         market_val = op['quantity'].mul(op['current_price']).sum() if not op.empty else 0
         total_cost = op['quantity'].mul(op['entry_price']).sum() if not op.empty else 0
         unrealized = market_val - total_cost
-        
         cl = df[df['status']=='Close'].copy()
         realized_profit = ((cl['exit_price'] - cl['entry_price']) * cl['quantity']).sum() if not cl.empty else 0
 
@@ -202,27 +219,20 @@ def view_portfolio(fin, page_key):
 
     open_df = df[df['status']=='Open'].copy()
     closed_df = df[df['status']=='Close'].copy()
-    
-    if not open_df.empty:
-        open_df['total_cost'] = open_df['quantity'] * open_df['entry_price']
-        open_df['market_value'] = open_df['quantity'] * open_df['current_price']
-        open_df['gain'] = open_df['market_value'] - open_df['total_cost']
-        open_df['gain_pct'] = (open_df['gain'] / open_df['total_cost'] * 100).fillna(0)
 
     t1, t2, t3 = st.tabs(["الأسهم الحالية", "تحليل الأداء", "الأرشيف"])
     with t1:
         if not open_df.empty:
-            cols = [('company_name', 'الشركة'), ('symbol', 'الرمز'), ('quantity', 'الكمية'), ('entry_price', 'متوسط'), ('current_price', 'حالي'), ('market_value', 'القيمة'), ('gain', 'الربح'), ('gain_pct', '%')]
-            render_table(apply_sorting(open_df, cols, page_key), cols)
+            render_table(apply_sorting(open_df, COLS_FULL, page_key), COLS_FULL)
             
             with st.expander("🔻 بيع سهم"):
                 with st.form("sell"):
                     c1,c2 = st.columns(2)
-                    st.markdown("**اختر السهم:**")
+                    st.markdown("<div style='font-size:0.8rem; font-weight:bold;'>اختر السهم:</div>", unsafe_allow_html=True)
                     s = c1.selectbox("s", open_df['symbol'].unique(), label_visibility="collapsed")
-                    st.markdown("**سعر البيع:**")
+                    st.markdown("<div style='font-size:0.8rem; font-weight:bold;'>سعر البيع:</div>", unsafe_allow_html=True)
                     p = c2.number_input("p", min_value=0.0, label_visibility="collapsed")
-                    st.markdown("**التاريخ:**")
+                    st.markdown("<div style='font-size:0.8rem; font-weight:bold;'>تاريخ البيع:</div>", unsafe_allow_html=True)
                     d = st.date_input("d", date.today(), label_visibility="collapsed")
                     if st.form_submit_button("تأكيد البيع"):
                         execute_query("UPDATE Trades SET status='Close', exit_price=%s, exit_date=%s WHERE symbol=%s AND strategy=%s AND status='Open'", (p, str(d), s, ts))
@@ -237,7 +247,6 @@ def view_portfolio(fin, page_key):
     with t3:
         if not closed_df.empty: 
             closed_df['net_sales'] = closed_df['quantity'] * closed_df['exit_price']
-            closed_df['total_cost'] = closed_df['quantity'] * closed_df['entry_price']
             closed_df['realized_gain'] = closed_df['net_sales'] - closed_df['total_cost']
             closed_df['gain_pct'] = (closed_df['realized_gain'] / closed_df['total_cost'] * 100).fillna(0)
             
@@ -250,7 +259,7 @@ def view_portfolio(fin, page_key):
             with c_b: render_kpi("إجمالي الربح", safe_fmt(sum_gain), sum_gain)
             with c_c: render_kpi("النسبة الكلية", safe_fmt(total_pct)+"%", sum_gain)
             
-            render_table(closed_df, [('company_name', 'الشركة'), ('symbol', 'الرمز'), ('quantity', 'الكمية'), ('exit_price', 'سعر البيع'), ('realized_gain', 'الربح'), ('gain_pct', '%'), ('exit_date', 'تاريخ')])
+            render_table(closed_df, COLS_FULL)
         else: st.info("الأرشيف فارغ")
 
 def view_cash_log():
