@@ -9,12 +9,12 @@ from config import DEFAULT_COLORS
 from components import render_navbar, render_kpi, render_table, render_ticker_card
 from analytics import (calculate_portfolio_metrics, update_prices, generate_equity_curve, calculate_historical_drawdown)
 from database import execute_query, fetch_table, get_db, clear_all_data
-from market_data import get_static_info, get_tasi_data
+from market_data import get_static_info, get_tasi_data, get_chart_history
 from data_source import get_company_details
 
-# === دوال وهمية (للحماية) ===
+# === دوال وهمية (للحماية من الأخطاء) ===
 try: from charts import render_technical_chart
-except: render_technical_chart = lambda s: st.warning("الشارت غير متوفر")
+except: render_technical_chart = lambda s: st.warning("الشارت غير متوفر حالياً")
 try: from backtester import run_backtest
 except: run_backtest = lambda a,b,c: None
 try: from financial_analysis import get_fundamental_ratios, render_financial_dashboard_ui, get_thesis, save_thesis
@@ -24,7 +24,7 @@ except:
     get_thesis = lambda s: None
     save_thesis = lambda s,t,tg,r: None
 
-# === 1. الدالة المخصصة لملفاتك (Fix) ===
+# === 1. الدالة المخصصة لإصلاح ملفاتك (Fix) ===
 def clean_and_fix_columns(df, table_name):
     """تنظيف البيانات وتجهيزها لقاعدة البيانات بناءً على ملفاتك"""
     if df is None or df.empty: return None
@@ -32,13 +32,13 @@ def clean_and_fix_columns(df, table_name):
     # 1. توحيد أسماء الأعمدة وحذف المسافات
     df.columns = df.columns.astype(str).str.strip().str.lower()
     
-    # 2. حذف عمود ID لأنه يسبب مشاكل مع قاعدة البيانات
+    # 2. حذف عمود ID لأنه يسبب مشاكل مع الترقيم التلقائي لقاعدة البيانات
     if 'id' in df.columns: 
         df = df.drop(columns=['id'])
 
     # --- معالجة جدول الصفقات (Trades) ---
     if table_name == 'Trades':
-        # التأكد من وجود الأعمدة الأساسية
+        # خريطة توحيد الأسماء
         mapping = {
             'الرمز': 'symbol', 'ticker': 'symbol', 
             'الشركة': 'company_name', 'company': 'company_name',
@@ -51,12 +51,13 @@ def clean_and_fix_columns(df, table_name):
         }
         df.rename(columns=mapping, inplace=True)
         
-        # تحويل الرموز إلى نصوص (مهم جداً)
+        # تحويل الرموز إلى نصوص (مهم جداً: يحول 4263.0 إلى "4263")
         if 'symbol' in df.columns:
-            df['symbol'] = df['symbol'].astype(str).str.replace('.0', '', regex=False).str.strip()
+            df['symbol'] = df['symbol'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
             
             # محاولة جلب الاسم والقطاع إذا كانا فارغين
             for idx, row in df.iterrows():
+                # إذا الاسم غير موجود، نحاول جلبه من قاعدة البيانات
                 if 'company_name' not in df.columns or pd.isna(row.get('company_name')):
                     name, sector = get_company_details(row['symbol'])
                     if name: df.at[idx, 'company_name'] = name
@@ -68,9 +69,8 @@ def clean_and_fix_columns(df, table_name):
         if 'strategy' not in df.columns: df['strategy'] = 'استثمار'
         if 'asset_type' not in df.columns: df['asset_type'] = 'Stock'
         
-        # الأعمدة المطلوبة
+        # التأكد من وجود الأعمدة المطلوبة فقط
         target_cols = ['symbol', 'company_name', 'sector', 'asset_type', 'date', 'quantity', 'entry_price', 'strategy', 'status', 'exit_date', 'exit_price', 'current_price']
-        # إضافة النواقص كـ None
         for c in target_cols:
             if c not in df.columns: df[c] = None
             
@@ -78,12 +78,12 @@ def clean_and_fix_columns(df, table_name):
 
     # --- معالجة جدول الإيداعات (Deposits) ---
     elif table_name == 'Deposits':
-        # دمج source و note في عمود واحد
+        # دمج source و note في عمود واحد لتجنب التعارض
         df['final_note'] = ''
         if 'source' in df.columns: df['final_note'] = df['source'].astype(str).replace('nan', '')
         if 'note' in df.columns: df['final_note'] = df['final_note'] + ' ' + df['note'].astype(str).replace('nan', '')
         
-        # إعادة التسمية
+        # تعيين الملاحظة النهائية
         df['note'] = df['final_note'].str.strip()
         
         target_cols = ['date', 'amount', 'note']
@@ -110,7 +110,7 @@ def clean_and_fix_columns(df, table_name):
     # --- معالجة التوزيعات (ReturnsGrants) ---
     elif table_name == 'ReturnsGrants':
         target_cols = ['date', 'symbol', 'company_name', 'amount']
-        if 'symbol' in df.columns: df['symbol'] = df['symbol'].astype(str).str.replace('.0', '')
+        if 'symbol' in df.columns: df['symbol'] = df['symbol'].astype(str).str.replace(r'\.0$', '', regex=True)
         
         for c in target_cols:
             if c not in df.columns: df[c] = None
@@ -120,32 +120,35 @@ def clean_and_fix_columns(df, table_name):
 
 def save_dataframe_to_db(df, table_name):
     clean_df = clean_and_fix_columns(df, table_name)
-    if clean_df is None or clean_df.empty: return False, "الملف فارغ أو غير متوافق"
+    if clean_df is None or clean_df.empty: return False, "الملف فارغ أو الأعمدة غير معروفة"
     
     # تنظيف التواريخ والأرقام أخيراً
     for col in clean_df.columns:
         if 'date' in col:
             clean_df[col] = pd.to_datetime(clean_df[col], errors='coerce').dt.strftime('%Y-%m-%d')
         elif col in ['amount', 'quantity', 'entry_price', 'exit_price']:
+            # إزالة الفواصل وتحويل لرقم
             clean_df[col] = pd.to_numeric(clean_df[col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
 
     records = clean_df.to_dict('records')
     count = 0
     
     with get_db() as conn:
-        if not conn: return False, "لا يوجد اتصال"
+        if not conn: return False, "لا يوجد اتصال بقاعدة البيانات"
         with conn.cursor() as cur:
             for row in records:
                 cols = list(row.keys())
+                # تحويل NaN إلى None لتقبله قاعدة البيانات
                 vals = [None if pd.isna(v) or v == '' else v for v in row.values()]
                 placeholders = ', '.join(['%s'] * len(vals))
+                
+                # بناء جملة الإدخال
                 q = f"INSERT INTO {table_name} ({', '.join(cols)}) VALUES ({placeholders})"
                 try: 
                     cur.execute(q, vals)
                     count += 1
                 except Exception as e: 
                     conn.rollback()
-                    # طباعة الخطأ في الكونسول للمساعدة
                     print(f"Failed row in {table_name}: {e}")
             conn.commit()
             
@@ -204,7 +207,7 @@ def render_pulse_dashboard():
         name = name if name else sym
         price = 0.0
         
-        # محاولة إيجاد السعر
+        # محاولة إيجاد السعر من آخر تحديث
         if not trades.empty:
             row = trades[trades['symbol'] == sym]
             if not row.empty:
