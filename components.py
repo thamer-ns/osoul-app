@@ -4,7 +4,6 @@ from datetime import date
 from config import APP_NAME, APP_ICON, DEFAULT_COLORS
 
 def safe_fmt(val, suffix=""):
-    """تقريب الأرقام لمنزلتين"""
     if val is None or pd.isna(val) or val == "": return "-"
     try:
         f_val = float(val)
@@ -21,7 +20,6 @@ def render_navbar():
         
     u = st.session_state.get('username', 'مستثمر')
     
-    # الهيدر
     st.markdown(f"""
     <div class="navbar-box">
         <div style="display: flex; align-items: center; gap: 15px;">
@@ -38,29 +36,28 @@ def render_navbar():
     </div>
     """, unsafe_allow_html=True)
 
-    # القائمة
     c_menu, c_user = st.columns([3, 1])
     
     with c_menu:
+        # القوائم الرئيسية (أزرار)
         cols = st.columns(6)
         labels = ['الرئيسية', 'مضاربة', 'استثمار', 'صكوك', 'السيولة', 'التحليل']
         keys = ['home', 'spec', 'invest', 'sukuk', 'cash', 'analysis']
         
         for i, (col, label, key) in enumerate(zip(cols, labels, keys)):
             active = (st.session_state.get('page') == key)
-            btn_type = "primary" if active else "secondary"
-            if col.button(label, key=f"nav_{key}", type=btn_type, use_container_width=True):
+            if col.button(label, key=f"nav_{key}", type="primary" if active else "secondary", use_container_width=True):
                 st.session_state.page = key
                 st.rerun()
 
     with c_user:
-        # القائمة المنسدلة (بدون تعليق)
-        # نستخدم مفتاح فريد وعنوان مخفي
-        opts = ["☰ القائمة", "➕ إضافة عملية", "🧪 المختبر", "⚙️ الإعدادات", "🚪 خروج"]
+        # القائمة المنسدلة الموحدة (الإضافة، الإعدادات، الخروج)
+        # خدعة: استخدام selectbox مخفي العنوان
+        opts = ["☰ قائمة الإجراءات", "➕ إضافة عملية جديدة", "🧪 المختبر", "⚙️ الإعدادات", "🚪 خروج"]
         user_choice = st.selectbox("user_menu_hidden", opts, label_visibility="collapsed")
         
-        if user_choice != "☰ القائمة":
-            if user_choice == "➕ إضافة عملية": st.session_state.page = 'add'
+        if user_choice != "☰ قائمة الإجراءات":
+            if user_choice == "➕ إضافة عملية جديدة": st.session_state.page = 'add'
             elif user_choice == "🧪 المختبر": st.session_state.page = 'backtest'
             elif user_choice == "⚙️ الإعدادات": st.session_state.page = 'settings'
             elif user_choice == "🚪 خروج": 
@@ -78,8 +75,8 @@ def render_kpi(label, value, color_condition=None):
             
     st.markdown(f"""
     <div class="kpi-box">
-        <div style="color:{C['sub_text']}; font-size:0.9rem; font-weight:700; margin-bottom:8px;">{label}</div>
-        <div class="kpi-value" style="color: {val_c} !important; font-size: 1.6rem; font-weight: 900;">{value}</div>
+        <div style="color:{C['sub_text']}; font-size:0.9rem; font-weight:700; margin-bottom:5px;">{label}</div>
+        <div class="kpi-value" style="color: {val_c} !important; font-size: 1.5rem; font-weight: 900;">{value}</div>
     </div>
     """, unsafe_allow_html=True)
 
