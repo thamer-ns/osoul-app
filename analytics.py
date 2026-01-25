@@ -4,14 +4,40 @@ from database import fetch_table, execute_query
 from market_data import fetch_batch_data
 import streamlit as st
 import logging
+from datetime import datetime, timedelta
+import pytz # مكتبة التوقيت
 
 logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 
-# === تحديث الأسعار (القلب النابض) ===
+# === ضبط توقيت السعودية ===
+KSA_TZ = pytz.timezone('Asia/Riyadh')
+
+# === تحديث الأسعار (المقيد بالوقت والفاصل الزمني) ===
 def update_prices():
     try:
-        # جلب الرموز المفتوحة فقط لتحديثها
+        # 1. التحقق من الوقت (السوق السعودي 10:00 ص - 04:00 م)
+        now_ksa = datetime.now(KSA_TZ)
+        market_open = now_ksa.replace(hour=10, minute=0, second=0, microsecond=0)
+        market_close = now_ksa.replace(hour=16, minute=0, second=0, microsecond=0)
+        
+        # إذا كان الوقت الحالي خارج أوقات التداول
+        if not (market_open <= now_ksa <= market_close):
+            # نسمح بالتحديث مرة واحدة فقط بعد الإغلاق لضمان تثبيت سعر الإغلاق، 
+            # لكن حسب طلبك: "بعدها يكتفى بسعر الاغلاق"، لذا سنوقف التحديث تماماً.
+            # يمكنك إرجاع True وهمي لعدم إظهار خطأ للمستخدم
+            st.toast("⚠️ السوق مغلق حالياً. يتم عرض أسعار الإغلاق.", icon="🌙")
+            return False
+
+        # 2. التحقق من فاصل الـ 15 دقيقة (Throttling)
+        if 'last_update_time' in st.session_state:
+            last_run = st.session_state['last_update_time']
+            diff = (now_ksa - last_run).total_seconds() / 60
+            if diff < 15:
+                st.toast(f"⏳ تم التحديث قبل {int(diff)} دقيقة. التحديث متاح كل 15 دقيقة.", icon="wait")
+                return False
+
+        # 3. جلب الرموز المفتوحة فقط لتحديثها
         trades = fetch_table("Trades")
         wl = fetch_table("Watchlist")
         
@@ -26,11 +52,11 @@ def update_prices():
             
         if not symbols: return False
         
-        # جلب الأسعار من Yahoo Finance
+        # 4. جلب الأسعار من المصدر
         data = fetch_batch_data(list(symbols))
         if not data: return False
         
-        # التحديث في قاعدة البيانات
+        # 5. التحديث في قاعدة البيانات
         from database import get_db
         with get_db() as conn:
             with conn.cursor() as cur:
@@ -44,14 +70,18 @@ def update_prices():
                         """, (d['price'], d['prev_close'], d['year_high'], d['year_low'], str(s)))
                 conn.commit()
         
+        # تسجيل وقت التحديث الناجح
+        st.session_state['last_update_time'] = now_ksa
         st.cache_data.clear() # مسح الكاش لرؤية الأسعار الجديدة
+        st.toast("✅ تم تحديث الأسعار بنجاح", icon="🚀")
         return True
+
     except Exception as e:
         logger.error(f"Update prices error: {e}")
         return False
 
 # === الحسابات المالية الدقيقة ===
-@st.cache_data(ttl=10) # تقليل الكاش لـ 10 ثواني فقط لرؤية التحديثات
+@st.cache_data(ttl=60) # الكاش دقيقة واحدة لتسريع التصفح
 def calculate_portfolio_metrics():
     try:
         trades = fetch_table("Trades")
