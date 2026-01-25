@@ -2,56 +2,80 @@ import streamlit as st
 from datetime import date
 from config import APP_NAME, APP_ICON, DEFAULT_COLORS
 
+# دالة تقريب الأرقام (التي تحافظ على نظافة الجدول)
+def safe_fmt(val, suffix=""):
+    if val is None or pd.isna(val) or val == "": return "-"
+    try:
+        f_val = float(val)
+        return f"{f_val:,.2f}{suffix}"
+    except:
+        return str(val)
+
 def render_navbar():
     if 'custom_colors' not in st.session_state:
-        from config import DEFAULT_COLORS
-        C = DEFAULT_COLORS
-    else:
-        C = st.session_state.custom_colors
-        
+        st.session_state.custom_colors = DEFAULT_COLORS.copy()
+    C = st.session_state.custom_colors
     u = st.session_state.get('username', 'مستثمر')
-    
-    # الناف بار بتصميم الصندوق العائم
+
+    # 1. الهيدر الجميل (HTML)
     st.markdown(f"""
-    <div style="background-color: {C['card_bg']}; padding: 15px 25px; border-radius: 16px; border: 1px solid {C['border']}; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
+    <div class="navbar-container">
         <div style="display: flex; align-items: center; gap: 15px;">
-            <div style="font-size: 2.2rem; background: #EFF6FF; width:50px; height:50px; display:flex; align-items:center; justify-content:center; border-radius:12px;">{APP_ICON}</div>
+            <div style="font-size: 2.5rem; background: #EFF6FF; width:55px; height:55px; display:flex; align-items:center; justify-content:center; border-radius:14px;">{APP_ICON}</div>
             <div>
-                <h2 style="margin: 0; color: {C['primary']} !important; font-weight: 800; font-size: 1.4rem;">{APP_NAME}</h2>
-                <span style="font-size: 0.8rem; color: {C['sub_text']}; font-weight: 600;">بوابتك الذكية للاستثمار</span>
+                <h2 style="margin: 0; color: {C['primary']} !important; font-weight: 900; font-size: 1.5rem;">{APP_NAME}</h2>
+                <span style="font-size: 0.85rem; color: {C['sub_text']}; font-weight: 600;">محفظتك الاستثمارية الذكية</span>
             </div>
         </div>
-        <div style="text-align: left; background-color: {C['page_bg']}; padding: 8px 16px; border-radius: 10px; border:1px solid {C['border']};">
-            <div style="color: {C['main_text']}; font-weight: 700; font-size: 0.85rem;">👤 {u}</div>
-            <div style="font-weight: 600; color: {C['sub_text']}; font-size: 0.75rem; direction: ltr;">{date.today().strftime('%Y-%m-%d')}</div>
+        <div style="text-align: left; background-color: {C['page_bg']}; padding: 8px 18px; border-radius: 12px; border:1px solid {C['border']};">
+            <div style="color: {C['main_text']}; font-weight: 800; font-size: 0.9rem;">👋 {u}</div>
+            <div style="font-weight: 700; color: {C['sub_text']}; font-size: 0.8rem; direction: ltr;">{date.today().strftime('%Y-%m-%d')}</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # القائمة
-    cols = st.columns(11, gap="small")
-    menu_items = [
-        ('الرئيسية', 'home'), ('نبض السوق', 'pulse'), ('مضاربة', 'spec'), 
-        ('استثمار', 'invest'), ('صكوك', 'sukuk'), ('السيولة', 'cash'), 
-        ('التحليل', 'analysis'), ('المختبر', 'backtest'), ('أدوات', 'tools'),
-        ('إعدادات', 'settings'), ('خروج', 'logout')
-    ]
+    # 2. القائمة المدمجة (أزرار + قائمة منسدلة)
+    # نقسم العمود: 8 أجزاء للقوائم الرئيسية، 3 أجزاء للقائمة الشخصية المنسدلة
+    c_main, c_user = st.columns([3, 1])
     
-    for col, (label, key) in zip(cols, menu_items):
-        active = (st.session_state.get('page') == key)
-        btn_type = "primary" if active else "secondary"
-        if col.button(label, key=f"nav_{key}", type=btn_type, use_container_width=True):
-            if key == 'logout':
-                from security import logout; logout()
-            else:
-                st.session_state.page = key; st.rerun()
+    with c_main:
+        # القوائم الرئيسية (أزرار بجانب بعض)
+        cols = st.columns(7)
+        labels = ['الرئيسية', 'مضاربة', 'استثمار', 'صكوك', 'السيولة', 'التحليل', 'المختبر']
+        keys = ['home', 'spec', 'invest', 'sukuk', 'cash', 'analysis', 'backtest']
+        
+        for i, (col, label, key) in enumerate(zip(cols, labels, keys)):
+            active = (st.session_state.get('page') == key)
+            if col.button(label, key=f"nav_{key}", type="primary" if active else "secondary", use_container_width=True):
+                st.session_state.page = key
+                st.rerun()
+
+    with c_user:
+        # القائمة المنسدلة (تجمع الإعدادات والأدوات والإضافة والخروج)
+        # نستخدم selectbox كقائمة تنقل
+        action = st.selectbox(
+            "القائمة الشخصية", # العنوان مخفي بالـ CSS
+            options=["⚙️ خيارات الحساب", "➕ إضافة صفقة", "🛠️ الأدوات", "⚙️ الإعدادات", "🚪 تسجيل خروج"],
+            key="user_menu_select",
+            label_visibility="collapsed"
+        )
+        
+        # منطق التوجيه عند الاختيار
+        if action == "➕ إضافة صفقة" and st.session_state.get('page') != 'add':
+            st.session_state.page = 'add'; st.rerun()
+        elif action == "🛠️ الأدوات" and st.session_state.get('page') != 'tools':
+            st.session_state.page = 'tools'; st.rerun()
+        elif action == "⚙️ الإعدادات" and st.session_state.get('page') != 'settings':
+            st.session_state.page = 'settings'; st.rerun()
+        elif action == "🚪 تسجيل خروج":
+            from security import logout; logout()
+
     st.markdown("---")
 
 def render_kpi(label, value, color_condition=None):
     C = DEFAULT_COLORS
     val_c = C['main_text']
     
-    # تحديد لون الرقم
     if color_condition == "blue": val_c = C['primary']
     elif color_condition == "success": val_c = C['success']
     elif color_condition == "danger": val_c = C['danger']
@@ -60,34 +84,30 @@ def render_kpi(label, value, color_condition=None):
             
     st.markdown(f"""
     <div class="kpi-box">
-        <div style="color:{C['sub_text']}; font-size:0.9rem; font-weight:700; margin-bottom:8px;">{label}</div>
+        <div style="color:{C['sub_text']}; font-size:0.9rem; font-weight:800; margin-bottom:8px;">{label}</div>
         <div class="kpi-value" style="color: {val_c} !important;">{value}</div>
     </div>
     """, unsafe_allow_html=True)
 
 def render_ticker_card(symbol, name, price, change):
     C = DEFAULT_COLORS
-    try:
-        price = float(price) if price is not None else 0.0
-        change = float(change) if change is not None else 0.0
+    try: price = float(price); change = float(change)
     except: price = 0.0; change = 0.0
 
     color = C['success'] if change >= 0 else C['danger']
     arrow = "▲" if change >= 0 else "▼"
-    bg_color = "#DCFCE7" if change >= 0 else "#FEE2E2"
+    bg = "#DCFCE7" if change >= 0 else "#FEE2E2"
 
     st.markdown(f"""
-    <div style="background-color: {C['card_bg']}; padding: 16px; border-radius: 14px; border: 1px solid {C['border']}; margin-bottom: 12px; transition: transform 0.2s;">
-        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
-            <div>
-                <div style="font-weight: 800; color: {C['main_text']}; font-size: 1.1rem;">{symbol}</div>
-                <div style="font-size: 0.8rem; color: {C['sub_text']}; font-weight:600;">{name}</div>
-            </div>
-            <div style="background-color: {bg_color}; color: {color}; padding: 4px 8px; border-radius: 6px; font-weight: 800; font-size: 0.8rem; direction: ltr;">
+    <div style="background-color: {C['card_bg']}; padding: 15px; border-radius: 14px; border: 1px solid {C['border']}; margin-bottom: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.02); transition: transform 0.2s;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+            <div style="font-weight: 800; color: {C['primary']}; font-size: 1rem;">{symbol}</div>
+            <div style="background-color: {bg}; color: {color}; padding: 3px 8px; border-radius: 6px; font-weight: 800; font-size: 0.8rem; direction: ltr;">
                 {change:.2f}% {arrow}
             </div>
         </div>
-        <div style="font-size: 1.6rem; font-weight: 900; color: {C['main_text']}; letter-spacing: -0.5px;">{price:,.2f}</div>
+        <div style="font-size: 0.85rem; color: {C['sub_text']}; margin-bottom: 5px; font-weight: 600;">{name}</div>
+        <div style="font-size: 1.5rem; font-weight: 900; color: {C['main_text']}; direction: ltr;">{price:,.2f}</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -106,37 +126,33 @@ def render_table(df, cols_def):
         is_closed = status_val in ['close', 'sold', 'مغلقة', 'مباعة']
         
         for k, _ in cols_def:
-            val = row.get(k, "-")
-            disp = val
+            val = row.get(k)
             
-            # تنسيقات مخصصة
-            if 'date' in k and val: 
-                disp = f"<span style='color:{C['sub_text']}; font-family:monospace;'>{str(val)[:10]}</span>"
-            
-            elif k == 'status':
-                bg, fg, txt = ("#F3F4F6", "#4B5563", "مغلقة") if is_closed else ("#DCFCE7", "#166534", "مفتوحة")
-                disp = f"<span style='background:{bg}; color:{fg}; padding:4px 10px; border-radius:8px; font-size:0.75rem; font-weight:800;'>{txt}</span>"
-            
-            # === إضافة net_sales و realized_gain للقائمة ===
-            elif k in ['gain', 'gain_pct', 'daily_change', 'return_pct', 'net_sales', 'realized_gain', 'amount']:
-                try:
-                    num_val = float(val)
-                    c = C['success'] if num_val >= 0 else C['danger']
-                    suffix = "%" if 'pct' in k or 'change' in k else ""
-                    # إضافة سهم للأرباح
-                    if 'pct' in k:
-                        disp = f"<span style='color:{c}; direction:ltr; font-weight:bold; background:{c}15; padding:2px 6px; border-radius:4px;'>{num_val:,.2f}{suffix}</span>"
+            # --- معالجة القيم الفارغة ---
+            if pd.isna(val) or val == "" or val is None:
+                disp = "<span style='color:#CBD5E1; font-style:italic; font-size:0.85rem;'>غير موجود</span>"
+            else:
+                disp = val
+                
+                # تنسيقات خاصة
+                if 'date' in k: 
+                    disp = f"<span style='color:{C['sub_text']}; font-family:monospace; font-weight:600;'>{str(val)[:10]}</span>"
+                
+                elif k == 'status':
+                    bg, fg, txt = ("#F1F5F9", "#64748B", "مغلقة") if is_closed else ("#DCFCE7", "#166534", "مفتوحة")
+                    disp = f"<span style='background:{bg}; color:{fg}; padding:5px 12px; border-radius:8px; font-size:0.8rem; font-weight:800;'>{txt}</span>"
+                
+                elif isinstance(val, (int, float)):
+                    # التقريب + التلوين
+                    f_val = f"{val:,.2f}"
+                    if k in ['gain', 'gain_pct', 'daily_change', 'return_pct', 'net_sales', 'realized_gain', 'amount']:
+                        c = C['success'] if val >= 0 else C['danger']
+                        suffix = "%" if 'pct' in k or 'change' in k else ""
+                        disp = f"<span style='color:{c}; direction:ltr; font-weight:bold;'>{f_val}{suffix}</span>"
+                    elif k == 'quantity':
+                        disp = f"<span style='font-weight:800;'>{val:,.0f}</span>"
                     else:
-                        disp = f"<span style='color:{c}; direction:ltr; font-weight:bold;'>{num_val:,.2f}</span>"
-                except: disp = val
-
-            elif k in ['market_value', 'total_cost', 'entry_price', 'current_price', 'exit_price']:
-                try: disp = f"{float(val):,.2f}"
-                except: disp = val
-            
-            elif k == 'quantity':
-                try: disp = f"<span style='font-weight:800;'>{float(val):,.0f}</span>"
-                except: disp = val
+                        disp = f"<span style='direction:ltr; font-weight:600;'>{f_val}</span>"
 
             cells += f"<td>{disp}</td>"
         rows_html += f"<tr>{cells}</tr>"
