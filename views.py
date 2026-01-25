@@ -5,13 +5,13 @@ from datetime import date
 import time
 
 # === الاستيرادات ===
-from config import DEFAULT_COLORS, BACKUP_DIR
+from config import DEFAULT_COLORS
 from components import render_navbar, render_kpi, render_table, render_ticker_card, safe_fmt
 from analytics import (calculate_portfolio_metrics, update_prices, generate_equity_curve, run_backtest)
-from database import execute_query, fetch_table, get_db, clear_all_data
+from database import execute_query, fetch_table, get_db
 from market_data import get_static_info, get_tasi_data, get_chart_history
 from data_source import get_company_details
-from charts import view_advanced_chart
+from charts import view_advanced_chart 
 
 try: from financial_analysis import get_fundamental_ratios, render_financial_dashboard_ui
 except ImportError: 
@@ -44,7 +44,7 @@ def view_dashboard(fin):
     
     st.markdown("---")
     crv = generate_equity_curve(fin['all_trades'])
-    if not crv.empty: st.plotly_chart(px.line(crv, x='date', y='cumulative_invested', title="نمو المحفظة"), use_container_width=True)
+    if not crv.empty: st.plotly_chart(px.line(crv, x='date', y='cumulative_invested', title=""), use_container_width=True)
 
 def render_pulse_dashboard():
     st.header("💓 نبض السوق")
@@ -108,31 +108,26 @@ def view_portfolio(fin, page_key):
     t1, t2, t3 = st.tabs(["الأسهم الحالية", "تحليل الأداء", "الأرشيف"])
     with t1:
         if not open_df.empty:
-            # === الفرز البسيط (بدون قوائم مزعجة) ===
-            # فرز تلقائي بالأحدث، مع خيار بسيط إذا أراد المستخدم
+            # === الفرز البسيط ===
             c_sort, _ = st.columns([1, 4])
             with c_sort:
-                sort_opt = st.radio("sort", ["الأحدث", "الأعلى ربحاً"], horizontal=True, label_visibility="collapsed")
+                st.markdown("**ترتيب:**")
+                sort_opt = st.radio("sort_r", ["الأحدث", "الأعلى ربحاً"], horizontal=True, label_visibility="collapsed")
             
-            if sort_opt == "الأعلى ربحاً":
-                open_df = open_df.sort_values(by="gain", ascending=False)
-            else:
-                open_df = open_df.sort_values(by="date", ascending=False)
+            if sort_opt == "الأعلى ربحاً": open_df = open_df.sort_values(by="gain", ascending=False)
+            else: open_df = open_df.sort_values(by="date", ascending=False)
 
             render_table(open_df, COLS_FULL)
             
             with st.expander("🔻 بيع سهم"):
                 with st.form("sell"):
                     c1,c2 = st.columns(2)
-                    st.markdown("**اختر السهم:**")
-                    s = c1.selectbox("s", open_df['symbol'].unique(), label_visibility="collapsed")
-                    st.markdown("**سعر البيع:**")
-                    p = c2.number_input("p", min_value=0.0, label_visibility="collapsed")
-                    st.markdown("**تاريخ البيع:**")
-                    d = st.date_input("d", date.today(), label_visibility="collapsed")
-                    if st.form_submit_button("تأكيد البيع"):
+                    st.markdown("**السهم:**"); s = c1.selectbox("s", open_df['symbol'].unique(), label_visibility="collapsed")
+                    st.markdown("**سعر البيع:**"); p = c2.number_input("p", min_value=0.0, label_visibility="collapsed")
+                    st.markdown("**التاريخ:**"); d = st.date_input("d", date.today(), label_visibility="collapsed")
+                    if st.form_submit_button("تأكيد"):
                         execute_query("UPDATE Trades SET status='Close', exit_price=%s, exit_date=%s WHERE symbol=%s AND strategy=%s AND status='Open'", (p, str(d), s, ts))
-                        st.success("تم البيع"); time.sleep(0.5); st.rerun()
+                        st.success("تم"); time.sleep(0.5); st.rerun()
         else: st.info("لا توجد أسهم حالية")
     
     with t2:
@@ -154,7 +149,6 @@ def view_portfolio(fin, page_key):
 
 def view_cash_log():
     st.header("💵 سجل السيولة")
-    # للعرض فقط كما طلبت
     fin = calculate_portfolio_metrics()
     c1, c2, c3 = st.columns(3)
     net = fin['deposits']['amount'].sum() - fin['withdrawals']['amount'].sum()
@@ -163,20 +157,17 @@ def view_cash_log():
     with c3: render_kpi("صافي التمويل", safe_fmt(net), "blue")
     st.markdown("---")
 
-    t1, t2, t3 = st.tabs(["سجل الإيداعات", "سجل السحوبات", "سجل العوائد"])
+    t1, t2, t3 = st.tabs(["الإيداعات", "السحوبات", "العوائد"])
     cols = [('date', 'التاريخ'), ('amount', 'المبلغ'), ('note', 'ملاحظات')]
-    
     with t1: render_table(fin['deposits'].sort_values('date', ascending=False), cols)
     with t2: render_table(fin['withdrawals'].sort_values('date', ascending=False), cols)
     with t3: render_table(fin['returns'].sort_values('date', ascending=False), [('date','التاريخ'), ('symbol','الرمز'), ('amount','المبلغ'), ('note','النوع')])
 
 def view_add_operations():
-    # صفحة موحدة للإضافة
+    # === الصفحة الموحدة للإضافة ===
     st.header("➕ مركز العمليات")
-    
     tab1, tab2 = st.tabs(["📈 تسجيل صفقة (أسهم)", "💰 تسجيل حركة مالية (كاش)"])
     
-    # --- تبويب الصفقات ---
     with tab1:
         with st.form("add_trade"):
             c1, c2 = st.columns(2)
@@ -191,49 +182,63 @@ def view_add_operations():
                     cn, sec = get_company_details(sym)
                     at = "Sukuk" if strat == "صكوك" else "Stock"
                     execute_query("INSERT INTO Trades (symbol, company_name, sector, asset_type, date, quantity, entry_price, strategy, status, current_price) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'Open', %s)", (sym, cn, sec, at, str(dt), qty, price, strat, price))
-                    st.success("تم الحفظ بنجاح"); st.cache_data.clear()
-                else: st.error("تأكد من البيانات")
+                    st.success("تم الحفظ"); st.cache_data.clear()
+                else: st.error("بيانات ناقصة")
 
-    # --- تبويب السيولة ---
     with tab2:
-        st.info("سجل هنا الإيداعات البنكية، السحوبات، أو توزيعات الأرباح")
         with st.form("add_cash"):
             c1, c2 = st.columns(2)
-            st.markdown("**نوع العملية:**")
-            op_type = c1.selectbox("op_t", ["إيداع نقدي", "سحب نقدي", "توزيعات/عوائد"], label_visibility="collapsed")
-            st.markdown("**المبلغ:**")
-            amount = c2.number_input("op_a", min_value=0.0, step=100.0, label_visibility="collapsed")
-            
+            st.markdown("**نوع العملية:**"); op_type = c1.selectbox("op_t", ["إيداع نقدي", "سحب نقدي", "توزيعات"], label_visibility="collapsed")
+            st.markdown("**المبلغ:**"); amount = c2.number_input("op_a", min_value=0.0, step=100.0, label_visibility="collapsed")
             c3, c4 = st.columns(2)
-            st.markdown("**التاريخ:**")
-            op_date = c3.date_input("op_d", date.today(), label_visibility="collapsed")
-            st.markdown("**ملاحظة / الرمز (للعوائد):**")
-            note = c4.text_input("op_n", label_visibility="collapsed")
-            
+            st.markdown("**التاريخ:**"); op_date = c3.date_input("op_d", date.today(), label_visibility="collapsed")
+            st.markdown("**ملاحظة/رمز:**"); note = c4.text_input("op_n", label_visibility="collapsed")
             if st.form_submit_button("حفظ العملية"):
                 if amount > 0:
-                    if op_type == "إيداع نقدي":
-                        execute_query("INSERT INTO Deposits (date, amount, note) VALUES (%s, %s, %s)", (str(op_date), amount, note))
-                    elif op_type == "سحب نقدي":
-                        execute_query("INSERT INTO Withdrawals (date, amount, note) VALUES (%s, %s, %s)", (str(op_date), amount, note))
-                    else: # عوائد
-                        # محاولة استنتاج اسم الشركة إذا كان الملاحظة رمزاً
-                        cn = ""
-                        if note: cn, _ = get_company_details(note)
+                    if op_type == "إيداع نقدي": execute_query("INSERT INTO Deposits (date, amount, note) VALUES (%s, %s, %s)", (str(op_date), amount, note))
+                    elif op_type == "سحب نقدي": execute_query("INSERT INTO Withdrawals (date, amount, note) VALUES (%s, %s, %s)", (str(op_date), amount, note))
+                    else: 
+                        cn, _ = get_company_details(note)
                         execute_query("INSERT INTO ReturnsGrants (date, symbol, company_name, amount, note) VALUES (%s, %s, %s, %s, %s)", (str(op_date), note, cn, amount, "توزيعات"))
-                    st.success("تم تسجيل العملية"); st.rerun()
-                else: st.error("المبلغ يجب أن يكون أكبر من صفر")
+                    st.success("تم التسجيل"); st.rerun()
 
 def view_analysis(fin):
-    view_advanced_chart(fin)
+    st.header("🔬 مركز التحليل")
+    trades = fin['all_trades']
+    wl = fetch_table("Watchlist")
+    symbols = list(set(trades['symbol'].unique().tolist() + wl['symbol'].unique().tolist())) if not trades.empty else []
+    
+    c1, c2 = st.columns([1, 2])
+    with c1: 
+        st.markdown("**بحث:**")
+        ns = st.text_input("s_search", label_visibility="collapsed")
+    if ns and ns not in symbols: symbols.insert(0, ns)
+    
+    with c2:
+        st.markdown("**اختر الشركة:**")
+        sym = st.selectbox("s_select", symbols, label_visibility="collapsed") if symbols else None
+    
+    if sym:
+        n, s = get_company_details(sym)
+        st.markdown(f"### {n} ({sym})")
+        t1, t2, t3, t4, t5 = st.tabs(["📊 المؤشرات", "📑 القوائم", "📝 الأطروحة", "📈 الشارت", "🏛️ كلاسيكي"])
+        with t1:
+            d = get_fundamental_ratios(sym)
+            c1,c2 = st.columns([1,3])
+            c1.metric("التقييم", f"{d['Score']}/10")
+            render_financial_dashboard_ui(sym)
+        with t2: st.info("البيانات المالية")
+        with t3: st.info("الأطروحة")
+        with t4: view_advanced_chart(sym)
+        with t5: st.info("التحليل الكلاسيكي")
 
 def view_backtester_ui(fin):
-    st.header("🧪 مختبر الاستراتيجيات")
+    st.header("🧪 المختبر")
     c1, c2, c3 = st.columns(3)
     with c1: 
         st.markdown("**السهم:**"); sym = st.selectbox("bs", list(set(fin['all_trades']['symbol'].unique().tolist()+["1120"])), label_visibility="collapsed")
     with c2: 
-        st.markdown("**الاستراتيجية:**"); strat = st.selectbox("bst", ["Trend Follower", "Sniper"], label_visibility="collapsed")
+        st.markdown("**استراتيجية:**"); strat = st.selectbox("bst", ["Trend Follower", "Sniper"], label_visibility="collapsed")
     with c3: 
         st.markdown("**رأس المال:**"); cap = st.number_input("bc", 100000, label_visibility="collapsed")
     if st.button("🚀 تشغيل"):
@@ -250,9 +255,7 @@ def view_settings():
     st.header("⚙️ الإعدادات")
     with st.expander("📥 استيراد بيانات (Excel/CSV)"):
         f = st.file_uploader("اختر الملف", accept_multiple_files=False)
-        if f and st.button("بدء الاستيراد"):
-            st.info("الاستيراد جاهز")
-    # تم حذف خيارات الحذف كما طلبت
+        if f and st.button("بدء الاستيراد"): st.info("تم")
 
 def view_sukuk_portfolio(fin):
     st.header("📜 الصكوك")
@@ -265,7 +268,7 @@ def view_sukuk_portfolio(fin):
 def view_tools():
     st.header("🛠️ الأدوات")
     fin = calculate_portfolio_metrics()
-    st.info(f"الزكاة التقديرية: {safe_fmt(fin['market_val_open']*0.025775)} ريال")
+    st.info(f"الزكاة: {safe_fmt(fin['market_val_open']*0.025775)}")
 
 def router():
     render_navbar()
@@ -281,7 +284,7 @@ def router():
     elif pg == 'backtest': view_backtester_ui(fin)
     elif pg == 'tools': view_tools()
     elif pg == 'settings': view_settings()
-    elif pg == 'add': view_add_operations() # استخدام الصفحة الموحدة الجديدة
+    elif pg == 'add': view_add_operations()
     elif pg == 'update': 
         with st.spinner("تحديث..."): update_prices()
         st.session_state.page='home'; st.rerun()
