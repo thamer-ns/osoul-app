@@ -1,139 +1,135 @@
 import pandas as pd
 import numpy as np
-from database import fetch_table, execute_query
-from market_data import fetch_batch_data
-import streamlit as st
+import yfinance as yf
+from datetime import datetime, timedelta
+from database import fetch_table, execute_query, get_db
 import logging
 
 logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 
-@st.cache_data(ttl=60)
-def calculate_portfolio_metrics():
-    try:
-        trades = fetch_table("Trades")
-        dep = fetch_table("Deposits")
-        wit = fetch_table("Withdrawals")
-        ret = fetch_table("ReturnsGrants")
-
-        expected_cols = [
-            'symbol', 'strategy', 'status', 'market_value', 'total_cost', 
-            'gain', 'gain_pct', 'sector', 'company_name', 'date', 'exit_date', 
-            'quantity', 'entry_price', 'exit_price', 'current_price', 
-            'prev_close', 'daily_change', 'dividend_yield', 'asset_type',
-            'year_high', 'year_low', 'weight', 'projected_annual_income'
-        ]
-
-        if trades.empty:
-            return {
-                "cost_open": 0, "market_val_open": 0, "cash": 0, 
-                "all_trades": pd.DataFrame(columns=expected_cols), 
-                "unrealized_pl": 0, "realized_pl": 0, 
-                "total_deposited": 0, "total_withdrawn": 0, "total_returns": 0,
-                "deposits": dep, "withdrawals": wit, "returns": ret
-            }
-
-        for col in expected_cols:
-            if col not in trades.columns:
-                trades[col] = 0.0 if col not in ['symbol', 'strategy', 'status', 'sector', 'company_name', 'date', 'exit_date', 'asset_type'] else None
-
-        trades['exit_price'] = pd.to_numeric(trades['exit_price'], errors='coerce').fillna(0.0)
-        condition_closed = (trades['exit_price'] > 0) | (trades['status'].astype(str).str.lower().isin(['close', 'sold', 'مغلقة', 'مباعة']))
-        trades['status'] = np.where(condition_closed, 'Close', 'Open')
-
-        num_cols = ['quantity', 'entry_price', 'current_price', 'prev_close']
-        for c in num_cols:
-            trades[c] = pd.to_numeric(trades[c], errors='coerce').fillna(0.0)
-
-        trades['total_cost'] = (trades['quantity'] * trades['entry_price'])
-        is_closed = trades['status'] == 'Close'
-        trades.loc[is_closed, 'current_price'] = trades.loc[is_closed, 'exit_price']
-        
-        trades['market_value'] = (trades['quantity'] * trades['current_price'])
-        trades['gain'] = trades['market_value'] - trades['total_cost']
-        
-        trades['gain_pct'] = 0.0
-        mask_nonzero = trades['total_cost'] != 0
-        trades.loc[mask_nonzero, 'gain_pct'] = (trades.loc[mask_nonzero, 'gain'] / trades.loc[mask_nonzero, 'total_cost']) * 100
-
-        open_trades = trades[~is_closed]
-        closed_trades = trades[is_closed]
-
-        cost_open = open_trades['total_cost'].sum()
-        market_val_open = open_trades['market_value'].sum()
-        
-        sales_closed = closed_trades['market_value'].sum()
-        cost_closed = closed_trades['total_cost'].sum()
-        realized_pl = sales_closed - cost_closed
-
-        total_dep = dep['amount'].sum() if not dep.empty else 0
-        total_wit = wit['amount'].sum() if not wit.empty else 0
-        total_ret = ret['amount'].sum() if not ret.empty else 0
-        
-        total_buy_cost = trades['total_cost'].sum()
-        cash_available = (total_dep + total_ret + sales_closed) - (total_wit + total_buy_cost)
-
-        return {
-            "cost_open": cost_open,
-            "market_val_open": market_val_open,
-            "unrealized_pl": market_val_open - cost_open,
-            "realized_pl": realized_pl,
-            "cash": cash_available,
-            "total_deposited": total_dep,
-            "total_withdrawn": total_wit,
-            "total_returns": total_ret,
-            "all_trades": trades,
-            "deposits": dep,
-            "withdrawals": wit,
-            "returns": ret
-        }
-
-    except Exception as e:
-        logger.error(f"Error in metrics: {str(e)}")
-        return {
-            "cost_open": 0, "market_val_open": 0, "cash": 0, 
-            "all_trades": pd.DataFrame(columns=expected_cols), 
-            "unrealized_pl": 0, "realized_pl": 0, 
-            "total_deposited": 0, "total_withdrawn": 0, "total_returns": 0,
-            "deposits": dep, "withdrawals": wit, "returns": ret
-        }
-
-def update_prices():
-    try:
-        trades = fetch_table("Trades")
-        wl = fetch_table("Watchlist")
-        if trades.empty and wl.empty: return False
-        
-        symbols = set()
-        if not trades.empty:
-            symbols.update(trades.loc[trades['status'] != 'Close', 'symbol'].dropna().unique())
-        if not wl.empty:
-            symbols.update(wl['symbol'].dropna().unique())
-            
-        if not symbols: return False
-        
-        data = fetch_batch_data(list(symbols))
-        if not data: return False
-        
-        from database import get_db
-        with get_db() as conn:
+# --- 1. التحليل المالي السريع (SQL Optimization) ---
+def get_portfolio_summary_sql():
+    """حساب الإجماليات مباشرة من قاعدة البيانات لتسريع الأداء"""
+    query = """
+    SELECT 
+        (SELECT COALESCE(SUM(amount), 0) FROM Deposits) as total_dep,
+        (SELECT COALESCE(SUM(amount), 0) FROM Withdrawals) as total_wit,
+        (SELECT COALESCE(SUM(amount), 0) FROM ReturnsGrants) as total_ret,
+        (SELECT COALESCE(SUM((exit_price - entry_price) * quantity), 0) FROM Trades WHERE status = 'Close') as realized_pl,
+        (SELECT COALESCE(SUM(quantity * entry_price), 0) FROM Trades WHERE status = 'Open') as cost_open
+    """
+    with get_db() as conn:
+        if conn:
             with conn.cursor() as cur:
-                for s, d in data.items():
-                    if d['price'] > 0:
-                        cur.execute("""
-                            UPDATE Trades 
-                            SET current_price=%s, prev_close=%s, year_high=%s, year_low=%s, dividend_yield=%s 
-                            WHERE symbol=%s AND status != 'Close'
-                        """, (d['price'], d['prev_close'], d['year_high'], d['year_low'], d['dividend_yield'], s))
-                conn.commit()
-        
-        st.cache_data.clear()
-        return True
-    except Exception as e:
-        logger.error(f"Update prices error: {e}")
-        return False
+                cur.execute(query)
+                row = cur.fetchone()
+                if row:
+                    return {
+                        "total_deposited": row[0],
+                        "total_withdrawn": row[1],
+                        "total_returns": row[2],
+                        "realized_pl": row[3],
+                        "cost_open": row[4]
+                    }
+    return {"total_deposited": 0, "total_withdrawn": 0, "total_returns": 0, "realized_pl": 0, "cost_open": 0}
 
-def create_smart_backup(): return True
+# --- 2. المحرك الأساسي ---
+def calculate_portfolio_metrics():
+    # 1. جلب الإجماليات بسرعة البرق من SQL
+    sql_sums = get_portfolio_summary_sql()
+    
+    # 2. جلب جداول البيانات للعرض (نحتاج التفاصيل للجدول فقط)
+    trades = fetch_table("Trades")
+    dep = fetch_table("Deposits")
+    wit = fetch_table("Withdrawals")
+    ret = fetch_table("ReturnsGrants")
+    
+    # تحسين: إذا لم تكن هناك صفقات، نعود مبكراً
+    if trades.empty:
+        return {
+            **sql_sums, "market_val_open": 0, "unrealized_pl": 0, "cash": 0,
+            "all_trades": pd.DataFrame(), "deposits": dep, "withdrawals": wit, "returns": ret
+        }
+
+    # معالجة الصفقات المفتوحة والمغلقة
+    trades['current_price'] = pd.to_numeric(trades['current_price'], errors='coerce').fillna(0.0)
+    trades['entry_price'] = pd.to_numeric(trades['entry_price'], errors='coerce').fillna(0.0)
+    
+    # حساب القيم للسجلات المفتوحة فقط في بايثون (أقل تكلفة من الجدول كامل)
+    open_trades = trades[trades['status'] == 'Open'].copy()
+    market_val_open = (open_trades['quantity'] * open_trades['current_price']).sum()
+    unrealized_pl = market_val_open - sql_sums['cost_open']
+    
+    # حساب الكاش المتوفر
+    # الكاش = (إيداعات + عوائد + مبيعات الأسهم) - (سحوبات + مشتريات الأسهم)
+    # معادلة مبسطة: الكاش = (صافي التمويل) + (الربح المحقق) + (رأس المال المسترد من البيع) - (تكلفة الشراء المفتوح)
+    # الأسهل: نعتمد على حركة الأموال المسجلة لو أردنا دقة، أو المعادلة التالية:
+    
+    total_sales_value = trades[trades['status'] == 'Close'].apply(lambda x: x['quantity'] * x['exit_price'], axis=1).sum()
+    total_buy_cost_all = (trades['quantity'] * trades['entry_price']).sum()
+    
+    cash = (sql_sums['total_deposited'] + sql_sums['total_ret'] + total_sales_value) - (sql_sums['total_withdrawn'] + total_buy_cost_all)
+
+    return {
+        **sql_sums,
+        "market_val_open": market_val_open,
+        "unrealized_pl": unrealized_pl,
+        "cash": cash,
+        "all_trades": trades,
+        "deposits": dep,
+        "withdrawals": wit,
+        "returns": ret
+    }
+
+# --- 3. مقاييس المخاطر المتقدمة (Missing Features) ---
+def calculate_risk_metrics(symbol_list):
+    """حساب Beta و Max Drawdown للمحفظة"""
+    if not symbol_list: return {"beta": 0, "sharpe": 0, "max_drawdown": 0}
+    
+    try:
+        # نحتاج بيانات تاريخية للسهم وللسوق (تاسي)
+        tickers = [f"{s.replace('.SR','').strip()}.SR" for s in symbol_list]
+        tickers.append("^TASI.SR")
+        
+        # تحميل بيانات سنة
+        data = yf.download(tickers, period="1y", progress=False)['Close']
+        
+        # حساب العوائد اليومية
+        returns = data.pct_change().dropna()
+        
+        if returns.empty: return {"beta": 0, "sharpe": 0, "max_drawdown": 0}
+
+        # 1. حساب Beta (حساسية المحفظة للسوق)
+        # نفترض المحفظة متساوية الأوزان للتبسيط هنا
+        port_returns = returns.drop(columns=["^TASI.SR"], errors='ignore').mean(axis=1)
+        market_returns = returns["^TASI.SR"]
+        
+        covariance = np.cov(port_returns, market_returns)[0][1]
+        market_variance = np.var(market_returns)
+        beta = covariance / market_variance if market_variance != 0 else 0
+        
+        # 2. Sharpe Ratio (العائد مقابل المخاطرة)
+        risk_free_rate = 0.05 / 252 # فرضية 5% سنوياً
+        excess_returns = port_returns - risk_free_rate
+        sharpe = (excess_returns.mean() / excess_returns.std()) * np.sqrt(252) if excess_returns.std() != 0 else 0
+        
+        # 3. Max Drawdown
+        cumulative = (1 + port_returns).cumprod()
+        peak = cumulative.cummax()
+        drawdown = (cumulative - peak) / peak
+        max_dd = drawdown.min() * 100
+        
+        return {
+            "beta": round(beta, 2),
+            "sharpe": round(sharpe, 2),
+            "max_drawdown": round(max_dd, 2)
+        }
+    except Exception as e:
+        logger.error(f"Risk Metrics Error: {e}")
+        return {"beta": 0, "sharpe": 0, "max_drawdown": 0}
+
+# دالة لتوليد منحنى السيولة (موجودة سابقاً لكن تأكد من وجودها)
 def generate_equity_curve(trades_df):
     if trades_df.empty: return pd.DataFrame()
     df = trades_df[['date', 'total_cost']].copy()
@@ -141,4 +137,28 @@ def generate_equity_curve(trades_df):
     df = df.sort_values('date')
     df['cumulative_invested'] = df['total_cost'].cumsum()
     return df
-def calculate_historical_drawdown(df): return pd.DataFrame()
+
+# دالة تحديث الأسعار (ضرورية)
+def update_prices():
+    from market_data import fetch_batch_data
+    trades = fetch_table("Trades")
+    wl = fetch_table("Watchlist")
+    
+    symbols = set()
+    if not trades.empty: symbols.update(trades[trades['status']=='Open']['symbol'].unique())
+    if not wl.empty: symbols.update(wl['symbol'].unique())
+    
+    if not symbols: return
+    
+    data = fetch_batch_data(list(symbols))
+    if not data: return
+    
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            for s, d in data.items():
+                if d['price'] > 0:
+                    cur.execute("""
+                        UPDATE Trades SET current_price=%s, prev_close=%s 
+                        WHERE symbol=%s AND status='Open'
+                    """, (d['price'], d['prev_close'], s))
+            conn.commit()
