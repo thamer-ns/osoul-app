@@ -347,7 +347,7 @@ def view_settings():
             'InvestmentThesis': 'InvestmentThesis'
         }
 
-        # الدالة السحرية لحل مشكلة قوقل شيت العربية واستخراج البيانات من ملف الإكسل المجمع
+        # الدالة السحرية لحل مشكلة الترميز (Unicode) والفاصلة العربية
         def clean_data_for_import(df):
             if 'id' in df.columns: df = df.drop(columns=['id'])
             
@@ -372,6 +372,7 @@ def view_settings():
                         q = f"INSERT INTO {table_name} ({', '.join(cols)}) VALUES ({', '.join(['%s']*len(vals))})"
                         try: cur.execute(q, vals)
                         except Exception as e: 
+                            # تجاهل أخطاء التكرار، لكن سجلها في الكونسول
                             print(f"Skipped row: {e}")
                             conn.rollback()
                     conn.commit()
@@ -381,20 +382,18 @@ def view_settings():
             try:
                 fname = file.name
                 
-                # السيناريو 1: ملف Excel مجمع (مثل backup_latest.xlsx)
+                # السيناريو 1: ملف Excel مجمع
                 if fname.endswith('.xlsx'):
                     xls = pd.ExcelFile(file)
-                    # نفحص كل ورقة في الملف
                     for sheet_name in xls.sheet_names:
-                        # هل اسم الورقة يطابق اسم جدول معروف؟
-                        if sheet_name in table_map: # لاحظ: table_map Keys هي نفسها Values في حالتك
+                        if sheet_name in table_map:
                             df = pd.read_excel(xls, sheet_name)
                             df_clean = clean_data_for_import(df)
                             if insert_df_to_db(df_clean, sheet_name):
                                 success_count += 1
-                                status.text(f"✅ تم استيراد الورقة: {sheet_name} من الملف {fname}")
+                                status.text(f"✅ تم استيراد الورقة: {sheet_name}")
                 
-                # السيناريو 2: ملف CSV أو Excel مفرد باسم محدد
+                # السيناريو 2: ملف CSV (مع معالجة الترميز)
                 else:
                     target_table = None
                     for keyword, table_name in table_map.items():
@@ -403,21 +402,32 @@ def view_settings():
                             break
                     
                     if target_table:
-                        if fname.endswith('.csv'):
-                            try: df = pd.read_csv(file)
-                            except: 
+                        # محاولة قراءة CSV بعدة ترميزات لتجنب خطأ Unicode
+                        encodings = ['utf-8', 'utf-8-sig', 'cp1256', 'iso-8859-1']
+                        df = None
+                        for enc in encodings:
+                            try:
                                 file.seek(0)
-                                df = pd.read_csv(file, sep=';')
-                        else: # xlsx مفرد (نادر)
-                            df = pd.read_excel(file)
+                                df = pd.read_csv(file, encoding=enc)
+                                break
+                            except: continue
                         
-                        df_clean = clean_data_for_import(df)
-                        if insert_df_to_db(df_clean, target_table):
-                            success_count += 1
-                            status.text(f"✅ تم استيراد الملف: {fname}")
+                        # محاولة أخيرة بفاصل منقوطة
+                        if df is None:
+                            try:
+                                file.seek(0)
+                                df = pd.read_csv(file, sep=';', encoding='utf-8-sig')
+                            except: pass
+
+                        if df is not None:
+                            df_clean = clean_data_for_import(df)
+                            if insert_df_to_db(df_clean, target_table):
+                                success_count += 1
+                                status.text(f"✅ تم استيراد الملف: {fname}")
+                        else:
+                            status.error(f"❌ فشل قراءة الملف {fname} بكل الترميزات")
                     else:
-                        # تجاهل الملفات غير المعروفة بصمت أو تحذير خفيف
-                        pass
+                        pass # ملف غير معروف
             
             except Exception as e:
                 status.error(f"❌ خطأ في الملف {file.name}: {e}")
