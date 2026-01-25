@@ -8,8 +8,50 @@ import logging
 logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 
-# --- دوال التحليل المالي والمحفظة ---
-@st.cache_data(ttl=60)
+# === تحديث الأسعار (القلب النابض) ===
+def update_prices():
+    try:
+        # جلب الرموز المفتوحة فقط لتحديثها
+        trades = fetch_table("Trades")
+        wl = fetch_table("Watchlist")
+        
+        symbols = set()
+        if not trades.empty:
+            # نحدث فقط الصفقات المفتوحة (Open)
+            open_symbols = trades.loc[trades['status'] == 'Open', 'symbol'].dropna().unique().tolist()
+            symbols.update(open_symbols)
+            
+        if not wl.empty:
+            symbols.update(wl['symbol'].dropna().unique().tolist())
+            
+        if not symbols: return False
+        
+        # جلب الأسعار من Yahoo Finance
+        data = fetch_batch_data(list(symbols))
+        if not data: return False
+        
+        # التحديث في قاعدة البيانات
+        from database import get_db
+        with get_db() as conn:
+            with conn.cursor() as cur:
+                for s, d in data.items():
+                    if d['price'] > 0:
+                        # تحديث السعر الحالي والإغلاق السابق
+                        cur.execute("""
+                            UPDATE Trades 
+                            SET current_price=%s, prev_close=%s, year_high=%s, year_low=%s 
+                            WHERE symbol=%s AND status = 'Open'
+                        """, (d['price'], d['prev_close'], d['year_high'], d['year_low'], str(s)))
+                conn.commit()
+        
+        st.cache_data.clear() # مسح الكاش لرؤية الأسعار الجديدة
+        return True
+    except Exception as e:
+        logger.error(f"Update prices error: {e}")
+        return False
+
+# === الحسابات المالية الدقيقة ===
+@st.cache_data(ttl=10) # تقليل الكاش لـ 10 ثواني فقط لرؤية التحديثات
 def calculate_portfolio_metrics():
     try:
         trades = fetch_table("Trades")
@@ -17,197 +59,93 @@ def calculate_portfolio_metrics():
         wit = fetch_table("Withdrawals")
         ret = fetch_table("ReturnsGrants")
 
-        expected_cols = [
-            'symbol', 'strategy', 'status', 'market_value', 'total_cost', 
-            'gain', 'gain_pct', 'sector', 'company_name', 'date', 'exit_date', 
-            'quantity', 'entry_price', 'exit_price', 'current_price', 
-            'prev_close', 'daily_change', 'dividend_yield', 'asset_type'
-        ]
-
-        if trades.empty:
-            return {
-                "cost_open": 0, "market_val_open": 0, "cash": 0, 
-                "all_trades": pd.DataFrame(columns=expected_cols), 
-                "unrealized_pl": 0, "realized_pl": 0, 
-                "total_deposited": 0, "total_withdrawn": 0, "total_returns": 0,
-                "deposits": dep, "withdrawals": wit, "returns": ret
-            }
-
-        for col in expected_cols:
-            if col not in trades.columns:
-                trades[col] = 0.0 if col not in ['symbol', 'strategy', 'status', 'sector', 'company_name', 'date', 'exit_date', 'asset_type'] else None
-
-        trades['exit_price'] = pd.to_numeric(trades['exit_price'], errors='coerce').fillna(0.0)
-        condition_closed = (trades['exit_price'] > 0) | (trades['status'].astype(str).str.lower().isin(['close', 'sold', 'مغلقة', 'مباعة']))
-        trades['status'] = np.where(condition_closed, 'Close', 'Open')
-
-        num_cols = ['quantity', 'entry_price', 'current_price']
-        for c in num_cols: trades[c] = pd.to_numeric(trades[c], errors='coerce').fillna(0.0)
-
-        trades['total_cost'] = (trades['quantity'] * trades['entry_price'])
-        is_closed = trades['status'] == 'Close'
-        trades.loc[is_closed, 'current_price'] = trades.loc[is_closed, 'exit_price']
-        trades['market_value'] = (trades['quantity'] * trades['current_price'])
-        trades['gain'] = trades['market_value'] - trades['total_cost']
-        
-        trades['gain_pct'] = 0.0
-        mask_nonzero = trades['total_cost'] != 0
-        trades.loc[mask_nonzero, 'gain_pct'] = (trades.loc[mask_nonzero, 'gain'] / trades.loc[mask_nonzero, 'total_cost']) * 100
-
-        open_trades = trades[~is_closed]
-        closed_trades = trades[is_closed]
-
-        cost_open = open_trades['total_cost'].sum()
-        market_val_open = open_trades['market_value'].sum()
-        sales_closed = closed_trades['market_value'].sum()
-        cost_closed = closed_trades['total_cost'].sum()
-        realized_pl = sales_closed - cost_closed
-
-        total_dep = dep['amount'].sum() if not dep.empty else 0
-        total_wit = wit['amount'].sum() if not wit.empty else 0
-        total_ret = ret['amount'].sum() if not ret.empty else 0
-        
-        # معادلة الكاش الدقيقة: (إيداع + توزيعات + بيع) - (سحب + شراء)
-        total_buy_cost = trades['total_cost'].sum()
-        cash_available = (total_dep + total_ret + sales_closed) - (total_wit + total_buy_cost)
-
-        return {
-            "cost_open": cost_open,
-            "market_val_open": market_val_open,
-            "unrealized_pl": market_val_open - cost_open,
-            "realized_pl": realized_pl,
-            "cash": cash_available,
-            "total_deposited": total_dep,
-            "total_withdrawn": total_wit,
-            "total_returns": total_ret,
-            "all_trades": trades,
-            "deposits": dep,
-            "withdrawals": wit,
-            "returns": ret
-        }
-
-    except Exception as e:
-        logger.error(f"Error in metrics: {str(e)}")
-        return {
+        # هيكل فارغ في حال عدم وجود بيانات
+        empty_res = {
             "cost_open": 0, "market_val_open": 0, "cash": 0, 
             "all_trades": pd.DataFrame(), "unrealized_pl": 0, "realized_pl": 0, 
             "total_deposited": 0, "total_withdrawn": 0, "total_returns": 0,
             "deposits": dep, "withdrawals": wit, "returns": ret
         }
 
-def update_prices():
-    try:
-        trades = fetch_table("Trades")
-        wl = fetch_table("Watchlist")
-        if trades.empty and wl.empty: return False
-        
-        symbols = set()
-        if not trades.empty: symbols.update(trades.loc[trades['status'] != 'Close', 'symbol'].dropna().unique())
-        if not wl.empty: symbols.update(wl['symbol'].dropna().unique())
-        if not symbols: return False
-        
-        data = fetch_batch_data(list(symbols))
-        if not data: return False
-        
-        from database import get_db
-        with get_db() as conn:
-            with conn.cursor() as cur:
-                for s, d in data.items():
-                    if d['price'] > 0:
-                        cur.execute("UPDATE Trades SET current_price=%s, prev_close=%s, year_high=%s, year_low=%s, dividend_yield=%s WHERE symbol=%s AND status != 'Close'", (d['price'], d['prev_close'], d['year_high'], d['year_low'], d['dividend_yield'], s))
-                conn.commit()
-        st.cache_data.clear()
-        return True
-    except Exception as e: return False
+        if trades.empty and dep.empty: return empty_res
 
-def create_smart_backup(): return True
+        # تحويل الأرقام (مهم جداً للحسابات)
+        num_cols = ['quantity', 'entry_price', 'current_price', 'exit_price']
+        for c in num_cols:
+            if c in trades.columns:
+                trades[c] = pd.to_numeric(trades[c], errors='coerce').fillna(0.0)
 
+        # 1. حسابات الصفقات المفتوحة
+        open_trades = trades[trades['status'] == 'Open'].copy()
+        
+        # التكلفة = الكمية * سعر الشراء
+        open_trades['total_cost'] = open_trades['quantity'] * open_trades['entry_price']
+        
+        # القيمة السوقية = الكمية * السعر الحالي (الذي يتم تحديثه)
+        open_trades['market_value'] = open_trades['quantity'] * open_trades['current_price']
+        
+        # الربح غير المحقق
+        open_trades['gain'] = open_trades['market_value'] - open_trades['total_cost']
+        
+        # المجاميع
+        cost_open = open_trades['total_cost'].sum()
+        market_val_open = open_trades['market_value'].sum()
+        unrealized_pl = market_val_open - cost_open
+
+        # 2. حسابات الصفقات المغلقة (الربح المحقق)
+        closed_trades = trades[trades['status'] == 'Close'].copy()
+        # الربح المحقق = (سعر البيع - سعر الشراء) * الكمية
+        closed_trades['realized_gain'] = (closed_trades['exit_price'] - closed_trades['entry_price']) * closed_trades['quantity']
+        realized_pl = closed_trades['realized_gain'].sum()
+
+        # 3. حساب الكاش الدقيق
+        total_dep = dep['amount'].sum() if not dep.empty else 0
+        total_wit = wit['amount'].sum() if not wit.empty else 0
+        total_ret = ret['amount'].sum() if not ret.empty else 0
+        
+        # الكاش الناتج من البيع
+        sales_cash = (closed_trades['quantity'] * closed_trades['exit_price']).sum()
+        
+        # الكاش المستهلك في الشراء (للمفتوح والمغلق)
+        total_spent = (trades['quantity'] * trades['entry_price']).sum()
+        
+        # المعادلة: الكاش = (إيداع + توزيعات + مبيعات) - (سحب + مشتريات)
+        cash_available = (total_dep + total_ret + sales_cash) - (total_wit + total_spent)
+
+        # دمج البيانات للعرض
+        trades_final = pd.concat([open_trades, closed_trades], ignore_index=True)
+
+        return {
+            "cost_open": cost_open,
+            "market_val_open": market_val_open,
+            "unrealized_pl": unrealized_pl,
+            "realized_pl": realized_pl,
+            "cash": cash_available,
+            "total_deposited": total_dep,
+            "total_withdrawn": total_wit,
+            "total_returns": total_ret,
+            "all_trades": trades_final,
+            "deposits": dep,
+            "withdrawals": wit,
+            "returns": ret
+        }
+
+    except Exception as e:
+        logger.error(f"Metrics Error: {e}")
+        return empty_res
+
+# دوال مساعدة أخرى
 def generate_equity_curve(trades_df):
     if trades_df.empty: return pd.DataFrame()
-    df = trades_df[['date', 'total_cost']].copy()
+    df = trades_df[['date', 'quantity', 'entry_price']].copy()
+    df['cost'] = df['quantity'] * df['entry_price']
     df['date'] = pd.to_datetime(df['date'])
     df = df.sort_values('date')
-    df['cumulative_invested'] = df['total_cost'].cumsum()
+    df['cumulative_invested'] = df['cost'].cumsum()
     return df
 
 def calculate_historical_drawdown(df):
-    return pd.DataFrame()
+    return pd.DataFrame() # Placeholder
 
-# --- دوال المختبر (Backtester) التي كانت مفقودة ---
-COMMISSION_RATE = 0.00155 
-
-def calculate_indicators(df):
-    df = df.copy()
-    df = df.sort_index(ascending=True)
-    df['SMA_20'] = df['Close'].rolling(window=20).mean()
-    df['SMA_50'] = df['Close'].rolling(window=50).mean()
-    delta = df['Close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / loss
-    df['RSI'] = 100 - (100 / (1 + rs))
-    return df
-
-def run_backtest(df, strategy_type, initial_capital=100000):
-    if df is None or df.empty or len(df) < 55: return None
-    df = calculate_indicators(df)
-    df['Signal'] = 0
-    
-    if strategy_type == 'Trend Follower (جون ميرفي)':
-        buy_cond = (df['Close'] > df['SMA_50']) & (df['RSI'] > 50)
-        sell_cond = (df['Close'] < df['SMA_50'])
-        df.loc[buy_cond, 'Signal'] = 1
-        df.loc[sell_cond, 'Signal'] = -1
-
-    elif strategy_type == 'Sniper (هجين)':
-        buy_cond = (df['Close'] > df['SMA_20']) & (df['Close'].shift(1) <= df['SMA_20'].shift(1))
-        sell_cond = (df['Close'] < df['SMA_20'])
-        df.loc[buy_cond, 'Signal'] = 1
-        df.loc[sell_cond, 'Signal'] = -1
-
-    cash = initial_capital
-    position_qty = 0
-    portfolio_values = []
-    trades = []
-    in_position = False
-    
-    for i in range(len(df)):
-        price = df['Close'].iloc[i]
-        date = df.index[i]
-        signal = df['Signal'].iloc[i]
-        
-        if pd.isna(price): portfolio_values.append(cash); continue
-
-        if signal == 1 and not in_position:
-            invest_amount = cash * 0.98
-            qty = int(invest_amount / (price * (1 + COMMISSION_RATE)))
-            if qty > 0:
-                trade_value = qty * price
-                commission = trade_value * COMMISSION_RATE
-                total_cost = trade_value + commission
-                if cash >= total_cost:
-                    cash -= total_cost
-                    position_qty = qty
-                    in_position = True
-                    trades.append({'التاريخ': date.strftime('%Y-%m-%d'), 'العملية': 'شراء 🟢', 'السعر': round(price, 2), 'الكمية': qty, 'العمولة': round(commission, 2), 'الرصيد': round(cash + (position_qty * price), 2)})
-            
-        elif signal == -1 and in_position:
-            sale_value = position_qty * price
-            commission = sale_value * COMMISSION_RATE
-            net_profit = sale_value - commission
-            cash += net_profit
-            trades.append({'التاريخ': date.strftime('%Y-%m-%d'), 'العملية': 'بيع 🔴', 'السعر': round(price, 2), 'الكمية': position_qty, 'العمولة': round(commission, 2), 'الرصيد': round(cash, 2)})
-            position_qty = 0
-            in_position = False
-            
-        current_equity = cash + (position_qty * price)
-        portfolio_values.append(current_equity)
-        
-    df['Portfolio_Value'] = portfolio_values
-    return {
-        'df': df,
-        'final_value': portfolio_values[-1],
-        'return_pct': ((portfolio_values[-1] - initial_capital) / initial_capital) * 100,
-        'trades_count': len(trades),
-        'trades_log': pd.DataFrame(trades)
-    }
+def create_smart_backup(): return True
+def run_backtest(*args): return None
