@@ -3,64 +3,65 @@ from datetime import date
 from config import APP_NAME, APP_ICON, DEFAULT_COLORS
 
 def render_navbar():
-    C = DEFAULT_COLORS
+    # التأكد من تحميل الألوان
+    if 'custom_colors' not in st.session_state:
+        from config import DEFAULT_COLORS
+        C = DEFAULT_COLORS
+    else:
+        C = st.session_state.custom_colors
+        
     u = st.session_state.get('username', 'مستثمر')
     
-    # === القائمة الجانبية (Sidebar) ===
-    with st.sidebar:
-        st.markdown(f"<h2 style='text-align:center; color:{C['primary']}'>{APP_ICON} {APP_NAME}</h2>", unsafe_allow_html=True)
-        st.markdown(f"<div style='text-align:center; margin-bottom:20px; color:{C['sub_text']}'>أهلاً، <b>{u}</b></div>", unsafe_allow_html=True)
-        
-        st.markdown("---")
-        
-        # القائمة المنسدلة للتنقل
-        selected_page = st.radio(
-            "تصفح الأقسام:",
-            options=['الرئيسية', 'نبض السوق', 'محفظة المضاربة', 'محفظة الاستثمار', 'محفظة الصكوك', 'سجل السيولة', 'التحليل الشامل', 'مختبر الاستراتيجيات', 'الأدوات والحاسبات', 'تسجيل عملية', 'الإعدادات', 'الملف الشخصي'],
-            index=0
-        )
-        
-        # خريطة لربط الأسماء العربية بالمفاتيح البرمجية
-        page_map = {
-            'الرئيسية': 'home',
-            'نبض السوق': 'pulse',
-            'محفظة المضاربة': 'spec',
-            'محفظة الاستثمار': 'invest',
-            'محفظة الصكوك': 'sukuk',
-            'سجل السيولة': 'cash',
-            'التحليل الشامل': 'analysis',
-            'مختبر الاستراتيجيات': 'backtest',
-            'الأدوات والحاسبات': 'tools',
-            'تسجيل عملية': 'add',
-            'الإعدادات': 'settings',
-            'الملف الشخصي': 'profile'
-        }
-        
-        # تحديث الصفحة
-        if st.session_state.get('page') != page_map[selected_page]:
-            st.session_state.page = page_map[selected_page]
-            st.rerun()
-            
-        st.markdown("---")
-        if st.button("تحديث الأسعار 🔄", use_container_width=True):
-            st.session_state.page = 'update'
-            st.rerun()
-            
-        if st.button("تسجيل الخروج 🔒", type="primary", use_container_width=True):
-            from security import logout
-            logout()
-
-    # === الشريط العلوي (فقط يعرض العنوان والتاريخ) ===
+    # === الصندوق العلوي (الهيدر) ===
     st.markdown(f"""
-    <div style="background-color: {C['card_bg']}; padding: 15px 20px; border-radius: 16px; border: 1px solid {C['border']}; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 4px 15px rgba(0,0,0,0.03);">
-        <div style="display: flex; align-items: center; gap: 10px;">
-            <span style="font-size: 1.2rem; font-weight: bold; color: {C['primary']};">{selected_page}</span>
+    <div class="navbar-box" style="background-color: {C['card_bg']}; padding: 15px 20px; border-radius: 16px; border: 1px solid {C['border']}; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 4px 15px rgba(0,0,0,0.03);">
+        <div style="display: flex; align-items: center; gap: 15px;">
+            <div style="font-size: 2.2rem;">{APP_ICON}</div>
+            <div>
+                <h2 style="margin: 0; color: {C['primary']} !important; font-weight: 900; font-size: 1.5rem;">{APP_NAME}</h2>
+                <span style="font-size: 0.8rem; color: {C['sub_text']}; font-weight: 600;">بوابتك الذكية للاستثمار</span>
+            </div>
         </div>
-        <div style="font-weight: 700; color: {C['sub_text']}; font-size: 0.9rem; direction: ltr;">
-            {date.today().strftime('%Y-%m-%d')}
+        <div style="text-align: left; background-color: {C['page_bg']}; padding: 8px 15px; border-radius: 12px;">
+            <div style="color: {C['primary']}; font-weight: 800; font-size: 0.9rem;">{u}</div>
+            <div style="font-weight: 700; color: {C['sub_text']}; font-size: 0.8rem; direction: ltr;">{date.today().strftime('%Y-%m-%d')}</div>
         </div>
     </div>
     """, unsafe_allow_html=True)
+
+    # === أزرار التنقل (القائمة الأفقية) ===
+    # زدنا عدد الأعمدة ليشمل كل الصفحات
+    cols = st.columns(11, gap="small")
+    
+    # القائمة الكاملة كما طلبت
+    menu_items = [
+        ('الرئيسية', 'home'), 
+        ('نبض السوق', 'pulse'),
+        ('مضاربة', 'spec'), 
+        ('استثمار', 'invest'), 
+        ('صكوك', 'sukuk'), 
+        ('السيولة', 'cash'), 
+        ('التحليل', 'analysis'),
+        ('المختبر', 'backtest'), 
+        ('أدوات', 'tools'),
+        ('إعدادات', 'settings'), 
+        ('خروج', 'logout')
+    ]
+    
+    for col, (label, key) in zip(cols, menu_items):
+        active = (st.session_state.get('page') == key)
+        # الزر النشط بلون مميز
+        btn_type = "primary" if active else "secondary"
+        
+        if col.button(label, key=f"nav_{key}", type=btn_type, use_container_width=True):
+            if key == 'logout':
+                from security import logout
+                logout()
+            else:
+                st.session_state.page = key
+                st.rerun()
+                
+    st.markdown("---")
 
 def render_kpi(label, value, color_condition=None):
     C = DEFAULT_COLORS
@@ -82,6 +83,7 @@ def render_table(df, cols_def):
         st.info("لا توجد بيانات للعرض")
         return
 
+    C = DEFAULT_COLORS
     headers = "".join([f"<th>{label}</th>" for _, label in cols_def])
     rows_html = ""
     
@@ -94,20 +96,32 @@ def render_table(df, cols_def):
             val = row.get(k, "-")
             disp = val
             
+            # تنسيق التاريخ
             if 'date' in k and val: disp = str(val)[:10]
+            
+            # تنسيق الحالة
             elif k == 'status':
-                bg, fg, txt = ("#F3F4F6", "#4B5563", "مغلقة") if is_closed else ("#DCFCE7", "#166534", "مفتوحة")
+                if is_closed:
+                    bg, fg, txt = ("#F3F4F6", "#4B5563", "مغلقة")
+                else:
+                    bg, fg, txt = ("#DCFCE7", "#166534", "مفتوحة")
                 disp = f"<span style='background:{bg}; color:{fg}; padding:4px 10px; border-radius:12px; font-size:0.75rem; font-weight:800;'>{txt}</span>"
+            
+            # تنسيق الأرقام الملونة (أرباح/خسائر)
             elif k in ['gain', 'gain_pct', 'daily_change', 'return_pct']:
                 try:
                     num_val = float(val)
-                    c = DEFAULT_COLORS['success'] if num_val >= 0 else DEFAULT_COLORS['danger']
+                    c = C['success'] if num_val >= 0 else C['danger']
                     suffix = "%" if 'pct' in k or 'change' in k else ""
                     disp = f"<span style='color:{c}; direction:ltr; font-weight:bold;'>{num_val:,.2f}{suffix}</span>"
                 except: disp = val
+
+            # تنسيق المبالغ المالية
             elif k in ['market_value', 'total_cost', 'entry_price', 'current_price', 'amount']:
                 try: disp = f"{float(val):,.2f}"
                 except: disp = val
+            
+            # تنسيق الكميات
             elif k == 'quantity':
                 try: disp = f"{float(val):,.0f}"
                 except: disp = val
