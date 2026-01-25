@@ -11,7 +11,7 @@ from analytics import (calculate_portfolio_metrics, update_prices, generate_equi
 from database import execute_query, fetch_table, get_db, clear_all_data
 from market_data import get_static_info, get_tasi_data, get_chart_history
 from data_source import get_company_details
-from charts import view_advanced_chart  # استيراد الشارت الصحيح
+from charts import view_advanced_chart  # استيراد الشارت
 
 try: from financial_analysis import get_fundamental_ratios, render_financial_dashboard_ui
 except ImportError: 
@@ -32,7 +32,6 @@ def apply_sorting(df, cols_definition, key_suffix):
         
         with c1:
             st.markdown("<p style='font-size:0.8rem; font-weight:bold; margin-bottom:0;'>رتب حسب:</p>", unsafe_allow_html=True)
-            # استخدمنا label عربي واضح
             sort_col_label = st.selectbox("فرز", options=list(label_map.keys()), key=f"sc_{key_suffix}", label_visibility="collapsed")
         
         with c2:
@@ -180,19 +179,30 @@ def view_portfolio(fin, page_key):
     if not all_d.empty:
         df = all_d[all_d['strategy'].astype(str).str.contains(ts, na=False)].copy()
     
-    # === تجهيز البيانات والأعمدة ===
+    # === تجهيز البيانات والأعمدة (التعديل هنا: تحويل البيانات لأرقام إجبارياً) ===
     if not df.empty:
-        # حسابات إضافية
+        # 1. تحويل الأعمدة الرقمية لضمان عدم وجود نصوص
+        cols_to_numeric = ['quantity', 'entry_price', 'current_price', 'exit_price']
+        for c in cols_to_numeric:
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0.0)
+
+        # 2. التأكد من وجود prev_close كرقم
+        if 'prev_close' not in df.columns: 
+            df['prev_close'] = df['current_price']
+        else:
+            df['prev_close'] = pd.to_numeric(df['prev_close'], errors='coerce').fillna(df['current_price'])
+
+        # 3. بيانات إضافية
+        if 'year_high' not in df.columns: df['year_high'] = 0.0
+        if 'year_low' not in df.columns: df['year_low'] = 0.0
+        
+        # 4. الحسابات
         df['total_cost'] = df['quantity'] * df['entry_price']
         df['market_value'] = df['quantity'] * df['current_price']
         
-        # جلب بيانات إضافية (افتراضية إذا لم تكن في قاعدة البيانات)
-        if 'year_high' not in df.columns: df['year_high'] = 0
-        if 'year_low' not in df.columns: df['year_low'] = 0
-        if 'prev_close' not in df.columns: df['prev_close'] = df['current_price'] # افتراضي
-        
-        # حساب التغير اليومي
-        df['daily_change'] = df.apply(lambda x: ((x['current_price'] - x['prev_close']) / x['prev_close'] * 100) if x['prev_close'] > 0 else 0, axis=1)
+        # حساب التغير اليومي (الآن آمن)
+        df['daily_change'] = df.apply(lambda x: ((x['current_price'] - x['prev_close']) / x['prev_close'] * 100) if x['prev_close'] > 0 else 0.0, axis=1)
 
         # حساب الوزن (للمفتوح)
         total_market_open = df[df['status']=='Open']['market_value'].sum()
