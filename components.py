@@ -23,7 +23,7 @@ def render_navbar():
     
     # الناف بار العلوي
     st.markdown(f"""
-    <div class="navbar-box">
+    <div class="navbar-box" style="background-color: {C['card_bg']}; padding: 15px 25px; border-radius: 16px; border: 1px solid {C['border']}; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
         <div style="display: flex; align-items: center; gap: 15px;">
             <div style="font-size: 2.2rem; background: #EFF6FF; width:50px; height:50px; display:flex; align-items:center; justify-content:center; border-radius:12px;">{APP_ICON}</div>
             <div>
@@ -50,12 +50,16 @@ def render_navbar():
                 st.session_state.page = key; st.rerun()
     
     with c2:
-        # القائمة المنسدلة للإجراءات (تم حل مشكلة التعليق عبر مفتاح فريد وعنوان مخفي)
-        act = st.selectbox("options", ["⚙️ خيارات القائمة", "إضافة صفقة", "الأدوات", "الإعدادات", "تسجيل خروج"], label_visibility="collapsed")
+        # القائمة المنسدلة للإجراءات (الملف، الإعدادات، الخروج)
+        # استخدام label_visibility="collapsed" لإخفاء العنوان الإنجليزي
+        act = st.selectbox("menu_options", ["⚙️ خيارات القائمة", "إضافة صفقة", "الأدوات", "الإعدادات", "تسجيل خروج"], label_visibility="collapsed")
         
-        if act == "إضافة صفقة" and st.session_state.get('page') != 'add': st.session_state.page = 'add'; st.rerun()
-        elif act == "الأدوات" and st.session_state.get('page') != 'tools': st.session_state.page = 'tools'; st.rerun()
-        elif act == "الإعدادات" and st.session_state.get('page') != 'settings': st.session_state.page = 'settings'; st.rerun()
+        if act == "إضافة صفقة" and st.session_state.get('page') != 'add': 
+            st.session_state.page = 'add'; st.rerun()
+        elif act == "الأدوات" and st.session_state.get('page') != 'tools': 
+            st.session_state.page = 'tools'; st.rerun()
+        elif act == "الإعدادات" and st.session_state.get('page') != 'settings': 
+            st.session_state.page = 'settings'; st.rerun()
         elif act == "تسجيل خروج": 
             from security import logout; logout()
 
@@ -71,9 +75,9 @@ def render_kpi(label, value, color_condition=None):
         val_c = C['success'] if color_condition >= 0 else C['danger']
             
     st.markdown(f"""
-    <div class="kpi-box">
+    <div class="kpi-box" style="background-color: {C['card_bg']}; border: 1px solid {C['border']}; border-radius: 16px; padding: 20px; text-align: right; box-shadow: 0 2px 5px rgba(0,0,0,0.02);">
         <div style="color:{C['sub_text']}; font-size:0.9rem; font-weight:700; margin-bottom:8px;">{label}</div>
-        <div class="kpi-value" style="color: {val_c} !important;">{value}</div>
+        <div class="kpi-value" style="color: {val_c} !important; font-size: 1.4rem; font-weight: 900;">{value}</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -85,7 +89,6 @@ def render_ticker_card(symbol, name, price, change):
     except: price = 0.0; change = 0.0
 
     color = C['success'] if change >= 0 else C['danger']
-    arrow = "▲" if change >= 0 else "▼"
     bg_color = "#DCFCE7" if change >= 0 else "#FEE2E2"
 
     st.markdown(f"""
@@ -96,7 +99,7 @@ def render_ticker_card(symbol, name, price, change):
                 <div style="font-size: 0.8rem; color: {C['sub_text']}; font-weight:600;">{name}</div>
             </div>
             <div style="background-color: {bg_color}; color: {color}; padding: 4px 8px; border-radius: 6px; font-weight: 800; font-size: 0.8rem; direction: ltr;">
-                {change:.2f}% {arrow}
+                {change:.2f}%
             </div>
         </div>
         <div style="font-size: 1.6rem; font-weight: 900; color: {C['main_text']}; letter-spacing: -0.5px;">{price:,.2f}</div>
@@ -121,6 +124,7 @@ def render_table(df, cols_def):
             val = row.get(k, "-")
             disp = val
             
+            # معالجة خاصة للقيم الفارغة
             if pd.isna(val) or val == "": disp = "-"
 
             if 'date' in k and val != "-": 
