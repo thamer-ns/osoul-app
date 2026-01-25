@@ -11,32 +11,31 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# في ملف database.py
+
 @st.cache_resource
 def get_connection_pool():
-    # 1. التحقق من وجود الرابط
     if "DATABASE_URL" not in st.secrets:
-        st.error("⚠️ خطأ خطير: لم يتم العثور على DATABASE_URL في إعدادات Secrets.")
+        st.error("⚠️ لم يتم العثور على رابط قاعدة البيانات.")
         return None
     
     db_url = st.secrets["DATABASE_URL"]
     
     try:
-        # محاولة إنشاء اتصال
+        # تعديل هام: نستخدم اتصال مباشر لأن المنفذ 6543 هو Pooler أصلاً
+        # هذا يحل مشاكل "Transaction Mode" التي قد تظهر
+        conn = psycopg2.connect(db_url)
+        conn.close() # نغلق الاتصال التجريبي فقط للتأكد
+        
+        # نعود لاستخدام Pool صغير جداً لتوافق الكود
         return psycopg2.pool.SimpleConnectionPool(
             minconn=1, 
-            maxconn=20, 
-            dsn=db_url,
-            connect_timeout=10  # مهلة 10 ثواني
+            maxconn=2,  # قللنا العدد لأن Supabase تدير الاتصالات
+            dsn=db_url
         )
-    except psycopg2.OperationalError as e:
-        # خطأ في الاتصال (كلمة مرور خطأ، هوست خطأ، الخ)
-        st.error(f"❌ فشل الاتصال بقاعدة البيانات (OperationalError).")
-        st.code(f"تفاصيل الخطأ: {e}")
-        return None
     except Exception as e:
-        # أخطاء أخرى
-        st.error(f"❌ حدث خطأ غير متوقع في قاعدة البيانات.")
-        st.code(str(e))
+        print(f"❌ CONNECTION ERROR: {e}")
+        st.error(f"فشل الاتصال (IPv4): {e}")
         return None
 
 @contextmanager
