@@ -1,78 +1,82 @@
-import requests
-from bs4 import BeautifulSoup
+import yfinance as yf
+import pandas as pd
 import streamlit as st
-import time
-import random
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from data_source import TADAWUL_DB
 
-# === 1. جلب السعر المباشر (Google Finance) ===
+# دالة مساعدة لتنظيف الرمز وإضافة .SR
 def get_ticker_symbol(symbol):
-    """تنظيف الرمز"""
-    return str(symbol).replace('.SR', '').replace('.sr', '').strip()
+    clean_sym = str(symbol).replace('.SR', '').replace('.0', '').strip()
+    return f"{clean_sym}.SR"
 
-def fetch_price_from_google(symbol):
-    ticker = get_ticker_symbol(symbol)
-    url = f"https://www.google.com/finance/quote/{ticker}:TADAWUL"
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-    
-    try:
-        # تقليل المهلة (timeout) لتسريع الفشل إذا علق الطلب
-        response = requests.get(url, headers=headers, timeout=3)
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.text, 'html.parser')
-            price_div = soup.find('div', {'class': 'YMlKec fxKbKc'})
-            if price_div:
-                return float(price_div.text.replace('SAR', '').replace(',', '').strip())
-    except Exception as e:
-        # لا نطبع الخطأ لتجنب تشويش الكونسول عند السرعة العالية
-        pass
-    return 0.0
+def get_static_info(symbol):
+    """جلب الاسم والقطاع من الملف المحلي"""
+    clean_sym = str(symbol).replace('.SR', '').replace('.0', '').strip()
+    data = TADAWUL_DB.get(clean_sym)
+    if data:
+        return data['name'], data['sector']
+    return symbol, "غير محدد"
 
-# === 2. جلب الشارت (معطل مؤقتاً) ===
-@st.cache_data(ttl=3600)
-def get_chart_history(symbol, period='1y', interval='1d'):
-    return None
-
-# === 3. تحديث الأسعار الجماعي (Parallel Execution) ===
 def fetch_batch_data(symbols_list):
-    results = {}
-    if not symbols_list: return results
+    """جلب أسعار مجموعة أسهم دفعة واحدة بسرعة"""
+    if not symbols_list: return {}
     
-    # استخدام ThreadPoolExecutor لتشغيل الطلبات بالتوازي
-    # max_workers=10 يعني طلب 10 أسعار في نفس اللحظة
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        # إرسال المهام
-        future_to_symbol = {executor.submit(fetch_price_from_google, sym): sym for sym in symbols_list}
+    # تحويل الرموز لصيغة ياهو (xxxx.SR)
+    tickers = [get_ticker_symbol(s) for s in symbols_list]
+    tickers_str = " ".join(tickers)
+    
+    results = {}
+    try:
+        # جلب البيانات دفعة واحدة
+        data = yf.Tickers(tickers_str)
         
-        # تجميع النتائج بمجرد وصولها
-        for future in as_completed(future_to_symbol):
-            sym = future_to_symbol[future]
+        for sym in symbols_list:
+            y_sym = get_ticker_symbol(sym)
             try:
-                price = future.result()
+                # محاولة جلب المعلومات السريعة
+                info = data.tickers[y_sym].fast_info
+                price = info.last_price
+                prev_close = info.previous_close
+                
+                # حساب التغير
+                change_pct = ((price - prev_close) / prev_close) * 100 if prev_close > 0 else 0.0
+                
                 if price > 0:
                     results[sym] = {
                         'price': price,
-                        'prev_close': price, # جوجل لا يعطي الإغلاق السابق بسهولة في نفس الصفحة، نستخدم الحالي مؤقتاً
-                        'year_high': price,
-                        'year_low': price,
-                        'dividend_yield': 0.0
+                        'prev_close': prev_close,
+                        'change_pct': change_pct,
+                        'year_high': info.year_high,
+                        'year_low': info.year_low,
+                        # العائد اختياري قد لا يكون متوفراً في fast_info
+                        'dividend_yield': 0.0 
                     }
-            except Exception as exc:
-                print(f'{sym} generated an exception: {exc}')
+            except Exception as e:
+                print(f"Error getting data for {sym}: {e}")
+                # في حال الفشل، نضع قيماً صفرية ولا نوقف البرنامج
+                results[sym] = {'price': 0.0, 'prev_close': 0.0, 'change_pct': 0.0, 'year_high': 0, 'year_low': 0, 'dividend_yield': 0}
                 
+    except Exception as e:
+        st.error(f"فشل الاتصال بمصدر البيانات: {e}")
+        
     return results
 
-def get_static_info(symbol):
-    from data_source import TADAWUL_DB
-    s_clean = get_ticker_symbol(symbol)
-    if s_clean in TADAWUL_DB:
-        return TADAWUL_DB[s_clean]['name'], TADAWUL_DB[s_clean]['sector']
-    return f"{s_clean}", "أخرى"
-
 def get_tasi_data():
-    price = fetch_price_from_google(".TASI")
-    if price == 0: price = fetch_price_from_google("TASI")
-    return price, 0.0
+    """جلب مؤشر تاسي"""
+    try:
+        ticker = yf.Ticker("^TASI.SR")
+        info = ticker.fast_info
+        price = info.last_price
+        prev = info.previous_close
+        change = ((price - prev) / prev) * 100
+        return price, change
+    except:
+        return 0.0, 0.0
+
+def get_chart_history(symbol, period='1y', interval='1d'):
+    """جلب بيانات الشارت"""
+    try:
+        ticker = yf.Ticker(get_ticker_symbol(symbol))
+        df = ticker.history(period=period, interval=interval)
+        return df
+    except:
+        return None
