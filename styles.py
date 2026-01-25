@@ -10,14 +10,13 @@ def apply_custom_css():
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap');
         
-        /* === إعدادات الصفحة الأساسية === */
+        /* === الأساسيات === */
         html, body, [class*="css"], .stMarkdown, h1, h2, h3, h4, p, label, div, span, th, td, button, input {{
             font-family: 'Cairo', sans-serif !important;
             direction: rtl; 
         }}
-
         .stApp {{ background-color: {C['page_bg']} !important; }}
-        [data-testid="stHeader"] {{ background-color: rgba(255, 255, 255, 0.8) !important; backdrop-filter: blur(10px); }}
+        [data-testid="stHeader"] {{ background-color: rgba(255, 255, 255, 0.9) !important; backdrop-filter: blur(10px); }}
         [data-testid="stSidebar"] {{ display: none !important; }}
 
         /* === 1. جداول البيانات (تصميم الجوهرة) === */
@@ -63,24 +62,7 @@ def apply_custom_css():
             padding: 10px !important;
         }}
         
-        /* القوائم المنسدلة */
-        div[data-baseweb="select"] > div {{
-            background-color: #ffffff !important;
-            color: {C['main_text']} !important;
-            border: 1px solid {C['border']} !important;
-            border-radius: 10px !important;
-        }}
-        div[data-baseweb="popover"], div[data-baseweb="menu"], ul[role="listbox"] {{
-            background-color: #ffffff !important;
-            border: 1px solid {C['border']} !important;
-        }}
-        li[role="option"] {{
-            color: {C['main_text']} !important;
-            background-color: #ffffff !important;
-            text-align: right !important;
-        }}
-
-        /* === 3. البطاقات ومؤشرات الأداء === */
+        /* === 3. بطاقات المؤشرات (KPIs) === */
         .kpi-box {{
             background-color: {C['card_bg']};
             border: 1px solid {C['border']};
@@ -95,7 +77,7 @@ def apply_custom_css():
         .kpi-title {{ font-size: 0.9rem; color: {C['sub_text']}; font-weight: 700; margin-bottom: 8px; }}
         .kpi-value {{ font-size: 1.6rem; font-weight: 900; direction: ltr; }}
         
-        /* === 4. صندوق تاسي (اللون الأزرق الغامق) === */
+        /* === 4. صندوق تاسي === */
         .tasi-box {{
             background: linear-gradient(120deg, {C['primary']} 0%, #0f172a 100%) !important;
             padding: 30px; 
@@ -119,18 +101,22 @@ def apply_custom_css():
             justify-content: space-between;
         }}
         
-        /* إخفاء العناوين الإنجليزية للحقول */
-        div[data-testid="stSelectbox"] > label {{ display: none; }}
-        div[data-testid="stTextInput"] > label {{ display: none; }}
-        div[data-testid="stNumberInput"] > label {{ display: none; }}
-        div[data-testid="stDateInput"] > label {{ display: none; }}
+        /* إخفاء العناوين الإنجليزية */
+        div[data-testid="stSelectbox"] > label, div[data-testid="stTextInput"] > label,
+        div[data-testid="stNumberInput"] > label, div[data-testid="stDateInput"] > label {{ display: none; }}
         
         /* أزرار Streamlit */
         div.stButton > button {{
             border-radius: 10px !important;
             font-weight: 700 !important;
             border: 1px solid {C['border']} !important;
+            background-color: {C['card_bg']};
+            color: {C['main_text']};
             box-shadow: 0 2px 5px rgba(0,0,0,0.02);
+        }}
+        div.stButton > button:hover {{
+            border-color: {C['primary']} !important;
+            color: {C['primary']} !important;
         }}
     </style>
     """, unsafe_allow_html=True)
