@@ -9,66 +9,56 @@ def get_manager():
     return stx.CookieManager(key="cookie_manager_app")
 
 def login_system():
-    # التأكد من تهيئة قاعدة البيانات
+    # تهيئة القاعدة عند بدء التشغيل
     init_db()
     
-    # إدارة الكوكيز
     cookie_manager = get_manager()
     
-    # 1. فحص الجلسة الحالية (Session State)
+    # 1. فحص الجلسة
     if st.session_state.get("logged_in", False):
         return True
     
-    # 2. فحص الكوكيز (للدخول التلقائي)
-    time.sleep(0.1) # مهلة بسيطة للكوكيز
-    cookie_user = cookie_manager.get(cookie="osoul_user")
-    if cookie_user:
-        st.session_state["logged_in"] = True
-        st.session_state["username"] = cookie_user
-        return True
+    # 2. فحص الكوكيز
+    time.sleep(0.1)
+    try:
+        cookie_user = cookie_manager.get(cookie="osoul_user")
+        if cookie_user:
+            st.session_state["logged_in"] = True
+            st.session_state["username"] = cookie_user
+            return True
+    except: pass
 
-    # 3. واجهة تسجيل الدخول / التسجيل
-    st.markdown(f"<h1 style='text-align: center; color: #0e6ba8;'>{APP_ICON} {APP_NAME}</h1>", unsafe_allow_html=True)
+    # 3. واجهة الدخول
+    st.markdown(f"<h1 style='text-align: center; color: #0052CC;'>{APP_ICON} {APP_NAME}</h1>", unsafe_allow_html=True)
     
-    # استخدام تبويبات لفصل العمليتين بوضوح
-    tab_login, tab_signup = st.tabs(["🔒 تسجيل الدخول", "✨ حساب جديد"])
+    tab1, tab2 = st.tabs(["تسجيل الدخول", "إنشاء حساب"])
     
-    # --- تبويب الدخول ---
-    with tab_login:
-        with st.form("login_form"):
-            u = st.text_input("اسم المستخدم", key="login_username")
-            p = st.text_input("كلمة المرور", type="password", key="login_password")
-            submitted = st.form_submit_button("دخول", type="primary", use_container_width=True)
-            
-            if submitted:
+    with tab1:
+        with st.form("login"):
+            u = st.text_input("اسم المستخدم", key="l_u")
+            p = st.text_input("كلمة المرور", type="password", key="l_p")
+            if st.form_submit_button("دخول", use_container_width=True):
                 if db_verify_user(u, p):
                     st.session_state["logged_in"] = True
                     st.session_state["username"] = u
                     cookie_manager.set('osoul_user', u, expires_at=datetime.datetime.now() + datetime.timedelta(days=30))
-                    st.success("تم تسجيل الدخول بنجاح!")
-                    time.sleep(0.5)
                     st.rerun()
                 else:
-                    st.error("اسم المستخدم أو كلمة المرور غير صحيحة")
+                    st.error("بيانات خاطئة")
 
-    # --- تبويب التسجيل (تم عزله تماماً) ---
-    with tab_signup:
-        st.markdown("### إنشاء حساب جديد")
-        with st.form("signup_form"):
-            new_u = st.text_input("اختر اسم مستخدم", key="signup_user")
-            new_p = st.text_input("اختر كلمة مرور", type="password", key="signup_pass")
-            # زر الإنشاء
-            create_submitted = st.form_submit_button("إنشاء الحساب", type="secondary", use_container_width=True)
-            
-            if create_submitted:
-                if new_u and new_p:
-                    if db_create_user(new_u, new_p):
-                        st.success("تم إنشاء الحساب بنجاح! يمكنك الآن تسجيل الدخول في التبويب المجاور.")
+    with tab2:
+        with st.form("signup"):
+            nu = st.text_input("اسم مستخدم جديد", key="s_u")
+            np = st.text_input("كلمة مرور جديدة", type="password", key="s_p")
+            if st.form_submit_button("إنشاء حساب", use_container_width=True):
+                if nu and np:
+                    if db_create_user(nu, np):
+                        st.success("تم الإنشاء! يمكنك الدخول الآن.")
                     else:
-                        st.error("اسم المستخدم هذا موجود مسبقاً، الرجاء اختيار اسم آخر.")
+                        st.error("اسم المستخدم موجود مسبقاً.")
                 else:
-                    st.warning("الرجاء تعبئة جميع الحقول.")
-
+                    st.warning("أكمل البيانات")
+    
     return False
 
 def logout():
@@ -76,6 +66,5 @@ def logout():
         manager = get_manager()
         manager.delete("osoul_user")
     except: pass
-    
     st.session_state.clear()
     st.rerun()
