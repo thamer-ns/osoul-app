@@ -3,12 +3,12 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
 from market_data import get_chart_history
+from config import DEFAULT_COLORS
 
-# === الدالة الأولى: رسم الشارت (التي تحبها مع المؤشرات) ===
+# تعريف دالة الرسم
 def render_technical_chart(symbol, period='1y', interval='1d'):
     """عرض الشارت الفني مع المؤشرات"""
     if 'custom_colors' not in st.session_state:
-        from config import DEFAULT_COLORS
         C = DEFAULT_COLORS
     else: C = st.session_state.custom_colors
 
@@ -66,28 +66,5 @@ def render_technical_chart(symbol, period='1y', interval='1d'):
     fig.update_layout(height=800, xaxis_rangeslider_visible=False, paper_bgcolor=C['card_bg'], plot_bgcolor=C['card_bg'], font=dict(family="Cairo", color=C['main_text']), showlegend=False)
     st.plotly_chart(fig, use_container_width=True)
 
-# === الدالة الثانية: صفحة الاختيار (هذه كانت ناقصة وتسبب الخطأ) ===
-def view_advanced_chart(fin):
-    """واجهة لاختيار سهم ثم عرض الشارت"""
-    st.header("📈 التحليل الفني")
-    
-    trades = fin['all_trades']
-    symbols = []
-    if not trades.empty:
-        symbols = trades['symbol'].unique().tolist()
-    
-    # إضافة خيار يدوي
-    col1, col2 = st.columns(2)
-    with col1:
-        manual_sym = st.text_input("بحث عن رمز (مثل 1120.SR)")
-    with col2:
-        selected_sym = st.selectbox("أو اختر من المحفظة", symbols) if symbols else None
-    
-    symbol = manual_sym if manual_sym else selected_sym
-    
-    if symbol:
-        st.markdown(f"### {symbol}")
-        # هنا نستدعي دالة الرسم الأساسية
-        render_technical_chart(symbol)
-    else:
-        st.info("الرجاء اختيار سهم لعرض الشارت.")
+# الاسم البديل لضمان التوافق مع views.py
+view_advanced_chart = render_technical_chart
