@@ -137,6 +137,13 @@ def init_db():
             PRIMARY KEY (symbol, period_type, date)
         )""",
         """CREATE TABLE IF NOT EXISTS InvestmentThesis (symbol VARCHAR(20) PRIMARY KEY, thesis_text TEXT, target_price DOUBLE PRECISION, recommendation VARCHAR(20), last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"""
+      CREATE TABLE IF NOT EXISTS Documents (
+    id SERIAL PRIMARY KEY, 
+    trade_id INTEGER, 
+    file_name TEXT, 
+    file_data BYTEA, 
+    upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+)  
     ]
     
     with get_db() as conn:
