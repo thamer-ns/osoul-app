@@ -1,10 +1,10 @@
 import streamlit as st
-import pandas as pd
+import pandas as pd # <--- تم إضافة المكتبة الناقصة
 from datetime import date
 from config import APP_NAME, APP_ICON, DEFAULT_COLORS
 
 def safe_fmt(val, suffix=""):
-    """دالة تقريب آمنة للأرقام"""
+    """دالة تقريب موحدة تمنع الكسور الطويلة"""
     if val is None or pd.isna(val) or val == "": return "-"
     try:
         f_val = float(val)
@@ -14,13 +14,16 @@ def safe_fmt(val, suffix=""):
 
 def render_navbar():
     if 'custom_colors' not in st.session_state:
-        st.session_state.custom_colors = DEFAULT_COLORS.copy()
-    C = st.session_state.custom_colors
+        from config import DEFAULT_COLORS
+        C = DEFAULT_COLORS
+    else:
+        C = st.session_state.custom_colors
+        
     u = st.session_state.get('username', 'مستثمر')
-
-    # الهيدر (التصميم الأصلي)
+    
+    # 1. الهيدر (التصميم الأصلي)
     st.markdown(f"""
-    <div class="navbar-box" style="background-color: {C['card_bg']}; padding: 15px 25px; border-radius: 16px; border: 1px solid {C['border']}; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
+    <div style="background-color: {C['card_bg']}; padding: 15px 25px; border-radius: 16px; border: 1px solid {C['border']}; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
         <div style="display: flex; align-items: center; gap: 15px;">
             <div style="font-size: 2.2rem; background: #EFF6FF; width:50px; height:50px; display:flex; align-items:center; justify-content:center; border-radius:12px;">{APP_ICON}</div>
             <div>
@@ -35,35 +38,32 @@ def render_navbar():
     </div>
     """, unsafe_allow_html=True)
 
-    # تقسيم الناف بار: أزرار التنقل + القائمة المنسدلة
-    col_nav, col_menu = st.columns([3, 1])
+    # 2. القوائم المدمجة (أزرار التنقل يمين + القائمة المنسدلة يسار)
+    c_menu, c_user = st.columns([3, 1])
     
-    with col_nav:
-        # أزرار الصفحات الرئيسية
+    with c_menu:
         cols = st.columns(6)
         labels = ['الرئيسية', 'مضاربة', 'استثمار', 'صكوك', 'السيولة', 'التحليل']
         keys = ['home', 'spec', 'invest', 'sukuk', 'cash', 'analysis']
-        
         for i, (col, label, key) in enumerate(zip(cols, labels, keys)):
             active = (st.session_state.get('page') == key)
-            btn_type = "primary" if active else "secondary"
-            if col.button(label, key=f"nav_{key}", type=btn_type, use_container_width=True):
+            if col.button(label, key=f"nav_{key}", type="primary" if active else "secondary", use_container_width=True):
                 st.session_state.page = key
                 st.rerun()
 
-    with col_menu:
-        # القائمة المنسدلة المجمعة (بدون عنوان إنجليزي)
-        menu_options = ["≡ القائمة الشخصية", "➕ إضافة صفقة", "🧪 المختبر", "⚙️ الإعدادات", "🚪 تسجيل خروج"]
-        selected_action = st.selectbox("user_menu_hidden", menu_options, label_visibility="collapsed")
+    with c_user:
+        # القائمة المنسدلة التي تجمع الخيارات الإضافية
+        # Trick: استخدام مفتاح فريد وعنوان مخفي
+        opts = ["☰ القائمة الشخصية", "➕ إضافة صفقة", "🧪 المختبر (Backtest)", "🛠️ الأدوات", "⚙️ الإعدادات", "🚪 تسجيل خروج"]
+        user_choice = st.selectbox("user_menu_hidden", opts, label_visibility="collapsed")
         
-        if selected_action == "➕ إضافة صفقة" and st.session_state.get('page') != 'add':
-            st.session_state.page = 'add'; st.rerun()
-        elif selected_action == "🧪 المختبر" and st.session_state.get('page') != 'backtest':
-            st.session_state.page = 'backtest'; st.rerun()
-        elif selected_action == "⚙️ الإعدادات" and st.session_state.get('page') != 'settings':
-            st.session_state.page = 'settings'; st.rerun()
-        elif selected_action == "🚪 تسجيل خروج":
-            st.session_state.clear(); st.rerun()
+        if user_choice != "☰ القائمة الشخصية":
+            if user_choice == "➕ إضافة صفقة": st.session_state.page = 'add'
+            elif user_choice == "🧪 المختبر (Backtest)": st.session_state.page = 'backtest'
+            elif user_choice == "🛠️ الأدوات": st.session_state.page = 'tools'
+            elif user_choice == "⚙️ الإعدادات": st.session_state.page = 'settings'
+            elif user_choice == "🚪 تسجيل خروج": from security import logout; logout()
+            st.rerun()
 
     st.markdown("---")
 
@@ -71,8 +71,6 @@ def render_kpi(label, value, color_condition=None):
     C = DEFAULT_COLORS
     val_c = C['main_text']
     if color_condition == "blue": val_c = C['primary']
-    elif color_condition == "success": val_c = C['success']
-    elif color_condition == "danger": val_c = C['danger']
     elif isinstance(color_condition, (int, float)):
         val_c = C['success'] if color_condition >= 0 else C['danger']
             
@@ -80,8 +78,7 @@ def render_kpi(label, value, color_condition=None):
     <div class="kpi-box">
         <div style="color:{C['sub_text']}; font-size:0.9rem; font-weight:700; margin-bottom:8px;">{label}</div>
         <div class="kpi-value" style="color: {val_c} !important;">{value}</div>
-    </div>
-    """, unsafe_allow_html=True)
+    </div>""", unsafe_allow_html=True)
 
 def render_ticker_card(symbol, name, price, change):
     C = DEFAULT_COLORS
@@ -111,7 +108,7 @@ def render_table(df, cols_def):
         is_closed = str(row.get('status', '')).lower() in ['close', 'sold', 'مغلقة']
         for k, _ in cols_def:
             val = row.get(k)
-            # معالجة "غير موجود"
+            # منطق "غير موجود"
             if pd.isna(val) or val == "" or val is None or (k in ['year_high', 'year_low', 'prev_close'] and float(val or 0)==0):
                 disp = "<span style='color:#ccc; font-size:0.8rem;'>غير موجود</span>"
             else:
@@ -126,6 +123,8 @@ def render_table(df, cols_def):
                         c = C['success'] if val >= 0 else C['danger']
                         suffix = "%" if 'pct' in k or 'change' in k else ""
                         disp = f"<span style='color:{c}; direction:ltr; font-weight:bold;'>{f_val}{suffix}</span>"
+                    elif k == 'weight':
+                        disp = f"<span style='color:{C['primary']}; direction:ltr; font-weight:bold;'>{f_val}%</span>"
                     elif k == 'quantity':
                         disp = f"<span style='font-weight:800;'>{val:,.0f}</span>"
                     else:
