@@ -4,7 +4,7 @@ from datetime import date
 from config import APP_NAME, APP_ICON, DEFAULT_COLORS
 
 def safe_fmt(val, suffix=""):
-    """دالة تقريب الأرقام"""
+    """تقريب الأرقام لمنزلتين"""
     if val is None or pd.isna(val) or val == "": return "-"
     try:
         f_val = float(val)
@@ -23,7 +23,7 @@ def render_navbar():
     
     # الهيدر
     st.markdown(f"""
-    <div class="navbar-box" style="background-color: {C['card_bg']}; padding: 15px 25px; border-radius: 16px; border: 1px solid {C['border']}; margin-bottom: 25px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
+    <div class="navbar-box">
         <div style="display: flex; align-items: center; gap: 15px;">
             <div style="font-size: 2.2rem; background: #EFF6FF; width:50px; height:50px; display:flex; align-items:center; justify-content:center; border-radius:12px;">{APP_ICON}</div>
             <div>
@@ -31,7 +31,7 @@ def render_navbar():
                 <span style="font-size: 0.8rem; color: {C['sub_text']}; font-weight: 600;">بوابتك الذكية للاستثمار</span>
             </div>
         </div>
-        <div style="text-align: left; background-color: {C['page_bg']}; padding: 8px 16px; border-radius: 10px; border:1px solid {C['border']};">
+        <div style="text-align: left;">
             <div style="color: {C['main_text']}; font-weight: 700; font-size: 0.85rem;">👤 {u}</div>
             <div style="font-weight: 600; color: {C['sub_text']}; font-size: 0.75rem; direction: ltr;">{date.today().strftime('%Y-%m-%d')}</div>
         </div>
@@ -42,7 +42,6 @@ def render_navbar():
     c_menu, c_user = st.columns([3, 1])
     
     with c_menu:
-        # الأزرار الرئيسية
         cols = st.columns(6)
         labels = ['الرئيسية', 'مضاربة', 'استثمار', 'صكوك', 'السيولة', 'التحليل']
         keys = ['home', 'spec', 'invest', 'sukuk', 'cash', 'analysis']
@@ -55,19 +54,18 @@ def render_navbar():
                 st.rerun()
 
     with c_user:
-        # القائمة المنسدلة (تم دمج الإضافة هنا)
-        # لاحظ: غيرنا الاسم ليكون واضحاً
-        opts = ["☰ القائمة السريعة", "➕ تسجيل عملية جديدة", "🧪 المختبر", "⚙️ الإعدادات", "🚪 تسجيل خروج"]
-        user_choice = st.selectbox("hidden_menu", opts, label_visibility="collapsed")
+        # القائمة المنسدلة (بدون تعليق)
+        # نستخدم مفتاح فريد وعنوان مخفي
+        opts = ["☰ القائمة", "➕ إضافة عملية", "🧪 المختبر", "⚙️ الإعدادات", "🚪 خروج"]
+        user_choice = st.selectbox("user_menu_hidden", opts, label_visibility="collapsed")
         
-        if user_choice == "➕ تسجيل عملية جديدة" and st.session_state.get('page') != 'add':
-            st.session_state.page = 'add'; st.rerun()
-        elif user_choice == "🧪 المختبر" and st.session_state.get('page') != 'backtest':
-            st.session_state.page = 'backtest'; st.rerun()
-        elif user_choice == "⚙️ الإعدادات" and st.session_state.get('page') != 'settings':
-            st.session_state.page = 'settings'; st.rerun()
-        elif user_choice == "🚪 تسجيل خروج":
-            from security import logout; logout()
+        if user_choice != "☰ القائمة":
+            if user_choice == "➕ إضافة عملية": st.session_state.page = 'add'
+            elif user_choice == "🧪 المختبر": st.session_state.page = 'backtest'
+            elif user_choice == "⚙️ الإعدادات": st.session_state.page = 'settings'
+            elif user_choice == "🚪 خروج": 
+                st.session_state.clear()
+            st.rerun()
 
     st.markdown("---")
 
@@ -81,7 +79,7 @@ def render_kpi(label, value, color_condition=None):
     st.markdown(f"""
     <div class="kpi-box">
         <div style="color:{C['sub_text']}; font-size:0.9rem; font-weight:700; margin-bottom:8px;">{label}</div>
-        <div class="kpi-value" style="color: {val_c} !important;">{value}</div>
+        <div class="kpi-value" style="color: {val_c} !important; font-size: 1.6rem; font-weight: 900;">{value}</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -92,45 +90,33 @@ def render_ticker_card(symbol, name, price, change):
     color = C['success'] if change >= 0 else C['danger']
     bg_color = "#DCFCE7" if change >= 0 else "#FEE2E2"
     st.markdown(f"""
-    <div style="background-color: {C['card_bg']}; padding: 16px; border-radius: 14px; border: 1px solid {C['border']}; margin-bottom: 12px; transition: transform 0.2s;">
-        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px;">
-            <div>
-                <div style="font-weight: 800; color: {C['main_text']}; font-size: 1.1rem;">{symbol}</div>
-                <div style="font-size: 0.8rem; color: {C['sub_text']}; font-weight:600;">{name}</div>
-            </div>
-            <div style="background-color: {bg_color}; color: {color}; padding: 4px 8px; border-radius: 6px; font-weight: 800; font-size: 0.8rem; direction: ltr;">
-                {change:.2f}%
-            </div>
+    <div style="background-color: {C['card_bg']}; padding: 15px; border-radius: 14px; border: 1px solid {C['border']}; margin-bottom: 10px;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+            <div style="font-weight: 800; color: {C['primary']};">{symbol}</div>
+            <div style="background-color: {bg_color}; color: {color}; padding: 2px 8px; border-radius: 6px; font-weight: 800; direction: ltr;">{change:.2f}%</div>
         </div>
-        <div style="font-size: 1.6rem; font-weight: 900; color: {C['main_text']}; letter-spacing: -0.5px;">{price:,.2f}</div>
-    </div>
-    """, unsafe_allow_html=True)
+        <div style="font-size: 0.8rem; color: {C['sub_text']};">{name}</div>
+        <div style="font-size: 1.4rem; font-weight: 900; color: {C['main_text']}; direction: ltr;">{price:,.2f}</div>
+    </div>""", unsafe_allow_html=True)
 
 def render_table(df, cols_def):
     if df.empty:
         st.info("لا توجد بيانات للعرض")
         return
-
     C = DEFAULT_COLORS
     headers = "".join([f"<th>{label}</th>" for _, label in cols_def])
     rows_html = ""
-    
     for _, row in df.iterrows():
         cells = ""
-        status_val = str(row.get('status', '')).lower()
-        is_closed = status_val in ['close', 'sold', 'مغلقة', 'مباعة']
-        
+        is_closed = str(row.get('status', '')).lower() in ['close', 'sold', 'مغلقة']
         for k, _ in cols_def:
-            val = row.get(k, "-")
-            disp = val
-            
-            # معالجة خاصة للقيم الفارغة
+            val = row.get(k)
+            # منطق "غير موجود"
             if pd.isna(val) or val == "" or val is None or (k in ['year_high', 'year_low', 'prev_close'] and float(val or 0)==0):
                 disp = "<span style='color:#ccc; font-size:0.8rem;'>غير موجود</span>"
             else:
                 disp = val
-                if 'date' in k: 
-                    disp = f"<span style='color:{C['sub_text']}; font-family:monospace;'>{str(val)[:10]}</span>"
+                if 'date' in k: disp = f"<span style='color:{C['sub_text']}; font-family:monospace;'>{str(val)[:10]}</span>"
                 elif k == 'status':
                     bg, fg, txt = ("#F3F4F6", "#4B5563", "مغلقة") if is_closed else ("#DCFCE7", "#166534", "مفتوحة")
                     disp = f"<span style='background:{bg}; color:{fg}; padding:4px 10px; border-radius:8px; font-size:0.75rem; font-weight:800;'>{txt}</span>"
@@ -148,14 +134,4 @@ def render_table(df, cols_def):
                         disp = f"<span style='direction:ltr; font-weight:600;'>{f_val}</span>"
             cells += f"<td>{disp}</td>"
         rows_html += f"<tr>{cells}</tr>"
-        
-    st.markdown(f"""
-    <div class="finance-table-container">
-        <div style="overflow-x: auto;">
-            <table class="finance-table">
-                <thead><tr>{headers}</tr></thead>
-                <tbody>{rows_html}</tbody>
-            </table>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown(f"""<div class="finance-table-container"><div style="overflow-x: auto;"><table class="finance-table"><thead><tr>{headers}</tr></thead><tbody>{rows_html}</tbody></table></div></div>""", unsafe_allow_html=True)
