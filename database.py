@@ -55,6 +55,7 @@ def db_verify_user(username, password):
     return False
 
 def init_db():
+    # 1. إنشاء الجداول
     tables = [
         """CREATE TABLE IF NOT EXISTS Users (username VARCHAR(50) PRIMARY KEY, password TEXT, email TEXT)""",
         """CREATE TABLE IF NOT EXISTS Trades (id SERIAL PRIMARY KEY, symbol VARCHAR(20), company_name TEXT, sector TEXT, asset_type VARCHAR(20) DEFAULT 'Stock', date DATE, quantity DOUBLE PRECISION, entry_price DOUBLE PRECISION, strategy VARCHAR(20), status VARCHAR(10), exit_date DATE, exit_price DOUBLE PRECISION, current_price DOUBLE PRECISION, prev_close DOUBLE PRECISION, year_high DOUBLE PRECISION, year_low DOUBLE PRECISION, dividend_yield DOUBLE PRECISION, note TEXT)""",
@@ -64,12 +65,30 @@ def init_db():
         """CREATE TABLE IF NOT EXISTS Watchlist (symbol VARCHAR(20) PRIMARY KEY)""",
         """CREATE TABLE IF NOT EXISTS Documents (id SERIAL PRIMARY KEY, trade_id INTEGER, file_name TEXT, file_data BYTEA, upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"""
     ]
+    
+    # 2. أوامر التحديث (Migration) لإضافة الأعمدة الناقصة في حال وجود الجدول مسبقاً
+    migrations = [
+        "ALTER TABLE Trades ADD COLUMN IF NOT EXISTS asset_type VARCHAR(20) DEFAULT 'Stock'",
+        "ALTER TABLE Trades ADD COLUMN IF NOT EXISTS sector TEXT",
+        "ALTER TABLE Trades ADD COLUMN IF NOT EXISTS company_name TEXT"
+    ]
+
     with get_db() as conn:
         if conn:
             with conn.cursor() as cur:
+                # إنشاء الجداول
                 for t in tables: 
                     try: cur.execute(t)
                     except: pass
+                
+                # تطبيق التحديثات (إضافة الأعمدة الناقصة)
+                for m in migrations:
+                    try: 
+                        cur.execute(m)
+                        conn.commit()
+                    except: 
+                        conn.rollback() # تجاهل الخطأ إذا العمود موجود
+                
                 conn.commit()
 
-def clear_all_data(): pass # تم إلغاء الحذف بناء على طلبك
+def clear_all_data(): pass
