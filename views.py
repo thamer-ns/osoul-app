@@ -4,23 +4,18 @@ import plotly.express as px
 from datetime import date
 import time
 
-# === الاستيرادات ===
 from config import DEFAULT_COLORS
 from components import render_navbar, render_kpi, render_table, render_ticker_card, safe_fmt
 from analytics import (calculate_portfolio_metrics, update_prices, generate_equity_curve, run_backtest)
 from database import execute_query, fetch_table, get_db
 from market_data import get_static_info, get_tasi_data, get_chart_history
 from data_source import get_company_details
-from charts import view_advanced_chart 
+from charts import view_advanced_chart
 
 try: from financial_analysis import get_fundamental_ratios, render_financial_dashboard_ui
 except ImportError: 
     get_fundamental_ratios = lambda s: {'Score': 0}
     render_financial_dashboard_ui = lambda s: None
-
-# ==========================================
-# 1. الصفحات
-# ==========================================
 
 def view_dashboard(fin):
     try: t_price, t_change = get_tasi_data()
@@ -108,21 +103,14 @@ def view_portfolio(fin, page_key):
     t1, t2, t3 = st.tabs(["الأسهم الحالية", "تحليل الأداء", "الأرشيف"])
     with t1:
         if not open_df.empty:
-            # === الفرز البسيط ===
-            c_sort, _ = st.columns([1, 4])
-            with c_sort:
-                st.markdown("**ترتيب:**")
-                sort_opt = st.radio("sort_r", ["الأحدث", "الأعلى ربحاً"], horizontal=True, label_visibility="collapsed")
-            
-            if sort_opt == "الأعلى ربحاً": open_df = open_df.sort_values(by="gain", ascending=False)
-            else: open_df = open_df.sort_values(by="date", ascending=False)
-
+            # ترتيب تلقائي بالأحدث
+            open_df = open_df.sort_values(by="date", ascending=False)
             render_table(open_df, COLS_FULL)
             
             with st.expander("🔻 بيع سهم"):
                 with st.form("sell"):
                     c1,c2 = st.columns(2)
-                    st.markdown("**السهم:**"); s = c1.selectbox("s", open_df['symbol'].unique(), label_visibility="collapsed")
+                    st.markdown("**اختر السهم:**"); s = c1.selectbox("s", open_df['symbol'].unique(), label_visibility="collapsed")
                     st.markdown("**سعر البيع:**"); p = c2.number_input("p", min_value=0.0, label_visibility="collapsed")
                     st.markdown("**التاريخ:**"); d = st.date_input("d", date.today(), label_visibility="collapsed")
                     if st.form_submit_button("تأكيد"):
@@ -164,9 +152,9 @@ def view_cash_log():
     with t3: render_table(fin['returns'].sort_values('date', ascending=False), [('date','التاريخ'), ('symbol','الرمز'), ('amount','المبلغ'), ('note','النوع')])
 
 def view_add_operations():
-    # === الصفحة الموحدة للإضافة ===
-    st.header("➕ مركز العمليات")
-    tab1, tab2 = st.tabs(["📈 تسجيل صفقة (أسهم)", "💰 تسجيل حركة مالية (كاش)"])
+    # صفحة الإضافة الموحدة (الميزة الجديدة)
+    st.header("➕ تسجيل العمليات")
+    tab1, tab2 = st.tabs(["📈 صفقة أسهم", "💰 حركة مالية (كاش)"])
     
     with tab1:
         with st.form("add_trade"):
@@ -233,7 +221,7 @@ def view_analysis(fin):
         with t5: st.info("التحليل الكلاسيكي")
 
 def view_backtester_ui(fin):
-    st.header("🧪 المختبر")
+    st.header("🧪 مختبر الاستراتيجيات")
     c1, c2, c3 = st.columns(3)
     with c1: 
         st.markdown("**السهم:**"); sym = st.selectbox("bs", list(set(fin['all_trades']['symbol'].unique().tolist()+["1120"])), label_visibility="collapsed")
@@ -255,7 +243,7 @@ def view_settings():
     st.header("⚙️ الإعدادات")
     with st.expander("📥 استيراد بيانات (Excel/CSV)"):
         f = st.file_uploader("اختر الملف", accept_multiple_files=False)
-        if f and st.button("بدء الاستيراد"): st.info("تم")
+        if f and st.button("بدء الاستيراد"): st.info("جاهز")
 
 def view_sukuk_portfolio(fin):
     st.header("📜 الصكوك")
@@ -268,7 +256,7 @@ def view_sukuk_portfolio(fin):
 def view_tools():
     st.header("🛠️ الأدوات")
     fin = calculate_portfolio_metrics()
-    st.info(f"الزكاة: {safe_fmt(fin['market_val_open']*0.025775)}")
+    st.info(f"الزكاة التقديرية: {safe_fmt(fin['market_val_open']*0.025775)} ريال")
 
 def router():
     render_navbar()
