@@ -10,13 +10,16 @@ from analytics import (calculate_portfolio_metrics, update_prices, generate_equi
 from database import execute_query, fetch_table, get_db
 from market_data import get_static_info, get_tasi_data, get_chart_history
 from data_source import get_company_details
-from charts import view_advanced_chart
+from charts import view_advanced_chart 
 
 try: from financial_analysis import get_fundamental_ratios, render_financial_dashboard_ui
 except ImportError: 
     get_fundamental_ratios = lambda s: {'Score': 0}
     render_financial_dashboard_ui = lambda s: None
 
+# ==========================================
+# 1. لوحة القيادة (Dashboard)
+# ==========================================
 def view_dashboard(fin):
     try: t_price, t_change = get_tasi_data()
     except: t_price, t_change = 0, 0
@@ -41,6 +44,9 @@ def view_dashboard(fin):
     crv = generate_equity_curve(fin['all_trades'])
     if not crv.empty: st.plotly_chart(px.line(crv, x='date', y='cumulative_invested', title=""), use_container_width=True)
 
+# ==========================================
+# 2. نبض السوق
+# ==========================================
 def render_pulse_dashboard():
     st.header("💓 نبض السوق")
     trades = fetch_table("Trades")
@@ -58,6 +64,9 @@ def render_pulse_dashboard():
             if not row.empty: price = row.iloc[0]['current_price']
         with cols[i % 4]: render_ticker_card(sym, name if name else sym, price, 0.0)
 
+# ==========================================
+# 3. عرض المحفظة (تم حذف الفرز والبيع)
+# ==========================================
 def view_portfolio(fin, page_key):
     ts = "مضاربة" if page_key == 'spec' else "استثمار"
     st.header(f"💼 محفظة {ts}")
@@ -103,19 +112,9 @@ def view_portfolio(fin, page_key):
     t1, t2, t3 = st.tabs(["الأسهم الحالية", "تحليل الأداء", "الأرشيف"])
     with t1:
         if not open_df.empty:
-            # ترتيب تلقائي بالأحدث
+            # عرض الجدول فقط بدون أدوات الفرز أو البيع (الترتيب افتراضي حسب الأحدث)
             open_df = open_df.sort_values(by="date", ascending=False)
             render_table(open_df, COLS_FULL)
-            
-            with st.expander("🔻 بيع سهم"):
-                with st.form("sell"):
-                    c1,c2 = st.columns(2)
-                    st.markdown("**اختر السهم:**"); s = c1.selectbox("s", open_df['symbol'].unique(), label_visibility="collapsed")
-                    st.markdown("**سعر البيع:**"); p = c2.number_input("p", min_value=0.0, label_visibility="collapsed")
-                    st.markdown("**التاريخ:**"); d = st.date_input("d", date.today(), label_visibility="collapsed")
-                    if st.form_submit_button("تأكيد"):
-                        execute_query("UPDATE Trades SET status='Close', exit_price=%s, exit_date=%s WHERE symbol=%s AND strategy=%s AND status='Open'", (p, str(d), s, ts))
-                        st.success("تم"); time.sleep(0.5); st.rerun()
         else: st.info("لا توجد أسهم حالية")
     
     with t2:
@@ -127,14 +126,15 @@ def view_portfolio(fin, page_key):
         if not closed_df.empty: 
             closed_df['net_sales'] = closed_df['quantity'] * closed_df['exit_price']
             closed_df['realized_gain'] = closed_df['net_sales'] - closed_df['total_cost']
-            
             c1, c2 = st.columns(2)
             with c1: render_kpi("صافي البيع", safe_fmt(closed_df['net_sales'].sum()), "blue")
             with c2: render_kpi("الربح المحقق", safe_fmt(closed_df['realized_gain'].sum()))
-            
             render_table(closed_df, COLS_FULL)
         else: st.info("الأرشيف فارغ")
 
+# ==========================================
+# 4. سجل السيولة (للعرض فقط)
+# ==========================================
 def view_cash_log():
     st.header("💵 سجل السيولة")
     fin = calculate_portfolio_metrics()
@@ -151,45 +151,105 @@ def view_cash_log():
     with t2: render_table(fin['withdrawals'].sort_values('date', ascending=False), cols)
     with t3: render_table(fin['returns'].sort_values('date', ascending=False), [('date','التاريخ'), ('symbol','الرمز'), ('amount','المبلغ'), ('note','النوع')])
 
+# ==========================================
+# 5. مركز العمليات (الإضافة والبيع والشراء والسيولة)
+# ==========================================
 def view_add_operations():
-    # صفحة الإضافة الموحدة (الميزة الجديدة)
-    st.header("➕ تسجيل العمليات")
-    tab1, tab2 = st.tabs(["📈 صفقة أسهم", "💰 حركة مالية (كاش)"])
+    st.header("➕ مركز العمليات")
+    tab1, tab2 = st.tabs(["💼 عمليات الأسهم (شراء/بيع)", "💰 العمليات المالية (كاش)"])
     
+    # --- تبويب الأسهم ---
     with tab1:
-        with st.form("add_trade"):
-            c1, c2 = st.columns(2)
-            st.markdown("**الرمز:**"); sym = c1.text_input("t_s", label_visibility="collapsed")
-            st.markdown("**المحفظة:**"); strat = c2.selectbox("t_st", ["استثمار", "مضاربة", "صكوك"], label_visibility="collapsed")
-            c3, c4, c5 = st.columns(3)
-            st.markdown("**الكمية:**"); qty = c3.number_input("t_q", min_value=1.0, label_visibility="collapsed")
-            st.markdown("**السعر:**"); price = c4.number_input("t_p", min_value=0.0, step=0.01, label_visibility="collapsed")
-            st.markdown("**التاريخ:**"); dt = c5.date_input("t_d", date.today(), label_visibility="collapsed")
-            if st.form_submit_button("حفظ الصفقة"):
-                if sym and qty > 0:
-                    cn, sec = get_company_details(sym)
-                    at = "Sukuk" if strat == "صكوك" else "Stock"
-                    execute_query("INSERT INTO Trades (symbol, company_name, sector, asset_type, date, quantity, entry_price, strategy, status, current_price) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'Open', %s)", (sym, cn, sec, at, str(dt), qty, price, strat, price))
-                    st.success("تم الحفظ"); st.cache_data.clear()
-                else: st.error("بيانات ناقصة")
+        with st.form("stock_op"):
+            # تحديد نوع العملية أولاً
+            c_type, c_strat = st.columns(2)
+            op_kind = c_type.selectbox("نوع العملية", ["شراء", "بيع"], label_visibility="collapsed")
+            strat = c_strat.selectbox("المحفظة", ["استثمار", "مضاربة", "صكوك"], label_visibility="collapsed")
+            
+            # تحديد الرمز: إذا بيع نختار من الموجود، إذا شراء نكتب كتابة
+            trades = fetch_table("Trades")
+            open_symbols = []
+            if not trades.empty:
+                # تصفية الأسهم المفتوحة في المحفظة المحددة
+                mask = (trades['status'] == 'Open') & (trades['strategy'] == strat)
+                open_symbols = trades[mask]['symbol'].unique().tolist()
 
+            c_sym, c_qty = st.columns(2)
+            
+            selected_sym = None
+            if op_kind == "بيع":
+                if open_symbols:
+                    selected_sym = c_sym.selectbox("اختر السهم", open_symbols, label_visibility="collapsed")
+                else:
+                    c_sym.warning("لا توجد أسهم متاحة للبيع في هذه المحفظة")
+            else:
+                selected_sym = c_sym.text_input("رمز السهم", placeholder="مثال: 1120", label_visibility="collapsed")
+
+            qty = c_qty.number_input("الكمية", min_value=1.0, step=1.0, label_visibility="collapsed")
+            
+            c_price, c_date = st.columns(2)
+            price = c_price.number_input("السعر", min_value=0.0, step=0.01, label_visibility="collapsed")
+            op_date = c_date.date_input("التاريخ", date.today(), label_visibility="collapsed")
+
+            if st.form_submit_button("تنفيذ العملية"):
+                if not selected_sym or qty <= 0 or price <= 0:
+                    st.error("الرجاء إدخال بيانات صحيحة")
+                else:
+                    # منطق الشراء
+                    if op_kind == "شراء":
+                        cn, sec = get_company_details(selected_sym)
+                        at = "Sukuk" if strat == "صكوك" else "Stock"
+                        execute_query("""
+                            INSERT INTO Trades 
+                            (symbol, company_name, sector, asset_type, date, quantity, entry_price, strategy, status, current_price) 
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'Open', %s)
+                        """, (selected_sym, cn, sec, at, str(op_date), qty, price, strat, price))
+                        st.success(f"تم شراء {qty} سهم من {selected_sym}")
+                        st.cache_data.clear()
+                        
+                    # منطق البيع (تحديث الصفقة المفتوحة)
+                    elif op_kind == "بيع":
+                        # نبحث عن الصفقة المفتوحة لهذا السهم ونغلقها
+                        # ملاحظة: هذا الكود يغلق الصفقة بالكامل بناءً على الرمز
+                        # يمكن تطويره ليدعم البيع الجزئي لاحقاً
+                        execute_query("""
+                            UPDATE Trades 
+                            SET status='Close', exit_price=%s, exit_date=%s 
+                            WHERE symbol=%s AND strategy=%s AND status='Open'
+                        """, (price, str(op_date), selected_sym, strat))
+                        st.success(f"تم بيع أسهم {selected_sym}")
+                        st.cache_data.clear()
+
+    # --- تبويب الكاش ---
     with tab2:
         with st.form("add_cash"):
             c1, c2 = st.columns(2)
-            st.markdown("**نوع العملية:**"); op_type = c1.selectbox("op_t", ["إيداع نقدي", "سحب نقدي", "توزيعات"], label_visibility="collapsed")
-            st.markdown("**المبلغ:**"); amount = c2.number_input("op_a", min_value=0.0, step=100.0, label_visibility="collapsed")
+            # تم دمج كل عمليات الكاش هنا
+            op_type = c1.selectbox("نوع العملية", ["إيداع نقدي", "سحب نقدي", "إضافة عائد/توزيعات"], label_visibility="collapsed")
+            amount = c2.number_input("المبلغ", min_value=0.0, step=100.0, label_visibility="collapsed")
+            
             c3, c4 = st.columns(2)
-            st.markdown("**التاريخ:**"); op_date = c3.date_input("op_d", date.today(), label_visibility="collapsed")
-            st.markdown("**ملاحظة/رمز:**"); note = c4.text_input("op_n", label_visibility="collapsed")
-            if st.form_submit_button("حفظ العملية"):
+            op_date = c3.date_input("التاريخ", date.today(), label_visibility="collapsed")
+            note = c4.text_input("ملاحظات / رمز السهم الموزع", placeholder="ملاحظة أو رمز السهم", label_visibility="collapsed")
+            
+            if st.form_submit_button("تسجيل الحركة المالية"):
                 if amount > 0:
-                    if op_type == "إيداع نقدي": execute_query("INSERT INTO Deposits (date, amount, note) VALUES (%s, %s, %s)", (str(op_date), amount, note))
-                    elif op_type == "سحب نقدي": execute_query("INSERT INTO Withdrawals (date, amount, note) VALUES (%s, %s, %s)", (str(op_date), amount, note))
+                    if op_type == "إيداع نقدي":
+                        execute_query("INSERT INTO Deposits (date, amount, note) VALUES (%s, %s, %s)", (str(op_date), amount, note))
+                    elif op_type == "سحب نقدي":
+                        execute_query("INSERT INTO Withdrawals (date, amount, note) VALUES (%s, %s, %s)", (str(op_date), amount, note))
                     else: 
-                        cn, _ = get_company_details(note)
+                        # إضافة عائد
+                        cn, _ = get_company_details(note) # محاولة جلب اسم الشركة اذا كانت ملاحظة رمزاً
                         execute_query("INSERT INTO ReturnsGrants (date, symbol, company_name, amount, note) VALUES (%s, %s, %s, %s, %s)", (str(op_date), note, cn, amount, "توزيعات"))
-                    st.success("تم التسجيل"); st.rerun()
+                    
+                    st.success("تم تسجيل العملية المالية بنجاح")
+                    st.cache_data.clear()
+                    st.rerun()
 
+# ==========================================
+# 6. التحليل
+# ==========================================
 def view_analysis(fin):
     st.header("🔬 مركز التحليل")
     trades = fin['all_trades']
@@ -220,6 +280,9 @@ def view_analysis(fin):
         with t4: view_advanced_chart(sym)
         with t5: st.info("التحليل الكلاسيكي")
 
+# ==========================================
+# 7. المختبر
+# ==========================================
 def view_backtester_ui(fin):
     st.header("🧪 مختبر الاستراتيجيات")
     c1, c2, c3 = st.columns(3)
@@ -239,12 +302,18 @@ def view_backtester_ui(fin):
                 c2.metric("الرصيد", f"{res['final_value']:,.2f}")
                 st.line_chart(res['df']['Portfolio_Value'])
 
+# ==========================================
+# 8. الإعدادات (تم حذف الحذف)
+# ==========================================
 def view_settings():
     st.header("⚙️ الإعدادات")
     with st.expander("📥 استيراد بيانات (Excel/CSV)"):
         f = st.file_uploader("اختر الملف", accept_multiple_files=False)
         if f and st.button("بدء الاستيراد"): st.info("جاهز")
 
+# ==========================================
+# 9. الصكوك
+# ==========================================
 def view_sukuk_portfolio(fin):
     st.header("📜 الصكوك")
     df = fin['all_trades']
@@ -253,11 +322,17 @@ def view_sukuk_portfolio(fin):
         render_table(sk, [('company_name', 'اسم الصك'), ('symbol', 'الرمز'), ('quantity', 'الكمية'), ('entry_price', 'شراء'), ('gain', 'الربح')])
     else: st.info("لا توجد صكوك")
 
+# ==========================================
+# 10. الأدوات
+# ==========================================
 def view_tools():
     st.header("🛠️ الأدوات")
     fin = calculate_portfolio_metrics()
     st.info(f"الزكاة التقديرية: {safe_fmt(fin['market_val_open']*0.025775)} ريال")
 
+# ==========================================
+# الموجه الرئيسي (Router)
+# ==========================================
 def router():
     render_navbar()
     pg = st.session_state.page
