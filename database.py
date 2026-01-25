@@ -10,7 +10,7 @@ logging.basicConfig(level=logging.ERROR)
 logger = logging.getLogger(__name__)
 
 # رابط قاعدة البيانات
-DB_URL = "postgresql://postgres.uxcdbjqnbphlzftpfajm:Tm1074844687@aws-1-ap-northeast-2.pooler.supabase.com:6543/postgres"
+DB_URL = "postgresql://postgres.uxcdbjqnbphlzftpfajm:Tn1074844687@aws-1-ap-northeast-2.pooler.supabase.com:6543/postgres"
 
 @st.cache_resource
 def get_connection_pool():
