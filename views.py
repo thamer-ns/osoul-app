@@ -44,7 +44,7 @@ def apply_sorting(df, cols_definition, key_suffix):
     except: return df
 
 # ==========================================
-# 2. منطق الاستيراد
+# 2. منطق الاستيراد (كما هو - ممتاز)
 # ==========================================
 
 def clean_and_fix_columns(df, table_name):
@@ -52,24 +52,20 @@ def clean_and_fix_columns(df, table_name):
     df.columns = df.columns.astype(str).str.strip().str.lower()
     if 'id' in df.columns: df = df.drop(columns=['id'])
 
-    # --- الإيداع والسحب ---
     if table_name in ['Deposits', 'Withdrawals']:
         df['final_note'] = ''
-        for col in ['source', 'reason', 'note', 'notes', 'statement', 'المصدر', 'السبب']:
+        for col in ['source', 'reason', 'note', 'notes', 'statement', 'المصدر', 'السبب', 'ملاحظات']:
             if col in df.columns:
-                df['final_note'] = df['final_note'] + ' ' + df[col].astype(str).replace('nan', '')
+                df['final_note'] = df['final_note'] + ' ' + df[col].astype(str).replace('nan', '').replace('None', '')
         df['note'] = df['final_note'].str.strip()
-        
         if 'amount' not in df.columns:
-            for c in ['cost', 'value', 'المبلغ']:
+            for c in ['cost', 'value', 'المبلغ', 'القيمة']:
                 if c in df.columns: df['amount'] = df[c]; break
-        
         target_cols = ['date', 'amount', 'note']
         for c in target_cols:
             if c not in df.columns: df[c] = None
         return df[target_cols]
 
-    # --- العوائد ---
     elif table_name == 'ReturnsGrants':
         if 'type' in df.columns: df.rename(columns={'type': 'note'}, inplace=True)
         target_cols = ['date', 'symbol', 'company_name', 'amount', 'note']
@@ -78,10 +74,9 @@ def clean_and_fix_columns(df, table_name):
             if c not in df.columns: df[c] = None
         return df[target_cols]
 
-    # --- الصفقات ---
     elif table_name == 'Trades':
         mapping = {
-            'الرمز': 'symbol', 'ticker': 'symbol', 
+            'الرمز': 'symbol', 'ticker': 'symbol', 'code': 'symbol',
             'الشركة': 'company_name', 'company': 'company_name',
             'القطاع': 'sector',
             'الكمية': 'quantity', 'qty': 'quantity',
@@ -91,17 +86,14 @@ def clean_and_fix_columns(df, table_name):
             'الحالة': 'status'
         }
         df.rename(columns=mapping, inplace=True)
-        
         if 'symbol' in df.columns:
             df['symbol'] = df['symbol'].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
             for idx, row in df.iterrows():
-                if 'strategy' not in df.columns or pd.isna(row.get('strategy')):
-                    df.at[idx, 'strategy'] = 'استثمار'
+                if 'strategy' not in df.columns or pd.isna(row.get('strategy')): df.at[idx, 'strategy'] = 'استثمار'
                 if 'company_name' not in df.columns or pd.isna(row.get('company_name')):
                     name, sec = get_company_details(row['symbol'])
                     if name: df.at[idx, 'company_name'] = name
-                    if sec and ('sector' not in df.columns or pd.isna(row.get('sector'))):
-                        df.at[idx, 'sector'] = sec
+                    if sec and ('sector' not in df.columns or pd.isna(row.get('sector'))): df.at[idx, 'sector'] = sec
 
         if 'status' not in df.columns: df['status'] = 'Open'
         if 'strategy' not in df.columns: df['strategy'] = 'استثمار'
@@ -111,19 +103,17 @@ def clean_and_fix_columns(df, table_name):
         for c in target_cols:
             if c not in df.columns: df[c] = None
         return df[target_cols]
-
     return None
 
 def save_dataframe_to_db(df, table_name):
     clean_df = clean_and_fix_columns(df, table_name)
     if clean_df is None or clean_df.empty: return False, "الملف غير صالح"
-    
     for col in clean_df.columns:
-        if 'date' in col:
-            clean_df[col] = pd.to_datetime(clean_df[col], errors='coerce').dt.strftime('%Y-%m-%d')
+        if 'date' in col: clean_df[col] = pd.to_datetime(clean_df[col], errors='coerce').dt.strftime('%Y-%m-%d')
         elif col in ['amount', 'quantity', 'entry_price', 'exit_price', 'current_price']:
             clean_df[col] = pd.to_numeric(clean_df[col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
-
+    
+    clean_df = clean_df.dropna(subset=['date'])
     records = clean_df.to_dict('records')
     count = 0
     with get_db() as conn:
@@ -192,30 +182,18 @@ def view_portfolio(fin, page_key):
     if not all_d.empty:
         df = all_d[all_d['strategy'].astype(str).str.contains(ts, na=False)].copy()
     
-    # === الحسابات الموسعة (المفتوحة والمغلقة) ===
+    # === الأيقونات والملخص ===
     if not df.empty:
-        # 1. الصفقات المفتوحة
         op = df[df['status']=='Open'].copy()
         market_val = op['quantity'].mul(op['current_price']).sum() if not op.empty else 0
-        unrealized = market_val - op['quantity'].mul(op['entry_price']).sum() if not op.empty else 0
+        total_cost = op['quantity'].mul(op['entry_price']).sum() if not op.empty else 0
+        unrealized = market_val - total_cost
         
-        # 2. الصفقات المغلقة (الربح المحقق وصافي البيع)
-        cl = df[df['status']=='Close'].copy()
-        realized = 0
-        net_sales = 0
-        if not cl.empty:
-            # ربح محقق = (سعر خروج - سعر دخول) * كمية
-            realized = (cl['exit_price'] - cl['entry_price']) * cl['quantity']
-            realized = realized.sum()
-            # صافي السيولة من البيع = سعر خروج * كمية
-            net_sales = (cl['exit_price'] * cl['quantity']).sum()
-
-        # === عرض البطاقات (4 بطاقات) ===
         c1, c2, c3, c4 = st.columns(4)
-        with c1: render_kpi("القيمة السوقية (مفتوح)", f"{market_val:,.2f}", "blue")
-        with c2: render_kpi("الربح غير المحقق", f"{unrealized:,.2f}", unrealized)
-        with c3: render_kpi("الربح المحقق (مغلق)", f"{realized:,.2f}", realized)
-        with c4: render_kpi("صافي السيولة من البيع", f"{net_sales:,.2f}", "success")
+        with c1: render_kpi("قيمة المحفظة", f"{market_val:,.2f}", "blue")
+        with c2: render_kpi("التكلفة", f"{total_cost:,.2f}")
+        with c3: render_kpi("الربح غير المحقق", f"{unrealized:,.2f}", unrealized)
+        with c4: render_kpi("عدد الشركات", f"{len(op)}")
         st.markdown("---")
 
     if df.empty: st.info(f"محفظة {ts} فارغة."); return
@@ -252,13 +230,14 @@ def view_portfolio(fin, page_key):
             st.plotly_chart(fig, use_container_width=True)
     with t3:
         if not closed_df.empty: 
-            # إضافة عمود الربح المحقق للجدول
             closed_df['realized_gain'] = (closed_df['exit_price'] - closed_df['entry_price']) * closed_df['quantity']
             render_table(closed_df, [('company_name', 'الشركة'), ('symbol', 'الرمز'), ('quantity', 'الكمية'), ('exit_price', 'سعر البيع'), ('realized_gain', 'الربح المحقق'), ('exit_date', 'تاريخ')])
 
 def view_cash_log():
     st.header("💵 سجل السيولة")
     fin = calculate_portfolio_metrics()
+    
+    # === الأيقونات عادت ===
     c1, c2, c3 = st.columns(3)
     net = fin['deposits']['amount'].sum() - fin['withdrawals']['amount'].sum()
     with c1: render_kpi("إجمالي الإيداعات", f"{fin['deposits']['amount'].sum():,.2f}", "success")
@@ -267,11 +246,73 @@ def view_cash_log():
     st.markdown("---")
 
     t1, t2, t3 = st.tabs(["الإيداعات", "السحوبات", "التوزيعات"])
-    with t1: render_table(fin['deposits'], [('date','التاريخ'), ('amount','المبلغ'), ('note','ملاحظات')])
-    with t2: render_table(fin['withdrawals'], [('date','التاريخ'), ('amount','المبلغ'), ('note','ملاحظات')])
+    
+    # === إعادة نماذج الإضافة اليدوية ===
+    with t1:
+        with st.expander("➕ تسجيل إيداع جديد"):
+            with st.form("new_dep"):
+                col_a, col_b = st.columns(2)
+                amt = col_a.number_input("المبلغ", min_value=0.0, step=100.0)
+                dt = col_b.date_input("التاريخ", date.today())
+                nt = st.text_input("ملاحظة / المصدر")
+                if st.form_submit_button("حفظ الإيداع"):
+                    execute_query("INSERT INTO Deposits (date, amount, note) VALUES (%s, %s, %s)", (str(dt), amt, nt))
+                    st.success("تم الحفظ"); st.rerun()
+        render_table(fin['deposits'], [('date','التاريخ'), ('amount','المبلغ'), ('note','ملاحظات')])
+        
+    with t2:
+        with st.expander("➖ تسجيل سحب جديد"):
+            with st.form("new_wit"):
+                col_a, col_b = st.columns(2)
+                amt = col_a.number_input("المبلغ", min_value=0.0, step=100.0)
+                dt = col_b.date_input("التاريخ", date.today())
+                nt = st.text_input("ملاحظة / السبب")
+                if st.form_submit_button("حفظ السحب"):
+                    execute_query("INSERT INTO Withdrawals (date, amount, note) VALUES (%s, %s, %s)", (str(dt), amt, nt))
+                    st.success("تم الحفظ"); st.rerun()
+        render_table(fin['withdrawals'], [('date','التاريخ'), ('amount','المبلغ'), ('note','ملاحظات')])
+        
     with t3:
-        st.markdown(f"**إجمالي التوزيعات:** {fin['returns']['amount'].sum():,.2f} ريال")
+        with st.expander("💰 تسجيل توزيعات/عوائد"):
+            with st.form("new_ret"):
+                col_a, col_b, col_c = st.columns(3)
+                sym = col_a.text_input("رمز السهم")
+                amt = col_b.number_input("المبلغ", min_value=0.0)
+                dt = col_c.date_input("التاريخ", date.today())
+                nt = st.text_input("نوع التوزيع (مثلاً: ربع سنوي)")
+                if st.form_submit_button("حفظ العائد"):
+                    comp_name, _ = get_company_details(sym)
+                    execute_query("INSERT INTO ReturnsGrants (date, symbol, company_name, amount, note) VALUES (%s, %s, %s, %s, %s)", (str(dt), sym, comp_name, amt, nt))
+                    st.success("تم الحفظ"); st.rerun()
         render_table(fin['returns'], [('date','التاريخ'), ('symbol','الرمز'), ('amount','المبلغ'), ('note', 'النوع')])
+
+# === استعادة صفحة "إضافة صفقة" اليدوية ===
+def view_add_trade():
+    st.header("➕ تسجيل صفقة جديدة")
+    with st.container():
+        st.info("استخدم هذه الصفحة لإضافة صفقات شراء فردية يدوياً.")
+        with st.form("add_manual_trade"):
+            c1, c2 = st.columns(2)
+            sym = c1.text_input("رمز السهم (مثال: 1120)")
+            strat = c2.selectbox("المحفظة / الاستراتيجية", ["استثمار", "مضاربة", "صكوك"])
+            
+            c3, c4, c5 = st.columns(3)
+            qty = c3.number_input("الكمية", min_value=1)
+            price = c4.number_input("سعر الشراء", min_value=0.0, step=0.01)
+            dt = c5.date_input("تاريخ الشراء", date.today())
+            
+            if st.form_submit_button("حفظ الصفقة"):
+                if sym and qty > 0 and price > 0:
+                    name, sector = get_company_details(sym)
+                    atype = "Sukuk" if strat == "صكوك" else "Stock"
+                    execute_query(
+                        """INSERT INTO Trades (symbol, company_name, sector, asset_type, date, quantity, entry_price, strategy, status, current_price) 
+                           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'Open', %s)""", 
+                        (sym, name, sector, atype, str(dt), qty, price, strat, price)
+                    )
+                    st.success("تمت الإضافة بنجاح!"); st.cache_data.clear()
+                else:
+                    st.error("الرجاء تعبئة جميع البيانات بشكل صحيح")
 
 def view_analysis(fin):
     st.header("🔬 مركز التحليل الشامل")
@@ -354,26 +395,15 @@ def view_settings():
 def view_sukuk_portfolio(fin):
     st.header("📜 الصكوك")
     df = fin['all_trades']
+    
+    # === أيقونات الصكوك ===
     if not df.empty:
         sk = df[df['asset_type']=='Sukuk']
-        
-        # === أيقونات الصكوك ===
         if not sk.empty:
-            op = sk[sk['status']=='Open']
-            total_val = op['quantity'].mul(op['entry_price']).sum()
-            
-            # حساب العائد المحقق من الصكوك (إذا وجد)
-            cl_sk = sk[sk['status']=='Close']
-            realized_sk = (cl_sk['exit_price'] - cl_sk['entry_price']) * cl_sk['quantity']
-            realized_sum = realized_sk.sum()
-            
-            c1, c2, c3 = st.columns(3)
-            with c1: render_kpi("قيمة الصكوك (مفتوح)", f"{total_val:,.2f}", "blue")
-            with c2: render_kpi("الربح المحقق", f"{realized_sum:,.2f}", realized_sum)
-            with c3: render_kpi("عدد الصكوك", f"{len(op)}")
+            total = sk['quantity'].mul(sk['entry_price']).sum()
+            render_kpi("إجمالي الصكوك", f"{total:,.2f}", "blue")
             st.markdown("---")
-            
-            if not sk.empty: render_table(sk, [('company_name','الاسم'), ('quantity','العدد'), ('entry_price','الشراء')]); return
+            render_table(sk, [('company_name','الاسم'), ('quantity','العدد'), ('entry_price','الشراء')]); return
     st.info("لا توجد صكوك")
 
 def view_tools():
@@ -396,7 +426,7 @@ def router():
     elif pg == 'backtest': view_backtester_ui(fin)
     elif pg == 'tools': view_tools()
     elif pg == 'settings': view_settings()
-    elif pg == 'add': st.info("استخدم الإعدادات للاستيراد")
+    elif pg == 'add': view_add_trade() # تم إعادة التوجيه للصفحة اليدوية
     elif pg == 'update': 
         with st.spinner("تحديث..."): update_prices()
         st.session_state.page='home'; st.rerun()
