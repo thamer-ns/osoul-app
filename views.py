@@ -6,31 +6,25 @@ import time
 
 from config import DEFAULT_COLORS
 from components import render_navbar, render_kpi, render_table, render_ticker_card, safe_fmt
-from analytics import (calculate_portfolio_metrics, update_prices, generate_equity_curve, run_backtest)
+from analytics import (calculate_portfolio_metrics, update_prices, generate_equity_curve)
 from database import execute_query, fetch_table, get_db, clear_all_data
 from market_data import get_static_info, get_tasi_data, get_chart_history
 from data_source import get_company_details
 from charts import view_advanced_chart
+try: from backtester import run_backtest
+except: pass
 
 try: from financial_analysis import get_fundamental_ratios, render_financial_dashboard_ui
 except ImportError: 
     get_fundamental_ratios = lambda s: {'Score': 0}
     render_financial_dashboard_ui = lambda s: None
 
-# === الصفحات ===
-
 def view_dashboard(fin):
     try: t_price, t_change = get_tasi_data()
     except: t_price, t_change = 0, 0
     C = DEFAULT_COLORS
     arrow, cl = ("🔼", C['success']) if t_change >= 0 else ("🔽", C['danger'])
-    
-    st.markdown(f"""
-    <div class="tasi-box">
-        <div><div style="font-size:1.1rem; color:{C['sub_text']};">المؤشر العام</div><div style="font-size:2.2rem; font-weight:900; color:{C['main_text']};">{safe_fmt(t_price)}</div></div>
-        <div style="background:{cl}15; color:{cl}; padding:8px 20px; border-radius:10px; font-weight:bold; direction:ltr;">{arrow} {safe_fmt(t_change)}%</div>
-    </div>""", unsafe_allow_html=True)
-    
+    st.markdown(f"""<div class="tasi-box"><div><div style="font-size:1.1rem; color:{C['sub_text']};">المؤشر العام</div><div style="font-size:2.2rem; font-weight:900; color:{C['main_text']};">{safe_fmt(t_price)}</div></div><div style="background:{cl}15; color:{cl}; padding:8px 20px; border-radius:10px; font-weight:bold; direction:ltr;">{arrow} {safe_fmt(t_change)}%</div></div>""", unsafe_allow_html=True)
     c1,c2,c3,c4 = st.columns(4)
     total_inv = fin['total_deposited'] - fin['total_withdrawn']
     with c1: render_kpi("الكاش المتوفر", safe_fmt(fin['cash']), "blue")
@@ -38,26 +32,20 @@ def view_dashboard(fin):
     with c3: render_kpi("القيمة السوقية", safe_fmt(fin['market_val_open']))
     tpl = fin['unrealized_pl'] + fin['realized_pl'] + fin['total_returns']
     with c4: render_kpi("الربح/الخسارة", safe_fmt(tpl), tpl)
-    
     st.markdown("---")
     crv = generate_equity_curve(fin['all_trades'])
-    if not crv.empty: st.plotly_chart(px.line(crv, x='date', y='cumulative_invested', title="نمو المحفظة"), use_container_width=True)
+    if not crv.empty: st.plotly_chart(px.line(crv, x='date', y='cumulative_invested', title=""), use_container_width=True)
 
 def render_pulse_dashboard():
     st.header("💓 نبض السوق")
-    trades = fetch_table("Trades")
-    wl = fetch_table("Watchlist")
-    symbols = set()
-    if not trades.empty: symbols.update(trades[trades['status']=='Open']['symbol'].unique())
-    if not wl.empty: symbols.update(wl['symbol'].unique())
+    trades = fetch_table("Trades"); wl = fetch_table("Watchlist")
+    symbols = list(set(trades[trades['status']=='Open']['symbol'].tolist() + wl['symbol'].tolist())) if not trades.empty else []
     if not symbols: st.info("القائمة فارغة."); return
     cols = st.columns(4)
     for i, sym in enumerate(symbols):
         name, _ = get_company_details(sym)
-        price = 0.0
-        if not trades.empty:
-            row = trades[trades['symbol'] == sym]
-            if not row.empty: price = row.iloc[0]['current_price']
+        row = trades[trades['symbol'] == sym]
+        price = row.iloc[0]['current_price'] if not row.empty else 0.0
         with cols[i % 4]: render_ticker_card(sym, name if name else sym, price, 0.0)
 
 def view_portfolio(fin, page_key):
@@ -65,8 +53,7 @@ def view_portfolio(fin, page_key):
     st.header(f"💼 محفظة {ts}")
     all_d = fin['all_trades']
     df = pd.DataFrame()
-    if not all_d.empty:
-        df = all_d[all_d['strategy'].astype(str).str.contains(ts, na=False)].copy()
+    if not all_d.empty: df = all_d[all_d['strategy'].astype(str).str.contains(ts, na=False)].copy()
     
     if not df.empty:
         total_market = df[df['status']=='Open']['market_value'].sum()
@@ -74,22 +61,16 @@ def view_portfolio(fin, page_key):
         df['daily_change'] = df.apply(lambda x: ((x['current_price'] - x['prev_close']) / x['prev_close'] * 100) if pd.notna(x['prev_close']) and x['prev_close'] > 0 else 0, axis=1)
 
     COLS_FULL = [
-        ('company_name', 'اسم الشركة'), ('sector', 'القطاع'), ('status', 'الحالة'),
-        ('symbol', 'رمز الشركة'), ('date', 'تاريخ الشراء'), ('exit_date', 'تاريخ البيع'),
-        ('quantity', 'الكمية'), ('entry_price', 'سعر الشراء'), ('total_cost', 'التكلفة'),
-        ('year_high', 'اعلى سنوي'), ('current_price', 'السعر الحالي'), ('year_low', 'ادنى سنوي'),
-        ('market_value', 'سعر السوق'), ('gain', 'الربح والخسارة'), ('gain_pct', 'نسبة الربح والخسارة'),
-        ('weight', 'وزن السهم'), ('daily_change', 'نسبة التغير اليومي'), ('prev_close', 'اغلاق الامس')
+        ('company_name', 'اسم الشركة'), ('sector', 'القطاع'), ('status', 'الحالة'), ('symbol', 'رمز الشركة'), ('date', 'تاريخ الشراء'), ('exit_date', 'تاريخ البيع'),
+        ('quantity', 'الكمية'), ('entry_price', 'سعر الشراء'), ('total_cost', 'التكلفة'), ('year_high', 'اعلى سنوي'), ('current_price', 'السعر الحالي'), ('year_low', 'ادنى سنوي'),
+        ('market_value', 'سعر السوق'), ('gain', 'الربح والخسارة'), ('gain_pct', 'نسبة الربح والخسارة'), ('weight', 'وزن السهم'), ('daily_change', 'نسبة التغير اليومي'), ('prev_close', 'اغلاق الامس')
     ]
 
     if not df.empty:
-        op = df[df['status']=='Open'].copy()
-        market_val = op['quantity'].mul(op['current_price']).sum() if not op.empty else 0
+        op = df[df['status']=='Open'].copy(); market_val = op['quantity'].mul(op['current_price']).sum() if not op.empty else 0
         total_cost = op['quantity'].mul(op['entry_price']).sum() if not op.empty else 0
         unrealized = market_val - total_cost
-        cl = df[df['status']=='Close'].copy()
-        realized_profit = ((cl['exit_price'] - cl['entry_price']) * cl['quantity']).sum() if not cl.empty else 0
-
+        cl = df[df['status']=='Close'].copy(); realized_profit = ((cl['exit_price'] - cl['entry_price']) * cl['quantity']).sum() if not cl.empty else 0
         c1, c2, c3, c4 = st.columns(4)
         with c1: render_kpi("القيمة السوقية", safe_fmt(market_val), "blue")
         with c2: render_kpi("التكلفة", safe_fmt(total_cost))
@@ -98,9 +79,7 @@ def view_portfolio(fin, page_key):
         st.markdown("---")
 
     if df.empty: st.info("المحفظة فارغة"); return
-
-    open_df = df[df['status']=='Open'].copy()
-    closed_df = df[df['status']=='Close'].copy()
+    open_df = df[df['status']=='Open'].copy(); closed_df = df[df['status']=='Close'].copy()
 
     t1, t2, t3 = st.tabs(["الأسهم الحالية", "تحليل الأداء", "الأرشيف"])
     with t1:
@@ -111,9 +90,7 @@ def view_portfolio(fin, page_key):
                 sort_opt = st.radio("sort_r", ["الأحدث", "الأعلى ربحاً"], horizontal=True, label_visibility="collapsed")
             if sort_opt == "الأعلى ربحاً": open_df = open_df.sort_values(by="gain", ascending=False)
             else: open_df = open_df.sort_values(by="date", ascending=False)
-
             render_table(open_df, COLS_FULL)
-            
             with st.expander("🔻 بيع سهم"):
                 with st.form("sell"):
                     c1,c2 = st.columns(2)
@@ -124,7 +101,6 @@ def view_portfolio(fin, page_key):
                         execute_query("UPDATE Trades SET status='Close', exit_price=%s, exit_date=%s WHERE symbol=%s AND strategy=%s AND status='Open'", (p, str(d), s, ts))
                         st.success("تم"); time.sleep(0.5); st.rerun()
         else: st.info("لا توجد أسهم حالية")
-    
     with t2:
         if not open_df.empty and page_key == 'invest':
             fig = px.pie(open_df, values='market_value', names='sector', hole=0.4)
@@ -133,7 +109,6 @@ def view_portfolio(fin, page_key):
         if not closed_df.empty: 
             closed_df['net_sales'] = closed_df['quantity'] * closed_df['exit_price']
             closed_df['realized_gain'] = closed_df['net_sales'] - closed_df['total_cost']
-            
             c1, c2 = st.columns(2)
             with c1: render_kpi("صافي البيع", safe_fmt(closed_df['net_sales'].sum()), "blue")
             with c2: render_kpi("الربح المحقق", safe_fmt(closed_df['realized_gain'].sum()))
@@ -149,7 +124,6 @@ def view_cash_log():
     with c2: render_kpi("إجمالي السحوبات", safe_fmt(fin['withdrawals']['amount'].sum()), "danger")
     with c3: render_kpi("صافي التمويل", safe_fmt(net), "blue")
     st.markdown("---")
-
     t1, t2, t3 = st.tabs(["الإيداعات", "السحوبات", "العوائد"])
     cols = [('date', 'التاريخ'), ('amount', 'المبلغ'), ('note', 'ملاحظات')]
     with t1: render_table(fin['deposits'].sort_values('date', ascending=False), cols)
@@ -197,13 +171,10 @@ def view_analysis(fin):
     trades = fin['all_trades']
     wl = fetch_table("Watchlist")
     symbols = list(set(trades['symbol'].unique().tolist() + wl['symbol'].unique().tolist())) if not trades.empty else []
-    
     c1, c2 = st.columns([1, 2])
-    with c1: 
-        st.markdown("**بحث:**"); ns = st.text_input("s_search", label_visibility="collapsed")
+    with c1: st.markdown("**بحث:**"); ns = st.text_input("s_search", label_visibility="collapsed")
     if ns and ns not in symbols: symbols.insert(0, ns)
-    with c2:
-        st.markdown("**اختر الشركة:**"); sym = st.selectbox("s_select", symbols, label_visibility="collapsed") if symbols else None
+    with c2: st.markdown("**اختر الشركة:**"); sym = st.selectbox("s_select", symbols, label_visibility="collapsed") if symbols else None
     
     if sym:
         n, s = get_static_info(sym)
@@ -241,9 +212,7 @@ def view_settings():
         f = st.file_uploader("اختر الملف", accept_multiple_files=False)
         if f and st.button("بدء الاستيراد"): st.info("جاهز للاستيراد")
         
-    # دمج ميزة رفع المستندات هنا
     with st.expander("📎 إدارة المرفقات"):
-        st.info("يمكنك هنا رفع مستندات إضافية")
         doc = st.file_uploader("رفع مستند PDF/Image", type=['pdf', 'png', 'jpg'])
         if doc and st.button("حفظ المستند"):
             try:
