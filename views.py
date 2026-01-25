@@ -3,27 +3,27 @@ import pandas as pd
 import plotly.express as px
 from datetime import date
 import time
+import io
 
 # === الاستيرادات ===
-from config import DEFAULT_COLORS
+from config import DEFAULT_COLORS, BACKUP_DIR
 from components import render_navbar, render_kpi, render_table
 from analytics import (calculate_portfolio_metrics, update_prices, create_smart_backup, 
                        generate_equity_curve, calculate_historical_drawdown)
-from charts import render_technical_chart # تأكد من أن charts.py يحتوي على هذه الدالة
+# تأكد أن charts.py محدث ليحتوي view_advanced_chart
+from charts import view_advanced_chart, render_technical_chart
 from financial_analysis import get_fundamental_ratios, render_financial_dashboard_ui, get_thesis, save_thesis
 from market_data import get_static_info, get_tasi_data, get_chart_history 
 from database import execute_query, fetch_table, get_db, clear_all_data
 
-# === استيراد الصفحات الاختيارية (أعدتها لك) ===
+# === استيراد الصفحات الاختيارية ===
 try: from backtester import run_backtest
 except ImportError: 
     def run_backtest(*args): return None
 
 try: from pulse import render_pulse_dashboard
 except ImportError: 
-    # دالة احتياطية في حال كان الملف ناقصاً
-    def render_pulse_dashboard(): 
-        st.info("🚧 صفحة نبض السوق قيد التحديث")
+    def render_pulse_dashboard(): st.info("🚧 صفحة نبض السوق قيد الصيانة")
 
 try: from classical_analysis import render_classical_analysis
 except ImportError:
@@ -44,19 +44,6 @@ def apply_sorting(df, cols_definition, key_suffix):
 def safe_fmt(val, suffix=""):
     try: return f"{float(val):,.2f}{suffix}"
     except: return "-"
-
-# === صفحة الملف الشخصي (تمت استعادتها) ===
-def view_profile():
-    st.header("👤 الملف الشخصي")
-    u = st.session_state.get('username', 'User')
-    st.write(f"مرحباً بك، **{u}**")
-    
-    with st.expander("تغيير كلمة المرور"):
-        with st.form("pwd_change"):
-            old = st.text_input("كلمة المرور الحالية", type="password")
-            new = st.text_input("كلمة المرور الجديدة", type="password")
-            if st.form_submit_button("تحديث"):
-                st.info("هذه الميزة تتطلب تفعيل التحقق الكامل.")
 
 # === الصفحات الرئيسية ===
 def view_dashboard(fin):
@@ -255,22 +242,26 @@ def view_cash_log():
     
     with t1:
         st.markdown(f"**المجموع:** {fin['deposits']['amount'].sum():,.2f}")
-        with st.expander("➕ إيداع جديد"):
+        with st.expander("➕ تسجيل إيداع نقدي"):
              with st.form("dep"):
                  amt = st.number_input("المبلغ"); dt = st.date_input("التاريخ"); nt = st.text_input("ملاحظة")
-                 if st.form_submit_button("حفظ"): execute_query("INSERT INTO Deposits (date, amount, note) VALUES (%s, %s, %s)", (str(dt), amt, nt)); st.rerun()
+                 if st.form_submit_button("حفظ"): execute_query("INSERT INTO Deposits (date, amount, note) VALUES (%s, %s, %s)", (str(dt), amt, nt)); st.success("تم"); st.rerun()
         render_table(fin['deposits'], [('date','التاريخ'), ('amount','المبلغ'), ('note','ملاحظات')])
     
     with t2:
         st.markdown(f"**المجموع:** {fin['withdrawals']['amount'].sum():,.2f}")
-        with st.expander("➖ سحب جديد"):
+        with st.expander("➖ تسجيل سحب نقدي"):
              with st.form("wit"):
                  amt = st.number_input("المبلغ"); dt = st.date_input("التاريخ"); nt = st.text_input("ملاحظة")
-                 if st.form_submit_button("حفظ"): execute_query("INSERT INTO Withdrawals (date, amount, note) VALUES (%s, %s, %s)", (str(dt), amt, nt)); st.rerun()
+                 if st.form_submit_button("حفظ"): execute_query("INSERT INTO Withdrawals (date, amount, note) VALUES (%s, %s, %s)", (str(dt), amt, nt)); st.success("تم"); st.rerun()
         render_table(fin['withdrawals'], [('date','التاريخ'), ('amount','المبلغ'), ('note','ملاحظات')])
     
     with t3:
         st.markdown(f"**المجموع:** {fin['returns']['amount'].sum():,.2f}")
+        with st.expander("💰 تسجيل توزيعات أرباح"):
+             with st.form("ret"):
+                 sym = st.text_input("رمز السهم"); amt = st.number_input("المبلغ المستلم"); dt = st.date_input("التاريخ")
+                 if st.form_submit_button("حفظ"): execute_query("INSERT INTO ReturnsGrants (date, symbol, amount) VALUES (%s, %s, %s)", (str(dt), sym, amt)); st.success("تم"); st.rerun()
         render_table(fin['returns'], [('date','التاريخ'), ('symbol','الرمز'), ('amount','المبلغ')])
 
 def view_tools():
@@ -278,17 +269,16 @@ def view_tools():
     fin = calculate_portfolio_metrics()
     st.info("زكاة المحفظة التقديرية (2.5775% من القيمة السوقية): " + str(fin['market_val_open'] * 0.025775))
 
-# === حل مشكلة السيولة (Mapping) ===
+# === حل مشكلة السيولة جذرياً (Clean & Map) ===
 def clean_and_map_columns(df):
     if df is None: return None
     df.columns = df.columns.str.strip().str.lower()
     
-    # تحويل أسماء الأعمدة الموجودة في ملفك إلى أسماء القاعدة
-    # في ملفك: Deposits.csv فيها 'source' -> نحولها لـ 'note'
-    # في ملفك: Withdrawals.csv فيها 'reason' -> نحولها لـ 'note'
+    # 1. خرائط تصحيح أسماء الأعمدة (Mapping)
+    # هذا يحل مشكلة: Error inserting row in Deposits: column "source" does not exist
     column_mapping = {
-        'source': 'note',
-        'reason': 'note',
+        'source': 'note',   # في ملفات الودائع
+        'reason': 'note',   # في ملفات السحب
         'notes': 'note',
         'cost': 'amount',
         'value': 'amount'
@@ -303,7 +293,7 @@ def clean_and_map_columns(df):
             try: df[col] = pd.to_datetime(df[col], errors='coerce').dt.strftime('%Y-%m-%d')
             except: pass
             
-    # تحويل الأرقام
+    # تحويل الأرقام (إزالة الفواصل)
     for col in df.columns:
         if df[col].dtype == 'object':
             try: df[col] = df[col].astype(str).str.replace(',', '')
@@ -315,18 +305,19 @@ def save_dataframe_to_db(df, table_name):
     df = clean_and_map_columns(df)
     if df is None or df.empty: return
 
-    # تحديد الأعمدة المسموحة لكل جدول (لتجنب الأخطاء)
+    # 3. الفلترة الذكية: إدخال الأعمدة الموجودة في قاعدة البيانات فقط
+    # هذا يحل مشكلة: column "type" does not exist في ReturnsGrants
     allowed_cols = {
         'Trades': ['symbol', 'company_name', 'sector', 'asset_type', 'date', 'quantity', 'entry_price', 'strategy', 'status', 'exit_date', 'exit_price', 'current_price'],
         'Deposits': ['date', 'amount', 'note'],
         'Withdrawals': ['date', 'amount', 'note'],
-        'ReturnsGrants': ['date', 'symbol', 'company_name', 'amount'],
+        'ReturnsGrants': ['date', 'symbol', 'company_name', 'amount'], # تم استبعاد 'type' لأنه غير موجود
         'Watchlist': ['symbol']
     }
     
     if table_name not in allowed_cols: return
     
-    # الاحتفاظ فقط بالأعمدة المسموحة وحذف الزائد (مثل type)
+    # الاحتفاظ فقط بالأعمدة المسموحة
     valid_cols = [c for c in df.columns if c in allowed_cols[table_name]]
     df_final = df[valid_cols].copy()
     
@@ -343,6 +334,7 @@ def save_dataframe_to_db(df, table_name):
                 query = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
                 try: cur.execute(query, vals)
                 except Exception as e: 
+                    # طباعة الخطأ في الكونسول فقط وتكملة الباقي
                     print(f"Error inserting into {table_name}: {e}")
                     conn.rollback()
             conn.commit()
@@ -366,6 +358,7 @@ def view_settings():
             'watchlist': 'Watchlist'
         }
         
+        # التأكد من الاتصال
         conn_check = get_db()
         with conn_check as conn:
             if not conn: st.error("لا يوجد اتصال بالقاعدة"); st.stop()
@@ -421,7 +414,6 @@ def router():
     elif pg == 'tools': view_tools()
     elif pg == 'add': view_add_trade()
     elif pg == 'settings': view_settings()
-    elif pg == 'profile': view_profile() # أعدت إضافة الصفحة
     elif pg == 'update':
         with st.spinner("تحديث..."): update_prices()
         st.session_state.page = 'home'; st.rerun()
