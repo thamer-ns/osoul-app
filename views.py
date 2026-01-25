@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from datetime import date
+import io
 
 # === الاستيرادات ===
 from components import render_navbar, render_kpi, render_table
@@ -18,7 +19,7 @@ try:
 except ImportError:
     def run_backtest(*args): return None
 
-# === استيراد ملف نبض السوق (الجديد) ===
+# === استيراد ملف نبض السوق ===
 try:
     from pulse import render_pulse_dashboard
 except ImportError:
@@ -46,10 +47,8 @@ def apply_sorting(df, cols_definition, key_suffix):
     try: return df.sort_values(by=target, ascending=asc)
     except: return df
 
-# === الصفحات ===
-
+# === مكونات الواجهة (Navbar) ===
 def render_navbar():
-    # تم زيادة الأعمدة إلى 10 لإضافة زر "نبض"
     c1, c2, c3, c4, c5, c6, c7, c8, c9, c10 = st.columns([1, 1, 1, 1, 1, 1, 1.2, 1, 1, 1])
     
     with c1:
@@ -59,7 +58,6 @@ def render_navbar():
     with c3:
         if st.button("💎 استثمار", use_container_width=True): st.session_state.page = 'invest'; st.rerun()
     with c4:
-        # === الزر الجديد ===
         if st.button("💓 نبض", use_container_width=True): st.session_state.page = 'pulse'; st.rerun()
     with c5:
         if st.button("📜 صكوك", use_container_width=True): st.session_state.page = 'sukuk'; st.rerun()
@@ -79,10 +77,11 @@ def render_navbar():
             if st.button("🛠️ أدوات", use_container_width=True): st.session_state.page = 'tools'; st.rerun()
             if st.button("⚙️ الإعدادات", use_container_width=True): st.session_state.page = 'settings'; st.rerun()
             if st.button("🚪 خروج", use_container_width=True): 
-                st.session_state.clear()
-                st.rerun()
+                st.session_state.clear(); st.rerun()
     
     st.markdown("---")
+
+# === الصفحات ===
 
 def view_dashboard(fin):
     try: t_price, t_change = get_tasi_data()
@@ -132,7 +131,6 @@ def view_portfolio(fin, page_key):
     
     if df_strat.empty: 
         st.warning(f"المحفظة فارغة. (تأكد أن الصفقات مسجلة تحت مسمى '{target_strat}')")
-        # نكمل التنفيذ ولا نتوقف
     
     if 'status' not in df_strat.columns: df_strat['status'] = 'Open'
 
@@ -150,8 +148,6 @@ def view_portfolio(fin, page_key):
     with t1:
         if page_key == 'invest':
             st.markdown("#### 🎯 التوزيع القطاعي والأهداف")
-            
-            # --- بداية الإصلاح الجذري لمشكلة الدمج ---
             if not open_df.empty:
                 sec_sum = open_df.groupby('sector').agg({'market_value':'sum'}).reset_index()
                 total_mv = sec_sum['market_value'].sum()
@@ -162,7 +158,6 @@ def view_portfolio(fin, page_key):
             saved_targets = fetch_table("SectorTargets")
             all_secs = set()
             
-            # تحويل القيم إلى نصوص (String) لتجنب الأخطاء
             if not sec_sum.empty:
                 sec_sum['sector'] = sec_sum['sector'].astype(str)
                 all_secs.update(sec_sum['sector'].tolist())
@@ -177,7 +172,6 @@ def view_portfolio(fin, page_key):
             else:
                 df_edit = pd.DataFrame(columns=['sector'])
 
-            # الدمج الآمن
             if not df_edit.empty:
                 df_edit = pd.merge(df_edit, sec_sum, on='sector', how='left').fillna(0)
                 if not saved_targets.empty:
@@ -187,7 +181,6 @@ def view_portfolio(fin, page_key):
                     df_edit['target_percentage'] = 0.0
             else:
                 df_edit = pd.DataFrame(columns=['sector', 'market_value', 'current_weight', 'target_percentage'])
-            # --- نهاية الإصلاح ---
 
             render_table(df_edit, [('sector', 'القطاع'), ('current_weight', 'الوزن الحالي %'), ('target_percentage', 'الهدف %')])
             
@@ -318,7 +311,6 @@ def view_analysis(fin):
 def view_backtester_ui(fin):
     st.header("🧪 مختبر الاستراتيجيات الذكي")
     st.markdown("قم باختبار استراتيجيات جون ميرفي والاستراتيجيات الهجينة على بيانات السوق السعودي.")
-
     with st.container():
         c1, c2, c3 = st.columns(3)
         with c1:
@@ -326,20 +318,16 @@ def view_backtester_ui(fin):
             common_symbols = ["1120.SR", "2222.SR", "1010.SR", "2010.SR", "1150.SR"]
             all_syms = list(set(symbols + common_symbols))
             symbol = st.selectbox("اختر السهم", all_syms)
-        
         with c2:
             strategy = st.selectbox("الاستراتيجية", ["Trend Follower (جون ميرفي)", "Sniper (هجين)"])
-        
         with c3:
             capital = st.number_input("رأس المال", value=100000, step=10000)
 
     if st.button("🚀 تشغيل الاختبار", type="primary", use_container_width=True):
         with st.spinner("جاري جلب البيانات التاريخية وتشغيل الخوارزميات..."):
             df_hist = get_chart_history(symbol, period="2y", interval="1d")
-            
             if df_hist is not None and not df_hist.empty and len(df_hist) > 50:
                 result = run_backtest(df_hist, strategy, capital)
-                
                 if result:
                     st.success("تم الاختبار بنجاح!")
                     res_c1, res_c2, res_c3 = st.columns(3)
@@ -347,10 +335,8 @@ def view_backtester_ui(fin):
                     res_c1.metric("العائد الكلي", f"{result['return_pct']:.2f}%", delta=f"{result['return_pct']:.2f}%", delta_color=ret_color)
                     res_c2.metric("القيمة النهائية", f"{result['final_value']:,.2f}")
                     res_c3.metric("عدد الصفقات", result['trades_count'])
-                    
                     st.subheader("📈 منحنى نمو رأس المال")
                     st.line_chart(result['df']['Portfolio_Value'], color="#0e6ba8")
-                    
                     with st.expander("سجل الصفقات التفصيلي", expanded=True):
                         if not result['trades_log'].empty:
                             st.dataframe(result['trades_log'], use_container_width=True)
@@ -370,7 +356,6 @@ def view_add_trade():
             qty = c3.number_input("الكمية", min_value=1.0)
             price = c4.number_input("السعر", min_value=0.0)
             date_ex = c5.date_input("التاريخ", date.today())
-            
             if st.form_submit_button("💾 حفظ", type="primary"):
                 n, s = get_static_info(sym)
                 atype = "Sukuk" if strat == "صكوك" else "Stock"
@@ -411,6 +396,7 @@ def view_tools():
     fin = calculate_portfolio_metrics()
     st.info("زكاة تقديرية (2.5775%): " + str(fin['market_val_open'] * 0.025775))
 
+# === صفحة الإعدادات (المحدثة لحل مشكلة CSV والأرقام العربية) ===
 def view_settings():
     st.header("⚙️ الإعدادات العامة")
     st.markdown("### 📤 النسخ الاحتياطي")
@@ -419,25 +405,101 @@ def view_settings():
         else: st.error("فشل النسخ")
     st.markdown("---")
     st.markdown("### 📥 إدارة البيانات")
-    if st.button("🗑️ حذف جميع البيانات (Format)", type="primary"):
+    if st.button("🗑️ حذف جميع البيانات (تهيئة)", type="primary"):
         clear_all_data()
-        st.warning("تم مسح البيانات!"); st.cache_data.clear(); st.rerun()
-    st.warning("استعادة البيانات (سيتم دمج الأعمدة الصحيحة فقط)")
-    f = st.file_uploader("ملف Excel", type=['xlsx'])
-    if f and st.button("🚀 استيراد"):
-        try:
-            xls = pd.ExcelFile(f)
-            with get_db() as conn:
-                tables = ['Trades', 'Deposits', 'Withdrawals', 'ReturnsGrants', 'Watchlist', 'SectorTargets', 'InvestmentThesis', 'FinancialStatements']
-                for t in tables:
-                    if t in xls.sheet_names:
-                        df = pd.read_excel(xls, t)
-                        if not df.empty:
-                            if 'id' in df.columns: df = df.drop(columns=['id'])
-                            pass 
-            st.success("تم الاستيراد (محاكاة)!")
+        st.warning("تم مسح جميع البيانات!"); st.cache_data.clear(); st.rerun()
+    
+    st.warning("استعادة البيانات (يدعم ملفات CSV المتعددة والأرقام العربية)")
+    
+    # السماح برفع عدة ملفات CSV/XLSX
+    uploaded_files = st.file_uploader("ارفع ملفات البيانات (Trades, Deposits, ...)", 
+                                      type=['csv', 'xlsx'], 
+                                      accept_multiple_files=True)
+    
+    if uploaded_files and st.button("🚀 بدء الاستيراد"):
+        success_count = 0
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        # دالة تنظيف وتصحيح البيانات
+        def clean_df_for_db(df):
+            # 1. إزالة عمود id إذا وجد لتجنب تعارض المفاتيح
+            if 'id' in df.columns:
+                df = df.drop(columns=['id'])
+            
+            # 2. معالجة الأعمدة
+            for col in df.columns:
+                # تحويل كل شيء لنص أولاً للمعالجة
+                if df[col].dtype == 'object':
+                    # استبدال الفاصلة العربية (٫) بالنقطة (.)
+                    df[col] = df[col].astype(str).str.replace('٫', '.', regex=False)
+                    # إزالة الفاصلة العادية (,) إذا كانت للألوف
+                    df[col] = df[col].astype(str).str.replace(',', '', regex=False)
+                    # محاولة التحويل لرقم
+                    df[col] = pd.to_numeric(df[col], errors='ignore')
+            return df
+
+        # خريطة الجداول
+        table_map = {
+            'Trades': 'Trades', 'Deposits': 'Deposits', 
+            'Withdrawals': 'Withdrawals', 'ReturnsGrants': 'ReturnsGrants',
+            'Watchlist': 'Watchlist', 'SectorTargets': 'SectorTargets',
+            'InvestmentThesis': 'InvestmentThesis'
+        }
+
+        total_files = len(uploaded_files)
+        for i, f in enumerate(uploaded_files):
+            try:
+                fname = f.name
+                target_table = None
+                for key, tbl in table_map.items():
+                    if key in fname:
+                        target_table = tbl
+                        break
+                
+                if target_table:
+                    # قراءة الملف حسب نوعه
+                    if fname.endswith('.csv'):
+                        df = pd.read_csv(f)
+                    else:
+                        df = pd.read_excel(f)
+                    
+                    if not df.empty:
+                        df_clean = clean_df_for_db(df)
+                        
+                        # الإدخال الآمن للقاعدة
+                        records = df_clean.to_dict('records')
+                        with get_db() as conn:
+                            with conn.cursor() as cur:
+                                for row in records:
+                                    # بناء جملة INSERT ديناميكية
+                                    cols = list(row.keys())
+                                    vals = list(row.values())
+                                    # معالجة NaN
+                                    vals = [None if pd.isna(v) else v for v in vals]
+                                    
+                                    col_str = ', '.join(cols)
+                                    val_placeholders = ', '.join(['%s'] * len(vals))
+                                    
+                                    query = f"INSERT INTO {target_table} ({col_str}) VALUES ({val_placeholders})"
+                                    try:
+                                        cur.execute(query, vals)
+                                    except Exception as e:
+                                        print(f"Skipped row in {target_table}: {e}")
+                                        conn.rollback() # تراجع عن الصف الفاشل فقط
+                                conn.commit()
+                        success_count += 1
+                        status_text.text(f"✅ تم استيراد: {fname}")
+                else:
+                    status_text.warning(f"⚠️ ملف غير معروف: {fname}")
+            except Exception as e:
+                status_text.error(f"❌ خطأ في {f.name}: {e}")
+            
+            progress_bar.progress((i + 1) / total_files)
+
+        if success_count > 0:
+            st.success(f"اكتمل الاستيراد لـ {success_count} ملفات! قم بتحديث الصفحة.")
             st.cache_data.clear()
-        except Exception as e: st.error(f"خطأ: {e}")
 
 def router():
     render_navbar()
