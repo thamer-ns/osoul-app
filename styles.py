@@ -1,5 +1,32 @@
 import streamlit as st
 
+# تعطيل كل النصوص الإنجليزية الخفية (aria / tooltips)
+st.markdown("""
+<script>
+(function() {
+    const clean = () => {
+        document.querySelectorAll('[aria-label], [title]').forEach(el => {
+            const v1 = el.getAttribute('aria-label') || '';
+            const v2 = el.getAttribute('title') || '';
+            const bad = /expand|collapse|keyboard|arrow|more|less|fullscreen|view/i;
+
+            if (bad.test(v1)) el.removeAttribute('aria-label');
+            if (bad.test(v2)) el.removeAttribute('title');
+        });
+
+        // حذف أي tooltip ظاهر
+        document.querySelectorAll('[role="tooltip"]').forEach(t => t.remove());
+    };
+
+    clean();
+    new MutationObserver(clean).observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true
+    });
+})();
+</script>
+""", unsafe_allow_html=True)
 def apply_custom_css():
     # === 1. JavaScript to kill English tooltips (Expand/Collapse) ===
     st.markdown("""
