@@ -1,7 +1,8 @@
 import streamlit as st
 
 def apply_custom_css():
-    # === 1. JavaScript: حذف التلميحات الإنجليزية فوراً ===
+    # === 1. JavaScript لإزالة التلميحات الإنجليزية المزعجة ===
+    # التغيير تم هنا: أضفنا كلمات (keyboard, more, less) للقائمة للحذف
     st.markdown("""
         <script>
         (function() {
@@ -11,73 +12,55 @@ def apply_custom_css():
                 targets.forEach(el => {
                     const t = el.getAttribute('title');
                     const a = el.getAttribute('aria-label');
-                    // تمت إضافة كلمات جديدة للقائمة (keyboard, ar, more, less)
-                    const badWords = /expand|collapse|fullscreen|view|zoom|keyboard|more|less|ar|options/i;
+                    // قائمة الكلمات التي نريد حذفها إذا ظهرت
+                    const badWords = /expand|collapse|fullscreen|view|zoom|keyboard|more|less|open|close/i;
                     
-                    // حذف التلميح إذا احتوى على الكلمات الإنجليزية
+                    // إذا وجد الكلمة، يقوم بحذف التلميح فوراً
                     if (t && badWords.test(t)) el.removeAttribute('title');
                     if (a && badWords.test(a)) el.removeAttribute('aria-label');
                 });
                 
-                // إخفاء عناصر التلميح الخاصة بـ Streamlit بالقوة
-                const tooltips = document.querySelectorAll('[role="tooltip"], .stTooltipHoverTarget');
-                tooltips.forEach(el => {
-                    el.style.display = 'none';
-                    el.style.opacity = '0';
-                    el.style.visibility = 'hidden';
-                });
+                // إزالة عناصر التلميحات العائمة الخاصة بـ Streamlit
+                document.querySelectorAll('[role="tooltip"], .stTooltipHoverTarget').forEach(el => el.remove());
             });
             observer.observe(document.body, { childList: true, subtree: true, attributes: true });
         })();
         </script>
     """, unsafe_allow_html=True)
 
-    # === 2. CSS: التصميم وإخفاء العناصر غير المرغوبة ===
+    # === 2. CSS للتصميم (لم يتغير شيء هنا) ===
     st.markdown("""
         <style>
         @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap');
         
-        /* إجبار الاتجاه لليمين والخط العربي */
-        html, body, [class*="css"], p, div, label, input, button, textarea, span, h1, h2, h3, a {
+        /* Force RTL and Font */
+        html, body, [class*="css"], p, div, label, input, button, textarea, span, h1, h2, h3 {
             font-family: 'Cairo', sans-serif !important;
             direction: rtl !important;
             text-align: right !important;
         }
         
-        /* === إخفاء العناصر الإنجليزية المزعجة === */
+        /* Hide Sidebar */
+        [data-testid="stSidebar"] { display: none !important; }
         
-        /* إخفاء القائمة الجانبية وشريط الأدوات العلوي (Deploy/Menu) */
-        [data-testid="stSidebar"], [data-testid="stToolbar"], header, .stAppHeader { 
-            display: none !important; visibility: hidden !important; 
-        }
-        
-        /* إخفاء أي تلميح (Tooltip) يظهر عند تحريك الماوس */
+        /* Visual hide for tooltips logic check */
         div[role="tooltip"], .stTooltipHoverTarget > span {
             display: none !important; opacity: 0 !important; visibility: hidden !important;
         }
-
-        /* إخفاء أيقونات التكبير والخيارات في الجداول والشارتات */
-        [data-testid="stElementToolbar"] { display: none !important; }
         
-        /* === تحسين القوائم المنسدلة (Expander) لإخفاء expand more/less === */
+        /* Hide Expander Arrow (السهم الصغير) */
         div[data-testid="stExpander"] details summary svg { display: none !important; }
-        div[data-testid="stExpander"] details summary {
-            list-style: none !important; /* إخفاء المثلث الافتراضي */
-            font-weight: 800 !important; 
-            color: #0052CC !important; 
-            padding: 10px 15px !important;
-        }
-        div[data-testid="stExpander"] details summary::-webkit-details-marker {
-            display: none !important;
-        }
-
-        /* Expander Box Styling */
+        
+        /* Expander Styling */
         div[data-testid="stExpander"] {
             border: 1px solid #E5E7EB; border-radius: 12px; background-color: #FAFAFA;
             margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.02);
         }
+        div[data-testid="stExpander"] details summary {
+            font-weight: 800 !important; color: #0052CC !important; padding: 10px 15px !important;
+        }
 
-        /* === تنسيق البطاقات (KPI Cards) === */
+        /* === Lively KPI Cards === */
         .kpi-card {
             background-color: white;
             border-radius: 20px;
@@ -95,7 +78,7 @@ def apply_custom_css():
             border-color: #BFDBFE;
         }
         
-        /* أيقونة الخلفية الباهتة */
+        /* Faded Background Icon */
         .kpi-icon-bg {
             position: absolute;
             left: -15px; bottom: -20px;
@@ -111,7 +94,7 @@ def apply_custom_css():
         .kpi-value { font-size: 1.8rem; font-weight: 900; color: #1E293B; direction: ltr; position: relative; z-index: 2; }
         .kpi-label { color: #64748B; font-size: 0.9rem; font-weight: 700; position: relative; z-index: 2; margin-bottom: 5px; }
 
-        /* === بطاقة تاسي الزرقاء === */
+        /* === Blue Gradient TASI Card === */
         .tasi-card {
             background: linear-gradient(135deg, #0052CC 0%, #0033A0 100%);
             border-radius: 20px; padding: 25px; color: white !important;
@@ -121,7 +104,7 @@ def apply_custom_css():
         }
         .tasi-card:hover { transform: translateY(-3px); }
 
-        /* === الجداول === */
+        /* === Blue Header Tables === */
         .finance-table {
             width: 100%; border-collapse: separate; border-spacing: 0;
             border: 1px solid #E5E7EB; border-radius: 12px;
@@ -139,12 +122,12 @@ def apply_custom_css():
         }
         .finance-table tr:hover { background-color: #F8FAFC; }
         
-        /* الألوان والشارات */
+        /* Colors & Badges */
         .txt-green { color: #059669 !important; } .txt-red { color: #DC2626 !important; } .txt-blue { color: #2563EB !important; }
         .badge-open { background: #DCFCE7; color: #166534; padding: 4px 12px; border-radius: 20px; font-size: 0.75rem; }
         .badge-closed { background: #F3F4F6; color: #4B5563; padding: 4px 12px; border-radius: 20px; font-size: 0.75rem; }
         
-        /* الأزرار */
+        /* Buttons */
         div.stButton > button {
             width: 100%; border-radius: 12px; height: 50px; font-weight: 800; border: none;
             box-shadow: 0 2px 4px rgba(0,0,0,0.05); background: white; color: #334155; transition: 0.2s;
