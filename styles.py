@@ -11,7 +11,8 @@ def apply_custom_css():
                 targets.forEach(el => {
                     const t = el.getAttribute('title');
                     const a = el.getAttribute('aria-label');
-                    const badWords = /expand|collapse|fullscreen|view|zoom/i;
+                    const badWords = /expand|collapse|fullscreen|view|zoom|keyboard|copy|print|sort|search|download/i;
+
                     
                     // Remove attributes if they contain English keywords
                     if (t && badWords.test(t)) el.removeAttribute('title');
@@ -41,6 +42,21 @@ def apply_custom_css():
         /* Hide Sidebar */
         [data-testid="stSidebar"] { display: none !important; }
         
+        /* 1. إخفاء التلميحات (Tooltips) بشكل كامل */
+        div[role="tooltip"], [data-testid="stTooltipHoverTarget"] {
+            display: none !important; opacity: 0 !important; visibility: hidden !important;
+        }
+
+        /* 2. إخفاء شريط أدوات الجداول (الذي يحتوي على download/search) */
+        [data-testid="stElementToolbar"] {
+            display: none !important;
+        }
+
+        /* 3. إخفاء أيقونات التكبير (Fullscreen) */
+        button[title="View fullscreen"] {
+            display: none !important;
+        }
+
         /* Visual hide for tooltips */
         div[role="tooltip"], .stTooltipHoverTarget > span {
             display: none !important; opacity: 0 !important; visibility: hidden !important;
@@ -50,11 +66,7 @@ def apply_custom_css():
         div[data-testid="stExpander"] details summary svg { display: none !important; }
         
         /* Expander Styling */
-        div[data-testid="stExpander"] {
-            border: 1px solid #E5E7EB; border-radius: 12px; background-color: #FAFAFA;
-            margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.02);
-        }
-        div[data-testid="stExpander"] details summary {
+        div[data-testid="stExpander"]testid="stExpander"] details summary {
             font-weight: 800 !important; color: #0052CC !important; padding: 10px 15px !important;
         }
 
