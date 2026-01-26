@@ -1,75 +1,41 @@
 import streamlit as st
-import pandas as pd
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from market_data import get_chart_history
 from config import DEFAULT_COLORS
-from components import render_navbar, render_kpi, render_table, render_ticker_card, safe_fmt
-from analytics import calculate_portfolio_metrics, generate_equity_curve, run_backtest
-from database import execute_query, fetch_table
-from market_data import get_static_info, get_tasi_data, get_chart_history
-from charts import view_advanced_chart
+import numpy as np
 
-def view_dashboard(fin):
-    try: t_price, t_chg = get_tasi_data()
-    except: t_price, t_chg = 0, 0
-    C = DEFAULT_COLORS
-    st.markdown(f'<div class="tasi-box"><div><div style="font-size:1.1rem; opacity:0.8;">تاسي</div><div style="font-size:2.2rem; font-weight:900;">{safe_fmt(t_price)}</div></div><div style="background:rgba(255,255,255,0.2); padding:10px 20px; border-radius:12px; font-weight:bold;">{t_chg:+.2f}%</div></div>', unsafe_allow_html=True)
-    c1,c2,c3,c4 = st.columns(4)
-    with c1: render_kpi("الكاش", safe_fmt(fin['cash']), "blue")
-    with c2: render_kpi("صافي الاستثمار", safe_fmt(fin['total_deposited'] - fin['total_withdrawn']))
-    with c3: render_kpi("قيمة المحفظة", safe_fmt(fin['market_val_open']))
-    tpl = fin['unrealized_pl'] + fin['realized_pl'] + fin['total_returns']
-    with c4: render_kpi("الأرباح الكلية", safe_fmt(tpl), tpl)
-
-def view_portfolio(fin, key):
-    ts = "مضاربة" if key == 'spec' else "استثمار"
-    st.header(f"💼 محفظة {ts}")
-    df = fin['all_trades']
-    if df.empty: st.info("لا توجد بيانات"); return
+def render_technical_chart(symbol, period='1y', interval='1d'):
+    if 'custom_colors' not in st.session_state: C = DEFAULT_COLORS
+    else: C = st.session_state.custom_colors
     
-    sub_df = df[df['strategy'].astype(str).str.contains(ts, na=False)].copy()
-    if sub_df.empty: st.info("المحفظة فارغة"); return
+    df = get_chart_history(symbol, period, interval)
+    if df is None or df.empty: st.warning("لا توجد بيانات"); return
 
-    open_df = sub_df[sub_df['status']=='Open']
-    cols = [('company_name', 'الشركة'), ('symbol', 'الرمز'), ('quantity', 'الكمية'), ('entry_price', 'الشراء'), ('current_price', 'الحالي'), ('gain', 'الربح'), ('gain_pct', '%')]
+    df['MA20'] = df['Close'].rolling(20).mean()
+    df['MA50'] = df['Close'].rolling(50).mean()
     
-    t1, t2 = st.tabs(["الأسهم الحالية", "الأرشيف"])
-    with t1: render_table(open_df, cols)
-    with t2: render_table(sub_df[sub_df['status']=='Close'], cols)
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, row_heights=[0.7, 0.3])
+    fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='Price'), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df['MA20'], line=dict(color='orange'), name='MA20'), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df['MA50'], line=dict(color='blue'), name='MA50'), row=1, col=1)
+    colors = np.where(df['Close'] >= df['Open'], 'green', 'red')
+    fig.add_trace(go.Bar(x=df.index, y=df['Volume'], marker_color=colors, name='Vol'), row=2, col=1)
+    
+    fig.update_layout(height=600, xaxis_rangeslider_visible=False, paper_bgcolor=C['card_bg'], plot_bgcolor=C['card_bg'], font=dict(family="Cairo", color=C['main_text']), showlegend=False)
+    st.plotly_chart(fig, use_container_width=True)
 
-def view_add_operations():
-    st.header("➕ مركز العمليات")
-    tab1, tab2 = st.tabs(["📈 صفقة أسهم", "💰 حركة مالية"])
-    with tab1:
-        with st.form("f1"):
-            c1,c2 = st.columns(2)
-            s = c1.text_input("الرمز (مثال: 1120)")
-            strt = c2.selectbox("المحفظة", ["استثمار", "مضاربة", "صكوك"])
-            c3,c4 = st.columns(2)
-            q = c3.number_input("الكمية", min_value=1.0)
-            p = c4.number_input("السعر", min_value=0.01)
-            if st.form_submit_button("حفظ الصفقة"):
-                name, sector = get_static_info(s)
-                execute_query("INSERT INTO Trades (symbol, company_name, sector, quantity, entry_price, strategy) VALUES (%s,%s,%s,%s,%s,%s)", (s, name, sector, q, p, strt))
-                st.success("تم الحفظ"); st.rerun()
-    with tab2:
-        with st.form("f2"):
-            c1,c2 = st.columns(2)
-            tp = c1.selectbox("النوع", ["إيداع", "سحب", "عائد/توزيعات"])
-            amt = c2.number_input("المبلغ")
-            note = st.text_input("ملاحظة / الرمز")
-            if st.form_submit_button("حفظ الحركة"):
-                tbl = "Deposits" if "إيداع" in tp else ("Withdrawals" if "سحب" in tp else "ReturnsGrants")
-                execute_query(f"INSERT INTO {tbl} (date, amount, note) VALUES (CURRENT_DATE, %s, %s)", (amt, note))
-                st.success("تم الحفظ"); st.rerun()
-
-def router():
-    render_navbar()
-    fin = calculate_portfolio_metrics()
-    pg = st.session_state.get('page', 'home')
-    if pg == 'home': view_dashboard(fin)
-    elif pg in ['spec', 'invest']: view_portfolio(fin, pg)
-    elif pg == 'add': view_add_operations()
-    elif pg == 'analysis': view_advanced_chart(fin)
-    elif pg == 'cash': 
-        st.header("💵 سجل السيولة")
-        render_table(fin['deposits'], [('date','التاريخ'), ('amount','المبلغ'), ('note','ملاحظة')])
-    elif pg == 'settings': st.header("⚙️ الإعدادات"); st.info("قسم الاستيراد قيد التطوير")
+def view_advanced_chart(fin):
+    st.header("📈 التحليل الفني")
+    trades = fin['all_trades']
+    syms = list(trades['symbol'].unique()) if not trades.empty else []
+    
+    c1, c2 = st.columns([1, 3])
+    with c1:
+        st.markdown("**بحث:**"); manual = st.text_input("s_c", label_visibility="collapsed")
+        st.markdown("**أو اختر:**"); sel = st.selectbox("s_l", syms, label_visibility="collapsed") if syms else None
+    
+    symbol = manual if manual else sel
+    if symbol:
+        st.markdown(f"### {symbol}")
+        render_technical_chart(symbol)
