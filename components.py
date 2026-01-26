@@ -1,42 +1,46 @@
 import streamlit as st
+import pandas as pd
 
 def safe_fmt(val, suffix=""):
     try: return f"{float(val):,.2f}{suffix}"
     except: return "-"
 
-def render_kpi(label, value, color="blue", icon="💰"):
-    # تحديد لون النص داخل المربع
-    text_color_class = "txt-blue"
-    if color == "success": text_color_class = "txt-green"
-    elif color == "danger": text_color_class = "txt-red"
+def render_kpi(label, value, color_class="neutral", icon="📊"):
+    """رسم بطاقة معلومات حيوية مع أيقونة خلفية"""
     
-    # رسم المربع (HTML)
+    # تحديد لون الرقم
+    val_color = "#1E293B" # افتراضي داكن
+    if color_class == "success": val_color = "#059669" # أخضر
+    elif color_class == "danger": val_color = "#DC2626" # أحمر
+    elif color_class == "blue": val_color = "#2563EB" # أزرق
+    
     st.markdown(f"""
     <div class="kpi-card">
-        <div class="kpi-icon">{icon}</div>
+        <div class="kpi-icon-bg">{icon}</div>
         <div class="kpi-label">{label}</div>
-        <div class="kpi-value {text_color_class}">{value}</div>
+        <div class="kpi-value" style="color: {val_color} !important;">{value}</div>
     </div>
     """, unsafe_allow_html=True)
 
 def render_ticker_card(symbol, name, price, change):
-    col = "#10B981" if change >= 0 else "#EF4444"
-    bg_icon = "📈" if change >= 0 else "📉"
+    col = "#059669" if change >= 0 else "#DC2626"
+    bg = "#DCFCE7" if change >= 0 else "#FEE2E2"
     
     st.markdown(f"""
-    <div class="kpi-card" style="padding: 15px;">
-        <div style="display:flex; justify-content:space-between; align-items:center;">
-            <div style="font-weight:900; color:#0052CC; font-size:1.1rem;">{symbol}</div>
-            <div style="direction:ltr; color:{col}; font-weight:800; background:{col}15; padding:2px 8px; border-radius:6px; font-size:0.85rem;">{change:+.2f}%</div>
+    <div class="kpi-card" style="padding: 15px; min-height: 120px;">
+        <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
+            <div style="font-weight:900; color:#1E293B;">{symbol}</div>
+            <div style="direction:ltr; color:{col}; background:{bg}; padding:2px 8px; border-radius:8px; font-weight:800; font-size:0.8rem;">{change:+.2f}%</div>
         </div>
-        <div style="font-size:1.4rem; font-weight:900; margin-top:5px; color:#1E293B;">{price:,.2f}</div>
-        <div style="color:#94A3B8; font-size:0.75rem;">{name}</div>
+        <div style="font-size:1.5rem; font-weight:900; color:#0F172A;">{price:,.2f}</div>
+        <div style="color:#94A3B8; font-size:0.75rem; font-weight:600;">{name}</div>
     </div>
     """, unsafe_allow_html=True)
 
 def render_custom_table(df, columns_config):
+    """رسم الجدول بالتصميم الاحترافي"""
     if df.empty:
-        st.info("📭 لا توجد بيانات متاحة")
+        st.info("📭 لا توجد بيانات للعرض")
         return
 
     html = '<div style="overflow-x:auto;"><table class="finance-table"><thead><tr>'
@@ -48,6 +52,7 @@ def render_custom_table(df, columns_config):
         for col_key, _, col_type in columns_config:
             val = row.get(col_key, "")
             display = val
+            cls = ""
             
             if col_type == 'money':
                 try: display = f"{float(val):,.2f}"
@@ -67,12 +72,9 @@ def render_custom_table(df, columns_config):
                 s = str(val).lower()
                 is_op = s in ['open', 'مفتوحة']
                 display = f'<span class="badge badge-{"open" if is_op else "closed"}">{"مفتوحة" if is_op else "مغلقة"}</span>'
-                cls = ""
             elif col_type == 'date':
                 display = str(val)[:10]
-                cls = ""
-            else: cls = ""
-                
+            
             html += f'<td><span class="{cls}">{display}</span></td>'
         html += '</tr>'
     html += '</tbody></table></div>'
