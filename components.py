@@ -13,6 +13,7 @@ def render_navbar():
     else: C = st.session_state.custom_colors
     u = st.session_state.get('username', 'مستثمر')
     
+    # الهيدر
     st.markdown(f"""
     <div class="navbar-box">
         <div style="display: flex; align-items: center; gap: 15px;">
@@ -28,25 +29,27 @@ def render_navbar():
         </div>
     </div>""", unsafe_allow_html=True)
 
-    c_menu, c_user = st.columns([3, 1])
-    with c_menu:
-        cols = st.columns(6)
-        labels = ['الرئيسية', 'مضاربة', 'استثمار', 'صكوك', 'السيولة', 'التحليل']
-        keys = ['home', 'spec', 'invest', 'sukuk', 'cash', 'analysis']
-        for i, (col, label, key) in enumerate(zip(cols, labels, keys)):
-            active = (st.session_state.get('page') == key)
-            if col.button(label, key=f"nav_{key}", type="primary" if active else "secondary", use_container_width=True):
-                st.session_state.page = key; st.rerun()
+    # القائمة العلوية (بدون تعقيد)
+    # استخدام tabs للتنقل السريع والمستقر بدلاً من الأزرار التي تعيد التحميل
+    tabs_labels = ['الرئيسية', 'مضاربة', 'استثمار', 'صكوك', 'السيولة', 'التحليل', 'المختبر', 'إضافة', 'الإعدادات']
+    tabs_keys = ['home', 'spec', 'invest', 'sukuk', 'cash', 'analysis', 'backtest', 'add', 'settings']
+    
+    # تحديد التبويب النشط حالياً
+    current_tab = st.session_state.get('page', 'home')
+    try:
+        active_idx = tabs_keys.index(current_tab)
+    except:
+        active_idx = 0
+        
+    # عرض القائمة كـ Tabs لثبات أفضل
+    selected_tab = st.radio("nav", tabs_labels, index=active_idx, horizontal=True, label_visibility="collapsed")
+    
+    # تحديث الصفحة بناءً على الاختيار
+    selected_key = tabs_keys[tabs_labels.index(selected_tab)]
+    if st.session_state.get('page') != selected_key:
+        st.session_state.page = selected_key
+        st.rerun()
 
-    with c_user:
-        opts = ["☰ القائمة", "➕ إضافة عملية", "🧪 المختبر", "⚙️ الإعدادات", "🚪 خروج"]
-        user_choice = st.selectbox("user_menu_hidden", opts, label_visibility="collapsed")
-        if user_choice != "☰ القائمة":
-            if user_choice == "➕ إضافة عملية": st.session_state.page = 'add'
-            elif user_choice == "🧪 المختبر": st.session_state.page = 'backtest'
-            elif user_choice == "⚙️ الإعدادات": st.session_state.page = 'settings'
-            elif user_choice == "🚪 خروج": st.session_state.clear()
-            st.rerun()
     st.markdown("---")
 
 def render_kpi(label, value, color_condition=None):
