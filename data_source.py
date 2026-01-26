@@ -357,4 +357,4 @@ def get_company_details(symbol):
     clean_sym = str(symbol).replace('.SR', '').replace('.0', '').strip()
     data = TADAWUL_DB.get(clean_sym)
     if data: return data['name'], data['sector']
-    return None, None
+    return symbol, "غير معروف"
