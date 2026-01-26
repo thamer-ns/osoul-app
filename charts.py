@@ -33,6 +33,7 @@ def view_advanced_chart(fin):
     c1, c2 = st.columns([1, 3])
     with c1:
         st.markdown("**بحث:**"); manual = st.text_input("s_c", label_visibility="collapsed")
+    with c2:
         st.markdown("**أو اختر:**"); sel = st.selectbox("s_l", syms, label_visibility="collapsed") if syms else None
     
     symbol = manual if manual else sel
