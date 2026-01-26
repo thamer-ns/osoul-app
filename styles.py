@@ -14,14 +14,12 @@ def apply_custom_css():
         [data-testid="stSidebar"] { display: none; }
         .block-container { padding-top: 1rem; padding-bottom: 5rem; }
 
-        /* تنسيق العناوين */
+        /* العناوين */
         h1, h2, h3, h4 { color: #172B4D; text-align: right; font-weight: 800; }
         
         /* إخفاء العناوين الإنجليزية للحقول */
         div[data-testid="stSelectbox"] > label, div[data-testid="stTextInput"] > label,
-        div[data-testid="stNumberInput"] > label, div[data-testid="stDateInput"] > label { 
-            display: none; 
-        }
+        div[data-testid="stNumberInput"] > label, div[data-testid="stDateInput"] > label { display: none; }
         
         /* تنسيق الحقول */
         input, .stTextInput input, .stNumberInput input, .stSelectbox, .stDateInput input {
@@ -39,7 +37,7 @@ def apply_custom_css():
             border: 1px solid #DFE1E6;
             overflow-x: auto;
             margin-bottom: 20px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.02);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.03);
         }
         .finance-table { width: 100%; border-collapse: collapse; min-width: 900px; }
         .finance-table th {
@@ -72,17 +70,17 @@ def apply_custom_css():
             box-shadow: 0 2px 4px rgba(0,0,0,0.02);
             transition: transform 0.2s;
         }
-        .kpi-box:hover { transform: translateY(-3px); border-color: #0052CC; }
+        .kpi-box:hover { transform: translateY(-2px); border-color: #0052CC; }
         
         /* صندوق تاسي */
         .tasi-box {
             background: linear-gradient(135deg, #0052CC 0%, #0747A6 100%);
-            padding: 25px;
+            padding: 20px;
             border-radius: 16px;
             color: white !important;
             display: flex; justify-content: space-between; align-items: center;
             margin-bottom: 20px;
-            box-shadow: 0 8px 20px rgba(0, 82, 204, 0.25);
+            box-shadow: 0 4px 12px rgba(0, 82, 204, 0.25);
         }
         
         /* الناف بار */
