@@ -1,56 +1,64 @@
 import streamlit as st
 
 def apply_custom_css():
-    # === 1) JavaScript: الحل الجذري لإزالة الكلام الإنجليزي (Expand/Collapse) ===
+    # === 1. JavaScript to kill English tooltips (Expand/Collapse) ===
     st.markdown("""
-    <script>
-    (function() {
-        const observer = new MutationObserver(() => {
-            // البحث عن أي عنصر يحمل تلميحات إنجليزية وحذفها فوراً
-            const targets = document.querySelectorAll('[title], [aria-label]');
-            targets.forEach(el => {
-                const t = el.getAttribute('title');
-                const a = el.getAttribute('aria-label');
-                // كلمات مفتاحية بالإنجليزية نريد حذفها
-                const badWords = /expand|collapse|fullscreen|view|zoom/i;
+        <script>
+        (function() {
+            const observer = new MutationObserver(() => {
+                // Select elements with tooltips
+                const targets = document.querySelectorAll('[title], [aria-label]');
+                targets.forEach(el => {
+                    const t = el.getAttribute('title');
+                    const a = el.getAttribute('aria-label');
+                    const badWords = /expand|collapse|fullscreen|view|zoom/i;
+                    
+                    // Remove attributes if they contain English keywords
+                    if (t && badWords.test(t)) el.removeAttribute('title');
+                    if (a && badWords.test(a)) el.removeAttribute('aria-label');
+                });
                 
-                if (t && badWords.test(t)) el.removeAttribute('title');
-                if (a && badWords.test(a)) el.removeAttribute('aria-label');
+                // Remove specific tooltip elements created by the library
+                document.querySelectorAll('[role="tooltip"], .stTooltipHoverTarget').forEach(el => el.remove());
             });
-            
-            // إخفاء أي تلميح Tooltip نشط
-            document.querySelectorAll('[role="tooltip"]').forEach(el => el.remove());
-        });
-        observer.observe(document.body, { childList: true, subtree: true, attributes: true });
-    })();
-    </script>
+            observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+        })();
+        </script>
     """, unsafe_allow_html=True)
 
-    # === 2) CSS: التصميم الحيوي والأيقونات وتنسيق اليمين ===
+    # === 2. CSS for Lively Design & RTL ===
     st.markdown("""
         <style>
         @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap');
         
-        /* إجبار الاتجاه لليمين */
+        /* Force RTL and Font */
         html, body, [class*="css"], p, div, label, input, button, textarea, span, h1, h2, h3 {
             font-family: 'Cairo', sans-serif !important;
             direction: rtl !important;
             text-align: right !important;
         }
         
-        /* إخفاء القائمة الجانبية وسهم القوائم */
+        /* Hide Sidebar */
         [data-testid="stSidebar"] { display: none !important; }
+        
+        /* Visual hide for tooltips */
+        div[role="tooltip"], .stTooltipHoverTarget > span {
+            display: none !important; opacity: 0 !important; visibility: hidden !important;
+        }
+        
+        /* Hide Expander Arrow */
         div[data-testid="stExpander"] details summary svg { display: none !important; }
         
-        /* تنسيق القوائم المنسدلة (بدون السهم) */
+        /* Expander Styling */
         div[data-testid="stExpander"] {
-            border: 1px solid #E5E7EB; border-radius: 12px; background: #FAFAFA; margin-bottom: 10px;
+            border: 1px solid #E5E7EB; border-radius: 12px; background-color: #FAFAFA;
+            margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.02);
         }
         div[data-testid="stExpander"] details summary {
-            color: #0052CC !important; font-weight: 800 !important;
+            font-weight: 800 !important; color: #0052CC !important; padding: 10px 15px !important;
         }
 
-        /* === البطاقات الحيوية (KPI Cards) === */
+        /* === Lively KPI Cards === */
         .kpi-card {
             background-color: white;
             border-radius: 20px;
@@ -63,12 +71,12 @@ def apply_custom_css():
             margin-bottom: 15px;
         }
         .kpi-card:hover {
-            transform: translateY(-6px) scale(1.01);
+            transform: translateY(-5px) scale(1.01);
             box-shadow: 0 15px 30px rgba(0,0,0,0.1);
             border-color: #BFDBFE;
         }
         
-        /* الأيقونة الخلفية الباهتة (اللمسة الجمالية) */
+        /* Faded Background Icon */
         .kpi-icon-bg {
             position: absolute;
             left: -15px; bottom: -20px;
@@ -82,9 +90,9 @@ def apply_custom_css():
         }
         
         .kpi-value { font-size: 1.8rem; font-weight: 900; color: #1E293B; direction: ltr; position: relative; z-index: 2; }
-        .kpi-label { color: #64748B; font-size: 0.9rem; font-weight: 700; position: relative; z-index: 2; }
+        .kpi-label { color: #64748B; font-size: 0.9rem; font-weight: 700; position: relative; z-index: 2; margin-bottom: 5px; }
 
-        /* صندوق تاسي */
+        /* === Blue Gradient TASI Card === */
         .tasi-card {
             background: linear-gradient(135deg, #0052CC 0%, #0033A0 100%);
             border-radius: 20px; padding: 25px; color: white !important;
@@ -94,7 +102,7 @@ def apply_custom_css():
         }
         .tasi-card:hover { transform: translateY(-3px); }
 
-        /* الجداول */
+        /* === Blue Header Tables === */
         .finance-table {
             width: 100%; border-collapse: separate; border-spacing: 0;
             border: 1px solid #E5E7EB; border-radius: 12px;
@@ -112,11 +120,12 @@ def apply_custom_css():
         }
         .finance-table tr:hover { background-color: #F8FAFC; }
         
-        /* الألوان والشارات */
+        /* Colors & Badges */
         .txt-green { color: #059669 !important; } .txt-red { color: #DC2626 !important; } .txt-blue { color: #2563EB !important; }
         .badge-open { background: #DCFCE7; color: #166534; padding: 4px 12px; border-radius: 20px; font-size: 0.75rem; }
         .badge-closed { background: #F3F4F6; color: #4B5563; padding: 4px 12px; border-radius: 20px; font-size: 0.75rem; }
         
+        /* Buttons */
         div.stButton > button {
             width: 100%; border-radius: 12px; height: 50px; font-weight: 800; border: none;
             box-shadow: 0 2px 4px rgba(0,0,0,0.05); background: white; color: #334155; transition: 0.2s;
