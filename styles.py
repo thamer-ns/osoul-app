@@ -27,7 +27,7 @@ st.markdown("""
 })();
 </script>
 """, unsafe_allow_html=True)
-def apply_custom_css():
+
 def apply_custom_css():
 
     st.markdown("""
