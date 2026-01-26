@@ -1,98 +1,61 @@
 import streamlit as st
 
-
 def apply_custom_css():
-
-    st.markdown("""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap');
-
-    html, body, [class*="css"], p, div, label, input, button, textarea {
-        font-family: 'Cairo', sans-serif !important;
-        direction: rtl !important;
-        text-align: right !important;
-    }
-
-    [data-testid="stSidebar"] {
-        display: none !important;
-    }
-
-    /* إخفاء نصوص أيقونات Streamlit الإنجليزية */
-    .material-icons,
-    [class*="material-icons"] {
-        display: none !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-
-    st.markdown("""
-    <script>
-    (function() {
-        function removeEnglishIcons() {
-            document.querySelectorAll('span, div, button').forEach(el => {
-                const txt = el.innerText || '';
-                if (/expand_more|expand_less|keyboard_arrow/i.test(txt)) {
-                    el.innerText = '';
-                }
-            });
-        }
-
-        removeEnglishIcons();
-        new MutationObserver(removeEnglishIcons).observe(document.body, {
-            childList: true,
-            subtree: true
-        });
-    })();
-    </script>
-    """, unsafe_allow_html=True)
-    # === 1. JavaScript to kill English tooltips (Expand/Collapse) ===
-    st.markdown("""
-        <script>
-        (function() {
-            const observer = new MutationObserver(() => {
-                // Select elements with tooltips
-                const targets = document.querySelectorAll('[title], [aria-label]');
-                targets.forEach(el => {
-                    const t = el.getAttribute('title');
-                    const a = el.getAttribute('aria-label');
-                    const badWords = /expand|collapse|fullscreen|view|zoom/i;
-                    
-                    // Remove attributes if they contain English keywords
-                    if (t && badWords.test(t)) el.removeAttribute('title');
-                    if (a && badWords.test(a)) el.removeAttribute('aria-label');
-                });
-                
-                // Remove specific tooltip elements created by the library
-                document.querySelectorAll('[role="tooltip"], .stTooltipHoverTarget').forEach(el => el.remove());
-            });
-            observer.observe(document.body, { childList: true, subtree: true, attributes: true });
-        })();
-        </script>
-    """, unsafe_allow_html=True)
-
-    # === 2. CSS for Lively Design & RTL ===
     st.markdown("""
         <style>
+        /* 1. استيراد خط Cairo */
         @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap');
         
-        /* Force RTL and Font */
+        /* 2. استيراد خط أيقونات Google (احتياطاً لضمان ظهورها) */
+        @import url('https://fonts.googleapis.com/icon?family=Material+Icons');
+
+        /* ============================================================
+           3. القواعد العامة (تطبيق الخط العربي والاتجاه)
+           ============================================================ */
         html, body, [class*="css"], p, div, label, input, button, textarea, span, h1, h2, h3 {
             font-family: 'Cairo', sans-serif !important;
             direction: rtl !important;
             text-align: right !important;
         }
-        
-        /* Hide Sidebar */
-        [data-testid="stSidebar"] { display: none !important; }
-        
-        /* Visual hide for tooltips */
-        div[role="tooltip"], .stTooltipHoverTarget > span {
-            display: none !important; opacity: 0 !important; visibility: hidden !important;
+
+        /* ============================================================
+           4. ✅ الحل الجذري (إصلاح الأيقونات)
+           نستثني كلاسات الأيقونات ونعيد لها خطها الأصلي واتجاهها
+           ============================================================ */
+        .material-icons,
+        [class*="material-icons"],
+        [data-testid="stExpander"] details summary span, /* سهم التوسيع */
+        i {
+            font-family: 'Material Icons' !important;
+            direction: ltr !important; /* الأيقونات تحتاج اتجاه أيسر لتعمل الـ Ligatures */
+            text-align: center !important;
+            font-weight: normal !important;
+            font-style: normal !important;
+            letter-spacing: normal !important;
+            text-transform: none !important;
+            white-space: nowrap !important;
+            word-wrap: normal !important;
         }
+
+        /* ============================================================
+           5. تنظيف الواجهة (إخفاء العناصر غير المرغوبة بـ CSS فقط)
+           ============================================================ */
         
-        /* Hide Expander Arrow */
-        div[data-testid="stExpander"] details summary svg { display: none !important; }
+        /* إخفاء القائمة الجانبية والهوامش */
+        [data-testid="stSidebar"], footer, header, #MainMenu { display: none !important; }
+        
+        /* إخفاء شريط أدوات الجداول (Search/Download) */
+        [data-testid="stElementToolbar"] { display: none !important; }
+        
+        /* إخفاء التلميحات (Tooltips) المزعجة */
+        div[role="tooltip"] { display: none !important; opacity: 0 !important; visibility: hidden !important; }
+        
+        /* إخفاء زر التكبير في الصور */
+        button[title="View fullscreen"] { display: none !important; }
+
+        /* ============================================================
+           6. التصميم الجمالي (البطاقات والجداول)
+           ============================================================ */
         
         /* Expander Styling */
         div[data-testid="stExpander"] {
@@ -102,42 +65,31 @@ def apply_custom_css():
         div[data-testid="stExpander"] details summary {
             font-weight: 800 !important; color: #0052CC !important; padding: 10px 15px !important;
         }
+        div[data-testid="stExpander"] details summary:hover {
+            color: #0033A0 !important; background-color: #F1F5F9;
+        }
 
-        /* === Lively KPI Cards === */
+        /* KPI Cards */
         .kpi-card {
-            background-color: white;
-            border-radius: 20px;
-            padding: 25px 20px;
-            position: relative;
-            overflow: hidden;
-            border: 1px solid #F3F4F6;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.02);
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            background-color: white; border-radius: 20px; padding: 25px 20px;
+            position: relative; overflow: hidden; border: 1px solid #F3F4F6;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.02); transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
             margin-bottom: 15px;
         }
         .kpi-card:hover {
-            transform: translateY(-5px) scale(1.01);
-            box-shadow: 0 15px 30px rgba(0,0,0,0.1);
-            border-color: #BFDBFE;
+            transform: translateY(-5px) scale(1.01); box-shadow: 0 15px 30px rgba(0,0,0,0.1); border-color: #BFDBFE;
         }
         
-        /* Faded Background Icon */
         .kpi-icon-bg {
-            position: absolute;
-            left: -15px; bottom: -20px;
-            font-size: 5.5rem; opacity: 0.08;
-            transform: rotate(15deg);
-            transition: all 0.4s ease;
-            color: #1E293B; pointer-events: none;
+            position: absolute; left: -15px; bottom: -20px; font-size: 5.5rem; opacity: 0.08;
+            transform: rotate(15deg); transition: all 0.4s ease; color: #1E293B; pointer-events: none;
         }
-        .kpi-card:hover .kpi-icon-bg { 
-            transform: rotate(0deg) scale(1.2); opacity: 0.15; left: -5px;
-        }
+        .kpi-card:hover .kpi-icon-bg { transform: rotate(0deg) scale(1.2); opacity: 0.15; left: -5px; }
         
         .kpi-value { font-size: 1.8rem; font-weight: 900; color: #1E293B; direction: ltr; position: relative; z-index: 2; }
         .kpi-label { color: #64748B; font-size: 0.9rem; font-weight: 700; position: relative; z-index: 2; margin-bottom: 5px; }
 
-        /* === Blue Gradient TASI Card === */
+        /* TASI Card */
         .tasi-card {
             background: linear-gradient(135deg, #0052CC 0%, #0033A0 100%);
             border-radius: 20px; padding: 25px; color: white !important;
@@ -147,7 +99,7 @@ def apply_custom_css():
         }
         .tasi-card:hover { transform: translateY(-3px); }
 
-        /* === Blue Header Tables === */
+        /* Tables */
         .finance-table {
             width: 100%; border-collapse: separate; border-spacing: 0;
             border: 1px solid #E5E7EB; border-radius: 12px;
@@ -165,7 +117,7 @@ def apply_custom_css():
         }
         .finance-table tr:hover { background-color: #F8FAFC; }
         
-        /* Colors & Badges */
+        /* Badges & Colors */
         .txt-green { color: #059669 !important; } .txt-red { color: #DC2626 !important; } .txt-blue { color: #2563EB !important; }
         .badge-open { background: #DCFCE7; color: #166534; padding: 4px 12px; border-radius: 20px; font-size: 0.75rem; }
         .badge-closed { background: #F3F4F6; color: #4B5563; padding: 4px 12px; border-radius: 20px; font-size: 0.75rem; }
