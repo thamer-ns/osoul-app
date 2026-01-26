@@ -14,6 +14,8 @@ def login_system():
         init_db()
         st.session_state.db_check = True
 
+    if 'username' in st.session_state:
+        return True
     cookie_manager = get_manager()
     
     # محاولة استرجاع المستخدم من الكوكيز
