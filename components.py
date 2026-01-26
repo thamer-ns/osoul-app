@@ -5,16 +5,11 @@ from config import APP_NAME, APP_ICON, DEFAULT_COLORS
 
 def safe_fmt(val, suffix=""):
     if val is None or pd.isna(val) or val == "": return "-"
-    try:
-        f_val = float(val)
-        return f"{f_val:,.2f}{suffix}"
-    except:
-        return str(val)
+    try: return f"{float(val):,.2f}{suffix}"
+    except: return str(val)
 
 def render_navbar():
-    if 'custom_colors' not in st.session_state:
-        from config import DEFAULT_COLORS
-        C = DEFAULT_COLORS
+    if 'custom_colors' not in st.session_state: C = DEFAULT_COLORS
     else: C = st.session_state.custom_colors
     u = st.session_state.get('username', 'مستثمر')
     
@@ -31,8 +26,7 @@ def render_navbar():
             <div style="color: {C['main_text']}; font-weight: 800; font-size: 0.9rem;">👤 {u}</div>
             <div style="font-weight: 700; color: {C['sub_text']}; font-size: 0.8rem; direction: ltr;">{date.today().strftime('%Y-%m-%d')}</div>
         </div>
-    </div>
-    """, unsafe_allow_html=True)
+    </div>""", unsafe_allow_html=True)
 
     c_menu, c_user = st.columns([3, 1])
     with c_menu:
@@ -41,14 +35,13 @@ def render_navbar():
         keys = ['home', 'spec', 'invest', 'sukuk', 'cash', 'analysis']
         for i, (col, label, key) in enumerate(zip(cols, labels, keys)):
             active = (st.session_state.get('page') == key)
-            btn_type = "primary" if active else "secondary"
-            if col.button(label, key=f"nav_{key}", type=btn_type, use_container_width=True):
+            if col.button(label, key=f"nav_{key}", type="primary" if active else "secondary", use_container_width=True):
                 st.session_state.page = key; st.rerun()
 
     with c_user:
-        opts = ["☰ القائمة السريعة", "➕ إضافة عملية", "🧪 المختبر", "⚙️ الإعدادات", "🚪 خروج"]
+        opts = ["☰ القائمة", "➕ إضافة عملية", "🧪 المختبر", "⚙️ الإعدادات", "🚪 خروج"]
         user_choice = st.selectbox("user_menu_hidden", opts, label_visibility="collapsed")
-        if user_choice != "☰ القائمة السريعة":
+        if user_choice != "☰ القائمة":
             if user_choice == "➕ إضافة عملية": st.session_state.page = 'add'
             elif user_choice == "🧪 المختبر": st.session_state.page = 'backtest'
             elif user_choice == "⚙️ الإعدادات": st.session_state.page = 'settings'
