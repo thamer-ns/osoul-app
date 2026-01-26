@@ -7,7 +7,6 @@ COMMISSION_RATE = 0.00155
 
 @st.cache_data(ttl=60)
 def calculate_portfolio_metrics():
-    # الهيكل الافتراضي لمنع KeyError
     empty_df = pd.DataFrame(columns=['date', 'amount', 'note'])
     default_res = {
         "cost_open": 0.0, "market_val_open": 0.0, "cash": 0.0, 
@@ -24,7 +23,6 @@ def calculate_portfolio_metrics():
         wit = fetch_table("Withdrawals")
         ret = fetch_table("ReturnsGrants")
 
-        # تنظيف الجداول المالية (ضمان وجود amount)
         for df in [dep, wit, ret]:
             if 'amount' not in df.columns: df['amount'] = 0.0
             else: df['amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0.0)
@@ -41,17 +39,15 @@ def calculate_portfolio_metrics():
             })
             return default_res
 
-        # تنظيف جدول الصفقات
-        req_cols = ['quantity', 'entry_price', 'exit_price', 'current_price', 'status', 'asset_type']
+        req_cols = ['quantity', 'entry_price', 'exit_price', 'current_price', 'status', 'asset_type', 'prev_close', 'year_high', 'year_low']
         for c in req_cols:
             if c not in trades.columns:
                 trades[c] = 0.0 if c not in ['status', 'asset_type'] else ('Open' if c=='status' else 'Stock')
         
         trades['asset_type'] = trades['asset_type'].fillna('Stock')
-        for c in ['quantity', 'entry_price', 'exit_price', 'current_price']:
+        for c in ['quantity', 'entry_price', 'exit_price', 'current_price', 'prev_close', 'year_high', 'year_low']:
             trades[c] = pd.to_numeric(trades[c], errors='coerce').fillna(0.0)
 
-        # منطق الإغلاق
         is_closed = (trades['exit_price'] > 0) | (trades['status'].astype(str).str.lower().isin(['close', 'sold', 'مغلقة']))
         trades['status'] = np.where(is_closed, 'Close', 'Open')
         trades.loc[is_closed, 'current_price'] = trades['exit_price']
@@ -64,10 +60,13 @@ def calculate_portfolio_metrics():
         mask_cost = trades['total_cost'] != 0
         trades.loc[mask_cost, 'gain_pct'] = (trades.loc[mask_cost, 'gain'] / trades.loc[mask_cost, 'total_cost']) * 100
 
-        # الوزن
-        trades['weight'] = 0.0
+        trades['daily_change'] = 0.0
         mask_open = trades['status'] == 'Open'
+        if trades.loc[mask_open, 'prev_close'].sum() > 0:
+             trades.loc[mask_open, 'daily_change'] = ((trades.loc[mask_open, 'current_price'] - trades.loc[mask_open, 'prev_close']) / trades.loc[mask_open, 'prev_close']) * 100
+
         total_open_val = trades.loc[mask_open, 'market_value'].sum()
+        trades['weight'] = 0.0
         if total_open_val > 0:
             trades.loc[mask_open, 'weight'] = (trades.loc[mask_open, 'market_value'] / total_open_val) * 100
 
@@ -78,7 +77,6 @@ def calculate_portfolio_metrics():
         market_val_open = open_trades['market_value'].sum()
         sales_closed = closed_trades['market_value'].sum()
         
-        # الكاش الدقيق
         total_buy_cost = trades['total_cost'].sum()
         cash = (total_dep + total_ret + sales_closed) - (total_wit + total_buy_cost)
 
@@ -105,5 +103,4 @@ def run_backtest(df, s, c):
     return {'final_value': df['Portfolio_Value'].iloc[-1], 'return_pct': ((df['Portfolio_Value'].iloc[-1]/c)-1)*100, 'df': df}
 
 def update_prices():
-    # كود التحديث (مختصر)
     return True
