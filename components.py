@@ -41,16 +41,19 @@ def render_navbar():
         keys = ['home', 'spec', 'invest', 'sukuk', 'cash', 'analysis']
         for i, (col, label, key) in enumerate(zip(cols, labels, keys)):
             active = (st.session_state.get('page') == key)
-            if col.button(label, key=f"nav_{key}", type="primary" if active else "secondary", use_container_width=True):
+            btn_type = "primary" if active else "secondary"
+            if col.button(label, key=f"nav_{key}", type=btn_type, use_container_width=True):
                 st.session_state.page = key; st.rerun()
 
     with c_user:
-        opts = ["☰ القائمة", "➕ تسجيل عملية", "🧪 المختبر", "⚙️ الإعدادات", "🚪 خروج"]
-        user_choice = st.selectbox("nav_user", opts, label_visibility="collapsed")
-        if user_choice == "➕ تسجيل عملية" and st.session_state.get('page') != 'add': st.session_state.page = 'add'; st.rerun()
-        elif user_choice == "🧪 المختبر" and st.session_state.get('page') != 'backtest': st.session_state.page = 'backtest'; st.rerun()
-        elif user_choice == "⚙️ الإعدادات" and st.session_state.get('page') != 'settings': st.session_state.page = 'settings'; st.rerun()
-        elif user_choice == "🚪 خروج": from security import logout; logout()
+        opts = ["☰ القائمة", "➕ إضافة عملية", "🧪 المختبر", "⚙️ الإعدادات", "🚪 خروج"]
+        user_choice = st.selectbox("user_menu_hidden", opts, label_visibility="collapsed")
+        if user_choice != "☰ القائمة":
+            if user_choice == "➕ إضافة عملية": st.session_state.page = 'add'
+            elif user_choice == "🧪 المختبر": st.session_state.page = 'backtest'
+            elif user_choice == "⚙️ الإعدادات": st.session_state.page = 'settings'
+            elif user_choice == "🚪 خروج": st.session_state.clear()
+            st.rerun()
     st.markdown("---")
 
 def render_kpi(label, value, color_condition=None):
@@ -59,7 +62,7 @@ def render_kpi(label, value, color_condition=None):
     if color_condition == "blue": val_c = C['primary']
     elif isinstance(color_condition, (int, float)):
         val_c = C['success'] if color_condition >= 0 else C['danger']
-    st.markdown(f"""<div class="kpi-box"><div style="color:{C['sub_text']}; font-size:0.9rem; font-weight:700; margin-bottom:8px;">{label}</div><div class="kpi-value" style="color: {val_c} !important; font-size: 1.6rem; font-weight: 900;">{value}</div></div>""", unsafe_allow_html=True)
+    st.markdown(f"""<div class="kpi-box"><div style="color:{C['sub_text']}; font-size:0.9rem; font-weight:700; margin-bottom:5px;">{label}</div><div class="kpi-value" style="color: {val_c} !important; font-size: 1.5rem; font-weight: 900;">{value}</div></div>""", unsafe_allow_html=True)
 
 def render_ticker_card(symbol, name, price, change):
     C = DEFAULT_COLORS
