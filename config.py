@@ -1,20 +1,18 @@
 from pathlib import Path
 
 APP_NAME = "أصولي"
-APP_ICON = "💎"
+APP_ICON = "🏛️"
 BACKUP_DIR = Path("backups")
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
-# الهوية البصرية (التصميم الجميل)
 DEFAULT_COLORS = {
+    'primary': '#0052CC',
     'page_bg': '#F4F6F8',
     'card_bg': '#FFFFFF',
     'main_text': '#172B4D',
     'sub_text': '#5E6C84',
-    'primary': '#0052CC',
-    'success': '#36B37E',
-    'danger': '#FF5630',
+    'success': '#006644',
+    'danger': '#DE350B',
     'border': '#DFE1E6',
     'input_bg': '#FFFFFF',
-    'header_bg': '#FAFBFC'
 }
