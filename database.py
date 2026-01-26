@@ -38,18 +38,17 @@ def fetch_table(table_name):
         'Trades': ['id', 'symbol', 'company_name', 'sector', 'asset_type', 'date', 'quantity', 'entry_price', 'exit_price', 'current_price', 'strategy', 'status', 'prev_close', 'year_high', 'year_low', 'dividend_yield'],
         'Deposits': ['id', 'date', 'amount', 'note'],
         'Withdrawals': ['id', 'date', 'amount', 'note'],
-        'ReturnsGrants': ['id', 'date', 'symbol', 'company_name', 'amount', 'note']
+        'ReturnsGrants': ['id', 'date', 'symbol', 'company_name', 'amount', 'note'],
+        'Watchlist': ['symbol']
     }
     with get_db() as conn:
         if conn:
             try:
                 df = pd.read_sql(f"SELECT * FROM {table_name}", conn)
                 df.columns = df.columns.str.lower()
-                
                 # إصلاح البيانات الناقصة فوراً
                 if table_name == 'Trades' and 'asset_type' not in df.columns: df['asset_type'] = 'Stock'
                 if table_name in ['Deposits', 'Withdrawals'] and 'amount' not in df.columns: df['amount'] = 0.0
-                
                 return df
             except: pass
     return pd.DataFrame(columns=[c.lower() for c in SCHEMAS.get(table_name, [])])
@@ -77,7 +76,7 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS Watchlist (symbol VARCHAR(20) PRIMARY KEY)",
         "CREATE TABLE IF NOT EXISTS Documents (id SERIAL PRIMARY KEY, trade_id INTEGER, file_name TEXT, file_data BYTEA, upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
     ]
-    # تحديثات الأعمدة (Migrations) لضمان عدم فقدان البيانات
+    # الترقية التلقائية للأعمدة
     migrations = [
         "ALTER TABLE Trades ADD COLUMN IF NOT EXISTS asset_type VARCHAR(20) DEFAULT 'Stock'",
         "ALTER TABLE Trades ADD COLUMN IF NOT EXISTS company_name TEXT",
@@ -90,8 +89,6 @@ def init_db():
         "ALTER TABLE Trades ADD COLUMN IF NOT EXISTS exit_price DOUBLE PRECISION DEFAULT 0",
         "ALTER TABLE Trades ADD COLUMN IF NOT EXISTS dividend_yield DOUBLE PRECISION DEFAULT 0",
         "ALTER TABLE Trades ADD COLUMN IF NOT EXISTS prev_close DOUBLE PRECISION DEFAULT 0",
-        "ALTER TABLE Trades ADD COLUMN IF NOT EXISTS year_high DOUBLE PRECISION DEFAULT 0",
-        "ALTER TABLE Trades ADD COLUMN IF NOT EXISTS year_low DOUBLE PRECISION DEFAULT 0",
         "ALTER TABLE ReturnsGrants ADD COLUMN IF NOT EXISTS symbol VARCHAR(20)",
         "ALTER TABLE ReturnsGrants ADD COLUMN IF NOT EXISTS company_name TEXT"
     ]
