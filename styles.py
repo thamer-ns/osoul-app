@@ -3,50 +3,54 @@ import streamlit as st
 def apply_custom_css():
     st.markdown("""
         <style>
-        @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap');
-
-        html, body, [class*="css"], [data-testid="stAppViewContainer"] {
-            font-family: 'Cairo', sans-serif !important;
+        @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap');
+        
+        html, body, [class*="css"], p, div, label, input, textarea, th, td, h1, h2, h3, button {
+            font-family: 'Cairo', sans-serif !important; 
             direction: rtl;
         }
-
-        h1, h2, h3, h4, h5, h6 {
-            font-family: 'Cairo', sans-serif !important;
-            text-align: right !important;
-            color: #1e293b;
-            padding-bottom: 10px;
-        }
-
-        div[data-testid="stDataFrame"] table {
-            direction: rtl;
-            width: 100%;
-        }
         
-        div[data-testid="stDataFrame"] th {
-            text-align: right !important;
-            background-color: #f1f5f9;
-            color: #0f172a;
-            font-weight: 700;
-            white-space: nowrap !important;
-        }
-        
-        div[data-testid="stDataFrame"] td {
-            text-align: right !important;
-            white-space: nowrap !important;
-            font-size: 15px;
-            font-family: 'Cairo', sans-serif !important;
-        }
-
-        .block-container {
-            padding-top: 2rem;
-            padding-bottom: 2rem;
-        }
-        
+        /* إخفاء القائمة الجانبية تماماً كما طلبت */
         [data-testid="stSidebar"] { display: none !important; }
         
-        /* تنسيق التبويبات */
-        .stTabs [data-baseweb="tab-list"] { gap: 10px; }
-        .stTabs [data-baseweb="tab"] { height: 50px; white-space: pre-wrap; background-color: #fff; border-radius: 5px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-        .stTabs [aria-selected="true"] { background-color: #e6f0ff !important; color: #0052cc !important; border: 1px solid #0052cc; }
+        /* تنسيق الأزرار العلوية لتكون بجانب بعضها */
+        div.stButton > button {
+            width: 100%;
+            border-radius: 8px;
+            font-weight: bold;
+            height: 45px;
+        }
+
+        /* تنسيق الجداول لتكون واسعة وواضحة */
+        div[data-testid="stDataFrame"] {
+            width: 100%;
+            direction: rtl;
+        }
+        
+        thead tr th:first-child { display:none }
+        tbody th { display:none }
+        
+        /* صناديق KPI */
+        .kpi-card {
+            background-color: white;
+            padding: 15px;
+            border-radius: 10px;
+            border: 1px solid #eee;
+            text-align: center;
+            box-shadow: 2px 2px 5px rgba(0,0,0,0.05);
+        }
+        
+        /* صندوق تاسي */
+        .tasi-box {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid #e0e0e0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.04);
+        }
         </style>
     """, unsafe_allow_html=True)
