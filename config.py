@@ -5,6 +5,7 @@ APP_ICON = "💎"
 BACKUP_DIR = Path("backups")
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
+# الهوية البصرية (التصميم الجميل)
 DEFAULT_COLORS = {
     'page_bg': '#F4F6F8',
     'card_bg': '#FFFFFF',
