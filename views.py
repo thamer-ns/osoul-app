@@ -2,20 +2,89 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from datetime import date
+import time
+
+# === الاستيرادات ===
 from config import DEFAULT_COLORS
 from components import render_navbar, render_kpi, render_table, render_ticker_card, safe_fmt
-from analytics import calculate_portfolio_metrics, update_prices, generate_equity_curve, calculate_historical_drawdown
-from database import execute_query, fetch_table, clear_all_data
-from market_data import get_static_info, get_tasi_data, get_chart_history
+from analytics import (calculate_portfolio_metrics, update_prices, generate_equity_curve, calculate_historical_drawdown)
+from database import execute_query, fetch_table, get_db, clear_all_data
+# تم إضافة fetch_batch_data هنا لدعم صفحة النبض
+from market_data import get_static_info, get_tasi_data, get_chart_history, fetch_batch_data
 from data_source import get_company_details
 from charts import render_technical_chart
-from backtester import run_backtest # استيراد المختبر
+from backtester import run_backtest
 
-# استيرادات التحليل المالي والكلاسيكي
+# استيرادات التحليل المالي والكلاسيكي مع الحماية
 try: from financial_analysis import get_fundamental_ratios, render_financial_dashboard_ui
 except: get_fundamental_ratios = lambda s: {'Score':0}; render_financial_dashboard_ui = lambda s: None
 try: from classical_analysis import render_classical_analysis
 except: render_classical_analysis = lambda s: None
+
+# ==========================================
+# 1. دوال مساعدة للاستيراد (هام جداً للملفات)
+# ==========================================
+def clean_and_fix_columns(df, table_name):
+    if df is None: return None
+    df.columns = df.columns.str.strip().str.lower()
+    
+    rename_map = {
+        'source': 'note', 'reason': 'note', 'notes': 'note',
+        'cost': 'amount', 'value': 'amount', 'ticker': 'symbol',
+        'code': 'symbol', 'price': 'entry_price', 'qty': 'quantity'
+    }
+    df.rename(columns=rename_map, inplace=True)
+    if 'id' in df.columns: df = df.drop(columns=['id'])
+    
+    # تحديد الأعمدة المسموحة لكل جدول
+    allowed_cols = {
+        'Trades': ['symbol', 'company_name', 'sector', 'asset_type', 'date', 'quantity', 'entry_price', 'strategy', 'status', 'exit_date', 'exit_price', 'current_price'],
+        'Deposits': ['date', 'amount', 'note'],
+        'Withdrawals': ['date', 'amount', 'note'],
+        'ReturnsGrants': ['date', 'symbol', 'company_name', 'amount', 'note'],
+        'Watchlist': ['symbol']
+    }
+    
+    if table_name in allowed_cols:
+        target_cols = allowed_cols[table_name]
+        existing_cols = [c for c in df.columns if c in target_cols]
+        df = df[existing_cols]
+    
+    # تنظيف البيانات
+    for col in df.columns:
+        if 'date' in col:
+            try: df[col] = pd.to_datetime(df[col], errors='coerce').dt.strftime('%Y-%m-%d')
+            except: pass
+        if df[col].dtype == 'object':
+            try: df[col] = df[col].astype(str).str.replace(',', '')
+            except: pass
+            
+    df = df.where(pd.notnull(df), None)
+    return df
+
+def save_dataframe_to_db(df, table_name):
+    df_clean = clean_and_fix_columns(df, table_name)
+    if df_clean is None or df_clean.empty: return False, "الملف فارغ أو غير متوافق"
+    
+    records = df_clean.to_dict('records')
+    count = 0
+    with get_db() as conn:
+        if not conn: return False, "لا يوجد اتصال"
+        with conn.cursor() as cur:
+            for row in records:
+                cols = list(row.keys())
+                vals = [v for v in row.values()]
+                placeholders = ', '.join(['%s'] * len(vals))
+                columns = ', '.join(cols)
+                query = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
+                try: cur.execute(query, vals); count += 1
+                except: conn.rollback()
+            conn.commit()
+    return True, f"تم استيراد {count} سجل"
+
+# ==========================================
+# 2. الصفحات الرئيسية (بما فيها النبض الجديد)
+# ==========================================
 
 def view_dashboard(fin):
     try: t_price, t_change = get_tasi_data()
@@ -24,8 +93,8 @@ def view_dashboard(fin):
     arrow, cl = ("🔼", C['success']) if t_change >= 0 else ("🔽", C['danger'])
     
     st.markdown(f"""
-    <div style="background:{C['card_bg']}; padding:20px; border-radius:10px; display:flex; justify-content:space-between; align-items:center; border:1px solid {C['border']};">
-        <div><div style="color:{C['sub_text']};">المؤشر العام (TASI)</div><div style="font-size:2rem; font-weight:900;">{safe_fmt(t_price)}</div></div>
+    <div style="background:{C['card_bg']}; padding:20px; border-radius:10px; display:flex; justify-content:space-between; align-items:center; border:1px solid {C['border']}; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
+        <div><div style="color:{C['sub_text']}; margin-bottom:5px;">المؤشر العام (TASI)</div><div style="font-size:2rem; font-weight:900; color:{C['main_text']};">{safe_fmt(t_price)}</div></div>
         <div style="background:{cl}15; color:{cl}; padding:8px 20px; border-radius:6px; font-weight:bold; direction:ltr;">{arrow} {t_change:.2f}%</div>
     </div>""", unsafe_allow_html=True)
     
@@ -41,6 +110,39 @@ def view_dashboard(fin):
     crv = generate_equity_curve(fin['all_trades'])
     if not crv.empty: st.plotly_chart(px.line(crv, x='date', y='cumulative_invested'), use_container_width=True)
 
+# === دالة النبض (تم دمج كودك هنا) ===
+def render_pulse_dashboard():
+    st.header("💓 نبض السوق")
+    
+    # 1. جلب الرموز من المحفظة والمراقبة
+    trades = fetch_table("Trades")
+    watchlist = fetch_table("Watchlist")
+    
+    symbols = set()
+    if not trades.empty and 'symbol' in trades.columns:
+        symbols.update(trades['symbol'].unique().tolist())
+    if not watchlist.empty and 'symbol' in watchlist.columns:
+        symbols.update(watchlist['symbol'].unique().tolist())
+        
+    if not symbols:
+        st.info("القائمة فارغة. أضف أسهم للمحفظة لتظهر هنا.")
+        return
+
+    # 2. جلب الأسعار
+    with st.spinner("جاري تحديث الأسعار..."):
+        data = fetch_batch_data(list(symbols))
+        
+    # 3. العرض
+    cols = st.columns(4)
+    for i, (sym, info) in enumerate(data.items()):
+        # حساب التغير (افتراضي إذا لم يتوفر الإغلاق السابق)
+        change = 0.0
+        if info['prev_close'] > 0:
+            change = ((info['price'] - info['prev_close']) / info['prev_close']) * 100
+            
+        with cols[i % 4]:
+            render_ticker_card(sym, "سهم", info['price'], change)
+
 def view_portfolio(fin, page_key):
     ts = "مضاربة" if page_key == 'spec' else "استثمار"
     st.header(f"💼 محفظة {ts}")
@@ -52,7 +154,7 @@ def view_portfolio(fin, page_key):
     
     if df.empty: st.info("المحفظة فارغة"); return
 
-    COLS = [('company_name', 'الشركة'), ('symbol', 'الرمز'), ('quantity', 'الكمية'), ('entry_price', 'شراء'), ('current_price', 'سوق'), ('gain', 'الربح'), ('gain_pct', '%')]
+    COLS = [('company_name', 'الشركة'), ('symbol', 'الرمز'), ('quantity', 'الكمية'), ('entry_price', 'شراء'), ('current_price', 'سوق'), ('market_value', 'القيمة'), ('gain', 'الربح'), ('gain_pct', '%')]
     open_df = df[df['status']=='Open'].copy()
     closed_df = df[df['status']=='Close'].copy()
 
@@ -76,13 +178,11 @@ def view_backtester_ui(fin):
     st.header("🧪 المختبر")
     c1, c2, c3 = st.columns(3)
     
-    # === هنا كان الخطأ، تم الإصلاح ===
-    # التحقق مما إذا كانت all_trades فارغة لتجنب KeyError
     trades_df = fin.get('all_trades', pd.DataFrame())
     if not trades_df.empty and 'symbol' in trades_df.columns:
         available_syms = list(set(trades_df['symbol'].unique().tolist() + ["1120"]))
     else:
-        available_syms = ["1120", "2222"] # قائمة افتراضية
+        available_syms = ["1120", "2222"]
         
     with c1: st.markdown("**السهم:**"); sym = st.selectbox("bs", available_syms, label_visibility="collapsed")
     with c2: st.markdown("**الاستراتيجية:**"); strat = st.selectbox("bst", ["Trend Follower (جون ميرفي)", "Sniper (هجين)"], label_visibility="collapsed")
@@ -122,12 +222,12 @@ def view_cash_log():
         with st.form("d"):
             a=st.number_input("مبلغ"); d=st.date_input("تاريخ"); n=st.text_input("ملاحظة")
             if st.form_submit_button("حفظ"): execute_query("INSERT INTO Deposits (date, amount, note) VALUES (%s,%s,%s)", (str(d),a,n)); st.rerun()
-        render_table(fin['deposits'], [('date','تاريخ'),('amount','مبلغ')])
+        render_table(fin['deposits'], [('date','تاريخ'),('amount','مبلغ'),('note','ملاحظة')])
     with t2:
         with st.form("w"):
             a=st.number_input("مبلغ"); d=st.date_input("تاريخ"); n=st.text_input("ملاحظة")
             if st.form_submit_button("حفظ"): execute_query("INSERT INTO Withdrawals (date, amount, note) VALUES (%s,%s,%s)", (str(d),a,n)); st.rerun()
-        render_table(fin['withdrawals'], [('date','تاريخ'),('amount','مبلغ')])
+        render_table(fin['withdrawals'], [('date','تاريخ'),('amount','مبلغ'),('note','ملاحظة')])
     with t3: render_table(fin['returns'], [('date','تاريخ'),('symbol','رمز'),('amount','مبلغ')])
 
 def view_analysis(fin):
@@ -153,15 +253,32 @@ def view_sukuk_portfolio(fin):
         if not sk.empty: render_table(sk, [('company_name','اسم'),('symbol','رمز'),('quantity','كمية'),('entry_price','سعر')])
         else: st.warning("لا يوجد")
 
-def view_tools(): st.header("🛠️ أدوات"); st.info(f"الزكاة: {calculate_portfolio_metrics()['market_val_open']*0.025775:,.2f}")
-def view_settings(): st.header("⚙️ إعدادات"); st.info("الاستيراد والحذف")
+def view_tools(): st.header("🛠️ الأدوات"); st.info(f"الزكاة: {calculate_portfolio_metrics()['market_val_open']*0.025775:,.2f}")
+
+def view_settings(): 
+    st.header("⚙️ إعدادات")
+    with st.expander("📥 استيراد بيانات (Excel/CSV)"):
+        f = st.file_uploader("اختر الملف", accept_multiple_files=False)
+        if f and st.button("بدء الاستيراد"): 
+            st.info("جاري المعالجة...")
+            try:
+                if f.name.endswith('xlsx'): df = pd.read_excel(f)
+                else: df = pd.read_csv(f)
+                # تخمين الجدول (يمكن تحسينه)
+                tbl = "Trades"
+                if 'amount' in df.columns: tbl = "Deposits"
+                
+                success, msg = save_dataframe_to_db(df, tbl)
+                if success: st.success(msg)
+                else: st.error(msg)
+            except Exception as e: st.error(f"خطأ: {e}")
 
 def router():
     render_navbar()
     pg = st.session_state.page
     fin = calculate_portfolio_metrics()
     if pg == 'home': view_dashboard(fin)
-    elif pg == 'pulse': st.info("نبض السوق")
+    elif pg == 'pulse': render_pulse_dashboard()
     elif pg in ['spec', 'invest']: view_portfolio(fin, pg)
     elif pg == 'sukuk': view_sukuk_portfolio(fin)
     elif pg == 'cash': view_cash_log()
