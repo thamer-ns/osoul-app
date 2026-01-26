@@ -28,6 +28,51 @@ st.markdown("""
 </script>
 """, unsafe_allow_html=True)
 def apply_custom_css():
+def apply_custom_css():
+
+    st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap');
+
+    html, body, [class*="css"], p, div, label, input, button, textarea {
+        font-family: 'Cairo', sans-serif !important;
+        direction: rtl !important;
+        text-align: right !important;
+    }
+
+    [data-testid="stSidebar"] {
+        display: none !important;
+    }
+
+    /* إخفاء نصوص أيقونات Streamlit الإنجليزية */
+    .material-icons,
+    [class*="material-icons"] {
+        display: none !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+
+    st.markdown("""
+    <script>
+    (function() {
+        function removeEnglishIcons() {
+            document.querySelectorAll('span, div, button').forEach(el => {
+                const txt = el.innerText || '';
+                if (/expand_more|expand_less|keyboard_arrow/i.test(txt)) {
+                    el.innerText = '';
+                }
+            });
+        }
+
+        removeEnglishIcons();
+        new MutationObserver(removeEnglishIcons).observe(document.body, {
+            childList: true,
+            subtree: true
+        });
+    })();
+    </script>
+    """, unsafe_allow_html=True)
     # === 1. JavaScript to kill English tooltips (Expand/Collapse) ===
     st.markdown("""
         <script>
