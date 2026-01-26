@@ -32,21 +32,21 @@ def apply_custom_css():
             font-family: 'Cairo' !important;
         }
 
-        /* تنسيق الجداول المتقدم */
+        /* تنسيق الجداول الفاخر */
         .finance-table-container {
             background-color: white;
             border-radius: 12px;
             border: 1px solid #DFE1E6;
             overflow-x: auto;
             margin-bottom: 20px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.03);
+            box-shadow: 0 4px 6px rgba(0,0,0,0.02);
         }
-        .finance-table { width: 100%; border-collapse: collapse; min-width: 800px; }
+        .finance-table { width: 100%; border-collapse: collapse; min-width: 900px; }
         .finance-table th {
             background-color: #F4F5F7;
-            color: #5E6C84;
-            font-weight: 700;
-            padding: 12px 15px;
+            color: #172B4D;
+            font-weight: 800;
+            padding: 14px 15px;
             text-align: right;
             border-bottom: 2px solid #DFE1E6;
             white-space: nowrap !important;
@@ -57,7 +57,8 @@ def apply_custom_css():
             border-bottom: 1px solid #DFE1E6;
             color: #172B4D;
             white-space: nowrap !important;
-            font-size: 0.9rem;
+            font-size: 0.95rem;
+            font-weight: 600;
         }
         .finance-table tr:hover { background-color: #FAFBFC; }
         
@@ -71,28 +72,28 @@ def apply_custom_css():
             box-shadow: 0 2px 4px rgba(0,0,0,0.02);
             transition: transform 0.2s;
         }
-        .kpi-box:hover { transform: translateY(-2px); }
+        .kpi-box:hover { transform: translateY(-3px); border-color: #0052CC; }
         
         /* صندوق تاسي */
         .tasi-box {
             background: linear-gradient(135deg, #0052CC 0%, #0747A6 100%);
-            padding: 20px;
+            padding: 25px;
             border-radius: 16px;
             color: white !important;
             display: flex; justify-content: space-between; align-items: center;
             margin-bottom: 20px;
-            box-shadow: 0 4px 12px rgba(0, 82, 204, 0.2);
+            box-shadow: 0 8px 20px rgba(0, 82, 204, 0.25);
         }
         
         /* الناف بار */
         .navbar-box {
             background-color: white;
-            padding: 10px 20px;
+            padding: 12px 25px;
             border-radius: 16px;
             border: 1px solid #DFE1E6;
-            margin-bottom: 20px;
+            margin-bottom: 25px;
             display: flex; justify-content: space-between; align-items: center;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.03);
+            box-shadow: 0 4px 10px rgba(0,0,0,0.03);
         }
     </style>
     """, unsafe_allow_html=True)
