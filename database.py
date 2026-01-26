@@ -5,22 +5,33 @@ import streamlit as st
 import bcrypt
 from contextlib import contextmanager
 
+# محاولة جلب الرابط
 try: DB_URL = st.secrets["postgres"]["url"]
 except: DB_URL = ""
 
 @st.cache_resource
 def get_connection_pool():
-    if not DB_URL: return None
-    try: return psycopg2.pool.SimpleConnectionPool(1, 20, dsn=DB_URL, sslmode='require')
-    except: return None
+    if not DB_URL:
+        st.error("❌ لم يتم العثور على رابط قاعدة البيانات في secrets.toml")
+        return None
+    try:
+        return psycopg2.pool.SimpleConnectionPool(1, 20, dsn=DB_URL, sslmode='require')
+    except Exception as e:
+        # هنا سيظهر لك الخطأ الحقيقي بدلاً من الصمت
+        st.error(f"❌ فشل الاتصال بقاعدة البيانات: {e}")
+        return None
 
 @contextmanager
 def get_db():
     pool = get_connection_pool()
     if not pool: yield None; return
     conn = None
-    try: conn = pool.getconn(); yield conn
-    except: yield None
+    try:
+        conn = pool.getconn()
+        yield conn
+    except Exception as e:
+        st.error(f"خطأ في الاتصال: {e}")
+        yield None
     finally:
         if conn: pool.putconn(conn)
 
@@ -28,29 +39,41 @@ def execute_query(query, params=()):
     with get_db() as conn:
         if conn:
             try:
-                with conn.cursor() as cur: cur.execute(query, params); conn.commit(); return True
-            except: conn.rollback(); return False
+                with conn.cursor() as cur:
+                    cur.execute(query, params)
+                    conn.commit()
+                return True
+            except Exception as e:
+                conn.rollback()
+                st.error(f"خطأ في التنفيذ: {e}")
+                return False
     return False
 
 def fetch_table(table_name):
-    # تعريف الهيكل الكامل لتجنب KeyError
+    # الهيكل الافتراضي
     SCHEMAS = {
         'Trades': ['id', 'symbol', 'company_name', 'sector', 'asset_type', 'date', 'quantity', 'entry_price', 'exit_price', 'current_price', 'strategy', 'status', 'prev_close', 'year_high', 'year_low', 'dividend_yield'],
         'Deposits': ['id', 'date', 'amount', 'note'],
         'Withdrawals': ['id', 'date', 'amount', 'note'],
-        'ReturnsGrants': ['id', 'date', 'symbol', 'company_name', 'amount', 'note'],
-        'Watchlist': ['symbol']
+        'ReturnsGrants': ['id', 'date', 'symbol', 'company_name', 'amount', 'note']
     }
+    
     with get_db() as conn:
         if conn:
             try:
                 df = pd.read_sql(f"SELECT * FROM {table_name}", conn)
                 df.columns = df.columns.str.lower()
-                # إصلاح البيانات الناقصة فوراً
+                
+                # إصلاح البيانات
                 if table_name == 'Trades' and 'asset_type' not in df.columns: df['asset_type'] = 'Stock'
                 if table_name in ['Deposits', 'Withdrawals'] and 'amount' not in df.columns: df['amount'] = 0.0
+                
                 return df
-            except: pass
+            except Exception as e:
+                # طباعة الخطأ في التيرمينال للمساعدة في الحل
+                print(f"Error fetching {table_name}: {e}")
+                pass
+                
     return pd.DataFrame(columns=[c.lower() for c in SCHEMAS.get(table_name, [])])
 
 def db_create_user(u, p):
@@ -76,7 +99,7 @@ def init_db():
         "CREATE TABLE IF NOT EXISTS Watchlist (symbol VARCHAR(20) PRIMARY KEY)",
         "CREATE TABLE IF NOT EXISTS Documents (id SERIAL PRIMARY KEY, trade_id INTEGER, file_name TEXT, file_data BYTEA, upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
     ]
-    # الترقية التلقائية للأعمدة
+    # الترقية التلقائية
     migrations = [
         "ALTER TABLE Trades ADD COLUMN IF NOT EXISTS asset_type VARCHAR(20) DEFAULT 'Stock'",
         "ALTER TABLE Trades ADD COLUMN IF NOT EXISTS company_name TEXT",
@@ -85,10 +108,10 @@ def init_db():
         "ALTER TABLE Trades ADD COLUMN IF NOT EXISTS status VARCHAR(10) DEFAULT 'Open'",
         "ALTER TABLE Trades ADD COLUMN IF NOT EXISTS quantity DOUBLE PRECISION DEFAULT 0",
         "ALTER TABLE Trades ADD COLUMN IF NOT EXISTS entry_price DOUBLE PRECISION DEFAULT 0",
-        "ALTER TABLE Trades ADD COLUMN IF NOT EXISTS current_price DOUBLE PRECISION DEFAULT 0",
         "ALTER TABLE Trades ADD COLUMN IF NOT EXISTS exit_price DOUBLE PRECISION DEFAULT 0",
-        "ALTER TABLE Trades ADD COLUMN IF NOT EXISTS dividend_yield DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE Trades ADD COLUMN IF NOT EXISTS current_price DOUBLE PRECISION DEFAULT 0",
         "ALTER TABLE Trades ADD COLUMN IF NOT EXISTS prev_close DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE Trades ADD COLUMN IF NOT EXISTS dividend_yield DOUBLE PRECISION DEFAULT 0",
         "ALTER TABLE ReturnsGrants ADD COLUMN IF NOT EXISTS symbol VARCHAR(20)",
         "ALTER TABLE ReturnsGrants ADD COLUMN IF NOT EXISTS company_name TEXT"
     ]
