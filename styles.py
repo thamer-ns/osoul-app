@@ -22,20 +22,27 @@ def apply_custom_css():
            4. ✅ الحل الجذري (إصلاح الأيقونات)
            نستثني كلاسات الأيقونات ونعيد لها خطها الأصلي واتجاهها
            ============================================================ */
+                /* استهداف شامل للأيقونات بما فيها القائمة المنبثقة والأزرار الثانوية */
         .material-icons,
         [class*="material-icons"],
-        [data-testid="stExpander"] details summary span, /* سهم التوسيع */
+        [data-testid="stExpander"] details summary span,
+        [data-testid="stPopover"] button span,
+        [data-testid="stPopoverBody"] span,
+        button[kind="secondary"] span,
         i {
             font-family: 'Material Icons' !important;
-            direction: ltr !important; /* الأيقونات تحتاج اتجاه أيسر لتعمل الـ Ligatures */
+            direction: ltr !important;
             text-align: center !important;
+            display: inline-block !important;
+            line-height: 1 !important;
+            vertical-align: middle !important;
+            white-space: nowrap !important;
             font-weight: normal !important;
             font-style: normal !important;
-            letter-spacing: normal !important;
             text-transform: none !important;
-            white-space: nowrap !important;
             word-wrap: normal !important;
         }
+
 
         /* ============================================================
            5. تنظيف الواجهة (إخفاء العناصر غير المرغوبة بـ CSS فقط)
