@@ -6,13 +6,12 @@ def safe_fmt(val, suffix=""):
     except: return "-"
 
 def render_kpi(label, value, color_class="neutral", icon="📊"):
-    """رسم بطاقة معلومات حيوية مع أيقونة خلفية"""
-    
-    # تحديد لون الرقم
-    val_color = "#1E293B" # افتراضي داكن
-    if color_class == "success": val_color = "#059669" # أخضر
-    elif color_class == "danger": val_color = "#DC2626" # أحمر
-    elif color_class == "blue": val_color = "#2563EB" # أزرق
+    """رسم البطاقة الحيوية مع الأيقونة"""
+    # تحديد الألوان
+    val_color = "#1E293B"
+    if color_class == "success": val_color = "#059669"
+    elif color_class == "danger": val_color = "#DC2626"
+    elif color_class == "blue": val_color = "#2563EB"
     
     st.markdown(f"""
     <div class="kpi-card">
@@ -38,7 +37,6 @@ def render_ticker_card(symbol, name, price, change):
     """, unsafe_allow_html=True)
 
 def render_custom_table(df, columns_config):
-    """رسم الجدول بالتصميم الاحترافي"""
     if df.empty:
         st.info("📭 لا توجد بيانات للعرض")
         return
