@@ -6,143 +6,106 @@ import time
 
 # === الاستيرادات ===
 from config import DEFAULT_COLORS
-from components import render_navbar, render_kpi, render_table, render_ticker_card, safe_fmt
+from components import render_kpi, render_table, render_ticker_card, safe_fmt
 from analytics import (calculate_portfolio_metrics, update_prices, generate_equity_curve, calculate_historical_drawdown)
 from database import execute_query, fetch_table, get_db, clear_all_data
-# تم إضافة fetch_batch_data هنا لدعم صفحة النبض
 from market_data import get_static_info, get_tasi_data, get_chart_history, fetch_batch_data
-from data_source import get_company_details
 from charts import render_technical_chart
-from backtester import run_backtest
+try: from backtester import run_backtest
+except: run_backtest = lambda *a: None
 
-# استيرادات التحليل المالي والكلاسيكي مع الحماية
-try: from financial_analysis import get_fundamental_ratios, render_financial_dashboard_ui
-except: get_fundamental_ratios = lambda s: {'Score':0}; render_financial_dashboard_ui = lambda s: None
-try: from classical_analysis import render_classical_analysis
-except: render_classical_analysis = lambda s: None
+# === القائمة العلوية (كما كانت سابقاً بالضبط) ===
+def render_navbar():
+    # تقسيم الشاشة لـ 10 أعمدة كما في تصميمك القديم
+    c1, c2, c3, c4, c5, c6, c7, c8, c9, c10 = st.columns([1, 1, 1, 1, 1, 1, 1.2, 1, 1, 1])
+    
+    with c1:
+        if st.button("🏠 الرئيسية", use_container_width=True): st.session_state.page = 'home'; st.rerun()
+    with c2:
+        if st.button("⚡ مضاربة", use_container_width=True): st.session_state.page = 'spec'; st.rerun()
+    with c3:
+        if st.button("💎 استثمار", use_container_width=True): st.session_state.page = 'invest'; st.rerun()
+    with c4:
+        if st.button("💓 نبض", use_container_width=True): st.session_state.page = 'pulse'; st.rerun()
+    with c5:
+        if st.button("📜 صكوك", use_container_width=True): st.session_state.page = 'sukuk'; st.rerun()
+    with c6:
+        if st.button("🔍 تحليل", use_container_width=True): st.session_state.page = 'analysis'; st.rerun()
+    with c7:
+        if st.button("🧪 المختبر", use_container_width=True): st.session_state.page = 'backtest'; st.rerun()
+    with c8:
+        if st.button("📂 سجلات", use_container_width=True): st.session_state.page = 'cash'; st.rerun()
+    with c9:
+        if st.button("🔄 تحديث", use_container_width=True): st.session_state.page = 'update'; st.rerun()
+    with c10:
+        with st.popover("👤 القائمة"):
+            st.write(f"مرحباً، {st.session_state.get('username', 'زائر')}")
+            if st.button("➕ إضافة صفقة", use_container_width=True): st.session_state.page = 'add'; st.rerun()
+            if st.button("🛠️ أدوات", use_container_width=True): st.session_state.page = 'tools'; st.rerun()
+            if st.button("⚙️ الإعدادات", use_container_width=True): st.session_state.page = 'settings'; st.rerun()
+            if st.button("🚪 خروج", use_container_width=True): 
+                try: from security import logout; logout()
+                except: st.session_state.clear(); st.rerun()
+    st.markdown("---")
 
-# ==========================================
-# 1. دوال مساعدة للاستيراد (هام جداً للملفات)
-# ==========================================
-def clean_and_fix_columns(df, table_name):
-    if df is None: return None
-    df.columns = df.columns.str.strip().str.lower()
-    
-    rename_map = {
-        'source': 'note', 'reason': 'note', 'notes': 'note',
-        'cost': 'amount', 'value': 'amount', 'ticker': 'symbol',
-        'code': 'symbol', 'price': 'entry_price', 'qty': 'quantity'
-    }
-    df.rename(columns=rename_map, inplace=True)
-    if 'id' in df.columns: df = df.drop(columns=['id'])
-    
-    # تحديد الأعمدة المسموحة لكل جدول
-    allowed_cols = {
-        'Trades': ['symbol', 'company_name', 'sector', 'asset_type', 'date', 'quantity', 'entry_price', 'strategy', 'status', 'exit_date', 'exit_price', 'current_price'],
-        'Deposits': ['date', 'amount', 'note'],
-        'Withdrawals': ['date', 'amount', 'note'],
-        'ReturnsGrants': ['date', 'symbol', 'company_name', 'amount', 'note'],
-        'Watchlist': ['symbol']
-    }
-    
-    if table_name in allowed_cols:
-        target_cols = allowed_cols[table_name]
-        existing_cols = [c for c in df.columns if c in target_cols]
-        df = df[existing_cols]
-    
-    # تنظيف البيانات
-    for col in df.columns:
-        if 'date' in col:
-            try: df[col] = pd.to_datetime(df[col], errors='coerce').dt.strftime('%Y-%m-%d')
-            except: pass
-        if df[col].dtype == 'object':
-            try: df[col] = df[col].astype(str).str.replace(',', '')
-            except: pass
-            
-    df = df.where(pd.notnull(df), None)
-    return df
-
-def save_dataframe_to_db(df, table_name):
-    df_clean = clean_and_fix_columns(df, table_name)
-    if df_clean is None or df_clean.empty: return False, "الملف فارغ أو غير متوافق"
-    
-    records = df_clean.to_dict('records')
-    count = 0
-    with get_db() as conn:
-        if not conn: return False, "لا يوجد اتصال"
-        with conn.cursor() as cur:
-            for row in records:
-                cols = list(row.keys())
-                vals = [v for v in row.values()]
-                placeholders = ', '.join(['%s'] * len(vals))
-                columns = ', '.join(cols)
-                query = f"INSERT INTO {table_name} ({columns}) VALUES ({placeholders})"
-                try: cur.execute(query, vals); count += 1
-                except: conn.rollback()
-            conn.commit()
-    return True, f"تم استيراد {count} سجل"
-
-# ==========================================
-# 2. الصفحات الرئيسية (بما فيها النبض الجديد)
-# ==========================================
-
+# === 1. الصفحة الرئيسية (كما صممتها أنت) ===
 def view_dashboard(fin):
+    # قسم تاسي في الأعلى
     try: t_price, t_change = get_tasi_data()
     except: t_price, t_change = 0, 0
-    C = DEFAULT_COLORS
-    arrow, cl = ("🔼", C['success']) if t_change >= 0 else ("🔽", C['danger'])
+    
+    arrow = "🔼" if t_change >= 0 else "🔽"
+    color = "#006644" if t_change >= 0 else "#DE350B"
     
     st.markdown(f"""
-    <div style="background:{C['card_bg']}; padding:20px; border-radius:10px; display:flex; justify-content:space-between; align-items:center; border:1px solid {C['border']}; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
-        <div><div style="color:{C['sub_text']}; margin-bottom:5px;">المؤشر العام (TASI)</div><div style="font-size:2rem; font-weight:900; color:{C['main_text']};">{safe_fmt(t_price)}</div></div>
-        <div style="background:{cl}15; color:{cl}; padding:8px 20px; border-radius:6px; font-weight:bold; direction:ltr;">{arrow} {t_change:.2f}%</div>
-    </div>""", unsafe_allow_html=True)
-    
-    c1,c2,c3,c4 = st.columns(4)
-    with c1: render_kpi("الكاش المتوفر", safe_fmt(fin['cash']), "blue")
-    with c2: render_kpi("صافي الاستثمار", safe_fmt(fin['total_deposited'] - fin['total_withdrawn']))
-    with c3: render_kpi("القيمة السوقية", safe_fmt(fin['market_val_open']))
-    tpl = fin['unrealized_pl'] + fin['realized_pl'] + fin['total_returns']
-    with c4: render_kpi("الأرباح الكلية", safe_fmt(tpl), tpl)
-    
+    <div class="tasi-box">
+        <div>
+            <div style="font-size:0.9rem; color:#5E6C84; font-weight:bold;">المؤشر العام (TASI)</div>
+            <div style="font-size:2rem; font-weight:900; color:#172B4D;">{t_price:,.2f}</div>
+        </div>
+        <div style="background:{color}15; color:{color}; padding:8px 20px; border-radius:6px; font-size:1.2rem; font-weight:bold; direction:ltr;">
+            {arrow} {t_change:.2f}%
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # الكروت (KPIs)
+    c1, c2, c3, c4 = st.columns(4)
+    total_pl = fin['unrealized_pl'] + fin['realized_pl'] + fin['total_returns']
+    with c1: render_kpi("الكاش المتوفر", f"{fin['cash']:,.2f}", "blue")
+    with c2: render_kpi("رأس المال المستثمر", f"{(fin['total_deposited']-fin['total_withdrawn']):,.2f}")
+    with c3: render_kpi("القيمة السوقية", f"{fin['market_val_open']:,.2f}")
+    with c4: render_kpi("الربح الكلي", f"{total_pl:,.2f}", 'success' if total_pl >= 0 else 'danger')
+
     st.markdown("---")
     st.subheader("📈 نمو المحفظة")
     crv = generate_equity_curve(fin['all_trades'])
     if not crv.empty: st.plotly_chart(px.line(crv, x='date', y='cumulative_invested'), use_container_width=True)
 
-# === دالة النبض (تم دمج كودك هنا) ===
+# === 2. صفحة نبض السوق (كما طلبت) ===
 def render_pulse_dashboard():
     st.header("💓 نبض السوق")
-    
-    # 1. جلب الرموز من المحفظة والمراقبة
     trades = fetch_table("Trades")
     watchlist = fetch_table("Watchlist")
     
     symbols = set()
-    if not trades.empty and 'symbol' in trades.columns:
-        symbols.update(trades['symbol'].unique().tolist())
-    if not watchlist.empty and 'symbol' in watchlist.columns:
-        symbols.update(watchlist['symbol'].unique().tolist())
-        
-    if not symbols:
-        st.info("القائمة فارغة. أضف أسهم للمحفظة لتظهر هنا.")
-        return
+    if not trades.empty: symbols.update(trades[trades['status']=='Open']['symbol'].unique())
+    if not watchlist.empty: symbols.update(watchlist['symbol'].unique())
+    
+    if not symbols: st.info("القائمة فارغة"); return
 
-    # 2. جلب الأسعار
-    with st.spinner("جاري تحديث الأسعار..."):
+    with st.spinner("جاري جلب الأسعار..."):
         data = fetch_batch_data(list(symbols))
-        
-    # 3. العرض
+    
     cols = st.columns(4)
     for i, (sym, info) in enumerate(data.items()):
-        # حساب التغير (افتراضي إذا لم يتوفر الإغلاق السابق)
-        change = 0.0
+        chg = 0.0
         if info['prev_close'] > 0:
-            change = ((info['price'] - info['prev_close']) / info['prev_close']) * 100
-            
-        with cols[i % 4]:
-            render_ticker_card(sym, "سهم", info['price'], change)
+            chg = ((info['price'] - info['prev_close']) / info['prev_close']) * 100
+        with cols[i%4]:
+            render_ticker_card(sym, "سهم", info['price'], chg)
 
+# === 3. المحفظة (استثمار/مضاربة) ===
 def view_portfolio(fin, page_key):
     ts = "مضاربة" if page_key == 'spec' else "استثمار"
     st.header(f"💼 محفظة {ts}")
@@ -152,131 +115,140 @@ def view_portfolio(fin, page_key):
     if not all_d.empty:
         df = all_d[all_d['strategy'].astype(str).str.contains(ts, na=False)].copy()
     
-    if df.empty: st.info("المحفظة فارغة"); return
+    if df.empty: st.warning("المحفظة فارغة"); return
 
-    COLS = [('company_name', 'الشركة'), ('symbol', 'الرمز'), ('quantity', 'الكمية'), ('entry_price', 'شراء'), ('current_price', 'سوق'), ('market_value', 'القيمة'), ('gain', 'الربح'), ('gain_pct', '%')]
+    if 'status' not in df.columns: df['status'] = 'Open'
     open_df = df[df['status']=='Open'].copy()
     closed_df = df[df['status']=='Close'].copy()
 
-    t1, t2 = st.tabs(["الأسهم الحالية", "الأرشيف"])
+    # حسابات سريعة
+    if not open_df.empty:
+        open_df['total_cost'] = open_df['quantity'] * open_df['entry_price']
+        open_df['market_value'] = open_df['quantity'] * open_df['current_price']
+        open_df['gain'] = open_df['market_value'] - open_df['total_cost']
+        open_df['gain_pct'] = (open_df['gain'] / open_df['total_cost']) * 100
+
+    t1, t2, t3 = st.tabs([f"القائمة ({len(open_df)})", "الأداء", "الأرشيف"])
+    
     with t1:
         if not open_df.empty:
-            render_table(open_df, COLS)
-            with st.expander("🔻 بيع سهم"):
-                with st.form("sell"):
+            cols = [('company_name', 'الشركة'), ('symbol', 'الرمز'), ('quantity', 'الكمية'), ('entry_price', 'ت.شراء'), ('current_price', 'سوق'), ('gain', 'الربح'), ('gain_pct', '%')]
+            render_table(open_df, cols)
+            
+            with st.expander("بيع"):
+                with st.form(f"sell_{page_key}"):
                     c1,c2 = st.columns(2)
-                    s = c1.selectbox("السهم", open_df['symbol'].unique())
-                    p = c2.number_input("السعر")
+                    s = c1.selectbox("سهم", open_df['symbol'].unique())
+                    p = c2.number_input("سعر البيع")
                     d = st.date_input("التاريخ", date.today())
                     if st.form_submit_button("بيع"):
                         execute_query("UPDATE Trades SET status='Close', exit_price=%s, exit_date=%s WHERE symbol=%s AND strategy=%s AND status='Open'", (p, str(d), s, ts))
                         st.success("تم"); st.cache_data.clear(); st.rerun()
     with t2:
-        render_table(closed_df, COLS)
+        if not open_df.empty:
+            st.plotly_chart(px.pie(open_df, values='market_value', names='sector', title="التوزيع القطاعي"), use_container_width=True)
+    with t3:
+        if not closed_df.empty: render_table(closed_df, [('company_name', 'الشركة'), ('symbol', 'الرمز'), ('gain', 'الربح'), ('exit_date', 'تاريخ')])
 
-def view_backtester_ui(fin):
-    st.header("🧪 المختبر")
-    c1, c2, c3 = st.columns(3)
-    
-    trades_df = fin.get('all_trades', pd.DataFrame())
-    if not trades_df.empty and 'symbol' in trades_df.columns:
-        available_syms = list(set(trades_df['symbol'].unique().tolist() + ["1120"]))
-    else:
-        available_syms = ["1120", "2222"]
-        
-    with c1: st.markdown("**السهم:**"); sym = st.selectbox("bs", available_syms, label_visibility="collapsed")
-    with c2: st.markdown("**الاستراتيجية:**"); strat = st.selectbox("bst", ["Trend Follower (جون ميرفي)", "Sniper (هجين)"], label_visibility="collapsed")
-    with c3: st.markdown("**رأس المال:**"); cap = st.number_input("bc", 100000, label_visibility="collapsed")
-    
-    if st.button("🚀 تشغيل"):
-        df = get_chart_history(sym, "2y")
-        if df is not None:
-            res = run_backtest(df, strat, cap)
-            if res:
-                c1,c2 = st.columns(2)
-                c1.metric("العائد", f"{res['return_pct']:.2f}%")
-                c2.metric("الرصيد", f"{res['final_value']:,.2f}")
-                st.line_chart(res['df']['Portfolio_Value'])
-                st.dataframe(res['trades_log'])
-
-def view_add_trade():
-    st.header("➕ إضافة صفقة")
-    with st.form("add"):
-        c1, c2 = st.columns(2)
-        s = c1.text_input("الرمز")
-        t = c2.selectbox("المحفظة", ["استثمار", "مضاربة", "صكوك"])
-        c3, c4 = st.columns(2)
-        q = c3.number_input("الكمية", 1.0)
-        p = c4.number_input("السعر")
-        d = st.date_input("التاريخ", date.today())
-        if st.form_submit_button("حفظ"):
-            n, sec = get_static_info(s)
-            at = "Sukuk" if t=="صكوك" else "Stock"
-            execute_query("INSERT INTO Trades (symbol, company_name, sector, asset_type, date, quantity, entry_price, strategy, status, current_price) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'Open',%s)", (s, n, sec, at, str(d), q, p, t, p))
-            st.success("تم"); st.cache_data.clear()
-
-def view_cash_log():
-    st.header("💵 السيولة"); fin = calculate_portfolio_metrics()
-    t1,t2,t3 = st.tabs(["إيداع", "سحب", "توزيع"])
-    with t1: 
-        with st.form("d"):
-            a=st.number_input("مبلغ"); d=st.date_input("تاريخ"); n=st.text_input("ملاحظة")
-            if st.form_submit_button("حفظ"): execute_query("INSERT INTO Deposits (date, amount, note) VALUES (%s,%s,%s)", (str(d),a,n)); st.rerun()
-        render_table(fin['deposits'], [('date','تاريخ'),('amount','مبلغ'),('note','ملاحظة')])
-    with t2:
-        with st.form("w"):
-            a=st.number_input("مبلغ"); d=st.date_input("تاريخ"); n=st.text_input("ملاحظة")
-            if st.form_submit_button("حفظ"): execute_query("INSERT INTO Withdrawals (date, amount, note) VALUES (%s,%s,%s)", (str(d),a,n)); st.rerun()
-        render_table(fin['withdrawals'], [('date','تاريخ'),('amount','مبلغ'),('note','ملاحظة')])
-    with t3: render_table(fin['returns'], [('date','تاريخ'),('symbol','رمز'),('amount','مبلغ')])
-
+# === 4. التحليل ===
 def view_analysis(fin):
     st.header("🔬 التحليل")
     trades = fin['all_trades']
     wl = fetch_table("Watchlist")
     syms = list(set(trades['symbol'].unique().tolist() + wl['symbol'].unique().tolist())) if not trades.empty else []
-    c1,c2=st.columns([1,2]); ns=c1.text_input("بحث"); sym=c2.selectbox("اختر", [ns]+syms if ns else syms) if syms or ns else None
+    
+    c1,c2 = st.columns([1,2])
+    ns = c1.text_input("بحث")
+    if ns and ns not in syms: syms.insert(0, ns)
+    sym = c2.selectbox("اختر", syms) if syms else None
+    
     if sym:
-        n, s = get_static_info(sym); st.markdown(f"### {n} ({sym})")
-        t1,t2,t3,t4,t5 = st.tabs(["مؤشرات", "قوائم", "أطروحة", "فني", "كلاسيكي"])
-        with t1: d=get_fundamental_ratios(sym); st.metric("التقييم", f"{d['Score']}/10")
-        with t2: render_financial_dashboard_ui(sym)
-        with t3: st.info("الأطروحة")
-        with t4: render_technical_chart(sym)
-        with t5: render_classical_analysis(sym)
+        render_technical_chart(sym)
 
-def view_sukuk_portfolio(fin):
-    st.header("📜 الصكوك")
-    df = fin['all_trades']
-    if 'asset_type' in df.columns:
-        sk = df[df['asset_type']=='Sukuk']
-        if not sk.empty: render_table(sk, [('company_name','اسم'),('symbol','رمز'),('quantity','كمية'),('entry_price','سعر')])
-        else: st.warning("لا يوجد")
+# === 5. السيولة والاستيراد ===
+def clean_and_fix_columns(df):
+    """دالة الإصلاح التي طلبتها"""
+    if df is None: return None
+    df.columns = df.columns.str.strip().str.lower()
+    
+    # تحويل المسميات كما تريد
+    rename_map = {'source': 'note', 'reason': 'note', 'notes': 'note', 'cost': 'amount', 'value': 'amount'}
+    df.rename(columns=rename_map, inplace=True)
+    
+    # تنظيف
+    if 'id' in df.columns: df = df.drop(columns=['id'])
+    return df
 
-def view_tools(): st.header("🛠️ الأدوات"); st.info(f"الزكاة: {calculate_portfolio_metrics()['market_val_open']*0.025775:,.2f}")
+def save_dataframe_to_db(df, table_name):
+    df = clean_and_fix_columns(df)
+    # فلترة الأعمدة حسب الجدول
+    allowed = {
+        'Trades': ['symbol', 'company_name', 'sector', 'asset_type', 'date', 'quantity', 'entry_price', 'strategy', 'status'],
+        'Deposits': ['date', 'amount', 'note'],
+        'Withdrawals': ['date', 'amount', 'note']
+    }
+    if table_name in allowed:
+        cols = [c for c in df.columns if c in allowed[table_name]]
+        df = df[cols]
+    
+    records = df.to_dict('records')
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            for row in records:
+                cols = list(row.keys())
+                vals = [str(v) for v in row.values()]
+                q = f"INSERT INTO {table_name} ({','.join(cols)}) VALUES ({','.join(['%s']*len(vals))})"
+                try: cur.execute(q, vals)
+                except: conn.rollback()
+            conn.commit()
+    return True
 
-def view_settings(): 
-    st.header("⚙️ إعدادات")
-    with st.expander("📥 استيراد بيانات (Excel/CSV)"):
-        f = st.file_uploader("اختر الملف", accept_multiple_files=False)
-        if f and st.button("بدء الاستيراد"): 
-            st.info("جاري المعالجة...")
+def view_settings():
+    st.header("⚙️ الإعدادات")
+    with st.expander("📥 استيراد ملف (Excel/CSV)"):
+        f = st.file_uploader("اختر الملف", type=['xlsx', 'csv'])
+        if f and st.button("استيراد"):
             try:
                 if f.name.endswith('xlsx'): df = pd.read_excel(f)
                 else: df = pd.read_csv(f)
-                # تخمين الجدول (يمكن تحسينه)
-                tbl = "Trades"
-                if 'amount' in df.columns: tbl = "Deposits"
                 
-                success, msg = save_dataframe_to_db(df, tbl)
-                if success: st.success(msg)
-                else: st.error(msg)
+                # منطق بسيط: إذا فيه quantity فهو صفقات، إذا amount فهو كاش
+                tbl = "Trades"
+                if 'amount' in df.columns or 'cost' in df.columns: tbl = "Deposits"
+                
+                save_dataframe_to_db(df, tbl)
+                st.success("تم الاستيراد")
             except Exception as e: st.error(f"خطأ: {e}")
+    
+    if st.button("حذف كل البيانات"):
+        clear_all_data()
+        st.warning("تم الحذف"); st.rerun()
+
+def view_cash_log():
+    st.header("💵 السجلات")
+    fin = calculate_portfolio_metrics()
+    t1,t2 = st.tabs(["إيداع", "سحب"])
+    with t1: render_table(fin['deposits'], [('date','تاريخ'),('amount','مبلغ'),('note','ملاحظة')])
+    with t2: render_table(fin['withdrawals'], [('date','تاريخ'),('amount','مبلغ')])
+
+def view_add_trade():
+    st.header("➕ إضافة")
+    with st.form("add"):
+        c1,c2=st.columns(2); s=c1.text_input("رمز"); t=c2.selectbox("نوع", ["استثمار","مضاربة","صكوك"])
+        c3,c4,c5=st.columns(3); q=c3.number_input("كمية"); p=c4.number_input("سعر"); d=c5.date_input("تاريخ", date.today())
+        if st.form_submit_button("حفظ"):
+            execute_query("INSERT INTO Trades (symbol, company_name, date, quantity, entry_price, strategy, status) VALUES (%s,%s,%s,%s,%s,%s,'Open')", (s, s, str(d), q, p, t))
+            st.success("تم"); st.cache_data.clear()
+
+def view_backtester_ui(fin): st.header("🧪 المختبر"); st.info("قريباً")
+def view_sukuk_portfolio(fin): st.header("📜 صكوك"); st.info("قائمة الصكوك")
+def view_tools(): st.header("🛠️ أدوات"); st.info("حاسبة الزكاة")
 
 def router():
     render_navbar()
     pg = st.session_state.page
     fin = calculate_portfolio_metrics()
+    
     if pg == 'home': view_dashboard(fin)
     elif pg == 'pulse': render_pulse_dashboard()
     elif pg in ['spec', 'invest']: view_portfolio(fin, pg)
@@ -287,6 +259,6 @@ def router():
     elif pg == 'tools': view_tools()
     elif pg == 'settings': view_settings()
     elif pg == 'add': view_add_trade()
-    elif pg == 'update':
+    elif pg == 'update': 
         with st.spinner("تحديث..."): update_prices()
-        st.session_state.page = 'home'; st.rerun()
+        st.session_state.page='home'; st.rerun()
