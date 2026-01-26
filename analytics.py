@@ -5,12 +5,18 @@ import streamlit as st
 
 @st.cache_data(ttl=60)
 def calculate_portfolio_metrics():
+    # الهيكل الافتراضي (الذي يمنع KeyError)
+    empty_df = pd.DataFrame()
     default_res = {
-        "cost_open": 0.0, "market_val_open": 0.0, "cash": 0.0, "all_trades": pd.DataFrame(),
-        "deposits": pd.DataFrame(), "withdrawals": pd.DataFrame(), "returns": pd.DataFrame(),
-        "total_deposited": 0, "total_withdrawn": 0, "total_returns": 0,
-        "unrealized_pl": 0, "realized_pl": 0
+        "cost_open": 0.0, "market_val_open": 0.0, "cash": 0.0, 
+        "unrealized_pl": 0.0, "realized_pl": 0.0, 
+        "total_deposited": 0.0, "total_withdrawn": 0.0, "total_returns": 0.0,
+        "deposits": pd.DataFrame(columns=['date', 'amount', 'note']),
+        "withdrawals": pd.DataFrame(columns=['date', 'amount', 'note']),
+        "returns": pd.DataFrame(columns=['date', 'amount', 'symbol', 'note']),
+        "all_trades": pd.DataFrame(columns=['symbol', 'company_name', 'sector', 'status', 'strategy', 'asset_type', 'date', 'quantity', 'entry_price', 'exit_price', 'current_price', 'total_cost', 'market_value', 'gain', 'gain_pct'])
     }
+
     try:
         trades = fetch_table("Trades")
         dep = fetch_table("Deposits")
@@ -34,15 +40,18 @@ def calculate_portfolio_metrics():
             })
             return default_res
 
-        # إصلاح Trades
-        if 'asset_type' not in trades.columns: trades['asset_type'] = 'Stock'
+        # التأكد من الأعمدة
+        cols = ['quantity', 'entry_price', 'exit_price', 'current_price', 'status', 'asset_type']
+        for c in cols:
+            if c not in trades.columns:
+                trades[c] = 0.0 if c not in ['status', 'asset_type'] else ('Open' if c=='status' else 'Stock')
+        
         trades['asset_type'] = trades['asset_type'].fillna('Stock')
         
         for c in ['quantity', 'entry_price', 'exit_price', 'current_price']:
-            if c not in trades.columns: trades[c] = 0.0
             trades[c] = pd.to_numeric(trades[c], errors='coerce').fillna(0.0)
 
-        is_closed = (trades['exit_price'] > 0) | (trades['status'].astype(str).str.lower().isin(['close', 'sold']))
+        is_closed = (trades['exit_price'] > 0) | (trades['status'].astype(str).str.lower().isin(['close', 'sold', 'مغلقة']))
         trades['status'] = np.where(is_closed, 'Close', 'Open')
         trades.loc[is_closed, 'current_price'] = trades['exit_price']
 
@@ -50,6 +59,10 @@ def calculate_portfolio_metrics():
         trades['market_value'] = trades['quantity'] * trades['current_price']
         trades['gain'] = trades['market_value'] - trades['total_cost']
         
+        trades['gain_pct'] = 0.0
+        mask_cost = trades['total_cost'] != 0
+        trades.loc[mask_cost, 'gain_pct'] = (trades.loc[mask_cost, 'gain'] / trades.loc[mask_cost, 'total_cost']) * 100
+
         open_trades = trades[trades['status'] == 'Open']
         closed_trades = trades[trades['status'] == 'Close']
 
@@ -70,16 +83,9 @@ def calculate_portfolio_metrics():
         }
     except: return default_res
 
+def update_prices(): return True
+def create_smart_backup(): return True
 def generate_equity_curve(df):
     if df.empty: return pd.DataFrame()
     return df[['date', 'total_cost']].sort_values('date').assign(cumulative_invested=lambda x: x['total_cost'].cumsum())
-
-def run_backtest(df, s, c):
-    if df is None or df.empty: return None
-    df = df.copy()
-    df['MA20'] = df['Close'].rolling(20).mean()
-    df['Signal'] = np.where(df['Close'] > df['MA20'], 1, -1)
-    df['Portfolio_Value'] = c * (1 + (df['Close'].pct_change() * df['Signal'].shift(1)).fillna(0).cumsum())
-    return {'final_value': df['Portfolio_Value'].iloc[-1], 'return_pct': ((df['Portfolio_Value'].iloc[-1]/c)-1)*100, 'df': df}
-
-def update_prices(): return True
+def calculate_historical_drawdown(df): return pd.DataFrame()
