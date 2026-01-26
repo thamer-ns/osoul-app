@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from datetime import date
-
 from config import DEFAULT_COLORS
 from components import render_kpi, render_custom_table, render_ticker_card, safe_fmt
 from analytics import calculate_portfolio_metrics, update_prices, generate_equity_curve
@@ -13,7 +12,7 @@ from backtester import run_backtest
 from financial_analysis import render_financial_dashboard_ui, get_fundamental_ratios, get_thesis, save_thesis
 from classical_analysis import render_classical_analysis
 
-# --- القائمة العلوية ---
+# --- Full Navigation Bar ---
 def render_navbar():
     c1, c2, c3, c4, c5, c6, c7, c8, c9, c10 = st.columns(10)
     buttons = [
@@ -36,7 +35,7 @@ def render_navbar():
                 except: st.session_state.clear(); st.rerun()
     st.markdown("---")
 
-# --- 1. الرئيسية (مع الأيقونات) ---
+# --- 1. Dashboard (With Icons) ---
 def view_dashboard(fin):
     try: tp, tc = get_tasi_data()
     except: tp, tc = 0, 0
@@ -49,7 +48,7 @@ def view_dashboard(fin):
     </div>""", unsafe_allow_html=True)
     
     c1, c2, c3, c4 = st.columns(4)
-    # تمرير الأيقونات هنا
+    # Icons passed here as 4th argument
     with c1: render_kpi("الكاش المتوفر", safe_fmt(fin['cash']), "blue", "💵")
     with c2: render_kpi("الاستثمار", safe_fmt(fin['total_deposited']-fin['total_withdrawn']), "neutral", "🏗️")
     with c3: render_kpi("القيمة السوقية", safe_fmt(fin['market_val_open']), "neutral", "📊")
@@ -58,19 +57,19 @@ def view_dashboard(fin):
     
     st.markdown("---")
     crv = generate_equity_curve(fin['all_trades'])
-    if not crv.empty: st.plotly_chart(px.line(crv, x='date', y='cumulative_invested', title="النمو"), use_container_width=True)
+    if not crv.empty: st.plotly_chart(px.line(crv, x='date', y='cumulative_invested', title="نمو المحفظة"), use_container_width=True)
 
-# --- 2. السيولة (تم إصلاحها + الأيقونات) ---
+# --- 2. Liquidity (Fixed + Icons) ---
 def view_cash_log():
     st.header("💰 السجلات المالية")
     fin = calculate_portfolio_metrics()
     
-    # التأكد من وجود البيانات لتجنب الخطأ
+    # Robust data retrieval using .get()
     deposits = fin.get('deposits', pd.DataFrame())
     withdrawals = fin.get('withdrawals', pd.DataFrame())
     returns = fin.get('returns', pd.DataFrame())
 
-    # الأيقونات العلوية
+    # Summary Icons
     c1, c2, c3 = st.columns(3)
     d_sum = deposits['amount'].sum() if not deposits.empty else 0
     w_sum = withdrawals['amount'].sum() if not withdrawals.empty else 0
@@ -83,10 +82,9 @@ def view_cash_log():
     st.markdown("---")
     t1, t2, t3 = st.tabs(["📥 سجل الإيداعات", "📤 سجل السحوبات", "🎁 سجل العوائد"])
     
-    # تعريف الأعمدة
     cols = [('date','التاريخ','date'), ('amount','المبلغ','money'), ('note','ملاحظات','text')]
     
-    # التبويب 1: الإيداعات
+    # Tab 1: Deposits
     with t1:
         with st.expander("➕ تسجيل إيداع جديد"):
             with st.form("add_dep"):
@@ -98,7 +96,7 @@ def view_cash_log():
                     st.success("تم"); st.rerun()
         render_custom_table(deposits, cols)
         
-    # التبويب 2: السحوبات
+    # Tab 2: Withdrawals
     with t2:
         with st.expander("➖ تسجيل سحب جديد"):
             with st.form("add_wit"):
@@ -110,7 +108,7 @@ def view_cash_log():
                     st.success("تم"); st.rerun()
         render_custom_table(withdrawals, cols)
         
-    # التبويب 3: العوائد
+    # Tab 3: Returns
     with t3:
         with st.expander("💵 تسجيل عائد/توزيع"):
             with st.form("add_ret"):
@@ -122,7 +120,7 @@ def view_cash_log():
                     st.success("تم"); st.rerun()
         render_custom_table(returns, cols)
 
-# --- 3. المحفظة (كما هي) ---
+# --- 3. Portfolio (As Requested) ---
 def view_portfolio(fin, key):
     ts = "مضاربة" if key=='spec' else "استثمار"
     st.header(f"💼 محفظة {ts}"); df = fin['all_trades']
@@ -142,7 +140,7 @@ def view_portfolio(fin, key):
     with t2:
         if not cl.empty: render_custom_table(cl, [('company_name','الشركة','text'),('symbol','الرمز','text'),('gain','الربح','colorful'),('exit_date','تاريخ','date')])
 
-# --- باقي الصفحات (نفس القديم) ---
+# --- Rest of the Views (As Requested) ---
 def view_analysis(fin):
     st.header("🔬 التحليل"); trades = fin['all_trades']; from database import fetch_table; wl = fetch_table("Watchlist")
     syms = list(set(trades['symbol'].unique().tolist() + wl['symbol'].unique().tolist())) if not trades.empty else []
@@ -174,6 +172,7 @@ def render_pulse_dashboard():
         with cols[i%4]: render_ticker_card(s, "سهم", info['price'], chg)
 
 def view_sukuk_portfolio(fin): st.header("📜 صكوك"); render_custom_table(fin['all_trades'][fin['all_trades']['asset_type']=='Sukuk'], [('symbol','رمز','text'),('quantity','كمية','money')])
+
 def view_add_trade():
     st.header("➕ إضافة صفقة"); 
     with st.form("add"):
@@ -183,6 +182,7 @@ def view_add_trade():
             at = "Sukuk" if t=="صكوك" else "Stock"
             execute_query("INSERT INTO Trades (symbol, asset_type, date, quantity, entry_price, strategy, status) VALUES (%s,%s,%s,%s,%s,%s,'Open')", (s,at,str(d),q,p,t))
             st.success("تم"); st.cache_data.clear()
+
 def view_tools(): st.header("🛠️ أدوات"); st.info("الزكاة")
 def view_settings(): st.header("⚙️ إعدادات"); st.info("الاستيراد")
 
