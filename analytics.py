@@ -39,13 +39,13 @@ def calculate_portfolio_metrics():
             })
             return default_res
 
-        req_cols = ['quantity', 'entry_price', 'exit_price', 'current_price', 'status', 'asset_type', 'prev_close', 'year_high', 'year_low']
+        req_cols = ['quantity', 'entry_price', 'exit_price', 'current_price', 'status', 'asset_type', 'prev_close']
         for c in req_cols:
             if c not in trades.columns:
                 trades[c] = 0.0 if c not in ['status', 'asset_type'] else ('Open' if c=='status' else 'Stock')
         
         trades['asset_type'] = trades['asset_type'].fillna('Stock')
-        for c in ['quantity', 'entry_price', 'exit_price', 'current_price', 'prev_close', 'year_high', 'year_low']:
+        for c in ['quantity', 'entry_price', 'exit_price', 'current_price']:
             trades[c] = pd.to_numeric(trades[c], errors='coerce').fillna(0.0)
 
         is_closed = (trades['exit_price'] > 0) | (trades['status'].astype(str).str.lower().isin(['close', 'sold', 'مغلقة']))
@@ -60,15 +60,17 @@ def calculate_portfolio_metrics():
         mask_cost = trades['total_cost'] != 0
         trades.loc[mask_cost, 'gain_pct'] = (trades.loc[mask_cost, 'gain'] / trades.loc[mask_cost, 'total_cost']) * 100
 
-        trades['daily_change'] = 0.0
-        mask_open = trades['status'] == 'Open'
-        if trades.loc[mask_open, 'prev_close'].sum() > 0:
-             trades.loc[mask_open, 'daily_change'] = ((trades.loc[mask_open, 'current_price'] - trades.loc[mask_open, 'prev_close']) / trades.loc[mask_open, 'prev_close']) * 100
-
-        total_open_val = trades.loc[mask_open, 'market_value'].sum()
+        # الوزن
         trades['weight'] = 0.0
+        mask_open = trades['status'] == 'Open'
+        total_open_val = trades.loc[mask_open, 'market_value'].sum()
         if total_open_val > 0:
             trades.loc[mask_open, 'weight'] = (trades.loc[mask_open, 'market_value'] / total_open_val) * 100
+        
+        # التغير اليومي
+        trades['daily_change'] = 0.0
+        if 'prev_close' in trades.columns:
+             trades.loc[mask_open, 'daily_change'] = ((trades.loc[mask_open, 'current_price'] - trades.loc[mask_open, 'prev_close']) / trades.loc[mask_open, 'prev_close']) * 100
 
         open_trades = trades[mask_open]
         closed_trades = trades[~mask_open]
@@ -76,14 +78,16 @@ def calculate_portfolio_metrics():
         cost_open = open_trades['total_cost'].sum()
         market_val_open = open_trades['market_value'].sum()
         sales_closed = closed_trades['market_value'].sum()
+        cost_closed = closed_trades['total_cost'].sum()
         
+        # الكاش الدقيق
         total_buy_cost = trades['total_cost'].sum()
         cash = (total_dep + total_ret + sales_closed) - (total_wit + total_buy_cost)
 
         return {
             "cost_open": cost_open, "market_val_open": market_val_open,
             "unrealized_pl": market_val_open - cost_open,
-            "realized_pl": sales_closed - closed_trades['total_cost'].sum(),
+            "realized_pl": sales_closed - cost_closed,
             "cash": cash,
             "total_deposited": total_dep, "total_withdrawn": total_wit, "total_returns": total_ret,
             "all_trades": trades, "deposits": dep, "withdrawals": wit, "returns": ret
@@ -102,5 +106,4 @@ def run_backtest(df, s, c):
     df['Portfolio_Value'] = c * (1 + (df['Close'].pct_change() * df['Signal'].shift(1)).fillna(0).cumsum())
     return {'final_value': df['Portfolio_Value'].iloc[-1], 'return_pct': ((df['Portfolio_Value'].iloc[-1]/c)-1)*100, 'df': df}
 
-def update_prices():
-    return True
+def update_prices(): return True
