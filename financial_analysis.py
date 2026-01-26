@@ -1,10 +1,11 @@
 import pandas as pd
 import streamlit as st
 import io
+import yfinance as yf
 from database import execute_query, fetch_table, get_db
-from market_data import fetch_price_from_google
+from market_data import fetch_price_from_google, get_ticker_symbol
 
-# === 1. جلب المؤشرات وحساب التقييم ===
+# === 1. جلب المؤشرات (يدوي + ياهو) ===
 def get_fundamental_ratios(symbol):
     metrics = {
         "P/E": None, "P/B": None, "ROE": None, 
@@ -12,194 +13,122 @@ def get_fundamental_ratios(symbol):
         "Score": 0, "Rating": "غير متاح", "Opinions": []
     }
     
-    # جلب السعر الحالي
+    # 1. السعر الحالي
     price = fetch_price_from_google(symbol)
     metrics["Current_Price"] = price
     
-    # جلب البيانات التاريخية
-    df = get_stored_financials(symbol)
+    # 2. محاولة جلب بيانات من ياهو للمساعدة
+    try:
+        ticker = yf.Ticker(get_ticker_symbol(symbol))
+        info = ticker.info
+        metrics['P/E'] = info.get('trailingPE')
+        metrics['P/B'] = info.get('priceToBook')
+        metrics['ROE'] = info.get('returnOnEquity', 0) * 100
+        
+        # حساب القيمة العادلة (Graham)
+        eps = info.get('trailingEps', 0)
+        bv = info.get('bookValue', 0)
+        if eps > 0 and bv > 0:
+            metrics['Fair_Value'] = (22.5 * eps * bv) ** 0.5
+            
+    except: pass
+
+    # 3. التقييم
+    score = 0
+    if metrics['P/E'] and 0 < metrics['P/E'] < 20: score += 2
+    if metrics['P/B'] and metrics['P/B'] < 2: score += 2
+    if metrics['ROE'] and metrics['ROE'] > 15: score += 3
+    if metrics['Fair_Value'] and price < metrics['Fair_Value']: score += 3
     
-    if not df.empty:
-        # أخذ آخر سنة متوفرة
-        latest = df.sort_values('date').iloc[-1]
-        
-        # استخراج الأرقام (مع الحماية من الصفر)
-        net_income = latest.get('net_income', 0)
-        equity = latest.get('total_equity', 0)
-        assets = latest.get('total_assets', 0)
-        
-        # حسابات تقريبية (نفترض عدد أسهم ثابت للتبسيط أو نجلبه مستقبلاً)
-        # هنا سنستخدم صافي الدخل والقيمة الدفترية مباشرة للتقييم
-        
-        score = 0
-        opinions = []
-        
-        # 1. تقييم مكرر الربحية (P/E) - نحتاج ربح السهم
-        # للتبسيط سنعتمد على النمو في الدخل
-        if net_income > 0:
-            score += 2
-            opinions.append("الشركة تحقق أرباحاً")
-        
-        # 2. العائد على الحقوق (ROE)
-        if equity > 0:
-            roe = (net_income / equity) * 100
-            metrics['ROE'] = roe
-            if roe > 15: 
-                score += 3
-                opinions.append("عائد على الحقوق ممتاز (>15%)")
-            elif roe > 10:
-                score += 1
-        
-        # 3. القيمة العادلة (Graham Formula Simplified)
-        # Fair Value = Sqrt(22.5 * EPS * BVPS)
-        # سنحسبها تقريبياً إذا توفرت البيانات
-        if net_income > 0 and equity > 0:
-            # افتراض عدد أسهم 100 مليون لغرض المثال فقط إذا لم يتوفر
-            # في النسخة المطورة نربط عدد الأسهم الحقيقي
-            pass 
-
-        metrics['Score'] = min(score, 10)
-        if score >= 7: metrics['Rating'] = "ممازة 💎"
-        elif score >= 4: metrics['Rating'] = "جيدة ✅"
-        else: metrics['Rating'] = "مخاطرة ⚠️"
-        
-        metrics['Opinions'] = opinions
-
+    metrics['Score'] = min(score, 10)
+    metrics['Rating'] = "شراء قوي 💎" if score >= 8 else "جيدة ✅" if score >= 5 else "مخاطرة ⚠️"
+    
     return metrics
 
-# === 2. الذكاء الصناعي للصق (Argaam Parser) ===
+# === 2. الاستيراد الذكي (لصق) ===
 def parse_pasted_text(raw_text):
-    """تحويل النص المنسوخ من أرقام/تداول إلى بيانات"""
     try:
-        # محاولة قراءة النص كجدول
         df = pd.read_csv(io.StringIO(raw_text), sep='\t')
-        if len(df.columns) <= 1:
-             df = pd.read_csv(io.StringIO(raw_text), sep=r'\s+', engine='python')
-
-        # تنظيف العناوين
+        if len(df.columns) <= 1: df = pd.read_csv(io.StringIO(raw_text), sep=r'\s+', engine='python')
         df.columns = df.columns.str.strip().str.lower()
-        
-        # قلب الجدول (لأن المواقع تعرض السنوات في الأعمدة)
-        # نجعل الصفوف أعمدة
-        df_T = df.set_index(df.columns[0]).T
-        df_T.reset_index(inplace=True)
-        
+        df_T = df.set_index(df.columns[0]).T; df_T.reset_index(inplace=True)
         results = []
         for _, row in df_T.iterrows():
-            # محاولة استخراج السنة من النص (مثلاً "2023" أو "ديسمبر 2023")
-            year_str = str(row['index'])
-            year = ''.join(filter(str.isdigit, year_str))
-            
-            # نقبل السنة إذا كانت 4 أرقام
+            year_str = str(row['index']); year = ''.join(filter(str.isdigit, year_str))
             if len(year) == 4:
-                def get_val(keywords):
-                    for col in df_T.columns:
-                        if any(k in str(col) for k in keywords):
-                            val = str(row[col])
-                            # تنظيف الرقم (حالة الأقواس تعني سالب)
-                            is_negative = '(' in val or ')' in val
-                            val = val.replace(',', '').replace('(', '').replace(')', '')
-                            try: 
-                                f_val = float(val)
-                                return -f_val if is_negative else f_val
+                def gv(ks):
+                    for c in df_T.columns:
+                        if any(k in str(c) for k in ks):
+                            v = str(row[c]).replace(',','').replace('(','-').replace(')','')
+                            try: return float(v)
                             except: continue
                     return 0.0
-
-                data_row = {
-                    'year': year,
-                    'revenue': get_val(['إيرادات', 'مبيعات', 'Revenue']),
-                    'net_income': get_val(['صافي', 'الربح', 'Net Income']),
-                    'total_assets': get_val(['أصول', 'Assets', 'موجودات']),
-                    'total_equity': get_val(['حقوق', 'Equity']),
-                    'oper_cash': get_val(['تشغيلي', 'Operating'])
-                }
-                # نضيف الصف فقط إذا كان فيه بيانات حقيقية
-                if data_row['revenue'] != 0 or data_row['net_income'] != 0:
-                    results.append(data_row)
+                data = {'year':year, 'revenue':gv(['إيرادات','Revenue']), 'net_income':gv(['صافي','Net Income']), 'total_equity':gv(['حقوق','Equity'])}
+                if data['revenue']!=0: results.append(data)
         return results
-    except Exception as e:
-        print(f"Error parsing: {e}")
-        return []
+    except: return []
 
-# === 3. واجهة القوائم (التي تحبها) ===
+# === 3. الواجهة (مع ياهو) ===
 def render_financial_dashboard_ui(symbol):
-    st.markdown("#### 📥 بيانات القوائم المالية")
+    st.markdown("#### 📥 إدارة البيانات المالية")
     
-    # منطقة الأدوات
-    with st.expander("إضافة / تحديث البيانات (نسخ ولصق)", expanded=False):
-        t1, t2 = st.tabs(["📋 نسخ من (أرقام/تداول)", "✍️ إدخال يدوي"])
+    with st.expander("خيارات الجلب والتحديث", expanded=True):
+        t1, t2, t3 = st.tabs(["🌐 جلب آلي (Yahoo)", "📋 نسخ ولصق (أرقام)", "✍️ يدوي"])
         
         with t1:
-            st.info("طريقة الاستخدام: اذهب لموقع أرقام -> القوائم المالية -> ظلل الجدول -> انسخ -> الصق هنا")
-            txt = st.text_area("لصق الجدول هنا", height=150)
-            if txt and st.button("⚡ معالجة وحفظ البيانات"):
+            if st.button("سحب البيانات من Yahoo Finance", use_container_width=True):
+                try:
+                    tk = yf.Ticker(get_ticker_symbol(symbol))
+                    inc = tk.income_stmt.T; bal = tk.balance_sheet.T
+                    if not inc.empty:
+                        c = 0
+                        for d, r in inc.iterrows():
+                            rev = r.get('Total Revenue', 0)
+                            net = r.get('Net Income', 0)
+                            eq = 0
+                            if not bal.empty and d in bal.index: eq = bal.loc[d].get('Stockholders Equity', 0)
+                            save_financial_row(symbol, d.strftime('%Y-%m-%d'), {'revenue':rev, 'net_income':net, 'total_equity':eq}, "Yahoo")
+                            c+=1
+                        st.success(f"تم تحديث {c} سنوات"); st.rerun()
+                    else: st.warning("لم نجد بيانات في ياهو")
+                except Exception as e: st.error(f"خطأ: {e}")
+
+        with t2:
+            txt = st.text_area("لصق الجدول من أرقام", height=100)
+            if txt and st.button("معالجة"):
                 data = parse_pasted_text(txt)
                 if data:
-                    c = 0
-                    for r in data:
-                        save_financial_row(symbol, f"{r['year']}-12-31", r)
-                        c += 1
-                    st.success(f"تم بنجاح استيراد وحفظ بيانات {c} سنوات!"); st.rerun()
-                else: st.error("لم نتمكن من قراءة الجدول، تأكد من النسخ بشكل صحيح.")
-        
-        with t2:
-            with st.form("manual_fin"):
-                c1, c2 = st.columns(2)
-                y = c1.number_input("السنة", 2015, 2030, 2024)
-                rev = c2.number_input("الإيرادات (مليون)")
-                c3, c4 = st.columns(2)
-                net = c3.number_input("صافي الربح (مليون)")
-                eq = c4.number_input("حقوق المساهمين (مليون)")
-                if st.form_submit_button("حفظ"):
-                    save_financial_row(symbol, f"{y}-12-31", {'revenue': rev*1000000, 'net_income': net*1000000, 'total_equity': eq*1000000})
-                    st.success("تم الحفظ"); st.rerun()
+                    for r in data: save_financial_row(symbol, f"{r['year']}-12-31", r, "Paste")
+                    st.success("تم"); st.rerun()
+                else: st.error("فشلت القراءة")
 
-    # عرض الجدول
+        with t3:
+            with st.form("man"):
+                y = st.number_input("السنة", 2020, 2030, 2024)
+                r = st.number_input("الإيرادات"); n = st.number_input("الصافي")
+                if st.form_submit_button("حفظ"):
+                    save_financial_row(symbol, f"{y}-12-31", {'revenue':r, 'net_income':n}, "Manual")
+                    st.success("تم"); st.rerun()
+
     df = get_stored_financials(symbol)
     if not df.empty:
-        st.markdown("##### 📊 السجل التاريخي")
-        # تنسيق العرض
-        disp_df = df[['date', 'revenue', 'net_income', 'total_equity']].copy()
-        disp_df['date'] = pd.to_datetime(disp_df['date']).dt.year
-        disp_df.rename(columns={'date': 'السنة', 'revenue': 'الإيرادات', 'net_income': 'صافي الربح', 'total_equity': 'الحقوق'}, inplace=True)
-        st.dataframe(disp_df.set_index('السنة'), use_container_width=True)
-    else:
-        st.warning("لا توجد بيانات محفوظة لهذا السهم. استخدم أداة النسخ أعلاه.")
+        st.markdown("##### 📊 السجل المالي")
+        disp = df[['date','revenue','net_income']].copy()
+        disp['date'] = pd.to_datetime(disp['date']).dt.year
+        st.dataframe(disp.set_index('date'), use_container_width=True)
 
-# === دوال قاعدة البيانات ===
-def save_financial_row(symbol, date, row):
-    # دالة حفظ ذكية تحدث البيانات إذا كانت موجودة
-    q = """
-        INSERT INTO FinancialStatements (symbol, date, revenue, net_income, total_assets, total_equity, period_type, source) 
-        VALUES (%s, %s, %s, %s, %s, %s, 'Annual', 'SmartPaste')
-        ON CONFLICT (symbol, period_type, date) DO UPDATE SET 
-        revenue=EXCLUDED.revenue, net_income=EXCLUDED.net_income, total_equity=EXCLUDED.total_equity
-    """
-    vals = (
-        symbol, date, 
-        row.get('revenue',0), row.get('net_income',0), 
-        row.get('total_assets',0), row.get('total_equity',0)
-    )
-    execute_query(q, vals)
+def save_financial_row(symbol, date, row, src="Manual"):
+    q = "INSERT INTO FinancialStatements (symbol, date, revenue, net_income, total_equity, period_type, source) VALUES (%s,%s,%s,%s,%s,'Annual',%s) ON CONFLICT (symbol, period_type, date) DO UPDATE SET revenue=EXCLUDED.revenue, net_income=EXCLUDED.net_income"
+    execute_query(q, (symbol, date, row.get('revenue',0), row.get('net_income',0), row.get('total_equity',0), src))
 
 def get_stored_financials(symbol):
     with get_db() as conn:
-        try: return pd.read_sql("SELECT * FROM FinancialStatements WHERE symbol=%s ORDER BY date ASC", conn, params=(symbol,))
+        try: return pd.read_sql("SELECT * FROM FinancialStatements WHERE symbol=%s ORDER BY date", conn, params=(symbol,))
         except: return pd.DataFrame()
 
-# دوال مساعدة للأطروحة
-def get_thesis(symbol):
-    with get_db() as conn:
-        try: 
-            df = pd.read_sql("SELECT * FROM InvestmentThesis WHERE symbol=%s", conn, params=(symbol,))
-            return df.iloc[0] if not df.empty else None
+def get_thesis(s): 
+    with get_db() as c: 
+        try: return pd.read_sql("SELECT * FROM InvestmentThesis WHERE symbol=%s", c, params=(s,)).iloc[0]
         except: return None
-
-def save_thesis(symbol, text, target, rec):
-    q = """
-        INSERT INTO InvestmentThesis (symbol, thesis_text, target_price, recommendation, last_updated)
-        VALUES (%s, %s, %s, %s, NOW())
-        ON CONFLICT (symbol) DO UPDATE SET 
-        thesis_text=EXCLUDED.thesis_text, target_price=EXCLUDED.target_price
-    """
-    execute_query(q, (symbol, text, target, rec))
+def save_thesis(s, t, tg, r):
+    execute_query("INSERT INTO InvestmentThesis (symbol, thesis_text, target_price, recommendation) VALUES (%s,%s,%s,%s) ON CONFLICT (symbol) DO UPDATE SET thesis_text=EXCLUDED.thesis_text", (s,t,tg,r))
