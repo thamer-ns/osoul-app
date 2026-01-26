@@ -21,13 +21,13 @@ def apply_custom_css():
         /* ============================================================
            4. ✅ الحل الجذري (إصلاح الأيقونات)
            نستثني كلاسات الأيقونات ونعيد لها خطها الأصلي واتجاهها
-           ============================================================ 
+           ============================================================ */
         .material-icons,
         [class*="material-icons"],
-        [data-testid="stExpander"] details summary span,
+        [data-testid="stExpander"] details summary span, /* سهم التوسيع */
         i {
             font-family: 'Material Icons' !important;
-            direction: ltr !important;
+            direction: ltr !important; /* الأيقونات تحتاج اتجاه أيسر لتعمل الـ Ligatures */
             text-align: center !important;
             font-weight: normal !important;
             font-style: normal !important;
@@ -36,8 +36,6 @@ def apply_custom_css():
             white-space: nowrap !important;
             word-wrap: normal !important;
         }
-
-
 
         /* ============================================================
            5. تنظيف الواجهة (إخفاء العناصر غير المرغوبة بـ CSS فقط)
