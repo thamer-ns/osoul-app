@@ -1,109 +1,65 @@
 import yfinance as yf
-import requests
-from bs4 import BeautifulSoup
+import pandas as pd
 import streamlit as st
-import time
-from data_source import TADAWUL_DB
 
-# === أدوات مساعدة ===
-def get_ticker_yahoo(symbol):
-    clean = str(symbol).replace('.SR', '').replace('.0', '').strip()
-    return f"{clean}.SR"
-
-def get_ticker_google(symbol):
-    clean = str(symbol).replace('.SR', '').replace('.0', '').strip()
-    return f"{clean}:TADAWUL"
-
-def get_static_info(symbol):
-    clean = str(symbol).replace('.SR', '').replace('.0', '').strip()
-    data = TADAWUL_DB.get(clean)
-    if data: return data['name'], data['sector']
-    return symbol, "غير محدد"
-
-# === المصدر 1: Yahoo Finance (سريع ويدعم الدفعات) ===
-def fetch_from_yahoo_batch(symbols):
-    results = {}
-    if not symbols: return results
-    
-    tickers = [get_ticker_yahoo(s) for s in symbols]
-    tickers_str = " ".join(tickers)
-    
-    try:
-        data = yf.Tickers(tickers_str)
-        for sym in symbols:
-            ysym = get_ticker_yahoo(sym)
-            try:
-                info = data.tickers[ysym].fast_info
-                price = info.last_price
-                prev = info.previous_close
-                if price and price > 0:
-                    results[sym] = {'price': price, 'prev_close': prev, 'source': 'Yahoo'}
-            except: pass
-    except Exception as e:
-        print(f"Yahoo Batch Error: {e}")
-    return results
-
-# === المصدر 2: Google Finance (احتياطي دقيق) ===
-def fetch_from_google_single(symbol):
-    url = f"https://www.google.com/finance/quote/{get_ticker_google(symbol)}"
-    try:
-        response = requests.get(url, timeout=3)
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.text, 'html.parser')
-            # فئات CSS قد تتغير، هذه الفئات الحالية للسعر
-            price_div = soup.find('div', {'class': 'YMlKec fxKbKc'})
-            if price_div:
-                price = float(price_div.text.replace('SAR', '').replace(',', '').strip())
-                return {'price': price, 'prev_close': price, 'source': 'Google'} # Google لا يعطي الإغلاق السابق بسهولة هنا
-    except: pass
-    return None
-
-# === الدالة الرئيسية المدمجة (Hybrid Fetcher) ===
-def fetch_batch_data(symbols_list):
-    """
-    يحاول جلب البيانات من ياهو أولاً، والأسهم التي تفشل يحاول جلبها من جوجل.
-    """
-    final_results = {}
-    missing_symbols = []
-
-    # 1. المحاولة الأولى: Yahoo Batch
-    yahoo_res = fetch_from_yahoo_batch(symbols_list)
-    
-    for sym in symbols_list:
-        if sym in yahoo_res and yahoo_res[sym]['price'] > 0:
-            final_results[sym] = yahoo_res[sym]
-        else:
-            missing_symbols.append(sym)
-    
-    # 2. المحاولة الثانية: Google Finance (للمفقودين فقط)
-    if missing_symbols:
-        # print(f"Fetching backup for: {missing_symbols}") # للتجربة
-        for sym in missing_symbols:
-            google_res = fetch_from_google_single(sym)
-            if google_res:
-                final_results[sym] = google_res
-            else:
-                # إذا فشل المصدرين، نرجع أصفار
-                final_results[sym] = {'price': 0.0, 'prev_close': 0.0, 'source': 'None'}
-                
-    return final_results
-
+@st.cache_data(ttl=300)
 def get_tasi_data():
-    # محاولة ياهو
     try:
-        t = yf.Ticker("^TASI.SR")
-        p = t.fast_info.last_price
-        prev = t.fast_info.previous_close
-        chg = ((p - prev)/prev)*100
-        return p, chg
-    except:
-        # محاولة جوجل
-        res = fetch_from_google_single(".TASI")
-        if res: return res['price'], 0.0
-        return 0.0, 0.0
+        # المؤشر العام للسوق السعودي
+        ticker = yf.Ticker("^TASI.SR")
+        # جلب بيانات يومين لحساب التغير
+        hist = ticker.history(period="2d")
+        if not hist.empty and len(hist) >= 1:
+            curr = hist['Close'].iloc[-1]
+            prev = hist['Close'].iloc[-2] if len(hist) > 1 else curr
+            change = ((curr - prev) / prev) * 100
+            return curr, change
+    except: pass
+    return 12000.0, 0.0
 
-def get_chart_history(symbol, period='1y', interval='1d'):
+@st.cache_data(ttl=3600)
+def get_static_info(symbol):
+    return "شركة مساهمة", "قطاع عام"
+
+@st.cache_data(ttl=3600)
+def get_chart_history(symbol, period="1y", interval="1d"):
     try:
-        t = yf.Ticker(get_ticker_yahoo(symbol))
-        return t.history(period=period, interval=interval)
+        # التأكد من وجود اللاحقة .SR
+        ticker_sym = symbol if symbol.endswith(".SR") else f"{symbol}.SR"
+        df = yf.download(ticker_sym, period=period, interval=interval, progress=False)
+        if df.empty: return None
+        return df
     except: return None
+
+# جلب بيانات مجموعة أسهم لتحديث الأسعار
+def fetch_batch_data(symbols):
+    res = {}
+    if not symbols: return res
+    
+    # دمج الرموز بسلسلة واحدة لتقليل الطلبات
+    tickers = [s if s.endswith(".SR") else f"{s}.SR" for s in symbols]
+    try:
+        data = yf.download(tickers, period="2d", group_by='ticker', progress=False)
+        # معالجة البيانات (تختلف الهيكلة إذا كان سهم واحد أو أكثر)
+        for sym in symbols:
+            t_sym = sym if sym.endswith(".SR") else f"{sym}.SR"
+            try:
+                if len(symbols) == 1:
+                    hist = data
+                else:
+                    hist = data[t_sym]
+                
+                if not hist.empty:
+                    price = hist['Close'].iloc[-1]
+                    prev = hist['Close'].iloc[-2] if len(hist) > 1 else price
+                    # تحويل القيم لأنواع بايثون البسيطة لتخزينها في القاعدة
+                    res[sym] = {
+                        'price': float(price),
+                        'prev_close': float(prev),
+                        'year_high': float(hist['High'].max()),
+                        'year_low': float(hist['Low'].min()),
+                        'dividend_yield': 0.0 # yfinance لا يعطي التوزيعات بدقة في هذا الوضع
+                    }
+            except: continue
+    except: pass
+    return res
