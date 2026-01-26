@@ -22,10 +22,13 @@ def apply_custom_css():
            4. ✅ الحل الجذري (إصلاح الأيقونات)
            نستثني كلاسات الأيقونات ونعيد لها خطها الأصلي واتجاهها
            ============================================================ */
-        .material-icons,
+           .material-icons,
         [class*="material-icons"],
-        [data-testid="stExpander"] details summary span, /* سهم التوسيع */
+        [data-testid="stExpander"] details summary span,
+        [data-testid="stPopover"] button span,      /* سهم القائمة المنبثقة */
+        [data-testid="stPopoverBody"] span,         /* أيقونات داخل القائمة */
         i {
+
             font-family: 'Material Icons' !important;
             direction: ltr !important; /* الأيقونات تحتاج اتجاه أيسر لتعمل الـ Ligatures */
             text-align: center !important;
