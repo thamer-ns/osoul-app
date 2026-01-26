@@ -6,7 +6,7 @@ def safe_fmt(val, suffix=""):
     except: return "-"
 
 def render_kpi(label, value, color_class="neutral", icon="📊"):
-    # الألوان
+    """Renders a lively KPI card with a background icon."""
     val_color = "#1E293B"
     if color_class == "success": val_color = "#059669"
     elif color_class == "danger": val_color = "#DC2626"
@@ -34,31 +34,43 @@ def render_ticker_card(symbol, name, price, change):
     </div>""", unsafe_allow_html=True)
 
 def render_custom_table(df, columns_config):
-    if df.empty: st.info("📭 لا توجد بيانات"); return
+    """Renders a custom HTML table, handling empty data gracefully."""
+    if df is None or df.empty:
+        st.info("📭 لا توجد بيانات متاحة")
+        return
+
     html = '<div style="overflow-x:auto;"><table class="finance-table"><thead><tr>'
     for _, label, _ in columns_config: html += f'<th>{label}</th>'
     html += '</tr></thead><tbody>'
+    
     for _, row in df.iterrows():
         html += '<tr>'
         for col_key, _, col_type in columns_config:
             val = row.get(col_key, "")
             display = val
             cls = ""
+            
             if col_type == 'money':
                 try: display = f"{float(val):,.2f}"
                 except: pass
                 cls = "txt-blue" if float(val if val else 0) > 0 else ""
             elif col_type == 'percent':
-                try: v = float(val); display = f"{v:.2f}%"; cls = "txt-green" if v >= 0 else "txt-red"
+                try: 
+                    v = float(val); display = f"{v:.2f}%"
+                    cls = "txt-green" if v >= 0 else "txt-red"
                 except: cls=""
             elif col_type == 'colorful':
-                try: v = float(val); display = f"{v:,.2f}"; cls = "txt-green" if v >= 0 else "txt-red"
+                try:
+                    v = float(val); display = f"{v:,.2f}"
+                    cls = "txt-green" if v >= 0 else "txt-red"
                 except: cls=""
             elif col_type == 'badge':
                 s = str(val).lower()
                 is_op = s in ['open', 'مفتوحة']
                 display = f'<span class="badge badge-{"open" if is_op else "closed"}">{"مفتوحة" if is_op else "مغلقة"}</span>'
-            elif col_type == 'date': display = str(val)[:10]
+            elif col_type == 'date':
+                display = str(val)[:10]
+            
             html += f'<td><span class="{cls}">{display}</span></td>'
         html += '</tr>'
     html += '</tbody></table></div>'
