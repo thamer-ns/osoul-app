@@ -5,44 +5,76 @@ def apply_custom_css():
         <style>
         @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap');
         
-        html, body, [class*="css"] {
+        /* تعميم الخط */
+        html, body, [class*="css"], p, div, label, input, button {
             font-family: 'Cairo', sans-serif !important;
             direction: rtl;
         }
         
-        /* تصميم الجداول (واسع وأنيق) */
-        div[data-testid="stDataFrame"] {
-            width: 100%;
-            direction: rtl;
-        }
-        div[data-testid="stDataFrame"] table {
-            width: 100%;
-        }
-        div[data-testid="stDataFrame"] th {
-            background-color: #f0f2f6;
-            color: #31333F;
-            font-weight: 700;
-            text-align: right !important;
-        }
-        div[data-testid="stDataFrame"] td {
-            text-align: right !important;
-        }
+        /* إخفاء القائمة الجانبية */
+        [data-testid="stSidebar"] { display: none !important; }
         
-        /* القوائم */
-        [data-testid="stSidebar"] { display: none; }
-        
-        /* الأزرار العلوية */
-        div.stButton > button {
+        /* === تصميم الجداول (مطابق للصور) === */
+        .finance-table {
             width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+            border: 1px solid #E5E7EB;
             border-radius: 8px;
-            font-weight: bold;
+            overflow: hidden;
+            margin-top: 10px;
+            background-color: white;
         }
         
-        /* البطاقات */
-        .kpi-card {
-            background: white; padding: 15px; border-radius: 10px;
-            border: 1px solid #e0e0e0; text-align: center;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        /* الرأس الأزرق الفاتح كما في الصور */
+        .finance-table th {
+            background-color: #F0F8FF !important; /* لون سماوي فاتح */
+            color: #1e3a8a !important; /* كحلي */
+            font-weight: 700;
+            padding: 12px 15px;
+            text-align: right;
+            border-bottom: 2px solid #BFDBFE;
+            font-size: 0.95rem;
+        }
+        
+        .finance-table td {
+            padding: 12px 15px;
+            text-align: right;
+            border-bottom: 1px solid #F3F4F6;
+            color: #374151;
+            font-size: 0.9rem;
+            font-weight: 500;
+        }
+        
+        /* الصف الأخير بدون خط */
+        .finance-table tr:last-child td { border-bottom: none; }
+        
+        /* تأثير عند المرور */
+        .finance-table tr:hover { background-color: #F9FAFB; }
+        
+        /* === الشارات (Badges) === */
+        .badge-open {
+            background-color: #DCFCE7; color: #166534;
+            padding: 4px 12px; border-radius: 9999px;
+            font-size: 0.75rem; font-weight: 800;
+        }
+        .badge-closed {
+            background-color: #F3F4F6; color: #4B5563;
+            padding: 4px 12px; border-radius: 9999px;
+            font-size: 0.75rem; font-weight: 800;
+        }
+        
+        /* === الأرقام الملونة === */
+        .val-pos { color: #059669; font-weight: 700; direction: ltr; }
+        .val-neg { color: #DC2626; font-weight: 700; direction: ltr; }
+        .val-neu { color: #374151; font-weight: 600; direction: ltr; }
+        .val-blue { color: #2563EB; font-weight: 700; direction: ltr; }
+        
+        /* === بطاقات الملخص العلوية === */
+        .summary-card {
+            background: white; padding: 15px; border-radius: 12px;
+            border: 1px solid #E5E7EB; text-align: center;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
         }
         </style>
     """, unsafe_allow_html=True)
