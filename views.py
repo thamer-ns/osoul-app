@@ -17,9 +17,7 @@ except ImportError:
     get_fundamental_ratios = lambda s: {'Score': 0}
     render_financial_dashboard_ui = lambda s: None
 
-# ==========================================
-# 1. لوحة القيادة (Dashboard)
-# ==========================================
+# 1. لوحة القيادة
 def view_dashboard(fin):
     try: t_price, t_change = get_tasi_data()
     except: t_price, t_change = 0, 0
@@ -44,22 +42,18 @@ def view_dashboard(fin):
     crv = generate_equity_curve(fin['all_trades'])
     if not crv.empty: st.plotly_chart(px.line(crv, x='date', y='cumulative_invested', title=""), use_container_width=True)
 
-# ==========================================
-# 2. المحفظة (Portfolio) - النسخة الكاملة
-# ==========================================
+# 2. المحفظة (النسخة الكاملة)
 def view_portfolio(fin, page_key):
     ts = "مضاربة" if page_key == 'spec' else "استثمار"
     st.header(f"💼 محفظة {ts}")
     all_d = fin['all_trades']
     
-    # فلترة الاستراتيجية
     df = pd.DataFrame()
     if not all_d.empty:
         df = all_d[all_d['strategy'].astype(str).str.contains(ts, na=False)].copy()
     
     if df.empty: st.info("المحفظة فارغة"); return
 
-    # الأعمدة الكاملة التي طلبتها
     COLS = [
         ('company_name', 'الشركة'), ('sector', 'القطاع'), ('status', 'الحالة'),
         ('symbol', 'الرمز'), ('date', 'تاريخ الشراء'), ('exit_date', 'تاريخ البيع'),
@@ -72,7 +66,6 @@ def view_portfolio(fin, page_key):
     open_df = df[df['status']=='Open'].copy()
     closed_df = df[df['status']=='Close'].copy()
 
-    # ملخص سريع
     c1, c2, c3, c4 = st.columns(4)
     with c1: render_kpi("القيمة السوقية", safe_fmt(open_df['market_value'].sum() if not open_df.empty else 0), "blue")
     with c2: render_kpi("التكلفة", safe_fmt(open_df['total_cost'].sum() if not open_df.empty else 0))
@@ -80,23 +73,19 @@ def view_portfolio(fin, page_key):
     with c4: render_kpi("الربح المحقق", safe_fmt(closed_df['gain'].sum() if not closed_df.empty else 0))
     st.markdown("---")
 
-    # التبويبات الثلاثة
     t1, t2, t3 = st.tabs(["📋 الأسهم الحالية", "📊 تحليل الأداء", "🗄️ الأرشيف"])
     
     with t1:
         if not open_df.empty:
-            # خيار الفرز البسيط
             c_sort, _ = st.columns([1, 4])
             with c_sort:
                 st.markdown("**ترتيب حسب:**")
                 sort_opt = st.radio("sort_r", ["الأحدث", "الأعلى ربحاً"], horizontal=True, label_visibility="collapsed")
-            
             if sort_opt == "الأعلى ربحاً": open_df = open_df.sort_values(by="gain", ascending=False)
             else: open_df = open_df.sort_values(by="date", ascending=False)
 
             render_table(open_df, COLS)
             
-            # منطقة البيع السريع
             with st.expander("🔻 بيع سهم"):
                 with st.form("sell"):
                     c1,c2 = st.columns(2)
@@ -118,15 +107,11 @@ def view_portfolio(fin, page_key):
         if not closed_df.empty:
             closed_df['net_sales'] = closed_df['quantity'] * closed_df['exit_price']
             closed_df['realized_gain'] = closed_df['net_sales'] - closed_df['total_cost']
-            
-            # أعمدة إضافية للأرشيف
             ARCHIVE_COLS = COLS + [('net_sales', 'صافي البيع'), ('realized_gain', 'الربح المحقق')]
             render_table(closed_df.sort_values('exit_date', ascending=False), ARCHIVE_COLS)
         else: st.info("الأرشيف فارغ")
 
-# ==========================================
-# 3. الصفحات الأخرى (نبض السوق، السيولة، التحليل)
-# ==========================================
+# 3. الصفحات الأخرى
 def render_pulse_dashboard():
     st.header("💓 نبض السوق")
     trades = fetch_table("Trades"); wl = fetch_table("Watchlist")
@@ -187,42 +172,15 @@ def view_add_operations():
             st.markdown("**النوع:**"); ty = c1.selectbox("t", ["إيداع نقدي", "سحب نقدي", "توزيعات"], label_visibility="collapsed")
             st.markdown("**المبلغ:**"); am = c2.number_input("a", 0.0, label_visibility="collapsed")
             st.markdown("**التاريخ:**"); da = st.date_input("da", date.today(), label_visibility="collapsed")
-            st.markdown("**ملاحظة / الرمز:**"); no = st.text_input("no", label_visibility="collapsed")
-            if st.form_submit_button("حفظ الحركة"):
+            st.markdown("**ملاحظة:**"); no = st.text_input("no", label_visibility="collapsed")
+            if st.form_submit_button("حفظ"):
                 if "إيداع" in ty: execute_query("INSERT INTO Deposits (date, amount, note) VALUES (%s,%s,%s)", (str(da), am, no))
                 elif "سحب" in ty: execute_query("INSERT INTO Withdrawals (date, amount, note) VALUES (%s,%s,%s)", (str(da), am, no))
                 else: execute_query("INSERT INTO ReturnsGrants (date, symbol, amount, note) VALUES (%s,%s,%s,%s)", (str(da), no, am, "توزيعات"))
                 st.success("تم"); st.rerun()
 
 def view_analysis(fin):
-    st.header("🔬 مركز التحليل")
-    trades = fin['all_trades']
-    wl = fetch_table("Watchlist")
-    symbols = list(set(trades['symbol'].unique().tolist() + wl['symbol'].unique().tolist())) if not trades.empty else []
-    
-    c1, c2 = st.columns([1, 2])
-    with c1: 
-        st.markdown("**بحث:**")
-        ns = st.text_input("s_search", label_visibility="collapsed")
-    if ns and ns not in symbols: symbols.insert(0, ns)
-    
-    with c2:
-        st.markdown("**اختر الشركة:**")
-        sym = st.selectbox("s_select", symbols, label_visibility="collapsed") if symbols else None
-    
-    if sym:
-        n, s = get_company_details(sym)
-        st.markdown(f"### {n} ({sym})")
-        t1, t2, t3, t4, t5 = st.tabs(["📊 المؤشرات", "📑 القوائم", "📝 الأطروحة", "📈 الشارت", "🏛️ كلاسيكي"])
-        with t1:
-            d = get_fundamental_ratios(sym)
-            c1,c2 = st.columns([1,3])
-            c1.metric("التقييم", f"{d['Score']}/10")
-            render_financial_dashboard_ui(sym)
-        with t2: st.info("البيانات المالية")
-        with t3: st.info("الأطروحة")
-        with t4: view_advanced_chart(sym)
-        with t5: st.info("التحليل الكلاسيكي")
+    view_advanced_chart(fin)
 
 def view_backtester_ui(fin):
     st.header("🧪 المختبر")
@@ -250,6 +208,15 @@ def view_settings():
     with st.expander("📥 استيراد بيانات (Excel/CSV)"):
         f = st.file_uploader("اختر الملف", accept_multiple_files=False)
         if f: st.info("جاهز")
+    
+    with st.expander("📎 إدارة المرفقات"):
+        doc = st.file_uploader("رفع مستند PDF/Image", type=['pdf', 'png', 'jpg'])
+        if doc and st.button("حفظ المستند"):
+            try:
+                bytes_data = doc.getvalue()
+                execute_query("INSERT INTO Documents (file_name, file_data) VALUES (%s, %s)", (doc.name, bytes_data))
+                st.success("تم الرفع")
+            except Exception as e: st.error(f"خطأ: {e}")
 
 def router():
     render_navbar()
