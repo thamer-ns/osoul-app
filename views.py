@@ -6,7 +6,7 @@ from datetime import date
 from config import DEFAULT_COLORS
 from components import render_kpi, render_custom_table, render_ticker_card, safe_fmt
 from analytics import calculate_portfolio_metrics, update_prices, generate_equity_curve
-from database import execute_query, fetch_table, get_db, clear_all_data
+from database import execute_query, fetch_table
 from market_data import get_static_info, get_tasi_data, get_chart_history, fetch_batch_data
 from charts import render_technical_chart
 from backtester import run_backtest
@@ -18,12 +18,11 @@ def render_navbar():
     buttons = [
         ('🏠 الرئيسية','home'), ('⚡ مضاربة','spec'), ('💎 استثمار','invest'), 
         ('💓 نبض','pulse'), ('📜 صكوك','sukuk'), ('🔍 تحليل','analysis'), 
-        ('🧪 مختبر','backtest'), ('💰 السيولة','cash'), ('🔄 تحديث','update')
+        ('🧪 المختبر','backtest'), ('💰 السيولة','cash'), ('🔄 تحديث','update')
     ]
     for i,(l,k) in enumerate(buttons):
         with [c1,c2,c3,c4,c5,c6,c7,c8,c9][i]: 
             if st.button(l, use_container_width=True): st.session_state.page=k; st.rerun()
-    
     with c10:
         with st.popover("👤 القائمة"):
             st.write(f"مرحباً {st.session_state.get('username','User')}")
@@ -31,46 +30,33 @@ def render_navbar():
             if st.button("🛠️ أدوات", use_container_width=True): st.session_state.page='tools'; st.rerun()
             if st.button("⚙️ إعدادات", use_container_width=True): st.session_state.page='settings'; st.rerun()
             st.markdown("---")
-            if st.button("🚪 خروج", use_container_width=True): 
+            if st.button("خروج", use_container_width=True): 
                 try: from security import logout; logout()
                 except: st.session_state.clear(); st.rerun()
     st.markdown("---")
 
 def view_dashboard(fin):
-    # مؤشر تاسي
     try: tp, tc = get_tasi_data()
     except: tp, tc = 0, 0
     ar = "🔼" if tc >= 0 else "🔽"
-    
     st.markdown(f"""
     <div class="tasi-card">
-        <div>
-            <div style="font-size:1rem; opacity:0.9; margin-bottom:5px;">المؤشر العام (TASI)</div>
-            <div style="font-size:2.5rem; font-weight:900;">{safe_fmt(tp)}</div>
-        </div>
-        <div style="background:rgba(255,255,255,0.2); padding:8px 20px; border-radius:12px; font-weight:bold; font-size:1.2rem; direction:ltr;">
-            {ar} {tc:.2f}%
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # البطاقات الحيوية مع الأيقونات
+        <div><div style="opacity:0.9;">المؤشر العام (TASI)</div><div style="font-size:2.5rem; font-weight:900;">{safe_fmt(tp)}</div></div>
+        <div style="background:rgba(255,255,255,0.2); padding:5px 15px; border-radius:10px; font-weight:bold; direction:ltr;">{ar} {tc:.2f}%</div>
+    </div>""", unsafe_allow_html=True)
     c1, c2, c3, c4 = st.columns(4)
     with c1: render_kpi("الكاش المتوفر", safe_fmt(fin['cash']), "blue", "💵")
     with c2: render_kpi("قيمة الاستثمار", safe_fmt(fin['total_deposited']-fin['total_withdrawn']), "neutral", "🏗️")
     with c3: render_kpi("القيمة السوقية", safe_fmt(fin['market_val_open']), "neutral", "📊")
     tpl = fin['unrealized_pl'] + fin['realized_pl']
     with c4: render_kpi("الربح/الخسارة", safe_fmt(tpl), 'success' if tpl>=0 else 'danger', "📈")
-    
     st.markdown("---")
     crv = generate_equity_curve(fin['all_trades'])
-    if not crv.empty: st.plotly_chart(px.line(crv, x='date', y='cumulative_invested', title="مسار نمو المحفظة"), use_container_width=True)
+    if not crv.empty: st.plotly_chart(px.line(crv, x='date', y='cumulative_invested', title="نمو المحفظة"), use_container_width=True)
 
 def view_cash_log():
     st.header("💰 السجلات المالية")
     fin = calculate_portfolio_metrics()
-    
-    # الأيقونات الثلاثة في الأعلى (كما طلبت)
     c1, c2, c3 = st.columns(3)
     with c1: render_kpi("إجمالي الإيداعات", safe_fmt(fin['deposits']['amount'].sum()), "success", "📥")
     with c2: render_kpi("إجمالي السحوبات", safe_fmt(fin['withdrawals']['amount'].sum()), "danger", "📤")
@@ -81,21 +67,19 @@ def view_cash_log():
     cols = [('date','التاريخ','date'),('amount','المبلغ','money'),('note','ملاحظات','text')]
     
     with t1:
-        with st.expander("➕ إضافة إيداع"):
+        with st.expander("➕ تسجيل إيداع جديد"):
             with st.form("d"):
                 a=st.number_input("المبلغ"); d=st.date_input("التاريخ"); n=st.text_input("ملاحظة")
                 if st.form_submit_button("حفظ"): execute_query("INSERT INTO Deposits (date, amount, note) VALUES (%s,%s,%s)",(str(d),a,n)); st.rerun()
         render_custom_table(fin['deposits'], cols)
-        
     with t2:
-        with st.expander("➖ إضافة سحب"):
+        with st.expander("➖ تسجيل سحب جديد"):
             with st.form("w"):
                 a=st.number_input("المبلغ"); d=st.date_input("التاريخ"); n=st.text_input("ملاحظة")
                 if st.form_submit_button("حفظ"): execute_query("INSERT INTO Withdrawals (date, amount, note) VALUES (%s,%s,%s)",(str(d),a,n)); st.rerun()
         render_custom_table(fin['withdrawals'], cols)
-        
     with t3:
-        with st.expander("💵 إضافة عائد"):
+        with st.expander("💵 تسجيل عائد جديد"):
             with st.form("r"):
                 s=st.text_input("رمز السهم"); a=st.number_input("المبلغ"); d=st.date_input("التاريخ")
                 if st.form_submit_button("حفظ"): execute_query("INSERT INTO ReturnsGrants (date, symbol, amount) VALUES (%s,%s,%s)",(str(d),s,a)); st.rerun()
@@ -104,7 +88,7 @@ def view_cash_log():
 def view_portfolio(fin, key):
     ts = "مضاربة" if key=='spec' else "استثمار"
     st.header(f"💼 محفظة {ts}"); df = fin['all_trades']
-    if df.empty: st.info("المحفظة فارغة"); return
+    if df.empty: st.info("فارغة"); return
     sub = df[df['strategy'].astype(str).str.contains(ts, na=False)]
     op = sub[sub['status']=='Open']; cl = sub[sub['status']=='Close']
     t1,t2 = st.tabs(["الصفقات الحالية", "الأرشيف"])
@@ -122,8 +106,7 @@ def view_portfolio(fin, key):
 
 def view_analysis(fin):
     st.header("🔬 مركز التحليل")
-    trades = fin['all_trades']
-    wl = fetch_table("Watchlist")
+    trades = fin['all_trades']; from database import fetch_table; wl = fetch_table("Watchlist")
     syms = list(set(trades['symbol'].unique().tolist() + wl['symbol'].unique().tolist())) if not trades.empty else []
     c1,c2=st.columns([1,2]); ns=c1.text_input("بحث"); sym=c2.selectbox("قائمة الأسهم", [ns]+syms if ns else syms) if syms or ns else None
     if sym:
@@ -136,26 +119,19 @@ def view_analysis(fin):
         with t5: th=get_thesis(sym); st.text_area("النص", value=th['thesis_text'] if th else "")
 
 def view_backtester_ui(fin):
-    st.header("🧪 المختبر")
-    c1,c2,c3 = st.columns(3)
+    st.header("🧪 المختبر"); c1,c2,c3 = st.columns(3)
     sym = c1.selectbox("السهم", ["1120.SR"] + fin['all_trades']['symbol'].unique().tolist())
-    strat = c2.selectbox("خطة", ["Trend Follower", "Sniper"])
-    cap = c3.number_input("مبلغ", 100000)
+    strat = c2.selectbox("خطة", ["Trend Follower", "Sniper"]); cap = c3.number_input("مبلغ", 100000)
     if st.button("بدء"):
         res = run_backtest(get_chart_history(sym, "2y"), strat, cap)
-        if res:
-            st.metric("العائد", f"{res['return_pct']:.2f}%")
-            st.line_chart(res['df']['Portfolio_Value'])
-            st.dataframe(res['trades_log'])
+        if res: st.metric("العائد", f"{res['return_pct']:.2f}%"); st.line_chart(res['df']['Portfolio_Value']); st.dataframe(res['trades_log'])
         else: st.error("بيانات ناقصة")
 
 def render_pulse_dashboard():
-    st.header("💓 نبض السوق")
-    trades = fetch_table("Trades"); wl = fetch_table("Watchlist")
+    st.header("💓 نبض السوق"); trades = fetch_table("Trades"); wl = fetch_table("Watchlist")
     syms = list(set(trades['symbol'].unique().tolist() + wl['symbol'].unique().tolist())) if not trades.empty else []
     if not syms: st.info("فارغة"); return
-    data = fetch_batch_data(syms)
-    cols = st.columns(4)
+    data = fetch_batch_data(syms); cols = st.columns(4)
     for i, (s, info) in enumerate(data.items()):
         chg = ((info['price']-info['prev_close'])/info['prev_close'])*100 if info['prev_close']>0 else 0
         with cols[i%4]: render_ticker_card(s, "سهم", info['price'], chg)
