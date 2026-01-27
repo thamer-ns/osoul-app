@@ -109,10 +109,11 @@ def view_portfolio(fin, key):
         st.markdown("---")
         
         if not op.empty:
-            # --- تحضير البيانات الإضافية للأعمدة الجديدة ---
-            # نحتاج جلب بيانات حية (إغلاق أمس، الأعلى، الأدنى)
-            from market_data import fetch_batch_data, get_company_details
-            live_data = fetch_batch_data(op['symbol'].unique().tolist())
+    # --- تحضير البيانات الإضافية للأعمدة الجديدة ---
+    from market_data import fetch_batch_data
+    from data_source import get_company_details   # ✅ التصحيح: الاستيراد من data_source
+    
+    live_data = fetch_batch_data(op['symbol'].unique().tolist())
             
             # إضافة الأعمدة المحسوبة للجدول
             op['sector'] = op['symbol'].apply(lambda x: get_company_details(x)[1])
