@@ -1,111 +1,135 @@
 import streamlit as st
-import streamlit.components.v1 as components  # ضروري لتشغيل كود إخفاء الإنجليزي
-
 def apply_custom_css():
-    # 1. كود CSS (التصميم، الخطوط، وإصلاح الواجهة)
-    st.markdown("""
-        <style>
-        /* استيراد الخطوط */
-        @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap');
-        @import url('https://fonts.googleapis.com/icon?family=Material+Icons');
+    st.markdown("""
+        <style>
+        /* 1. استيراد خط Cairo */
+        @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap');
+        
+        /* 2. استيراد خط أيقونات Google (احتياطاً لضمان ظهورها) */
+        @import url('https://fonts.googleapis.com/icon?family=Material+Icons');
 
-        /* تعميم الخط العربي والاتجاه */
-        html, body, [class*="css"], p, div, label, input, button, textarea, span, h1, h2, h3, h4, h5, h6 {
-            font-family: 'Cairo', sans-serif !important;
-            direction: rtl !important;
-            text-align: right !important;
-        }
+        /* ============================================================
+           3. القواعد العامة (تطبيق الخط العربي والاتجاه)
+           ============================================================ */
+        html, body, [class*="css"], p, div, label, input, button, textarea, span, h1, h2, h3 {
+            font-family: 'Cairo', sans-serif !important;
+            direction: rtl !important;
+            text-align: right !important;
+        }
 
-        /* إصلاح اتجاه الأيقونات لتظهر بشكل صحيح */
-        .material-icons, [class*="material-icons"], i, 
-        [data-testid="stExpander"] details summary span,
-        [data-testid="stPopover"] button span {
-            direction: ltr !important;
-            font-family: 'Material Icons' !important;
-        }
+        /* ============================================================
+           4. ✅ الحل الجذري (إصلاح الأيقونات)
+           نستثني كلاسات الأيقونات ونعيد لها خطها الأصلي واتجاهها
+           ============================================================ */
+       .material-icons,
+[class*="material-icons"],
+[data-testid="stExpander"] details summary span, /* سهم التوسيع */
+[data-testid="stPopover"] button span,      /* ✅ حل expand_more في القائمة */
+[data-testid="stPopoverBody"] span,         /* ✅ حل أيقونات داخلها */
+i {
+            font-family: 'Material Icons' !important;
+            direction: ltr !important; /* الأيقونات تحتاج اتجاه أيسر لتعمل الـ Ligatures */
+            text-align: center !important;
+            font-weight: normal !important;
+            font-style: normal !important;
+            letter-spacing: normal !important;
+            text-transform: none !important;
+            white-space: nowrap !important;
+            word-wrap: normal !important;
+        }
 
-        /* إزالة الخط العمودي والظل عند القائمة الجانبية */
-        section[data-testid="stSidebar"] {
-            border-right: none !important;
-            border-left: none !important;
-            box-shadow: none !important;
-        }
-        
-        /* إخفاء الهوامش العلوية والسفلية وأشرطة الأدوات */
-        footer, header, [data-testid="stElementToolbar"] { display: none !important; }
-        
-        /* إخفاء التلميحات المزعجة (Tooltips) */
-        div[role="tooltip"] { display: none !important; visibility: hidden !important; }
+        /* ============================================================
+           5. تنظيف الواجهة (إخفاء العناصر غير المرغوبة بـ CSS فقط)
+           ============================================================ */
+    
+        
+        /* إخفاء القائمة الجانبية والهوامش */
+        footer, header, #MainMenu { display: none !important; }
+        
+        /* إخفاء شريط أدوات الجداول (Search/Download) */
+        [data-testid="stElementToolbar"] { display: none !important; }
+        
+        /* إخفاء التلميحات (Tooltips) المزعجة */
+        div[role="tooltip"] { display: none !important; opacity: 0 !important; visibility: hidden !important; }
+        
+        /* إخفاء زر التكبير في الصور */
+        button[title="View fullscreen"] { display: none !important; }
 
-        /* تنسيق البطاقات (KPI Cards) */
-        .kpi-card {
-            background-color: white; border-radius: 15px; padding: 20px;
-            border: 1px solid #F1F5F9; box-shadow: 0 2px 4px rgba(0,0,0,0.03);
-            margin-bottom: 10px; position: relative; overflow: hidden;
-        }
-        .kpi-value { font-size: 1.6rem; font-weight: 800; color: #1E293B; direction: ltr; }
-        .kpi-label { color: #64748B; font-size: 0.85rem; font-weight: 700; margin-bottom: 5px; }
-        
-        /* أيقونة خلفية باهتة */
-        .kpi-icon-bg {
-            position: absolute; left: -10px; bottom: -15px; font-size: 5rem;
-            opacity: 0.05; color: #334155; pointer-events: none;
-        }
+        /* ============================================================
+           6. التصميم الجمالي (البطاقات والجداول)
+           ============================================================ */
+        
+        /* Expander Styling */
+        div[data-testid="stExpander"] {
+            border: 1px solid #E5E7EB; border-radius: 12px; background-color: #FAFAFA;
+            margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+        }
+        div[data-testid="stExpander"] details summary {
+            font-weight: 800 !important; color: #0052CC !important; padding: 10px 15px !important;
+        }
+        div[data-testid="stExpander"] details summary:hover {
+            color: #0033A0 !important; background-color: #F1F5F9;
+        }
 
-        /* تنسيق الجداول */
-        .finance-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-        .finance-table th { background: #F8FAFC; padding: 12px; color: #475569; font-size: 0.85rem; }
-        .finance-table td { padding: 12px; border-bottom: 1px solid #F1F5F9; font-weight: 600; color: #334155; }
-        
-        /* ألوان النصوص */
-        .txt-green { color: #10B981 !important; }
-        .txt-red { color: #EF4444 !important; }
-        .txt-blue { color: #3B82F6 !important; }
-        
-        /* تحسين الأزرار */
-        div.stButton > button {
-            border-radius: 10px; height: 45px; font-weight: 700; border: none;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.05); background: white; color: #334155;
-        }
-        div.stButton > button:hover { color: #0052CC; background: #F8FAFC; }
-        </style>
-    """, unsafe_allow_html=True)
+        /* KPI Cards */
+        .kpi-card {
+            background-color: white; border-radius: 20px; padding: 25px 20px;
+            position: relative; overflow: hidden; border: 1px solid #F3F4F6;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.02); transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            margin-bottom: 15px;
+        }
+        .kpi-card:hover {
+            transform: translateY(-5px) scale(1.01); box-shadow: 0 15px 30px rgba(0,0,0,0.1); border-color: #BFDBFE;
+        }
+        
+        .kpi-icon-bg {
+            position: absolute; left: -15px; bottom: -20px; font-size: 5.5rem; opacity: 0.08;
+            transform: rotate(15deg); transition: all 0.4s ease; color: #1E293B; pointer-events: none;
+        }
+        .kpi-card:hover .kpi-icon-bg { transform: rotate(0deg) scale(1.2); opacity: 0.15; left: -5px; }
+        
+        .kpi-value { font-size: 1.8rem; font-weight: 900; color: #1E293B; direction: ltr; position: relative; z-index: 2; }
+        .kpi-label { color: #64748B; font-size: 0.9rem; font-weight: 700; position: relative; z-index: 2; margin-bottom: 5px; }
 
-    # 2. كود جافا سكريبت (هذا الجزء كان ناقصاً عندك وهو الحل الجذري للنصوص الإنجليزية)
-    components.html("""
-    <script>
-        const observer = new MutationObserver((mutations) => {
-            // الكلمات التي نريد حذفها
-            const badWords = /expand|collapse|fullscreen|view|zoom|more|less|keyboard|ar|double_arrow|sidebar/i;
-            
-            function clean(node) {
-                if (!node) return;
-                // حذف التلميحات (Tooltips) التي تظهر عند تمرير الماوس
-                if (node.getAttribute && node.getAttribute('title') && badWords.test(node.getAttribute('title'))) {
-                    node.removeAttribute('title');
-                }
-                if (node.getAttribute && node.getAttribute('aria-label') && badWords.test(node.getAttribute('aria-label'))) {
-                    node.removeAttribute('aria-label');
-                }
-                // إخفاء أيقونات الأسهم المشوهة إذا ظهرت كنص
-                if (node.innerText && badWords.test(node.innerText) && node.innerText.length < 20) {
-                    if (node.tagName === 'SPAN' || node.tagName === 'I') {
-                        node.style.opacity = '0';
-                    }
-                }
-            }
+        /* TASI Card */
+        .tasi-card {
+            background: linear-gradient(135deg, #0052CC 0%, #0033A0 100%);
+            border-radius: 20px; padding: 25px; color: white !important;
+            display: flex; justify-content: space-between; align-items: center;
+            box-shadow: 0 10px 25px rgba(0, 82, 204, 0.25); margin-bottom: 25px;
+            transition: transform 0.3s ease;
+        }
+        .tasi-card:hover { transform: translateY(-3px); }
 
-            mutations.forEach((mutation) => {
-                mutation.addedNodes.forEach((node) => {
-                    if (node.nodeType === 1) { 
-                        clean(node);
-                        node.querySelectorAll('*').forEach(clean);
-                    }
-                });
-            });
-        });
-
-        // تشغيل المراقبة
-        observer.observe(window.parent.document.body, { childList: true, subtree: true });
-    </script>
-    """, height=0, width=0)
+        /* Tables */
+        .finance-table {
+            width: 100%; border-collapse: separate; border-spacing: 0;
+            border: 1px solid #E5E7EB; border-radius: 12px;
+            overflow: hidden; background: white; margin-top: 15px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.02);
+        }
+        .finance-table th {
+            background-color: #F0F8FF !important; color: #1E40AF !important;
+            font-weight: 800; padding: 15px; text-align: right;
+            border-bottom: 2px solid #DBEAFE;
+        }
+        .finance-table td {
+            padding: 12px 15px; text-align: right; border-bottom: 1px solid #F1F5F9;
+            color: #334155; font-weight: 600;
+        }
+        .finance-table tr:hover { background-color: #F8FAFC; }
+        
+        /* Badges & Colors */
+        .txt-green { color: #059669 !important; } .txt-red { color: #DC2626 !important; } .txt-blue { color: #2563EB !important; }
+        .badge-open { background: #DCFCE7; color: #166534; padding: 4px 12px; border-radius: 20px; font-size: 0.75rem; }
+        .badge-closed { background: #F3F4F6; color: #4B5563; padding: 4px 12px; border-radius: 20px; font-size: 0.75rem; }
+        
+        /* Buttons */
+        div.stButton > button {
+            width: 100%; border-radius: 12px; height: 50px; font-weight: 800; border: none;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05); background: white; color: #334155; transition: 0.2s;
+        }
+        div.stButton > button:hover { transform: translateY(-2px); box-shadow: 0 5px 10px rgba(0,0,0,0.1); color: #0052CC; }
+        </style>
+    """, unsafe_allow_html=True)
+هل فيه خطا ووش باقي اعدل ووين ووش احذف 
