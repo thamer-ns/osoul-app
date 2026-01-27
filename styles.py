@@ -1,4 +1,5 @@
 import streamlit as st
+
 def apply_custom_css():
     st.markdown("""
         <style>
