@@ -44,7 +44,7 @@ i {
            ============================================================ */
         
         /* إخفاء القائمة الجانبية والهوامش */
-        [data-testid="stSidebar"], footer, header, #MainMenu { display: none !important; }
+        footer, header, #MainMenu { display: none !important; }
         
         /* إخفاء شريط أدوات الجداول (Search/Download) */
         [data-testid="stElementToolbar"] { display: none !important; }
