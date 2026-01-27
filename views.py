@@ -37,7 +37,9 @@ def render_navbar():
             except: st.session_state.clear(); st.rerun()
 
 # --- 1. Dashboard ---
+# --- 1. Dashboard (The Command Center) ---
 def view_dashboard(fin):
+    # 1. قسم تاسي (TASI Section)
     try: tp, tc = get_tasi_data()
     except: tp, tc = 0, 0
     ar = "🔼" if tc >= 0 else "🔽"
@@ -48,18 +50,142 @@ def view_dashboard(fin):
         <div style="background:rgba(255,255,255,0.2); padding:5px 15px; border-radius:10px; font-weight:bold; direction:ltr;">{ar} {tc:.2f}%</div>
     </div>""", unsafe_allow_html=True)
     
+    # 2. البطاقات الرئيسية (Main KPIs) - نظرة عامة
     c1, c2, c3, c4 = st.columns(4)
-    tpl = fin['unrealized_pl'] + fin['realized_pl']
+    total_pl = fin['unrealized_pl'] + fin['realized_pl']
     
-    with c1: render_kpi("الكاش المتوفر", safe_fmt(fin['cash']), "blue", "💵")
-    with c2: render_kpi("صافي الاستثمار", safe_fmt(fin['total_deposited']-fin['total_withdrawn']), "neutral", "🏗️")
-    with c3: render_kpi("القيمة السوقية", safe_fmt(fin['market_val_open']), "neutral", "📊")
-    with c4: render_kpi("الربح/الخسارة", safe_fmt(tpl), 'success' if tpl>=0 else 'danger', "📈")
+    # حساب نسبة الكاش
+    total_assets = fin['market_val_open'] + fin['cash']
+    cash_pct = (fin['cash'] / total_assets * 100) if total_assets else 0
+
+    with c1: render_kpi(f"الكاش ({cash_pct:.1f}%)", safe_fmt(fin['cash']), "blue", "💵")
+    with c2: render_kpi("صافي الإيداعات", safe_fmt(fin['total_deposited']-fin['total_withdrawn']), "neutral", "🏗️")
+    with c3: render_kpi("إجمالي الأصول", safe_fmt(total_assets), "neutral", "🏦")
+    with c4: render_kpi("صافي الربح الكلي", safe_fmt(total_pl), 'success' if total_pl>=0 else 'danger', "📈")
     
     st.markdown("---")
-    crv = generate_equity_curve(fin['all_trades'])
-    if not crv.empty: st.plotly_chart(px.line(crv, x='date', y='cumulative_invested', title="نمو المحفظة"), use_container_width=True)
 
+    # ========================================================
+    # 🆕 3. تفاصيل العمليات (المنفذة والقائمة) - طلبك الجديد
+    # ========================================================
+    df = fin['all_trades']
+    
+    # A. حسابات العمليات القائمة (Open)
+    # موجودة جزئياً في fin، لكن نحسب النسبة بدقة
+    open_cost = fin['cost_open']
+    open_market = fin['market_val_open']
+    open_pl = fin['unrealized_pl']
+    open_pct = (open_pl / open_cost * 100) if open_cost != 0 else 0.0
+
+    st.subheader("📊 الصفقات القائمة (Open Positions)")
+    o1, o2, o3, o4 = st.columns(4)
+    with o1: st.metric("التكلفة الإجمالية", safe_fmt(open_cost))
+    with o2: st.metric("القيمة السوقية", safe_fmt(open_market))
+    with o3: st.metric("الربح/الخسارة غير المحقق", safe_fmt(open_pl), delta=f"{open_pl:,.2f}")
+    with o4: st.metric("نسبة النمو", f"{open_pct:.2f}%", delta_color="normal")
+
+    st.markdown("<div style='margin: 10px 0; border-bottom: 1px dashed #ddd;'></div>", unsafe_allow_html=True)
+
+    # B. حسابات العمليات المنفذة (Closed)
+    if not df.empty:
+        closed_df = df[df['status'] == 'Close']
+        closed_cost = closed_df['total_cost'].sum()
+        closed_pl = fin['realized_pl'] # محسوبة مسبقاً في analytics
+        closed_sales = closed_df['market_value'].sum() # في المغلقة market_value = exit_price * quantity
+        closed_pct = (closed_pl / closed_cost * 100) if closed_cost != 0 else 0.0
+    else:
+        closed_cost = closed_pl = closed_sales = closed_pct = 0
+
+    st.subheader("📜 الصفقات المنفذة/المغلقة (Executed)")
+    x1, x2, x3, x4 = st.columns(4)
+    with x1: st.metric("رأس المال المسترد", safe_fmt(closed_cost)) # التكلفة الأساسية للصفقات المغلقة
+    with x2: st.metric("المبلغ بعد البيع", safe_fmt(closed_sales))
+    with x3: st.metric("الربح/الخسارة المحقق", safe_fmt(closed_pl), delta=f"{closed_pl:,.2f}")
+    with x4: st.metric("العائد المحقق", f"{closed_pct:.2f}%", delta_color="normal")
+
+    st.markdown("---")
+
+    # 4. الرسوم البيانية (Charts Section)
+    if not df.empty:
+        open_trades = df[df['status'] == 'Open']
+        
+        # A. توزيع الأصول
+        invest_val = open_trades[open_trades['strategy'].astype(str).str.contains('استثمار')]['market_value'].sum()
+        spec_val = open_trades[open_trades['strategy'].astype(str).str.contains('مضاربة')]['market_value'].sum()
+        sukuk_val = open_trades[open_trades['asset_type'] == 'Sukuk']['market_value'].sum()
+        cash_val = fin['cash']
+        
+        alloc_df = pd.DataFrame({
+            'Asset': ['استثمار', 'مضاربة', 'صكوك', 'كاش'],
+            'Value': [invest_val, spec_val, sukuk_val, cash_val]
+        })
+        alloc_df = alloc_df[alloc_df['Value'] > 0]
+        
+        # B. مقارنة الأداء
+        perf_data = []
+        for strat in ['استثمار', 'مضاربة', 'صكوك']:
+            sub = open_trades[open_trades['strategy'] == strat] if strat != 'صكوك' else open_trades[open_trades['asset_type'] == 'Sukuk']
+            if not sub.empty:
+                perf_data.append({'Type': strat, 'Metric': 'التكلفة', 'Value': sub['total_cost'].sum()})
+                perf_data.append({'Type': strat, 'Metric': 'القيمة الحالية', 'Value': sub['market_value'].sum()})
+        perf_df = pd.DataFrame(perf_data)
+
+        col_chart1, col_chart2 = st.columns(2)
+        
+        with col_chart1:
+            st.subheader("🥧 توزيع الأصول")
+            if not alloc_df.empty:
+                fig1 = px.pie(alloc_df, values='Value', names='Asset', hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel)
+                fig1.update_layout(showlegend=True, margin=dict(t=0, b=0, l=0, r=0), height=250)
+                st.plotly_chart(fig1, use_container_width=True)
+            else: st.info("لا توجد أصول")
+
+        with col_chart2:
+            st.subheader("⚖️ الأداء (تكلفة vs سوق)")
+            if not perf_df.empty:
+                fig2 = px.bar(perf_df, x='Type', y='Value', color='Metric', barmode='group', 
+                              color_discrete_map={'التكلفة': '#94A3B8', 'القيمة الحالية': '#059669'})
+                fig2.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=250, yaxis_title="")
+                st.plotly_chart(fig2, use_container_width=True)
+            else: st.info("لا توجد بيانات")
+
+        st.markdown("---")
+
+        # 5. الأفضل والأسوأ + منحنى النمو
+        c_top, c_curve = st.columns([1, 2])
+        
+        with c_top:
+            st.subheader("🏆 الأداء الحالي")
+            if not open_trades.empty:
+                sorted_df = open_trades.sort_values(by='gain', ascending=False)
+                
+                top3 = sorted_df.head(3)[['symbol', 'gain']]
+                st.caption("✅ الأكثر ربحاً")
+                for _, r in top3.iterrows():
+                    st.markdown(f"**{r['symbol']}**: <span style='color:green'>+{r['gain']:,.0f}</span>", unsafe_allow_html=True)
+                
+                st.markdown("---")
+                
+                bot3 = sorted_df.tail(3)[['symbol', 'gain']].sort_values(by='gain', ascending=True)
+                st.caption("🔻 الأكثر خسارة")
+                for _, r in bot3.iterrows():
+                    val = r['gain']
+                    color = "red" if val < 0 else "green"
+                    st.markdown(f"**{r['symbol']}**: <span style='color:{color}'>{val:,.0f}</span>", unsafe_allow_html=True)
+            else: st.info("لا توجد صفقات مفتوحة")
+
+        with c_curve:
+            st.subheader("📈 نمو المحفظة")
+            crv = generate_equity_curve(df)
+            if not crv.empty: 
+                fig3 = px.line(crv, x='date', y='cumulative_invested')
+                fig3.update_traces(line_color='#0052CC', line_width=3)
+                fig3.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=300, yaxis_title="القيمة التراكمية")
+                st.plotly_chart(fig3, use_container_width=True)
+            else: st.info("لا توجد بيانات تاريخية")
+            
+    else:
+        st.info("👋 مرحباً بك! ابدأ بإضافة صفقات أو رصيد لتفعيل لوحة القيادة.")
 # --- 2. Portfolio View (Updated Columns) ---
 def view_portfolio(fin, key):
     ts = "مضاربة" if key == 'spec' else "استثمار"
