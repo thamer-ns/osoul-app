@@ -67,46 +67,9 @@ def view_dashboard(fin):
     st.markdown("---")
 
     # ========================================================
-    # 🆕 3. تفاصيل العمليات (تصميم موحد وثابت)
+    # 🆕 3. تفاصيل العمليات (بنفس تصميم البطاقات العلوية تماماً)
     # ========================================================
     
-    # دالة البطاقات المحسنة (Fixed Icon Size & Colors)
-    def mini_card(label, val, sub_val=None, val_color="#0F172A", icon="🔹"):
-        # تحديد لون النص الفرعي (النسبة)
-        sub_color = "#64748B"
-        if sub_val and ("%" in sub_val):
-             sub_color = "#059669" if "+" in sub_val else "#DC2626"
-
-        st.markdown(f"""
-        <div style="
-            background-color: #ffffff; 
-            border: 1px solid #E2E8F0; 
-            border-radius: 16px; 
-            padding: 20px 15px; 
-            text-align: center; 
-            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
-            height: 100%;
-            transition: transform 0.2s;
-        ">
-            <div style="
-                width: 45px; 
-                height: 45px; 
-                background-color: #F1F5F9; 
-                border-radius: 50%; 
-                display: flex; 
-                align-items: center; 
-                justify-content: center; 
-                font-size: 1.5rem; 
-                margin: 0 auto 10px auto;
-            ">
-                {icon}
-            </div>
-            <div style="font-size:0.85rem; color:#64748B; font-weight:700; margin-bottom:8px;">{label}</div>
-            <div style="font-size:1.2rem; font-weight:900; color:{val_color}; direction:ltr; margin-bottom:4px;">{val}</div>
-            <div style="font-size:0.8rem; font-weight:600; color:{sub_color}; direction:ltr; min-height:1.2em;">{sub_val if sub_val else ''}</div>
-        </div>
-        """, unsafe_allow_html=True)
-
     df = fin['all_trades']
     
     # A. العمليات القائمة (Open)
@@ -115,15 +78,14 @@ def view_dashboard(fin):
     open_pl = fin['unrealized_pl']
     open_pct = (open_pl / open_cost * 100) if open_cost != 0 else 0.0
     
-    # لون الربح (أخضر) والخسارة (أحمر)
-    pl_color_val = "#059669" if open_pl >= 0 else "#DC2626"
-
     st.markdown("##### 📊 ملخص الصفقات القائمة (Open)")
     o1, o2, o3, o4 = st.columns(4)
-    with o1: mini_card("التكلفة الإجمالية", safe_fmt(open_cost), icon="💰")
-    with o2: mini_card("القيمة السوقية", safe_fmt(open_market), icon="🏷️")
-    with o3: mini_card("الربح الورقي", safe_fmt(open_pl), f"{open_pct:+.2f}%", pl_color_val, icon="📈")
-    with o4: mini_card("عدد الشركات", f"{len(df[df['status']=='Open'])}", icon="🏢")
+    
+    # استخدام render_kpi لضمان نفس الشكل والحجم
+    with o1: render_kpi("التكلفة الإجمالية", safe_fmt(open_cost), "neutral", "💰")
+    with o2: render_kpi("القيمة السوقية", safe_fmt(open_market), "blue", "📊")
+    with o3: render_kpi("الربح الورقي", safe_fmt(open_pl), "success" if open_pl >= 0 else "danger", "📈")
+    with o4: render_kpi("نسبة النمو", f"{open_pct:.2f}%", "success" if open_pct >= 0 else "danger", "٪")
 
     st.markdown("<div style='margin-bottom: 25px;'></div>", unsafe_allow_html=True)
 
@@ -134,18 +96,17 @@ def view_dashboard(fin):
         closed_pl = fin['realized_pl']
         closed_sales = closed_df['market_value'].sum()
         closed_pct = (closed_pl / closed_cost * 100) if closed_cost != 0 else 0.0
-        c_pl_color = "#059669" if closed_pl >= 0 else "#DC2626"
         closed_count = len(closed_df)
     else:
         closed_cost = closed_pl = closed_sales = closed_pct = closed_count = 0
-        c_pl_color = "#64748B"
 
     st.markdown("##### 📜 ملخص الصفقات المنفذة (Executed)")
     x1, x2, x3, x4 = st.columns(4)
-    with x1: mini_card("رأس المال المسترد", safe_fmt(closed_cost), icon="↩️")
-    with x2: mini_card("السيولة العائدة", safe_fmt(closed_sales), icon="📥")
-    with x3: mini_card("الربح المحقق", safe_fmt(closed_pl), f"{closed_pct:+.2f}%", c_pl_color, icon="✅")
-    with x4: mini_card("صفقات مغلقة", f"{closed_count}", icon="🔒")
+    
+    with x1: render_kpi("رأس المال المسترد", safe_fmt(closed_cost), "neutral", "↩️")
+    with x2: render_kpi("السيولة العائدة", safe_fmt(closed_sales), "blue", "📥")
+    with x3: render_kpi("الربح المحقق", safe_fmt(closed_pl), "success" if closed_pl >= 0 else "danger", "✅")
+    with x4: render_kpi("العائد المحقق", f"{closed_pct:.2f}%", "success" if closed_pct >= 0 else "danger", "٪")
 
     st.markdown("---")
 
@@ -203,7 +164,7 @@ def view_dashboard(fin):
             if not open_trades.empty:
                 sorted_df = open_trades.sort_values(by='gain', ascending=False)
                 
-                # دالة صغيرة لعرض السطر مع الاسم
+                # دالة صغيرة لعرض السطر مع الاسم (مع الاحتفاظ بالتنسيق الجميل)
                 def render_row(row, color):
                     name, _ = get_company_details(row['symbol']) 
                     short_name = (name[:15] + '..') if len(name) > 15 else name
