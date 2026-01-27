@@ -38,8 +38,12 @@ def render_navbar():
 
 # --- 1. Dashboard ---
 # --- 1. Dashboard (The Command Center) ---
+# --- 1. Dashboard (The Command Center) ---
 def view_dashboard(fin):
-    # 1. قسم تاسي (TASI Section)
+    # استيراد دالة الأسماء
+    from data_source import get_company_details
+
+    # 1. TASI Section
     try: tp, tc = get_tasi_data()
     except: tp, tc = 0, 0
     ar = "🔼" if tc >= 0 else "🔽"
@@ -50,11 +54,9 @@ def view_dashboard(fin):
         <div style="background:rgba(255,255,255,0.2); padding:5px 15px; border-radius:10px; font-weight:bold; direction:ltr;">{ar} {tc:.2f}%</div>
     </div>""", unsafe_allow_html=True)
     
-    # 2. البطاقات الرئيسية (Main KPIs) - نظرة عامة
+    # 2. Main KPIs
     c1, c2, c3, c4 = st.columns(4)
     total_pl = fin['unrealized_pl'] + fin['realized_pl']
-    
-    # حساب نسبة الكاش
     total_assets = fin['market_val_open'] + fin['cash']
     cash_pct = (fin['cash'] / total_assets * 100) if total_assets else 0
 
@@ -66,46 +68,62 @@ def view_dashboard(fin):
     st.markdown("---")
 
     # ========================================================
-    # 🆕 3. تفاصيل العمليات (المنفذة والقائمة) - طلبك الجديد
+    # 🆕 3. تفاصيل العمليات (تصميم جديد: بطاقات مصغرة)
     # ========================================================
+    
+    # دالة مساعدة لرسم البطاقات المصغرة (CSS خاص)
+    def mini_card(label, val, sub_val=None, color="#1E293B", icon="🔹"):
+        sub_html = f"<div style='font-size:0.8rem; color:{color}; direction:ltr;'>{sub_val}</div>" if sub_val else ""
+        st.markdown(f"""
+        <div style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 12px; padding: 15px; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
+            <div style="font-size:1.5rem; margin-bottom:5px;">{icon}</div>
+            <div style="font-size:0.85rem; color:#64748B; font-weight:700; margin-bottom:5px;">{label}</div>
+            <div style="font-size:1.1rem; font-weight:900; color:#0F172A; direction:ltr;">{val}</div>
+            {sub_html}
+        </div>
+        """, unsafe_allow_html=True)
+
     df = fin['all_trades']
     
-    # A. حسابات العمليات القائمة (Open)
-    # موجودة جزئياً في fin، لكن نحسب النسبة بدقة
+    # A. العمليات القائمة
     open_cost = fin['cost_open']
     open_market = fin['market_val_open']
     open_pl = fin['unrealized_pl']
     open_pct = (open_pl / open_cost * 100) if open_cost != 0 else 0.0
+    pl_color = "#059669" if open_pl >= 0 else "#DC2626"
 
-    st.subheader("📊 الصفقات القائمة (Open Positions)")
+    st.markdown("##### 📊 ملخص الصفقات القائمة (Open)")
     o1, o2, o3, o4 = st.columns(4)
-    with o1: st.metric("التكلفة الإجمالية", safe_fmt(open_cost))
-    with o2: st.metric("القيمة السوقية", safe_fmt(open_market))
-    with o3: st.metric("الربح/الخسارة غير المحقق", safe_fmt(open_pl), delta=f"{open_pl:,.2f}")
-    with o4: st.metric("نسبة النمو", f"{open_pct:.2f}%", delta_color="normal")
+    with o1: mini_card("التكلفة الإجمالية", safe_fmt(open_cost), icon="💰")
+    with o2: mini_card("القيمة السوقية", safe_fmt(open_market), icon="🏷️")
+    with o3: mini_card("الربح الورقي", safe_fmt(open_pl), f"{open_pct:+.2f}%", pl_color, icon="📈")
+    with o4: mini_card("عدد الشركات", f"{len(df[df['status']=='Open'])}", icon="🏢")
 
-    st.markdown("<div style='margin: 10px 0; border-bottom: 1px dashed #ddd;'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='margin-bottom: 20px;'></div>", unsafe_allow_html=True)
 
-    # B. حسابات العمليات المنفذة (Closed)
+    # B. العمليات المنفذة
     if not df.empty:
         closed_df = df[df['status'] == 'Close']
         closed_cost = closed_df['total_cost'].sum()
-        closed_pl = fin['realized_pl'] # محسوبة مسبقاً في analytics
-        closed_sales = closed_df['market_value'].sum() # في المغلقة market_value = exit_price * quantity
+        closed_pl = fin['realized_pl']
+        closed_sales = closed_df['market_value'].sum()
         closed_pct = (closed_pl / closed_cost * 100) if closed_cost != 0 else 0.0
+        c_pl_color = "#059669" if closed_pl >= 0 else "#DC2626"
+        closed_count = len(closed_df)
     else:
-        closed_cost = closed_pl = closed_sales = closed_pct = 0
+        closed_cost = closed_pl = closed_sales = closed_pct = closed_count = 0
+        c_pl_color = "#64748B"
 
-    st.subheader("📜 الصفقات المنفذة/المغلقة (Executed)")
+    st.markdown("##### 📜 ملخص الصفقات المنفذة (Executed)")
     x1, x2, x3, x4 = st.columns(4)
-    with x1: st.metric("رأس المال المسترد", safe_fmt(closed_cost)) # التكلفة الأساسية للصفقات المغلقة
-    with x2: st.metric("المبلغ بعد البيع", safe_fmt(closed_sales))
-    with x3: st.metric("الربح/الخسارة المحقق", safe_fmt(closed_pl), delta=f"{closed_pl:,.2f}")
-    with x4: st.metric("العائد المحقق", f"{closed_pct:.2f}%", delta_color="normal")
+    with x1: mini_card("رأس المال المسترد", safe_fmt(closed_cost), icon="↩️")
+    with x2: mini_card("السيولة العائدة", safe_fmt(closed_sales), icon="📥")
+    with x3: mini_card("الربح المحقق", safe_fmt(closed_pl), f"{closed_pct:+.2f}%", c_pl_color, icon="✅")
+    with x4: mini_card("صفقات مغلقة", f"{closed_count}", icon="🔒")
 
     st.markdown("---")
 
-    # 4. الرسوم البيانية (Charts Section)
+    # 4. الرسوم البيانية
     if not df.empty:
         open_trades = df[df['status'] == 'Open']
         
@@ -121,13 +139,13 @@ def view_dashboard(fin):
         })
         alloc_df = alloc_df[alloc_df['Value'] > 0]
         
-        # B. مقارنة الأداء
+        # B. الأداء
         perf_data = []
         for strat in ['استثمار', 'مضاربة', 'صكوك']:
             sub = open_trades[open_trades['strategy'] == strat] if strat != 'صكوك' else open_trades[open_trades['asset_type'] == 'Sukuk']
             if not sub.empty:
                 perf_data.append({'Type': strat, 'Metric': 'التكلفة', 'Value': sub['total_cost'].sum()})
-                perf_data.append({'Type': strat, 'Metric': 'القيمة الحالية', 'Value': sub['market_value'].sum()})
+                perf_data.append({'Type': strat, 'Metric': 'السوق', 'Value': sub['market_value'].sum()})
         perf_df = pd.DataFrame(perf_data)
 
         col_chart1, col_chart2 = st.columns(2)
@@ -144,14 +162,14 @@ def view_dashboard(fin):
             st.subheader("⚖️ الأداء (تكلفة vs سوق)")
             if not perf_df.empty:
                 fig2 = px.bar(perf_df, x='Type', y='Value', color='Metric', barmode='group', 
-                              color_discrete_map={'التكلفة': '#94A3B8', 'القيمة الحالية': '#059669'})
+                              color_discrete_map={'التكلفة': '#94A3B8', 'السوق': '#059669'})
                 fig2.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=250, yaxis_title="")
                 st.plotly_chart(fig2, use_container_width=True)
             else: st.info("لا توجد بيانات")
 
         st.markdown("---")
 
-        # 5. الأفضل والأسوأ + منحنى النمو
+        # 5. الأفضل والأسوأ + نمو المحفظة
         c_top, c_curve = st.columns([1, 2])
         
         with c_top:
@@ -159,19 +177,33 @@ def view_dashboard(fin):
             if not open_trades.empty:
                 sorted_df = open_trades.sort_values(by='gain', ascending=False)
                 
-                top3 = sorted_df.head(3)[['symbol', 'gain']]
+                # دالة صغيرة لعرض السطر مع الاسم
+                def render_row(row, color):
+                    name, _ = get_company_details(row['symbol']) # ✅ جلب الاسم هنا
+                    # تقصير الاسم الطويل
+                    short_name = (name[:15] + '..') if len(name) > 15 else name
+                    
+                    st.markdown(f"""
+                    <div style="display:flex; justify-content:space-between; margin-bottom:8px; border-bottom:1px solid #eee; padding-bottom:5px;">
+                        <div>
+                            <div style="font-weight:bold; font-size:0.9rem;">{short_name}</div>
+                            <div style="font-size:0.75rem; color:#888;">{row['symbol']}</div>
+                        </div>
+                        <div style="font-weight:bold; color:{color}; direction:ltr;">{row['gain']:+,.0f}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
                 st.caption("✅ الأكثر ربحاً")
-                for _, r in top3.iterrows():
-                    st.markdown(f"**{r['symbol']}**: <span style='color:green'>+{r['gain']:,.0f}</span>", unsafe_allow_html=True)
+                for _, r in sorted_df.head(3).iterrows():
+                    render_row(r, "#059669")
                 
-                st.markdown("---")
+                st.markdown("<br>", unsafe_allow_html=True)
                 
-                bot3 = sorted_df.tail(3)[['symbol', 'gain']].sort_values(by='gain', ascending=True)
                 st.caption("🔻 الأكثر خسارة")
+                bot3 = sorted_df.tail(3).sort_values(by='gain', ascending=True)
                 for _, r in bot3.iterrows():
-                    val = r['gain']
-                    color = "red" if val < 0 else "green"
-                    st.markdown(f"**{r['symbol']}**: <span style='color:{color}'>{val:,.0f}</span>", unsafe_allow_html=True)
+                    if r['gain'] < 0: render_row(r, "#DC2626")
+
             else: st.info("لا توجد صفقات مفتوحة")
 
         with c_curve:
