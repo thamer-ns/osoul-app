@@ -84,8 +84,12 @@ def render_financial_dashboard_ui(symbol):
     if not df.empty: st.dataframe(df)
 
 def save_financial_row(s, d, r):
+    # ✅ التعديل: إجبار القيم على التحول إلى float عادي لتجنب خطأ numpy
+    rev = float(r.get('revenue', 0))
+    net = float(r.get('net_income', 0))
+    
     q = "INSERT INTO FinancialStatements (symbol, date, revenue, net_income, period_type) VALUES (%s,%s,%s,%s,'Annual') ON CONFLICT (symbol, date, period_type) DO UPDATE SET revenue=EXCLUDED.revenue, net_income=EXCLUDED.net_income"
-    execute_query(q, (s,d,r.get('revenue',0), r.get('net_income',0)))
+    execute_query(q, (s, d, rev, net))0)))
 
 def get_stored_financials(s):
     try: return fetch_table("FinancialStatements").query(f"symbol == '{s}'")
