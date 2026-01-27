@@ -37,173 +37,146 @@ def render_navbar():
             except: st.session_state.clear(); st.rerun()
 
 # --- 1. Dashboard ---
-# --- 1. Dashboard (The Command Center) ---
-def view_dashboard(fin):
-    # استيراد دالة الأسماء
-    from data_source import get_company_details
-
-    # 1. TASI Section
-    try: tp, tc = get_tasi_data()
-    except: tp, tc = 0, 0
-    ar = "🔼" if tc >= 0 else "🔽"
+# في ملف views.py
+def view_portfolio(fin, key):
+    ts = "مضاربة" if key == 'spec' else "استثمار"
+    st.header(f"💼 محفظة {ts}")
     
-    st.markdown(f"""
-    <div class="tasi-card">
-        <div><div style="opacity:0.9;">المؤشر العام (TASI)</div><div style="font-size:2.5rem; font-weight:900;">{safe_fmt(tp)}</div></div>
-        <div style="background:rgba(255,255,255,0.2); padding:5px 15px; border-radius:10px; font-weight:bold; direction:ltr;">{ar} {tc:.2f}%</div>
-    </div>""", unsafe_allow_html=True)
-    
-    # 2. Main KPIs (البطاقات العلوية)
-    c1, c2, c3, c4 = st.columns(4)
-    total_pl = fin['unrealized_pl'] + fin['realized_pl']
-    total_assets = fin['market_val_open'] + fin['cash']
-    cash_pct = (fin['cash'] / total_assets * 100) if total_assets else 0
-
-    with c1: render_kpi(f"الكاش ({cash_pct:.1f}%)", safe_fmt(fin['cash']), "blue", "💵")
-    with c2: render_kpi("صافي الإيداعات", safe_fmt(fin['total_deposited']-fin['total_withdrawn']), "neutral", "🏗️")
-    with c3: render_kpi("إجمالي الأصول", safe_fmt(total_assets), "neutral", "🏦")
-    with c4: render_kpi("صافي الربح الكلي", safe_fmt(total_pl), 'success' if total_pl>=0 else 'danger', "📈")
-    
-    st.markdown("---")
-
-    # ========================================================
-    # 🆕 3. تفاصيل العمليات (بنفس تصميم البطاقات العلوية تماماً)
-    # ========================================================
+    # CSS لتحسين شكل الصفوف والأزرار
+    st.markdown("""
+        <style>
+        .stock-row { 
+            background-color: white; padding: 10px; border-radius: 10px; 
+            border: 1px solid #e5e7eb; margin-bottom: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+            align-items: center;
+        }
+        .stButton button { border-radius: 8px; font-weight: bold; }
+        </style>
+    """, unsafe_allow_html=True)
     
     df = fin['all_trades']
-    
-    # A. العمليات القائمة (Open)
-    open_cost = fin['cost_open']
-    open_market = fin['market_val_open']
-    open_pl = fin['unrealized_pl']
-    open_pct = (open_pl / open_cost * 100) if open_cost != 0 else 0.0
-    
-    st.markdown("##### 📊 ملخص الصفقات القائمة (Open)")
-    o1, o2, o3, o4 = st.columns(4)
-    
-    # استخدام render_kpi لضمان نفس الشكل والحجم
-    with o1: render_kpi("التكلفة الإجمالية", safe_fmt(open_cost), "neutral", "💰")
-    with o2: render_kpi("القيمة السوقية", safe_fmt(open_market), "blue", "📊")
-    with o3: render_kpi("الربح الورقي", safe_fmt(open_pl), "success" if open_pl >= 0 else "danger", "📈")
-    with o4: render_kpi("نسبة النمو", f"{open_pct:.2f}%", "success" if open_pct >= 0 else "danger", "٪")
-
-    st.markdown("<div style='margin-bottom: 25px;'></div>", unsafe_allow_html=True)
-
-    # B. العمليات المنفذة (Closed)
-    if not df.empty:
-        closed_df = df[df['status'] == 'Close']
-        closed_cost = closed_df['total_cost'].sum()
-        closed_pl = fin['realized_pl']
-        closed_sales = closed_df['market_value'].sum()
-        closed_pct = (closed_pl / closed_cost * 100) if closed_cost != 0 else 0.0
-        closed_count = len(closed_df)
+    if df.empty:
+        sub = pd.DataFrame()
     else:
-        closed_cost = closed_pl = closed_sales = closed_pct = closed_count = 0
-
-    st.markdown("##### 📜 ملخص الصفقات المنفذة (Executed)")
-    x1, x2, x3, x4 = st.columns(4)
+        sub = df[df['strategy'].astype(str).str.contains(ts, na=False)].copy()
     
-    with x1: render_kpi("رأس المال المسترد", safe_fmt(closed_cost), "neutral", "↩️")
-    with x2: render_kpi("السيولة العائدة", safe_fmt(closed_sales), "blue", "📥")
-    with x3: render_kpi("الربح المحقق", safe_fmt(closed_pl), "success" if closed_pl >= 0 else "danger", "✅")
-    with x4: render_kpi("العائد المحقق", f"{closed_pct:.2f}%", "success" if closed_pct >= 0 else "danger", "٪")
-
-    st.markdown("---")
-
-    # 4. الرسوم البيانية
-    if not df.empty:
-        open_trades = df[df['status'] == 'Open']
+    op = sub[sub['status'] == 'Open'].copy()
+    cl = sub[sub['status'] == 'Close'].copy()
+    
+    t1, t2 = st.tabs(["الصفقات القائمة", "الأرشيف"])
+    
+    # ==========================
+    # 🟢 الصفقات القائمة (تصميم تفاعلي جديد)
+    # ==========================
+    with t1:
+        # عرض الملخص (KPIs)
+        total_cost = op['total_cost'].sum() if not op.empty else 0
+        total_market = op['market_value'].sum() if not op.empty else 0
+        total_gain = op['gain'].sum() if not op.empty else 0
+        total_pct = (total_gain / total_cost * 100) if total_cost != 0 else 0.0
         
-        # A. توزيع الأصول
-        invest_val = open_trades[open_trades['strategy'].astype(str).str.contains('استثمار')]['market_value'].sum()
-        spec_val = open_trades[open_trades['strategy'].astype(str).str.contains('مضاربة')]['market_value'].sum()
-        sukuk_val = open_trades[open_trades['asset_type'] == 'Sukuk']['market_value'].sum()
-        cash_val = fin['cash']
+        k1, k2, k3, k4 = st.columns(4)
+        with k1: render_kpi("التكلفة", safe_fmt(total_cost), "neutral", "💰")
+        with k2: render_kpi("السوق", safe_fmt(total_market), "blue", "📊")
+        with k3: render_kpi("الربح", safe_fmt(total_gain), "success" if total_gain >= 0 else "danger", "📈")
+        with k4: render_kpi("النسبة", f"{total_pct:.2f}%", "success" if total_pct >= 0 else "danger", "٪")
         
-        alloc_df = pd.DataFrame({
-            'Asset': ['استثمار', 'مضاربة', 'صكوك', 'كاش'],
-            'Value': [invest_val, spec_val, sukuk_val, cash_val]
-        })
-        alloc_df = alloc_df[alloc_df['Value'] > 0]
-        
-        # B. الأداء
-        perf_data = []
-        for strat in ['استثمار', 'مضاربة', 'صكوك']:
-            sub = open_trades[open_trades['strategy'] == strat] if strat != 'صكوك' else open_trades[open_trades['asset_type'] == 'Sukuk']
-            if not sub.empty:
-                perf_data.append({'Type': strat, 'Metric': 'التكلفة', 'Value': sub['total_cost'].sum()})
-                perf_data.append({'Type': strat, 'Metric': 'السوق', 'Value': sub['market_value'].sum()})
-        perf_df = pd.DataFrame(perf_data)
-
-        col_chart1, col_chart2 = st.columns(2)
-        
-        with col_chart1:
-            st.subheader("🥧 توزيع الأصول")
-            if not alloc_df.empty:
-                fig1 = px.pie(alloc_df, values='Value', names='Asset', hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel)
-                fig1.update_layout(showlegend=True, margin=dict(t=0, b=0, l=0, r=0), height=250)
-                st.plotly_chart(fig1, use_container_width=True)
-            else: st.info("لا توجد أصول")
-
-        with col_chart2:
-            st.subheader("⚖️ الأداء (تكلفة vs سوق)")
-            if not perf_df.empty:
-                fig2 = px.bar(perf_df, x='Type', y='Value', color='Metric', barmode='group', 
-                              color_discrete_map={'التكلفة': '#94A3B8', 'السوق': '#059669'})
-                fig2.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=250, yaxis_title="")
-                st.plotly_chart(fig2, use_container_width=True)
-            else: st.info("لا توجد بيانات")
-
         st.markdown("---")
-
-        # 5. الأفضل والأسوأ + نمو المحفظة
-        c_top, c_curve = st.columns([1, 2])
         
-        with c_top:
-            st.subheader("🏆 الأداء الحالي")
-            if not open_trades.empty:
-                sorted_df = open_trades.sort_values(by='gain', ascending=False)
-                
-                # دالة صغيرة لعرض السطر مع الاسم (مع الاحتفاظ بالتنسيق الجميل)
-                def render_row(row, color):
-                    name, _ = get_company_details(row['symbol']) 
-                    short_name = (name[:15] + '..') if len(name) > 15 else name
-                    
-                    st.markdown(f"""
-                    <div style="display:flex; justify-content:space-between; margin-bottom:8px; border-bottom:1px solid #eee; padding-bottom:5px;">
-                        <div>
-                            <div style="font-weight:bold; font-size:0.9rem;">{short_name}</div>
-                            <div style="font-size:0.75rem; color:#888;">{row['symbol']}</div>
-                        </div>
-                        <div style="font-weight:bold; color:{color}; direction:ltr;">{row['gain']:+,.0f}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
+        # زر الإضافة العلوي (مثل سهمي)
+        c_add, c_sort = st.columns([1, 3])
+        with c_add:
+            if st.button("➕ إضافة / شراء سهم", use_container_width=True, type="primary"):
+                st.session_state.page = 'add'
+                st.rerun()
 
-                st.caption("✅ الأكثر ربحاً")
-                for _, r in sorted_df.head(3).iterrows():
-                    render_row(r, "#059669")
-                
-                st.markdown("<br>", unsafe_allow_html=True)
-                
-                st.caption("🔻 الأكثر خسارة")
-                bot3 = sorted_df.tail(3).sort_values(by='gain', ascending=True)
-                for _, r in bot3.iterrows():
-                    if r['gain'] < 0: render_row(r, "#DC2626")
-
-            else: st.info("لا توجد صفقات مفتوحة")
-
-        with c_curve:
-            st.subheader("📈 نمو المحفظة")
-            crv = generate_equity_curve(df)
-            if not crv.empty: 
-                fig3 = px.line(crv, x='date', y='cumulative_invested')
-                fig3.update_traces(line_color='#0052CC', line_width=3)
-                fig3.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=300, yaxis_title="القيمة التراكمية")
-                st.plotly_chart(fig3, use_container_width=True)
-            else: st.info("لا توجد بيانات تاريخية")
+        if not op.empty:
+            # تحضير البيانات
+            from market_data import fetch_batch_data
+            from data_source import get_company_details
             
-    else:
-        st.info("👋 مرحباً بك! ابدأ بإضافة صفقات أو رصيد لتفعيل لوحة القيادة.")
+            live_data = fetch_batch_data(op['symbol'].unique().tolist())
+            op['prev_close'] = op['symbol'].apply(lambda x: live_data.get(x, {}).get('prev_close', 0))
+            op['day_change'] = ((op['current_price'] - op['prev_close']) / op['prev_close'] * 100).fillna(0)
+
+            # --- رسم الجدول التفاعلي (Header) ---
+            h1, h2, h3, h4, h5, h6, h7 = st.columns([2, 1.5, 1.5, 1.5, 1.5, 1.5, 2])
+            h1.markdown("**الشركة**")
+            h2.markdown("**الكمية**")
+            h3.markdown("**متوسط التكلفة**")
+            h4.markdown("**السعر الحالي**")
+            h5.markdown("**القيمة السوقية**")
+            h6.markdown("**الربح/الخسارة**")
+            h7.markdown("**إجراءات**") # مكان الأزرار
+            
+            # --- رسم الصفوف (Rows) ---
+            for idx, row in op.iterrows():
+                with st.container():
+                    st.markdown('<div class="stock-row">', unsafe_allow_html=True)
+                    c1, c2, c3, c4, c5, c6, c7 = st.columns([2, 1.5, 1.5, 1.5, 1.5, 1.5, 2])
+                    
+                    # البيانات
+                    with c1: 
+                        name, _ = get_company_details(row['symbol'])
+                        st.markdown(f"**{name}**\n<br><span style='color:#888; font-size:0.8em'>{row['symbol']}</span>", unsafe_allow_html=True)
+                    with c2: st.markdown(f"{row['quantity']:,.0f}")
+                    with c3: st.markdown(f"{row['entry_price']:,.2f}")
+                    with c4: st.markdown(f"**{row['current_price']:,.2f}**")
+                    with c5: st.markdown(f"{row['market_value']:,.0f}")
+                    with c6: 
+                        color = "green" if row['gain'] >= 0 else "red"
+                        st.markdown(f"<span style='color:{color}; direction:ltr; font-weight:bold'>{row['gain']:+,.0f}</span>\n<br><span style='font-size:0.8em; color:{color}'>({row['gain_pct']:.1f}%)</span>", unsafe_allow_html=True)
+                    
+                    # الأزرار (شراء / بيع)
+                    with c7:
+                        b_buy, b_sell = st.columns(2)
+                        
+                        # زر الشراء (+)
+                        with b_buy:
+                            pop_buy = st.popover("➕", use_container_width=True)
+                            with pop_buy:
+                                st.markdown(f"**شراء المزيد: {row['symbol']}**")
+                                with st.form(f"buy_{row['symbol']}_{idx}"):
+                                    q_add = st.number_input("الكمية", min_value=1)
+                                    p_add = st.number_input("السعر", value=float(row['current_price']))
+                                    d_add = st.date_input("التاريخ", date.today())
+                                    if st.form_submit_button("تأكيد الشراء"):
+                                        at = "Sukuk" if "Sukuk" in str(row.get('asset_type','')) else "Stock"
+                                        execute_query("INSERT INTO Trades (symbol, asset_type, date, quantity, entry_price, strategy, status) VALUES (%s,%s,%s,%s,%s,%s,'Open')", 
+                                                      (row['symbol'], at, str(d_add), q_add, p_add, ts))
+                                        st.success("تم")
+                                        st.rerun()
+
+                        # زر البيع (-)
+                        with b_sell:
+                            pop_sell = st.popover("➖", use_container_width=True)
+                            with pop_sell:
+                                st.markdown(f"**بيع: {row['symbol']}**")
+                                with st.form(f"sell_{row['symbol']}_{idx}"):
+                                    st.caption(f"الكمية المتوفرة: {row['quantity']}")
+                                    p_exit = st.number_input("سعر البيع", value=float(row['current_price']))
+                                    d_exit = st.date_input("تاريخ البيع", date.today())
+                                    if st.form_submit_button("تأكيد البيع"):
+                                        # تحديث الصفقة للإغلاق
+                                        execute_query("UPDATE Trades SET status='Close', exit_price=%s, exit_date=%s WHERE symbol=%s AND strategy=%s AND status='Open'", 
+                                                      (p_exit, str(d_exit), row['symbol'], ts))
+                                        st.success("تم البيع")
+                                        st.rerun()
+                    
+                    st.markdown('</div>', unsafe_allow_html=True)
+        else:
+            st.info("لا توجد صفقات قائمة")
+
+    # ==========================
+    # 🔴 الأرشيف (كما هو)
+    # ==========================
+    with t2:
+        if not cl.empty:
+            render_custom_table(cl, [('company_name', 'الشركة', 'text'), ('symbol', 'الرمز', 'text'), 
+                                     ('gain', 'الربح', 'colorful'), ('gain_pct', '%', 'percent'), 
+                                     ('exit_date', 'تاريخ البيع', 'date')])
+        else:
+            st.info("الأرشيف فارغ")
 # --- 2. Portfolio View (Updated Columns) ---
 def view_portfolio(fin, key):
     ts = "مضاربة" if key == 'spec' else "استثمار"
