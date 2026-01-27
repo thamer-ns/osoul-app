@@ -169,69 +169,73 @@ def view_dashboard(fin):
         st.info("👋 مرحباً بك! ابدأ بإضافة صفقات أو رصيد لتفعيل لوحة القيادة.")
 
 # --- 3. Portfolio View (محسنة: فرز + تفاعلية) ---
-# --- 3. Portfolio View (معدلة بالتصميم الجديد) ---
+# --- 3. Portfolio View (تم التعديل لمطابقة التصميم في الصورة) ---
 def view_portfolio(fin, key):
     ts = "مضاربة" if key == 'spec' else "استثمار"
     st.header(f"💼 محفظة {ts}")
     
-    # 1. CSS مستوحى من تصميم finance-table الذي طلبته
+    # === 1. CSS مطابق للصورة المرفقة تماماً ===
     st.markdown("""
         <style>
-        /* حاوية الجدول كاملة */
-        .finance-container {
-            border: 1px solid #e5e7eb;
-            border-radius: 12px;
+        /* حاوية الجدول: حواف دائرية وظل خفيف */
+        .trade-container {
+            border: 1px solid #e2e8f0; /* رمادي فاتح جداً */
+            border-radius: 8px; 
+            background-color: white;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
             overflow: hidden;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.03);
-            background-color: white;
-            margin-bottom: 25px;
+            margin-bottom: 20px;
         }
         
-        /* رأس الجدول */
-        .finance-header {
-            background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
-            padding: 15px 10px;
-            border-bottom: 2px solid #e5e7eb;
-            font-weight: 800;
-            color: #1e293b; /* Primary Dark */
-            font-size: 0.95rem;
+        /* ترويسة الجدول: خلفية رمادية فاتحة وخط غامق */
+        .trade-header {
+            background-color: #f8fafc; 
+            border-bottom: 1px solid #e2e8f0;
+            padding: 14px 10px;
+            font-weight: 700;
+            color: #475569;
+            font-size: 0.9rem;
             display: flex;
             align-items: center;
         }
         
-        /* صفوف البيانات */
-        .finance-row {
-            padding: 12px 10px;
+        /* صفوف البيانات: خلفية بيضاء وفواصل خفيفة */
+        .trade-row {
+            background-color: #ffffff;
             border-bottom: 1px solid #f1f5f9;
-            transition: all 0.2s ease;
-            background-color: white;
-            color: #334155;
+            padding: 14px 10px;
+            font-size: 0.9rem;
+            color: #1e293b;
             display: flex;
             align-items: center;
-            font-size: 0.95rem;
+            transition: background-color 0.2s;
         }
         
-        /* تأثير التمرير (Hover) */
-        .finance-row:hover {
-            background-color: #f0f9ff !important;
+        .trade-row:hover {
+            background-color: #f8fafc !important;
+        }
+
+        .trade-row:last-child {
+            border-bottom: none;
         }
         
-        /* تنسيق الأرقام والألوان */
-        .val-success { color: #10b981; font-weight: bold; }
-        .val-danger { color: #ef4444; font-weight: bold; }
-        .val-neutral { color: #64748b; }
-        
-        /* تنسيق حالة الصفقة (Badge) */
+        /* بادج الحالة (مفتوحة): أخضر فاتح دائري */
         .status-badge {
-            background-color: #E3FCEF;
-            color: #006644;
-            padding: 4px 10px;
-            border-radius: 12px;
-            font-size: 0.8rem;
-            font-weight: bold;
+            background-color: #dcfce7;
+            color: #166534;
+            padding: 4px 12px;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            display: inline-block;
         }
+
+        /* تنسيق الأرقام */
+        .num-pos { color: #10b981; font-weight: 600; } /* أخضر للربح */
+        .num-neg { color: #ef4444; font-weight: 600; } /* أحمر للخسارة */
+        .num-neutral { color: #334155; }
         
-        /* ضبط المحاذاة داخل الأعمدة */
+        /* ضبط محاذاة الأعمدة */
         div[data-testid="stVerticalBlock"] > div > div[data-testid="stHorizontalBlock"] {
             align-items: center;
         }
@@ -248,7 +252,7 @@ def view_portfolio(fin, key):
     t1, t2 = st.tabs(["الصفقات القائمة", "الأرشيف"])
     
     with t1:
-        # الملخص (KPIs) - كما هو
+        # مؤشرات الأداء (كما هي لم تتغير)
         total_cost = op['total_cost'].sum() if not op.empty else 0
         total_market = op['market_value'].sum() if not op.empty else 0
         total_gain = op['gain'].sum() if not op.empty else 0
@@ -262,7 +266,7 @@ def view_portfolio(fin, key):
         
         st.markdown("---")
         
-        # شريط الأدوات والفرز
+        # أزرار التحكم والفرز
         c_add, c_sort = st.columns([1, 3])
         with c_add:
             if st.button("➕ إضافة / شراء", type="primary", use_container_width=True):
@@ -279,7 +283,6 @@ def view_portfolio(fin, key):
             op['day_change'] = ((op['current_price'] - op['prev_close']) / op['prev_close'] * 100).fillna(0)
             op['weight'] = (op['market_value'] / total_market * 100).fillna(0)
 
-            # منطق الفرز
             with c_sort:
                 sort_options = {
                     "الربح والخسارة": "gain", "القيمة السوقية": "market_value",
@@ -291,86 +294,75 @@ def view_portfolio(fin, key):
                 ascending = True if sort_col in ["company_name", "date"] else False
                 op = op.sort_values(by=sort_col, ascending=ascending)
 
-            # === بناء الجدول بتصميم Finance Table ===
+            # === بداية الجدول بالتصميم الجديد ===
+            st.markdown('<div class="trade-container">', unsafe_allow_html=True)
             
-            # 1. بداية حاوية الجدول
-            st.markdown('<div class="finance-container">', unsafe_allow_html=True)
-            
-            # 2. رأس الجدول (Header)
-            st.markdown('<div class="finance-header">', unsafe_allow_html=True)
-            h1, h2, h3, h4, h5, h6, h7 = st.columns([2, 1.2, 1.2, 1.2, 1.2, 1.2, 1.5])
-            h1.markdown("الشركة / الرمز")
-            h2.markdown("الكمية")
-            h3.markdown("التكلفة")
-            h4.markdown("آخر سعر (يومي)")
-            h5.markdown("القيمة (الوزن)")
-            h6.markdown("الربح الصافي")
-            h7.markdown("إجراءات")
-            st.markdown('</div>', unsafe_allow_html=True) # إغلاق الرأس
+            # 1. الترويسة (Header)
+            st.markdown('<div class="trade-header">', unsafe_allow_html=True)
+            # توزيع الأعمدة ليشبه الصورة: الشركة (عريض)، الرمز، القطاع، الحالة، الأرقام
+            h1, h2, h3, h4, h5, h6, h7, h8 = st.columns([2, 1, 1.2, 1, 1.2, 1.2, 1.2, 1])
+            h1.text("الشركة")
+            h2.text("الرمز")
+            h3.text("القطاع")
+            h4.text("الحالة")
+            h5.text("الكمية")
+            h6.text("التكلفة")
+            h7.text("السوق")
+            h8.text("إجراء")
+            st.markdown('</div>', unsafe_allow_html=True)
 
-            # 3. صفوف البيانات (Rows)
+            # 2. الصفوف (Rows)
             for idx, row in op.iterrows():
-                # حاوية الصف مع كلاس finance-row
                 with st.container():
-                    st.markdown('<div class="finance-row">', unsafe_allow_html=True)
-                    c1, c2, c3, c4, c5, c6, c7 = st.columns([2, 1.2, 1.2, 1.2, 1.2, 1.2, 1.5])
+                    st.markdown('<div class="trade-row">', unsafe_allow_html=True)
+                    c1, c2, c3, c4, c5, c6, c7, c8 = st.columns([2, 1, 1.2, 1, 1.2, 1.2, 1.2, 1])
                     
-                    name, _ = get_company_details(row['symbol'])
+                    name, sector = get_company_details(row['symbol'])
                     
-                    # العمود 1: الاسم والرمز والحالة
-                    with c1: 
-                        st.markdown(f"**{name}** <span class='status-badge'>مفتوحة</span><br><span style='color:#64748b; font-size:0.8em'>{row['symbol']}</span>", unsafe_allow_html=True)
+                    # الشركة
+                    with c1: st.markdown(f"**{name}**", unsafe_allow_html=True)
+                    # الرمز
+                    with c2: st.caption(f"{row['symbol']}")
+                    # القطاع
+                    with c3: st.caption(f"{sector}")
+                    # الحالة (Badged)
+                    with c4: st.markdown('<span class="status-badge">مفتوحة</span>', unsafe_allow_html=True)
                     
-                    # العمود 2: الكمية
-                    with c2: st.markdown(f"**{row['quantity']:,.0f}**")
+                    # الكمية
+                    with c5: st.markdown(f"**{row['quantity']:,.0f}**", unsafe_allow_html=True)
                     
-                    # العمود 3: التكلفة
-                    with c3: st.markdown(f"{row['entry_price']:,.2f}")
+                    # التكلفة (سعر الشراء)
+                    with c6: st.markdown(f"{row['entry_price']:,.2f}", unsafe_allow_html=True)
                     
-                    # العمود 4: السعر والتغير اليومي
-                    with c4: 
-                        dc = row['day_change']
-                        clr_dc = "#10b981" if dc >= 0 else "#ef4444"
-                        st.markdown(f"**{row['current_price']:,.2f}**<br><span style='color:{clr_dc}; direction:ltr; font-size:0.85em'>{dc:+.2f}%</span>", unsafe_allow_html=True)
-                        
-                    # العمود 5: القيمة والوزن
-                    with c5: 
-                        st.markdown(f"**{row['market_value']:,.0f}**<br><span style='color:#64748b; font-size:0.8em'>{row['weight']:.1f}%</span>", unsafe_allow_html=True)
-                        
-                    # العمود 6: الربح
-                    with c6:
-                        color_cls = "val-success" if row['gain'] >= 0 else "val-danger"
-                        st.markdown(f"<span class='{color_cls}'>{row['gain']:+,.0f}</span><br><span class='{color_cls}' style='font-size:0.85em'>{row['gain_pct']:.1f}%</span>", unsafe_allow_html=True)
-                    
-                    # العمود 7: الأزرار التفاعلية (حافظنا عليها)
+                    # القيمة السوقية والربح
                     with c7:
-                        b_col1, b_col2 = st.columns(2)
-                        with b_col1:
-                            pop_buy = st.popover("➕", help="شراء")
-                            with pop_buy:
-                                st.markdown(f"**شراء: {name}**")
-                                with st.form(f"buy_{row['symbol']}_{idx}"):
-                                    q = st.number_input("الكمية", 1); p = st.number_input("السعر", value=float(row['current_price']))
-                                    d = st.date_input("التاريخ", date.today())
-                                    if st.form_submit_button("شراء"):
+                        dc = row['day_change']
+                        gain_pct = row['gain_pct']
+                        cls_gn = "num-pos" if gain_pct >= 0 else "num-neg"
+                        # عرض السعر وتحته نسبة الربح ملونة
+                        st.markdown(f"**{row['current_price']:,.2f}**<br><span class='{cls_gn}' style='font-size:0.8em'>{gain_pct:+.1f}%</span>", unsafe_allow_html=True)
+
+                    # الأزرار (حافظنا عليها داخل الصف لعدم تغيير المنطق)
+                    with c8:
+                        pop = st.popover("⚙️", help="إدارة")
+                        with pop:
+                            st.caption(f"إدارة: {name}")
+                            with st.form(f"act_{row['symbol']}_{idx}"):
+                                action = st.radio("الإجراء", ["شراء المزيد", "بيع جزء/الكل"])
+                                q_in = st.number_input("الكمية", 1.0, value=float(row['quantity']) if "بيع" in action else 1.0)
+                                p_in = st.number_input("السعر", value=float(row['current_price']))
+                                d_in = st.date_input("التاريخ", date.today())
+                                if st.form_submit_button("تنفيذ"):
+                                    if "شراء" in action:
                                         at = "Sukuk" if "Sukuk" in str(row.get('asset_type','')) else "Stock"
-                                        execute_query("INSERT INTO Trades (symbol, asset_type, date, quantity, entry_price, strategy, status) VALUES (%s,%s,%s,%s,%s,%s,'Open')", (row['symbol'], at, str(d), q, p, ts))
-                                        st.success("تم"); st.rerun()
-                        with b_col2:
-                            pop_sell = st.popover("➖", help="بيع")
-                            with pop_sell:
-                                st.markdown(f"**بيع: {name}**")
-                                with st.form(f"sell_{row['symbol']}_{idx}"):
-                                    st.caption(f"الكمية: {row['quantity']}")
-                                    p = st.number_input("سعر البيع", value=float(row['current_price']))
-                                    d = st.date_input("تاريخ", date.today())
-                                    if st.form_submit_button("بيع"):
-                                        execute_query("UPDATE Trades SET status='Close', exit_price=%s, exit_date=%s WHERE symbol=%s AND strategy=%s AND status='Open'", (p, str(d), row['symbol'], ts))
-                                        st.success("تم"); st.rerun()
-                    
-                    st.markdown('</div>', unsafe_allow_html=True) # إغلاق div الصف
+                                        execute_query("INSERT INTO Trades (symbol, asset_type, date, quantity, entry_price, strategy, status) VALUES (%s,%s,%s,%s,%s,%s,'Open')", (row['symbol'], at, str(d_in), q_in, p_in, ts))
+                                    else:
+                                        execute_query("UPDATE Trades SET status='Close', exit_price=%s, exit_date=%s WHERE symbol=%s AND strategy=%s AND status='Open'", (p_in, str(d_in), row['symbol'], ts))
+                                    st.success("تم"); st.rerun()
+
+                    st.markdown('</div>', unsafe_allow_html=True)
             
-            st.markdown('</div>', unsafe_allow_html=True) # إغلاق حاوية الجدول
+            st.markdown('</div>', unsafe_allow_html=True)
         else:
             st.info("لا توجد صفقات قائمة")
 
