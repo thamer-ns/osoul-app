@@ -112,9 +112,7 @@ def update_prices():
         
         count = 0
         for sym, data in live_data.items():
-            # ---------------------------------------------------------
-            # 🛠️ التعديل هنا: استخدام float() لتحويل رقم numpy
-            # ---------------------------------------------------------
+            # ✅ الحل: تحويل القيمة من numpy إلى python native float
             raw_price = data.get('price', 0)
             price = float(raw_price) 
             
@@ -125,8 +123,9 @@ def update_prices():
                 count += 1
         return True
     except Exception as e: 
-        print(f"Update Error: {e}") # طباعة الخطأ للمتابعة
+        st.error(f"فشل التحديث: {e}") # عرض الخطأ للمتابعة
         return False
+        
 def create_smart_backup(): pass # يمكن تنفيذها لاحقاً
 
 def generate_equity_curve(df):
