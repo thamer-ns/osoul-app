@@ -14,7 +14,6 @@ from classical_analysis import render_classical_analysis
 
 # --- 1. Navigation Bar (مع القائمة الجانبية) ---
 def render_navbar():
-    # الأزرار العلوية
     cols = st.columns(9)
     buttons = [
         ('🏠 الرئيسية','home'), ('⚡ مضاربة','spec'), ('💎 استثمار','invest'), 
@@ -29,7 +28,7 @@ def render_navbar():
                     st.session_state.page = key
                     st.rerun()
     
-    # ✅ القائمة الجانبية (مضمونة الظهور)
+    # ✅ القائمة الجانبية (موجودة ولم تحذف)
     with st.sidebar:
         st.header("👤 لوحة التحكم")
         st.write(f"المستخدم: **{st.session_state.get('username','Guest')}**")
@@ -42,7 +41,7 @@ def render_navbar():
             try: from security import logout; logout()
             except: st.session_state.clear(); st.rerun()
 
-# --- 2. Dashboard (الرئيسية بالتصميم الموحد) ---
+# --- 2. Dashboard (بتصميم الأيقونات الموحد) ---
 def view_dashboard(fin):
     from data_source import get_company_details
     try: tp, tc = get_tasi_data()
@@ -104,7 +103,6 @@ def view_dashboard(fin):
     if not df.empty:
         open_trades = df[df['status'] == 'Open']
         
-        # A. توزيع الأصول
         invest_val = open_trades[open_trades['strategy'].astype(str).str.contains('استثمار')]['market_value'].sum()
         spec_val = open_trades[open_trades['strategy'].astype(str).str.contains('مضاربة')]['market_value'].sum()
         sukuk_val = open_trades[open_trades['asset_type'] == 'Sukuk']['market_value'].sum()
@@ -134,11 +132,10 @@ def view_dashboard(fin):
                 fig3.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=250, yaxis_title="القيمة التراكمية")
                 st.plotly_chart(fig3, use_container_width=True)
             else: st.info("لا توجد بيانات تاريخية")
-            
     else:
         st.info("👋 مرحباً بك! ابدأ بإضافة صفقات أو رصيد لتفعيل لوحة القيادة.")
 
-# --- 3. Portfolio View (تفاعلية: أزرار بيع/شراء لكل سهم) ---
+# --- 3. Portfolio View (هنا التغيير الجذري: أزرار بيع وشراء) ---
 def view_portfolio(fin, key):
     ts = "مضاربة" if key == 'spec' else "استثمار"
     st.header(f"💼 محفظة {ts}")
@@ -147,14 +144,14 @@ def view_portfolio(fin, key):
     st.markdown("""
         <style>
         .stock-row { 
-            background-color: white; padding: 12px; border-radius: 8px; 
-            border: 1px solid #e5e7eb; margin-bottom: 8px; 
-            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-            display: flex; align-items: center;
+            background-color: white; padding: 15px; border-radius: 12px; 
+            border: 1px solid #e5e7eb; margin-bottom: 12px; 
+            box-shadow: 0 2px 4px rgba(0,0,0,0.03);
+            display: flex; align-items: center; justify-content: space-between;
         }
-        div[data-testid="stVerticalBlock"] > div > div[data-testid="stHorizontalBlock"] {
-            align-items: center;
-        }
+        .stock-info { flex: 2; }
+        .stock-stat { flex: 1; text-align: center; }
+        .stock-actions { flex: 1.5; display: flex; gap: 5px; justify-content: flex-end;}
         </style>
     """, unsafe_allow_html=True)
     
@@ -169,7 +166,6 @@ def view_portfolio(fin, key):
     
     # --- الصفقات القائمة (تصميم تفاعلي) ---
     with t1:
-        # عرض الملخص
         total_cost = op['total_cost'].sum() if not op.empty else 0
         total_market = op['market_value'].sum() if not op.empty else 0
         total_gain = op['gain'].sum() if not op.empty else 0
@@ -183,10 +179,9 @@ def view_portfolio(fin, key):
         
         st.markdown("---")
         
-        # زر الإضافة العلوي
         c_add, _ = st.columns([1, 3])
         with c_add:
-            if st.button("➕ إضافة سهم جديد للمحفظة", type="primary", use_container_width=True):
+            if st.button("➕ شراء سهم جديد", type="primary", use_container_width=True):
                 st.session_state.page = 'add'
                 st.rerun()
 
@@ -194,15 +189,12 @@ def view_portfolio(fin, key):
             from market_data import fetch_batch_data
             from data_source import get_company_details
             
-            live_data = fetch_batch_data(op['symbol'].unique().tolist())
-            op['prev_close'] = op['symbol'].apply(lambda x: live_data.get(x, {}).get('prev_close', 0))
-
-            # العناوين (Header)
+            # العناوين
             h1, h2, h3, h4, h5, h6, h7 = st.columns([2, 1, 1.5, 1.5, 1.5, 1.5, 2])
             h1.caption("الشركة"); h2.caption("الكمية"); h3.caption("التكلفة"); 
             h4.caption("آخر سعر"); h5.caption("القيمة السوقية"); h6.caption("الربح/الخسارة"); h7.caption("إجراءات")
 
-            # الصفوف التفاعلية
+            # رسم الصفوف التفاعلية
             for idx, row in op.iterrows():
                 with st.container():
                     st.markdown('<div class="stock-row">', unsafe_allow_html=True)
@@ -218,9 +210,11 @@ def view_portfolio(fin, key):
                         color = "green" if row['gain'] >= 0 else "red"
                         st.markdown(f":{color}[**{row['gain']:+,.0f}**] <span style='font-size:0.8em'>({row['gain_pct']:.1f}%)</span>", unsafe_allow_html=True)
                     
-                    # الأزرار التفاعلية (Popover)
+                    # --- هنا الأزرار التفاعلية (Popover) ---
                     with c7:
                         b_col1, b_col2 = st.columns(2)
+                        
+                        # زر شراء (+)
                         with b_col1:
                             pop_buy = st.popover("➕", help="شراء المزيد")
                             with pop_buy:
@@ -232,6 +226,8 @@ def view_portfolio(fin, key):
                                         at = "Sukuk" if "Sukuk" in str(row.get('asset_type','')) else "Stock"
                                         execute_query("INSERT INTO Trades (symbol, asset_type, date, quantity, entry_price, strategy, status) VALUES (%s,%s,%s,%s,%s,%s,'Open')", (row['symbol'], at, str(d), q, p, ts))
                                         st.success("تم"); st.rerun()
+                        
+                        # زر بيع (-)
                         with b_col2:
                             pop_sell = st.popover("➖", help="بيع")
                             with pop_sell:
