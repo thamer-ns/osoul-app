@@ -14,7 +14,6 @@ from classical_analysis import render_classical_analysis
 
 # --- Full Navigation Bar ---
 def render_navbar():
-    # استخدام 9 أعمدة فقط لضمان المساحة
     cols = st.columns(9)
     buttons = [
         ('🏠 الرئيسية','home'), ('⚡ مضاربة','spec'), ('💎 استثمار','invest'), 
@@ -29,7 +28,6 @@ def render_navbar():
                     st.session_state.page = key
                     st.rerun()
     
-    # القائمة الجانبية (User Menu)
     with st.sidebar:
         st.write(f"مرحباً {st.session_state.get('username','User')}")
         if st.button("➕ إضافة صفقة", use_container_width=True): st.session_state.page='add'; st.rerun()
@@ -62,17 +60,17 @@ def view_dashboard(fin):
     crv = generate_equity_curve(fin['all_trades'])
     if not crv.empty: st.plotly_chart(px.line(crv, x='date', y='cumulative_invested', title="نمو المحفظة"), use_container_width=True)
 
-# --- 2. Portfolio View (Fixed Logic) ---
+# --- 2. Portfolio View (Updated Columns) ---
 def view_portfolio(fin, key):
     ts = "مضاربة" if key == 'spec' else "استثمار"
     st.header(f"💼 محفظة {ts}")
     
-    # 1. حقن CSS خاص لهذا الجدول لمنع التفاف النص وضبط الحجم
+    # CSS لتنسيق الجدول العريض
     st.markdown("""
         <style>
         .finance-table td, .finance-table th {
-            white-space: nowrap !important;  /* منع النزول لسطر جديد */
-            font-size: 0.85rem !important;   /* حجم خط مناسب */
+            white-space: nowrap !important;
+            font-size: 0.85rem !important;
             vertical-align: middle !important;
         }
         </style>
@@ -89,17 +87,13 @@ def view_portfolio(fin, key):
     
     t1, t2 = st.tabs(["الصفقات القائمة", "الأرشيف"])
     
-    # ==========================
-    # 🟢 تبويب الصفقات القائمة (الأعمدة التفصيلية)
-    # ==========================
+    # --- تبويب القائمة ---
     with t1:
-        # حساب الملخصات
         total_cost = op['total_cost'].sum() if not op.empty else 0
         total_market = op['market_value'].sum() if not op.empty else 0
         total_gain = op['gain'].sum() if not op.empty else 0
         total_pct = (total_gain / total_cost * 100) if total_cost != 0 else 0.0
         
-        # عرض الأيقونات
         k1, k2, k3, k4 = st.columns(4)
         with k1: render_kpi("إجمالي التكلفة", safe_fmt(total_cost), "neutral", "💰")
         with k2: render_kpi("سعر السوق", safe_fmt(total_market), "blue", "📊")
@@ -109,27 +103,25 @@ def view_portfolio(fin, key):
         st.markdown("---")
         
         if not op.empty:
-    # --- تحضير البيانات الإضافية للأعمدة الجديدة ---
-    from market_data import fetch_batch_data
-    from data_source import get_company_details   # ✅ التصحيح: الاستيراد من data_source
-    
-    live_data = fetch_batch_data(op['symbol'].unique().tolist())
+            # --- تحضير البيانات الإضافية ---
+            # ✅ تصحيح الاستيراد هنا
+            from market_data import fetch_batch_data
+            from data_source import get_company_details
             
-            # إضافة الأعمدة المحسوبة للجدول
+            live_data = fetch_batch_data(op['symbol'].unique().tolist())
+            
             op['sector'] = op['symbol'].apply(lambda x: get_company_details(x)[1])
             op['status_ar'] = "مفتوحة"
             op['exit_date_display'] = "-"
             
-            # جلب البيانات من live_data
             op['prev_close'] = op['symbol'].apply(lambda x: live_data.get(x, {}).get('prev_close', 0))
             op['year_high'] = op['symbol'].apply(lambda x: live_data.get(x, {}).get('year_high', 0))
             op['year_low'] = op['symbol'].apply(lambda x: live_data.get(x, {}).get('year_low', 0))
             
-            # حساب التغير اليومي والوزن
             op['day_change'] = ((op['current_price'] - op['prev_close']) / op['prev_close'] * 100).fillna(0)
             op['weight'] = (op['market_value'] / total_market * 100).fillna(0)
 
-            # --- أدوات الفرز (حسب أعمدة الجدول) ---
+            # --- الفرز ---
             c_sort, _ = st.columns([1, 3])
             sort_options = [
                 "الرمز", "الشركة", "القطاع", "تاريخ الشراء", "الكمية", 
@@ -138,7 +130,6 @@ def view_portfolio(fin, key):
             ]
             sort_by = c_sort.selectbox(f"فرز {ts} حسب:", sort_options, key=f"sort_op_{key}")
             
-            # منطق الفرز
             if sort_by == "الربح والخسارة": op = op.sort_values(by='gain', ascending=False)
             elif sort_by == "القيمة السوقية (الوزن)": op = op.sort_values(by='market_value', ascending=False)
             elif sort_by == "التغير اليومي": op = op.sort_values(by='day_change', ascending=False)
@@ -146,14 +137,13 @@ def view_portfolio(fin, key):
             elif sort_by == "الشركة": op = op.sort_values(by='company_name')
             elif sort_by == "القطاع": op = op.sort_values(by='sector')
             elif sort_by == "التكلفة": op = op.sort_values(by='total_cost', ascending=False)
-            else: op = op.sort_values(by='date', ascending=False) # الافتراضي
+            else: op = op.sort_values(by='date', ascending=False)
             
-            # --- تعريف الأعمدة (بالترتيب المطلوب) ---
-            # الصيغة: (اسم العمود في الداتافريم، العنوان بالعربي، نوع التنسيق)
+            # --- الأعمدة التفصيلية ---
             cols = [
                 ('company_name', 'اسم الشركة', 'text'),
                 ('sector', 'القطاع', 'text'),
-                ('status_ar', 'الحالة', 'badge'), # badge ستظهرها ملونة
+                ('status_ar', 'الحالة', 'badge'),
                 ('symbol', 'رمز الشركة', 'text'),
                 ('date', 'تاريخ الشراء', 'date'),
                 ('exit_date_display', 'تاريخ البيع', 'text'),
@@ -163,7 +153,7 @@ def view_portfolio(fin, key):
                 ('year_high', 'اعلى سنوي', 'money'),
                 ('current_price', 'السعر الحالي', 'money'),
                 ('year_low', 'ادنى سنوي', 'money'),
-                ('market_value', 'سعر السوق', 'money'), # هذا هو القيمة السوقية
+                ('market_value', 'سعر السوق', 'money'),
                 ('gain', 'الربح والخسارة', 'colorful'),
                 ('gain_pct', 'نسبة الربح والخسارة', 'percent'),
                 ('weight', 'وزن السهم', 'percent'),
@@ -173,7 +163,6 @@ def view_portfolio(fin, key):
             
             render_custom_table(op, cols)
             
-            # زر البيع
             with st.expander("🔴 تسجيل بيع"):
                 with st.form(f"s_{key}"):
                     s = st.selectbox("سهم", op['symbol'].unique())
@@ -185,11 +174,8 @@ def view_portfolio(fin, key):
         else:
             st.info("لا توجد صفقات قائمة حالياً")
 
-    # ==========================
-    # 🔴 تبويب الأرشيف (كما هو سابقاً مع تحسين بسيط)
-    # ==========================
+    # --- تبويب الأرشيف ---
     with t2:
-        # حساب الملخصات للأرشيف
         total_cost = cl['total_cost'].sum() if not cl.empty else 0
         total_exit = cl['market_value'].sum() if not cl.empty else 0
         total_gain = cl['gain'].sum() if not cl.empty else 0
@@ -216,6 +202,7 @@ def view_portfolio(fin, key):
                                      ('exit_date', 'تاريخ البيع', 'date')])
         else:
             st.info("الأرشيف فارغ")
+
 # --- 3. Sukuk View ---
 def view_sukuk_portfolio(fin):
     st.header("📜 محفظة الصكوك")
@@ -224,13 +211,11 @@ def view_sukuk_portfolio(fin):
     if df.empty: sukuk = pd.DataFrame(columns=['asset_type', 'total_cost', 'market_value', 'gain', 'date'])
     else: sukuk = df[df['asset_type'] == 'Sukuk'].copy()
     
-    # حساب الأرقام
     total_cost = sukuk['total_cost'].sum() if not sukuk.empty else 0
     total_market = sukuk['market_value'].sum() if not sukuk.empty else 0
     total_gain = sukuk['gain'].sum() if not sukuk.empty else 0
     total_pct = (total_gain / total_cost * 100) if total_cost != 0 else 0.0
     
-    # عرض الأيقونات دائماً
     k1, k2, k3, k4 = st.columns(4)
     with k1: render_kpi("إجمالي الاستثمار", safe_fmt(total_cost), "neutral", "🕌")
     with k2: render_kpi("القيمة الحالية", safe_fmt(total_market), "blue", "📊")
