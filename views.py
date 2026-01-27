@@ -121,24 +121,102 @@ def view_cash_log():
         render_custom_table(returns, cols)
 
 # --- 3. Portfolio (As Requested) ---
+# --- 3. Portfolio (Updated with Sorting & KPIs) ---
 def view_portfolio(fin, key):
-    ts = "مضاربة" if key=='spec' else "استثمار"
-    st.header(f"💼 محفظة {ts}"); df = fin['all_trades']
-    if df.empty: st.info("فارغة"); return
-    sub = df[df['strategy'].astype(str).str.contains(ts, na=False)]
-    op = sub[sub['status']=='Open']; cl = sub[sub['status']=='Close']
-    t1,t2 = st.tabs(["الصفقات القائمة", "الأرشيف"])
+    ts = "مضاربة" if key == 'spec' else "استثمار"
+    st.header(f"💼 محفظة {ts}")
+    
+    # تصفية البيانات حسب الاستراتيجية
+    df = fin['all_trades']
+    if df.empty:
+        st.info("فارغة"); return
+    
+    sub = df[df['strategy'].astype(str).str.contains(ts, na=False)].copy()
+    
+    # تقسيم الصفقات (قائمة / أرشيف)
+    op = sub[sub['status'] == 'Open'].copy()
+    cl = sub[sub['status'] == 'Close'].copy()
+    
+    t1, t2 = st.tabs(["الصفقات القائمة", "الأرشيف"])
+    
+    # ==========================
+    # 🟢 تبويب الصفقات القائمة
+    # ==========================
     with t1:
         if not op.empty:
-            cols = [('company_name','الشركة','text'),('symbol','الرمز','text'),('quantity','الكمية','money'),('entry_price','ت.شراء','money'),('current_price','سوق','money'),('gain','الربح','colorful'),('gain_pct','%','percent')]
+            # 1. حساب وعرض الملخص (KPIs)
+            total_cost = op['total_cost'].sum()
+            total_market = op['market_value'].sum()
+            total_gain = op['gain'].sum()
+            total_pct = (total_gain / total_cost * 100) if total_cost != 0 else 0.0
+            
+            k1, k2, k3, k4 = st.columns(4)
+            with k1: render_kpi("إجمالي التكلفة", safe_fmt(total_cost), "neutral", "💰")
+            with k2: render_kpi("سعر السوق", safe_fmt(total_market), "blue", "📊")
+            with k3: render_kpi("الربح/الخسارة", safe_fmt(total_gain), "success" if total_gain >= 0 else "danger", "📈")
+            with k4: render_kpi("النسبة %", f"{total_pct:.2f}%", "success" if total_pct >= 0 else "danger", "٪")
+            
+            st.markdown("---")
+            
+            # 2. الفرز (Sorting)
+            c_sort, _ = st.columns([1, 3])
+            sort_by = c_sort.selectbox(f"فرز {ts} (قائمة) حسب:", ["التاريخ (الأحدث)", "الربح (الأعلى)", "الوزن (الأعلى)"], key=f"sort_op_{key}")
+            
+            if "الربح" in sort_by: op = op.sort_values(by='gain', ascending=False)
+            elif "الوزن" in sort_by: op = op.sort_values(by='market_value', ascending=False)
+            else: op = op.sort_values(by='date', ascending=False)
+            
+            # 3. عرض الجدول
+            cols = [('company_name', 'الشركة', 'text'), ('symbol', 'الرمز', 'text'), ('quantity', 'الكمية', 'money'), 
+                    ('entry_price', 'ت.شراء', 'money'), ('current_price', 'سوق', 'money'), 
+                    ('gain', 'الربح', 'colorful'), ('gain_pct', '%', 'percent')]
             render_custom_table(op, cols)
+            
+            # 4. زر البيع
             with st.expander("🔴 تسجيل بيع"):
                 with st.form(f"s_{key}"):
-                    s=st.selectbox("سهم", op['symbol'].unique()); p=st.number_input("سعر البيع"); d=st.date_input("تاريخ")
-                    if st.form_submit_button("تأكيد"): execute_query("UPDATE Trades SET status='Close', exit_price=%s, exit_date=%s WHERE symbol=%s AND strategy=%s AND status='Open'",(p,str(d),s,ts)); st.rerun()
-        else: st.info("لا توجد أسهم حالياً")
+                    s = st.selectbox("سهم", op['symbol'].unique())
+                    p = st.number_input("سعر البيع")
+                    d = st.date_input("تاريخ")
+                    if st.form_submit_button("تأكيد"):
+                        execute_query("UPDATE Trades SET status='Close', exit_price=%s, exit_date=%s WHERE symbol=%s AND strategy=%s AND status='Open'", (p, str(d), s, ts))
+                        st.rerun()
+        else:
+            st.info("لا توجد أسهم حالياً")
+
+    # ==========================
+    # 🔴 تبويب الأرشيف
+    # ==========================
     with t2:
-        if not cl.empty: render_custom_table(cl, [('company_name','الشركة','text'),('symbol','الرمز','text'),('gain','الربح','colorful'),('exit_date','تاريخ','date')])
+        if not cl.empty:
+            # 1. حساب وعرض الملخص (KPIs)
+            total_cost = cl['total_cost'].sum()
+            total_exit = cl['market_value'].sum() # في الصفقات المغلقة market_value هو قيمة البيع
+            total_gain = cl['gain'].sum()
+            total_pct = (total_gain / total_cost * 100) if total_cost != 0 else 0.0
+            
+            k1, k2, k3, k4 = st.columns(4)
+            with k1: render_kpi("إجمالي التكلفة", safe_fmt(total_cost), "neutral", "📜")
+            with k2: render_kpi("قيمة البيع", safe_fmt(total_exit), "blue", "💵")
+            with k3: render_kpi("الربح المحقق", safe_fmt(total_gain), "success" if total_gain >= 0 else "danger", "✅")
+            with k4: render_kpi("النسبة %", f"{total_pct:.2f}%", "success" if total_pct >= 0 else "danger", "٪")
+            
+            st.markdown("---")
+
+            # 2. الفرز (Sorting)
+            c_sort, _ = st.columns([1, 3])
+            sort_by = c_sort.selectbox(f"فرز {ts} (أرشيف) حسب:", ["التاريخ (الأحدث)", "الربح (الأعلى)", "قيمة البيع (الأعلى)"], key=f"sort_cl_{key}")
+            
+            if "الربح" in sort_by: cl = cl.sort_values(by='gain', ascending=False)
+            elif "قيمة البيع" in sort_by: cl = cl.sort_values(by='market_value', ascending=False)
+            else: cl = cl.sort_values(by='exit_date', ascending=False)
+
+            # 3. عرض الجدول
+            render_custom_table(cl, [('company_name', 'الشركة', 'text'), ('symbol', 'الرمز', 'text'), 
+                                     ('gain', 'الربح', 'colorful'), ('gain_pct', '%', 'percent'), 
+                                     ('exit_date', 'تاريخ البيع', 'date')])
+        else:
+            st.info("سجل الأرشيف فارغ")
 
 # --- Rest of the Views (As Requested) ---
 def view_analysis(fin):
