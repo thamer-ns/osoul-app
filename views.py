@@ -60,16 +60,16 @@ def view_dashboard(fin):
     if not crv.empty: st.plotly_chart(px.line(crv, x='date', y='cumulative_invested', title="نمو المحفظة"), use_container_width=True)
 
 # --- 2. Liquidity (Fixed + Icons) ---
+# --- 2. Liquidity (Updated with Sorting) ---
 def view_cash_log():
-    st.header("💰 السجلات المالية")
+    st.header("💰 السيولة والسجلات المالية")
     fin = calculate_portfolio_metrics()
     
-    # Robust data retrieval using .get()
     deposits = fin.get('deposits', pd.DataFrame())
     withdrawals = fin.get('withdrawals', pd.DataFrame())
     returns = fin.get('returns', pd.DataFrame())
 
-    # Summary Icons
+    # Summary Icons (موجودة سابقاً ولكن نعيد ترتيبها للتناسق)
     c1, c2, c3 = st.columns(3)
     d_sum = deposits['amount'].sum() if not deposits.empty else 0
     w_sum = withdrawals['amount'].sum() if not withdrawals.empty else 0
@@ -82,9 +82,9 @@ def view_cash_log():
     st.markdown("---")
     t1, t2, t3 = st.tabs(["📥 سجل الإيداعات", "📤 سجل السحوبات", "🎁 سجل العوائد"])
     
-    cols = [('date','التاريخ','date'), ('amount','المبلغ','money'), ('note','ملاحظات','text')]
+    cols_base = [('date', 'التاريخ', 'date'), ('amount', 'المبلغ', 'money'), ('note', 'ملاحظات', 'text')]
     
-    # Tab 1: Deposits
+    # --- Tab 1: Deposits ---
     with t1:
         with st.expander("➕ تسجيل إيداع جديد"):
             with st.form("add_dep"):
@@ -92,11 +92,16 @@ def view_cash_log():
                 d = st.date_input("التاريخ", date.today())
                 n = st.text_input("ملاحظة")
                 if st.form_submit_button("حفظ"):
-                    execute_query("INSERT INTO Deposits (date, amount, note) VALUES (%s,%s,%s)",(str(d),a,n))
+                    execute_query("INSERT INTO Deposits (date, amount, note) VALUES (%s,%s,%s)", (str(d), a, n))
                     st.success("تم"); st.rerun()
-        render_custom_table(deposits, cols)
         
-    # Tab 2: Withdrawals
+        if not deposits.empty:
+            sb = st.selectbox("فرز الإيداعات حسب:", ["التاريخ (الأحدث)", "المبلغ (الأعلى)"], key="sort_dep")
+            if "المبلغ" in sb: deposits = deposits.sort_values('amount', ascending=False)
+            else: deposits = deposits.sort_values('date', ascending=False)
+            render_custom_table(deposits, cols_base)
+
+    # --- Tab 2: Withdrawals ---
     with t2:
         with st.expander("➖ تسجيل سحب جديد"):
             with st.form("add_wit"):
@@ -104,11 +109,16 @@ def view_cash_log():
                 d = st.date_input("التاريخ", date.today())
                 n = st.text_input("ملاحظة")
                 if st.form_submit_button("حفظ"):
-                    execute_query("INSERT INTO Withdrawals (date, amount, note) VALUES (%s,%s,%s)",(str(d),a,n))
+                    execute_query("INSERT INTO Withdrawals (date, amount, note) VALUES (%s,%s,%s)", (str(d), a, n))
                     st.success("تم"); st.rerun()
-        render_custom_table(withdrawals, cols)
         
-    # Tab 3: Returns
+        if not withdrawals.empty:
+            sb = st.selectbox("فرز السحوبات حسب:", ["التاريخ (الأحدث)", "المبلغ (الأعلى)"], key="sort_wit")
+            if "المبلغ" in sb: withdrawals = withdrawals.sort_values('amount', ascending=False)
+            else: withdrawals = withdrawals.sort_values('date', ascending=False)
+            render_custom_table(withdrawals, cols_base)
+        
+    # --- Tab 3: Returns ---
     with t3:
         with st.expander("💵 تسجيل عائد/توزيع"):
             with st.form("add_ret"):
@@ -116,11 +126,14 @@ def view_cash_log():
                 a = st.number_input("المبلغ", min_value=0.0, step=10.0)
                 d = st.date_input("التاريخ", date.today())
                 if st.form_submit_button("حفظ"):
-                    execute_query("INSERT INTO ReturnsGrants (date, symbol, amount) VALUES (%s,%s,%s)",(str(d),s,a))
+                    execute_query("INSERT INTO ReturnsGrants (date, symbol, amount) VALUES (%s,%s,%s)", (str(d), s, a))
                     st.success("تم"); st.rerun()
-        render_custom_table(returns, cols)
-
-# --- 3. Portfolio (As Requested) ---
+        
+        if not returns.empty:
+            sb = st.selectbox("فرز العوائد حسب:", ["التاريخ (الأحدث)", "المبلغ (الأعلى)"], key="sort_ret")
+            if "المبلغ" in sb: returns = returns.sort_values('amount', ascending=False)
+            else: returns = returns.sort_values('date', ascending=False)
+            render_custom_table(returns, cols_base)
 # --- 3. Portfolio (Updated with Sorting & KPIs) ---
 def view_portfolio(fin, key):
     ts = "مضاربة" if key == 'spec' else "استثمار"
