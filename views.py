@@ -249,8 +249,44 @@ def render_pulse_dashboard():
         chg = ((info['price']-info['prev_close'])/info['prev_close'])*100 if info['prev_close']>0 else 0
         with cols[i%4]: render_ticker_card(s, "سهم", info['price'], chg)
 
-def view_sukuk_portfolio(fin): st.header("📜 صكوك"); render_custom_table(fin['all_trades'][fin['all_trades']['asset_type']=='Sukuk'], [('symbol','رمز','text'),('quantity','كمية','money')])
+def view_sukuk_portfolio(fin):
+    st.header("📜 محفظة الصكوك")
+    
+    df = fin['all_trades']
+    if df.empty: st.info("فارغة"); return
 
+    # تصفية الصكوك
+    sukuk = df[df['asset_type'] == 'Sukuk'].copy()
+    
+    if not sukuk.empty:
+        # 1. حساب وعرض الملخص (KPIs)
+        total_cost = sukuk['total_cost'].sum()
+        total_market = sukuk['market_value'].sum()
+        total_gain = sukuk['gain'].sum()
+        total_pct = (total_gain / total_cost * 100) if total_cost != 0 else 0.0
+        
+        k1, k2, k3, k4 = st.columns(4)
+        with k1: render_kpi("إجمالي الاستثمار", safe_fmt(total_cost), "neutral", "🕌")
+        with k2: render_kpi("القيمة الحالية", safe_fmt(total_market), "blue", "📊")
+        with k3: render_kpi("الربح/الخسارة", safe_fmt(total_gain), "success" if total_gain >= 0 else "danger", "📈")
+        with k4: render_kpi("النسبة %", f"{total_pct:.2f}%", "success" if total_pct >= 0 else "danger", "٪")
+        
+        st.markdown("---")
+
+        # 2. الفرز
+        c_sort, _ = st.columns([1, 3])
+        sort_by = c_sort.selectbox("فرز الصكوك حسب:", ["التاريخ (الأحدث)", "القيمة (الأعلى)", "الربح (الأعلى)"], key="sort_sukuk")
+        
+        if "القيمة" in sort_by: sukuk = sukuk.sort_values(by='market_value', ascending=False)
+        elif "الربح" in sort_by: sukuk = sukuk.sort_values(by='gain', ascending=False)
+        else: sukuk = sukuk.sort_values(by='date', ascending=False)
+
+        # 3. عرض الجدول
+        render_custom_table(sukuk, [('symbol', 'رمز', 'text'), ('company_name', 'اسم الصك', 'text'), 
+                                    ('quantity', 'القيمة الاسمية', 'money'), ('current_price', 'السعر الحالي', 'money'),
+                                    ('gain', 'الربح', 'colorful')])
+    else:
+        st.info("لا توجد صكوك مضافة")
 def view_add_trade():
     st.header("➕ إضافة صفقة"); 
     with st.form("add"):
