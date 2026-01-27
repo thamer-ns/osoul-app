@@ -38,7 +38,6 @@ def render_navbar():
 
 # --- 1. Dashboard ---
 # --- 1. Dashboard (The Command Center) ---
-# --- 1. Dashboard (The Command Center) ---
 def view_dashboard(fin):
     # استيراد دالة الأسماء
     from data_source import get_company_details
@@ -54,7 +53,7 @@ def view_dashboard(fin):
         <div style="background:rgba(255,255,255,0.2); padding:5px 15px; border-radius:10px; font-weight:bold; direction:ltr;">{ar} {tc:.2f}%</div>
     </div>""", unsafe_allow_html=True)
     
-    # 2. Main KPIs
+    # 2. Main KPIs (البطاقات العلوية)
     c1, c2, c3, c4 = st.columns(4)
     total_pl = fin['unrealized_pl'] + fin['realized_pl']
     total_assets = fin['market_val_open'] + fin['cash']
@@ -68,40 +67,67 @@ def view_dashboard(fin):
     st.markdown("---")
 
     # ========================================================
-    # 🆕 3. تفاصيل العمليات (تصميم جديد: بطاقات مصغرة)
+    # 🆕 3. تفاصيل العمليات (تصميم موحد وثابت)
     # ========================================================
     
-    # دالة مساعدة لرسم البطاقات المصغرة (CSS خاص)
-    def mini_card(label, val, sub_val=None, color="#1E293B", icon="🔹"):
-        sub_html = f"<div style='font-size:0.8rem; color:{color}; direction:ltr;'>{sub_val}</div>" if sub_val else ""
+    # دالة البطاقات المحسنة (Fixed Icon Size & Colors)
+    def mini_card(label, val, sub_val=None, val_color="#0F172A", icon="🔹"):
+        # تحديد لون النص الفرعي (النسبة)
+        sub_color = "#64748B"
+        if sub_val and ("%" in sub_val):
+             sub_color = "#059669" if "+" in sub_val else "#DC2626"
+
         st.markdown(f"""
-        <div style="background-color: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 12px; padding: 15px; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
-            <div style="font-size:1.5rem; margin-bottom:5px;">{icon}</div>
-            <div style="font-size:0.85rem; color:#64748B; font-weight:700; margin-bottom:5px;">{label}</div>
-            <div style="font-size:1.1rem; font-weight:900; color:#0F172A; direction:ltr;">{val}</div>
-            {sub_html}
+        <div style="
+            background-color: #ffffff; 
+            border: 1px solid #E2E8F0; 
+            border-radius: 16px; 
+            padding: 20px 15px; 
+            text-align: center; 
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+            height: 100%;
+            transition: transform 0.2s;
+        ">
+            <div style="
+                width: 45px; 
+                height: 45px; 
+                background-color: #F1F5F9; 
+                border-radius: 50%; 
+                display: flex; 
+                align-items: center; 
+                justify-content: center; 
+                font-size: 1.5rem; 
+                margin: 0 auto 10px auto;
+            ">
+                {icon}
+            </div>
+            <div style="font-size:0.85rem; color:#64748B; font-weight:700; margin-bottom:8px;">{label}</div>
+            <div style="font-size:1.2rem; font-weight:900; color:{val_color}; direction:ltr; margin-bottom:4px;">{val}</div>
+            <div style="font-size:0.8rem; font-weight:600; color:{sub_color}; direction:ltr; min-height:1.2em;">{sub_val if sub_val else ''}</div>
         </div>
         """, unsafe_allow_html=True)
 
     df = fin['all_trades']
     
-    # A. العمليات القائمة
+    # A. العمليات القائمة (Open)
     open_cost = fin['cost_open']
     open_market = fin['market_val_open']
     open_pl = fin['unrealized_pl']
     open_pct = (open_pl / open_cost * 100) if open_cost != 0 else 0.0
-    pl_color = "#059669" if open_pl >= 0 else "#DC2626"
+    
+    # لون الربح (أخضر) والخسارة (أحمر)
+    pl_color_val = "#059669" if open_pl >= 0 else "#DC2626"
 
     st.markdown("##### 📊 ملخص الصفقات القائمة (Open)")
     o1, o2, o3, o4 = st.columns(4)
     with o1: mini_card("التكلفة الإجمالية", safe_fmt(open_cost), icon="💰")
     with o2: mini_card("القيمة السوقية", safe_fmt(open_market), icon="🏷️")
-    with o3: mini_card("الربح الورقي", safe_fmt(open_pl), f"{open_pct:+.2f}%", pl_color, icon="📈")
+    with o3: mini_card("الربح الورقي", safe_fmt(open_pl), f"{open_pct:+.2f}%", pl_color_val, icon="📈")
     with o4: mini_card("عدد الشركات", f"{len(df[df['status']=='Open'])}", icon="🏢")
 
-    st.markdown("<div style='margin-bottom: 20px;'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='margin-bottom: 25px;'></div>", unsafe_allow_html=True)
 
-    # B. العمليات المنفذة
+    # B. العمليات المنفذة (Closed)
     if not df.empty:
         closed_df = df[df['status'] == 'Close']
         closed_cost = closed_df['total_cost'].sum()
@@ -179,8 +205,7 @@ def view_dashboard(fin):
                 
                 # دالة صغيرة لعرض السطر مع الاسم
                 def render_row(row, color):
-                    name, _ = get_company_details(row['symbol']) # ✅ جلب الاسم هنا
-                    # تقصير الاسم الطويل
+                    name, _ = get_company_details(row['symbol']) 
                     short_name = (name[:15] + '..') if len(name) > 15 else name
                     
                     st.markdown(f"""
