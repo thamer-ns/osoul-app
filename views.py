@@ -13,33 +13,52 @@ from financial_analysis import render_financial_dashboard_ui, get_fundamental_ra
 from classical_analysis import render_classical_analysis
 
 # --- 1. Navigation Bar (القائمة العلوية + الجانبية) ---
+# --- 1. Navigation Bar (القائمة المنسدلة بجانب التحديث) ---
 def render_navbar():
-    cols = st.columns(9)
+    # نقسم العرض إلى 10 أعمدة لتوزيع الأزرار
+    cols = st.columns(10)
+    
+    # قائمة الأزرار الرئيسية (بدون زر التحديث، سنضعه يدوياً)
     buttons = [
         ('🏠 الرئيسية','home'), ('⚡ مضاربة','spec'), ('💎 استثمار','invest'), 
         ('💓 نبض','pulse'), ('📜 صكوك','sukuk'), ('🔍 تحليل','analysis'), 
-        ('🧪 المختبر','backtest'), ('💰 السيولة','cash'), ('🔄 تحديث','update')
+        ('🧪 المختبر','backtest'), ('💰 السيولة','cash')
     ]
     
+    # 1. رسم الأزرار الرئيسية (من 1 إلى 8)
     for i, (label, key) in enumerate(buttons):
-        if i < len(cols):
-            with cols[i]:
-                if st.button(label, use_container_width=True): 
-                    st.session_state.page = key
-                    st.rerun()
+        with cols[i]:
+            if st.button(label, use_container_width=True): 
+                st.session_state.page = key
+                st.rerun()
     
-    # ✅ القائمة الجانبية (Sidebar) - كما هي
-    with st.sidebar:
-        st.header("👤 لوحة التحكم")
-        st.write(f"المستخدم: **{st.session_state.get('username','Guest')}**")
-        st.markdown("---")
-        if st.button("➕ إضافة صفقة جديدة", use_container_width=True): st.session_state.page='add'; st.rerun()
-        if st.button("🛠️ أدوات (الزكاة)", use_container_width=True): st.session_state.page='tools'; st.rerun()
-        if st.button("⚙️ الإعدادات", use_container_width=True): st.session_state.page='settings'; st.rerun()
-        st.markdown("---")
-        if st.button("🚪 تسجيل خروج", use_container_width=True): 
-            try: from security import logout; logout()
-            except: st.session_state.clear(); st.rerun()
+    # 2. زر التحديث (في العمود التاسع)
+    with cols[8]:
+        if st.button('🔄 تحديث', use_container_width=True):
+            st.session_state.page = 'update'
+            st.rerun()
+
+    # 3. زر القائمة (في العمود العاشر والأخير)
+    with cols[9]:
+        # القائمة المنسدلة بدلاً من السايدبار
+        with st.popover("☰ القائمة", use_container_width=True):
+            st.caption(f"👤 {st.session_state.get('username','Guest')}")
+            st.markdown("---")
+            
+            if st.button("➕ إضافة صفقة", use_container_width=True): 
+                st.session_state.page='add'; st.rerun()
+            
+            if st.button("🛠️ أدوات", use_container_width=True): 
+                st.session_state.page='tools'; st.rerun()
+            
+            if st.button("⚙️ الإعدادات", use_container_width=True): 
+                st.session_state.page='settings'; st.rerun()
+            
+            st.markdown("---")
+            
+            if st.button("🚪 خروج", use_container_width=True): 
+                try: from security import logout; logout()
+                except: st.session_state.clear(); st.rerun()
 
 # --- 2. Dashboard (الرئيسية - محسنة) ---
 def view_dashboard(fin):
