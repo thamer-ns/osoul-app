@@ -13,7 +13,9 @@ from financial_analysis import render_financial_dashboard_ui, get_fundamental_ra
 from classical_analysis import render_classical_analysis
 
 # --- Full Navigation Bar ---
+# في ملف views.py
 def render_navbar():
+    # الشريط العلوي (الصفحات الرئيسية)
     cols = st.columns(9)
     buttons = [
         ('🏠 الرئيسية','home'), ('⚡ مضاربة','spec'), ('💎 استثمار','invest'), 
@@ -28,14 +30,18 @@ def render_navbar():
                     st.session_state.page = key
                     st.rerun()
     
+    # ✅ القائمة الجانبية (تمت استعادتها)
     with st.sidebar:
-        st.write(f"مرحباً {st.session_state.get('username','User')}")
-        if st.button("➕ إضافة صفقة", use_container_width=True): st.session_state.page='add'; st.rerun()
-        if st.button("🛠️ أدوات", use_container_width=True): st.session_state.page='tools'; st.rerun()
-        if st.button("🚪 خروج", use_container_width=True): 
+        st.header("👤 لوحة التحكم")
+        st.write(f"المستخدم: **{st.session_state.get('username','Guest')}**")
+        st.markdown("---")
+        if st.button("➕ إضافة صفقة جديدة", use_container_width=True): st.session_state.page='add'; st.rerun()
+        if st.button("🛠️ أدوات (الزكاة)", use_container_width=True): st.session_state.page='tools'; st.rerun()
+        if st.button("⚙️ الإعدادات", use_container_width=True): st.session_state.page='settings'; st.rerun()
+        st.markdown("---")
+        if st.button("🚪 تسجيل خروج", use_container_width=True): 
             try: from security import logout; logout()
             except: st.session_state.clear(); st.rerun()
-
 # --- 1. Dashboard ---
 # في ملف views.py
 def view_portfolio(fin, key):
