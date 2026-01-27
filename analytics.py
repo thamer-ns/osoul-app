@@ -95,6 +95,8 @@ def calculate_portfolio_metrics():
         print(f"Error in analytics: {e}")
         return default_res
 
+# analytics.py
+
 def update_prices():
     """تحديث أسعار السوق للأسهم المفتوحة"""
     try:
@@ -110,15 +112,21 @@ def update_prices():
         
         count = 0
         for sym, data in live_data.items():
-            price = data.get('price', 0)
+            # ---------------------------------------------------------
+            # 🛠️ التعديل هنا: استخدام float() لتحويل رقم numpy
+            # ---------------------------------------------------------
+            raw_price = data.get('price', 0)
+            price = float(raw_price) 
+            
             if price > 0:
                 # تحديث السعر في قاعدة البيانات
                 query = "UPDATE Trades SET current_price = %s WHERE symbol = %s AND status = 'Open'"
                 execute_query(query, (price, sym))
                 count += 1
         return True
-    except: return False
-
+    except Exception as e: 
+        print(f"Update Error: {e}") # طباعة الخطأ للمتابعة
+        return False
 def create_smart_backup(): pass # يمكن تنفيذها لاحقاً
 
 def generate_equity_curve(df):
