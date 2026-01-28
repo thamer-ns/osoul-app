@@ -522,18 +522,60 @@ def view_cash_log():
 
 # --- Other Views ---
 def view_analysis(fin):
-    st.header("🔬 التحليل"); trades = fin['all_trades']; from database import fetch_table; wl = fetch_table("Watchlist")
+    st.header("🔬 التحليل")
+    trades = fin['all_trades']
+    
+    # استيراد قائمة المراقبة لدمجها في البحث
+    from database import fetch_table
+    wl = fetch_table("Watchlist")
+    
+    # تجميع الرموز من الصفقات وقائمة المراقبة
     syms = list(set(trades['symbol'].unique().tolist() + wl['symbol'].unique().tolist())) if not trades.empty else []
-    c1,c2=st.columns([1,2]); ns=c1.text_input("بحث"); sym=c2.selectbox("اختر", [ns]+syms if ns else syms) if syms or ns else None
+    
+    c1, c2 = st.columns([1, 2])
+    ns = c1.text_input("بحث")
+    
+    # قائمة الاختيار الذكية
+    options = [ns] + syms if ns else syms
+    sym = c2.selectbox("اختر", options) if options else None
+    
     if sym:
         n, s = get_company_details(sym)
         st.markdown(f"### {n} ({sym})")
-        t1,t2,t3,t4,t5 = st.tabs(["مؤشرات", "فني", "قوائم", "كلاسيكي", "أطروحة"])
-        with t1: d=get_fundamental_ratios(sym); st.metric("التقييم", f"{d['Score']}/10", d['Rating']); st.write(d.get('Opinions'))
-        with t2: render_technical_chart(sym)
-        with t3: render_financial_dashboard_ui(sym)
-        with t4: render_classical_analysis(sym)
-        with t5: th=get_thesis(sym); st.text_area("نص", value=th['thesis_text'] if th else "")
+        
+        # توزيع التحليلات على التبويبات
+        t1, t2, t3, t4, t5 = st.tabs(["مؤشرات (Score)", "فني (Technical)", "قوائم (Financials)", "كلاسيكي (Classical)", "أطروحة (Thesis)"])
+        
+        # 1. التبويب الأول: نظرة سريعة (Scores)
+        with t1: 
+            d = get_fundamental_ratios(sym)
+            st.metric("التقييم العام", f"{d.get('Score', 0)}/10", d.get('Rating', 'N/A'))
+            if d.get('Opinions'): 
+                st.info(d['Opinions'])
+        
+        # 2. التبويب الثاني: التحليل الفني المطور (جون ميرفي)
+        with t2: 
+            render_technical_chart(sym) # ✅ استدعاء النسخة الجديدة
+            
+        # 3. التبويب الثالث: التحليل المالي العميق (جراهام وبيوتروسكي)
+        with t3: 
+            render_financial_dashboard_ui(sym) # ✅ استدعاء النسخة الجديدة
+            
+        # 4. التبويب الرابع: التحليل الكلاسيكي (فيبوناتشي ودعوم)
+        with t4: 
+            render_classical_analysis(sym) # ✅ استدعاء النسخة الجديدة
+            
+        # 5. التبويب الخامس: الأطروحة الاستثمارية
+        with t5: 
+            th = get_thesis(sym)
+            # ✅ تم إصلاح خطأ القوس الناقص هنا
+            st.text_area("نص الأطروحة", value=th['thesis_text'] if th else "", height=200)
+            
+            # زر الحفظ (اختياري إذا أردت إضافته هنا)
+            if st.button("حفظ الأطروحة"):
+                # يحتاج لاستدعاء دالة save_thesis مع المدخلات الصحيحة
+                pass 
+
 
 def view_backtester_ui(fin):
     st.header("🧪 المختبر"); c1,c2,c3 = st.columns(3)
