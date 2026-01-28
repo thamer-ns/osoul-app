@@ -603,6 +603,18 @@ def view_add_trade():
 
 def view_tools(): st.header("🛠️ أدوات"); st.info("الزكاة")
 def view_settings(): st.header("⚙️ إعدادات"); st.info("الاستيراد")
+# مثال لإضافة الزر في الإعدادات
+from analytics import create_smart_backup
+
+if st.button("💾 إنشاء نسخة احتياطية الآن"):
+    file_data, file_name = create_smart_backup()
+    if file_data:
+        st.download_button(
+            label="📥 اضغط لتحميل الملف",
+            data=file_data,
+            file_name=file_name,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
 def router():
     if 'page' not in st.session_state:
