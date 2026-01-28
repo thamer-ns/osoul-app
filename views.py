@@ -276,6 +276,7 @@ def view_portfolio(fin, key):
             st.info("الأرشيف فارغ")
 
 # --- 4. Sukuk View ---
+# --- 4. Sukuk View (معدلة لعرض العدد والقيمة بشكل صحيح) ---
 def view_sukuk_portfolio(fin):
     st.header("📜 محفظة الصكوك")
     df = fin['all_trades']
@@ -302,6 +303,10 @@ def view_sukuk_portfolio(fin):
             st.session_state.page = 'add'; st.rerun()
 
     if not sukuk.empty:
+        # حساب القيمة الاسمية الإجمالية (العدد * 1000) للتوضيح
+        # نفترض أن القيمة الاسمية للصك الواحد 1000 ريال دائماً
+        sukuk['nominal_total'] = sukuk['quantity'] * 1000
+
         c_sort, _ = st.columns([1, 3])
         sort_by = c_sort.selectbox("فرز الصكوك حسب:", ["التاريخ (الأحدث)", "القيمة (الأعلى)", "الربح (الأعلى)"], key="sort_sukuk")
         
@@ -309,9 +314,16 @@ def view_sukuk_portfolio(fin):
         elif "الربح" in sort_by: sukuk = sukuk.sort_values(by='gain', ascending=False)
         else: sukuk = sukuk.sort_values(by='date', ascending=False)
 
-        render_custom_table(sukuk, [('symbol', 'رمز', 'text'), ('company_name', 'اسم الصك', 'text'), 
-                                    ('quantity', 'القيمة الاسمية', 'money'), ('current_price', 'السعر الحالي', 'money'),
-                                    ('gain', 'الربح', 'colorful')])
+        # ✅ تحديث الأعمدة: فصلنا العدد عن القيمة الاسمية
+        cols = [
+            ('symbol', 'الرمز', 'text'), 
+            ('company_name', 'اسم الصك', 'text'), 
+            ('quantity', 'العدد', 'text'),  # يظهر العدد الفعلي (مثلاً 1)
+            ('nominal_total', 'القيمة الاسمية', 'money'), # يظهر القيمة (مثلاً 1000)
+            ('current_price', 'السعر السوقي', 'money'),
+            ('gain', 'الربح', 'colorful')
+        ]
+        render_custom_table(sukuk, cols)
         
         # ميزة تعديل الصكوك
         with st.expander("✏️ تعديل بيانات صك (تصحيح خطأ)"):
@@ -325,8 +337,9 @@ def view_sukuk_portfolio(fin):
                     
                     with st.form(f"edit_form_s_{sukuk_id}"):
                         c_s1, c_s2 = st.columns(2)
-                        n_qty = c_s1.number_input("القيمة الاسمية الصحيحة", value=float(curr_s['quantity']))
-                        n_prc = c_s2.number_input("سعر الشراء الصحيح", value=float(curr_s['entry_price']))
+                        # هنا نعدل "العدد" وليس القيمة
+                        n_qty = c_s1.number_input("العدد الصحيح", value=float(curr_s['quantity']), step=1.0)
+                        n_prc = c_s2.number_input("سعر الشراء", value=float(curr_s['entry_price']))
                         n_date = st.date_input("تاريخ الشراء", pd.to_datetime(curr_s['date']))
                         
                         if st.form_submit_button("حفظ التصحيح"):
@@ -337,9 +350,10 @@ def view_sukuk_portfolio(fin):
                             st.success("تم التعديل")
                             st.rerun()
             else:
-                st.info("لا يمكن التعديل")
+                st.info("لا يمكن التعديل حالياً")
     else:
         st.info("لا توجد صكوك مضافة")
+
 
 # --- 5. Cash Log View ---
 def view_cash_log():
