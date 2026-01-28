@@ -5,8 +5,8 @@ import time
 from database import db_verify_user, db_create_user
 from config import APP_NAME, APP_ICON
 
-# التعديل هنا: حذفنا experimental_allow_widgets لأنها تسبب خطأ في النسخ الحديثة
-@st.cache_resource
+# 🛑 التعديل هنا: حذفنا @st.cache_resource نهائياً
+# لأن CookieManager يعتبر Widget ولا يجوز وضعه داخل الكاش في نسخ Streamlit الجديدة
 def get_manager():
     return stx.CookieManager(key="osoul_auth_manager")
 
@@ -19,9 +19,10 @@ def login_system():
         return True
 
     # 2. محاولة استرجاع المستخدم من الكوكيز (تذكرني)
+    # ملاحظة: يجب استدعاء المدير دائماً
     cookie_manager = get_manager()
     
-    # انتظار قصير لضمان قراءة الكوكيز
+    # انتظار قصير لضمان قراءة الكوكيز من المتصفح
     time.sleep(0.1)
     
     cookie_user = cookie_manager.get('osoul_user')
