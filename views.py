@@ -525,11 +525,15 @@ def view_analysis(fin):
     st.header("🔬 التحليل"); trades = fin['all_trades']; from database import fetch_table; wl = fetch_table("Watchlist")
     syms = list(set(trades['symbol'].unique().tolist() + wl['symbol'].unique().tolist())) if not trades.empty else []
     c1,c2=st.columns([1,2]); ns=c1.text_input("بحث"); sym=c2.selectbox("اختر", [ns]+syms if ns else syms) if syms or ns else None
-    # في views.py
-def view_analysis(fin):
-    # ... (نفس الكود السابق لاختيار السهم)
     if sym:
-        # ...
+        n, s = get_company_details(sym)
+        st.markdown(f"### {n} ({sym})")
+        t1,t2,t3,t4,t5 = st.tabs(["مؤشرات", "فني", "قوائم", "كلاسيكي", "أطروحة"])
+        with t1: d=get_fundamental_ratios(sym); st.metric("التقييم", f"{d['Score']}/10", d['Rating']); st.write(d.get('Opinions'))
+        with t2: render_technical_chart(sym)
+        with t3: render_financial_dashboard_ui(sym)
+        with t4: render_classical_analysis(sym)
+        with t5: th=get_thesis(sym); st.text_area("نص", value=th['thesis_text'] if th else ""
         with t1: render_financial_dashboard_ui(sym) # استدعاء النسخة الجديدة
         with t2: render_technical_chart(sym)        # استدعاء النسخة الجديدة
         with t4: render_classical_analysis(sym)     # استدعاء النسخة الجديدة
