@@ -2,66 +2,36 @@ import streamlit as st
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
+import pandas as pd
 from market_data import get_chart_history
 from config import DEFAULT_COLORS
 
 def render_technical_chart(symbol, period='1y', interval='1d'):
-    """عرض الشارت الفني مع المؤشرات"""
-    C = DEFAULT_COLORS
-    
-    # جلب البيانات
-    df = get_chart_history(symbol, period, interval)
-    if df is None or df.empty:
-        st.warning(f"لا توجد بيانات فنية متاحة للسهم {symbol}")
-        return
+    C = DEFAULT_COLORS; df = get_chart_history(symbol, period, interval)
+    if df is None or len(df) < 50: st.warning("بيانات غير كافية"); return
 
-    # الحسابات الفنية
-    df['MA20'] = df['Close'].rolling(20).mean()
-    df['MA50'] = df['Close'].rolling(50).mean()
+    df['MA20'] = df['Close'].rolling(20).mean(); df['MA50'] = df['Close'].rolling(50).mean()
     df['STD20'] = df['Close'].rolling(20).std()
-    df['BB_Upper'] = df['MA20'] + (df['STD20'] * 2)
-    df['BB_Lower'] = df['MA20'] - (df['STD20'] * 2)
+    df['BB_Upper'] = df['MA20'] + (df['STD20']*2); df['BB_Lower'] = df['MA20'] - (df['STD20']*2)
     
-    # RSI
-    delta = df['Close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(14).mean().replace(0, 1)
-    df['RSI'] = 100 - (100 / (1 + (gain/loss)))
+    # RSI Correct Formula
+    delta = df['Close'].diff(); gain = (delta.where(delta>0, 0)); loss = (-delta.where(delta<0, 0))
+    avg_gain = gain.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+    avg_loss = loss.ewm(alpha=1/14, min_periods=14, adjust=False).mean()
+    rs = avg_gain / avg_loss; df['RSI'] = 100 - (100 / (1 + rs))
 
     # MACD
-    ema12 = df['Close'].ewm(span=12).mean()
-    ema26 = df['Close'].ewm(span=26).mean()
-    df['MACD'] = ema12 - ema26
-    df['Signal'] = df['MACD'].ewm(span=9).mean()
-    
-    df.dropna(inplace=True)
+    e12 = df['Close'].ewm(span=12, adjust=False).mean(); e26 = df['Close'].ewm(span=26, adjust=False).mean()
+    df['MACD'] = e12 - e26; df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
+    df['Hist'] = df['MACD'] - df['Signal']; df.dropna(inplace=True)
 
-    # الرسم
-    fig = make_subplots(
-        rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.03, 
-        row_heights=[0.5, 0.15, 0.15, 0.2],
-        subplot_titles=("السعر", "الحجم", "RSI", "MACD")
-    )
-
-    # 1. السعر
-    fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='Price'), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df['BB_Upper'], line=dict(color='gray', width=1, dash='dot'), name='BB Up'), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df['BB_Lower'], line=dict(color='gray', width=1, dash='dot'), fill='tonexty', name='BB Low'), row=1, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df['MA50'], line=dict(color=C['primary'], width=1.5), name='MA50'), row=1, col=1)
-
-    # 2. الحجم
-    colors = np.where(df['Close'] >= df['Open'], C['success'], C['danger'])
-    fig.add_trace(go.Bar(x=df.index, y=df['Volume'], marker_color=colors, name='Volume'), row=2, col=1)
-
-    # 3. RSI
+    fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.03, row_heights=[0.5, 0.15, 0.15, 0.2])
+    fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='السعر'), row=1, col=1)
+    fig.add_trace(go.Scatter(x=df.index, y=df['MA50'], line=dict(color=C['primary']), name='MA50'), row=1, col=1)
+    fig.add_trace(go.Bar(x=df.index, y=df['Volume'], marker_color=np.where(df['Close']>=df['Open'], '#26A69A', '#EF5350'), name='V'), row=2, col=1)
     fig.add_trace(go.Scatter(x=df.index, y=df['RSI'], line=dict(color='purple'), name='RSI'), row=3, col=1)
-    fig.add_hline(y=70, line_dash="dot", line_color="red", row=3, col=1)
-    fig.add_hline(y=30, line_dash="dot", line_color="green", row=3, col=1)
-
-    # 4. MACD
-    fig.add_trace(go.Scatter(x=df.index, y=df['MACD'], line=dict(color='blue'), name='MACD'), row=4, col=1)
-    fig.add_trace(go.Scatter(x=df.index, y=df['Signal'], line=dict(color='orange'), name='Signal'), row=4, col=1)
-    fig.add_trace(go.Bar(x=df.index, y=df['MACD']-df['Signal'], marker_color='gray', name='Hist'), row=4, col=1)
-
-    fig.update_layout(height=800, xaxis_rangeslider_visible=False, paper_bgcolor=C['card_bg'], plot_bgcolor=C['card_bg'], font=dict(family="Cairo", color=C['main_text']), showlegend=False)
+    fig.add_hline(y=70, line_dash="dash", row=3, col=1); fig.add_hline(y=30, line_dash="dash", row=3, col=1)
+    fig.add_trace(go.Bar(x=df.index, y=df['Hist'], marker_color=np.where(df['Hist']>=0, '#26A69A', '#EF5350'), name='H'), row=4, col=1)
+    
+    fig.update_layout(height=800, xaxis_rangeslider_visible=False, showlegend=False, margin=dict(l=10,r=10,t=10,b=10))
     st.plotly_chart(fig, use_container_width=True)
