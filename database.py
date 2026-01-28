@@ -1,87 +1,146 @@
-import sqlite3
+import psycopg2
+from psycopg2 import pool
 import pandas as pd
 import streamlit as st
-import threading
+import bcrypt
+from contextlib import contextmanager
 
-# 🔒 قفل لمنع تضارب الكتابة في Streamlit (Multi-threading)
-DB_LOCK = threading.Lock()
-DB_NAME = "portfolio.db"
-
-def get_connection():
-    """إنشاء اتصال آمن يدعم العمليات المتعددة"""
-    conn = sqlite3.connect(DB_NAME, check_same_thread=False)
-    return conn
-
-def init_db():
-    """تهيئة الجداول مع ضمان وجود الأعمدة الضرورية"""
-    with DB_LOCK:
-        try:
-            conn = get_connection()
-            c = conn.cursor()
-            
-            # جدول الصفقات
-            c.execute('''
-                CREATE TABLE IF NOT EXISTS Trades (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    symbol TEXT NOT NULL,
-                    company_name TEXT,
-                    asset_type TEXT DEFAULT 'Stock',
-                    date TEXT,
-                    quantity REAL,
-                    entry_price REAL,
-                    total_cost REAL,
-                    current_price REAL,
-                    status TEXT DEFAULT 'Open',
-                    strategy TEXT,
-                    exit_price REAL DEFAULT 0,
-                    exit_date TEXT,
-                    notes TEXT
-                )
-            ''')
-            
-            # الجداول المالية
-            c.execute('''CREATE TABLE IF NOT EXISTS Deposits (id INTEGER PRIMARY KEY, date TEXT, amount REAL, note TEXT)''')
-            c.execute('''CREATE TABLE IF NOT EXISTS Withdrawals (id INTEGER PRIMARY KEY, date TEXT, amount REAL, note TEXT)''')
-            c.execute('''CREATE TABLE IF NOT EXISTS ReturnsGrants (id INTEGER PRIMARY KEY, date TEXT, symbol TEXT, amount REAL)''')
-            c.execute('''CREATE TABLE IF NOT EXISTS Watchlist (symbol TEXT PRIMARY KEY, target_price REAL, note TEXT)''')
-            
-            conn.commit()
-            conn.close()
-        except Exception as e:
-            st.error(f"فشل تهيئة قاعدة البيانات: {e}")
-
-def execute_query(query, params=None):
-    """تنفيذ استعلام آمن وتحويل Syntax PostgreSQL إلى SQLite"""
-    with DB_LOCK:
-        try:
-            conn = get_connection()
-            c = conn.cursor()
-            
-            # 🔧 التحويل السحري: %s -> ?
-            fixed_query = query.replace('%s', '?')
-            
-            if params:
-                c.execute(fixed_query, params)
-            else:
-                c.execute(fixed_query)
-                
-            conn.commit()
-            conn.close()
-            return True
-        except Exception as e:
-            st.error(f"خطأ قاعدة البيانات: {e}")
-            return False
-
-def fetch_table(table_name):
-    """جلب جدول كامل كـ DataFrame"""
+# 1. إعداد رابط قاعدة البيانات
+try:
+    # محاولة قراءة الرابط المباشر
+    DB_URL = st.secrets["DATABASE_URL"]
+except:
     try:
-        conn = get_connection()
-        # استخدام pandas مباشرة (آمن من SQL Injection لأننا نتحكم بالاسم بالكود)
-        df = pd.read_sql(f"SELECT * FROM {table_name}", conn)
-        conn.close()
-        return df
-    except Exception:
-        return pd.DataFrame()
+        # محاولة قراءة الرابط من قسم postgres
+        DB_URL = st.secrets["postgres"]["url"]
+    except:
+        DB_URL = ""
 
-# تشغيل التهيئة عند الاستيراد لضمان وجود الجداول
-init_db()
+# 2. إنشاء مسبح الاتصالات (Connection Pool)
+@st.cache_resource
+def get_connection_pool():
+    if not DB_URL:
+        return None
+    try:
+        # إنشاء مسبح اتصالات لزيادة الأداء
+        return psycopg2.pool.SimpleConnectionPool(1, 20, dsn=DB_URL, sslmode='require')
+    except Exception as e:
+        st.error(f"خطأ الاتصال بقاعدة البيانات: {e}")
+        return None
+
+# 3. إدارة الاتصال (Context Manager)
+@contextmanager
+def get_db():
+    pool_obj = get_connection_pool()
+    if not pool_obj:
+        yield None
+        return
+    
+    conn = None
+    try:
+        conn = pool_obj.getconn()
+        yield conn
+    except Exception as e:
+        # طباعة الخطأ في الكونسول للمطور
+        print(f"DB Connection Error: {e}")
+        yield None
+    finally:
+        if conn:
+            pool_obj.putconn(conn)
+
+# 4. تنفيذ الأوامر (INSERT, UPDATE, DELETE)
+def execute_query(query, params=()):
+    with get_db() as conn:
+        if conn:
+            try:
+                with conn.cursor() as cur:
+                    # تحويل ؟ إلى %s في حال تم تمرير كود SQLite بالخطأ
+                    fixed_query = query.replace('?', '%s')
+                    cur.execute(fixed_query, params)
+                    conn.commit()
+                    return True
+            except Exception as e:
+                conn.rollback()
+                st.error(f"Error executing query: {e}")
+                return False
+    return False
+
+# 5. جلب البيانات (SELECT)
+def fetch_table(table_name):
+    with get_db() as conn:
+        if conn:
+            try:
+                # PostgreSQL حساس لحالة الأحرف في أسماء الجداول إذا كانت بين علامات تنصيص
+                q = f'SELECT * FROM "{table_name}"'
+                return pd.read_sql(q, conn)
+            except:
+                try:
+                    # محاولة الحروف الصغيرة في حال فشل الأولى
+                    return pd.read_sql(f'SELECT * FROM {table_name.lower()}', conn)
+                except Exception as e:
+                    print(f"Fetch table error: {e}")
+                    pass
+    return pd.DataFrame()
+
+# 6. تهيئة الجداول
+def init_db():
+    tables = [
+        "CREATE TABLE IF NOT EXISTS Users (username VARCHAR(50) PRIMARY KEY, password TEXT, email TEXT)",
+        """CREATE TABLE IF NOT EXISTS Trades (
+            id SERIAL PRIMARY KEY, 
+            symbol VARCHAR(20), 
+            company_name TEXT, 
+            sector TEXT, 
+            asset_type VARCHAR(20), 
+            date DATE, 
+            quantity DOUBLE PRECISION, 
+            entry_price DOUBLE PRECISION, 
+            exit_price DOUBLE PRECISION DEFAULT 0, 
+            current_price DOUBLE PRECISION DEFAULT 0, 
+            strategy VARCHAR(20), 
+            status VARCHAR(10) DEFAULT 'Open',
+            exit_date DATE,
+            notes TEXT
+        )""",
+        "CREATE TABLE IF NOT EXISTS Deposits (id SERIAL PRIMARY KEY, date DATE, amount DOUBLE PRECISION, note TEXT)",
+        "CREATE TABLE IF NOT EXISTS Withdrawals (id SERIAL PRIMARY KEY, date DATE, amount DOUBLE PRECISION, note TEXT)",
+        "CREATE TABLE IF NOT EXISTS ReturnsGrants (id SERIAL PRIMARY KEY, date DATE, symbol VARCHAR(20), company_name TEXT, amount DOUBLE PRECISION, note TEXT)",
+        "CREATE TABLE IF NOT EXISTS Watchlist (symbol VARCHAR(20) PRIMARY KEY, target_price DOUBLE PRECISION, note TEXT)",
+        "CREATE TABLE IF NOT EXISTS FinancialStatements (symbol VARCHAR(20), date DATE, revenue DOUBLE PRECISION, net_income DOUBLE PRECISION, total_equity DOUBLE PRECISION, period_type VARCHAR(20), source VARCHAR(20), PRIMARY KEY(symbol, date, period_type))",
+        "CREATE TABLE IF NOT EXISTS InvestmentThesis (symbol VARCHAR(20) PRIMARY KEY, thesis_text TEXT, target_price DOUBLE PRECISION, recommendation VARCHAR(20), last_updated DATE)"
+    ]
+    
+    with get_db() as conn:
+        if conn:
+            try:
+                with conn.cursor() as cur:
+                    for t in tables:
+                        cur.execute(t)
+                    conn.commit()
+            except Exception as e:
+                conn.rollback()
+                st.error(f"Init DB Error: {e}")
+
+# 7. وظائف المستخدمين (Authentication)
+def db_create_user(u, p):
+    # تشفير كلمة المرور
+    h = bcrypt.hashpw(p.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+    return execute_query("INSERT INTO Users (username, password) VALUES (%s, %s)", (u, h))
+
+def db_verify_user(u, p):
+    with get_db() as conn:
+        if conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT password FROM Users WHERE username = %s", (u,))
+                    res = cur.fetchone()
+                    if res and res[0]:
+                        # التحقق من كلمة المرور
+                        return bcrypt.checkpw(p.encode('utf-8'), res[0].encode('utf-8'))
+            except Exception as e:
+                print(f"Auth Error: {e}")
+    return False
+
+# تشغيل التهيئة عند الاستيراد
+if DB_URL:
+    init_db()
