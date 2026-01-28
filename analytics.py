@@ -6,7 +6,9 @@ import streamlit as st
 
 @st.cache_data(ttl=60)
 def calculate_portfolio_metrics():
-    # الهيكل الافتراضي
+    """
+    حساب جميع مؤشرات المحفظة والكاش والأرباح بدقة محاسبية.
+    """
     default_res = {
         "cost_open": 0.0, "market_val_open": 0.0, "cash": 0.0, 
         "unrealized_pl": 0.0, "realized_pl": 0.0, 
@@ -16,12 +18,13 @@ def calculate_portfolio_metrics():
     }
 
     try:
+        # جلب البيانات
         trades = fetch_table("Trades")
         dep = fetch_table("Deposits")
         wit = fetch_table("Withdrawals")
         ret = fetch_table("ReturnsGrants")
 
-        # تنظيف البيانات المالية
+        # تنظيف البيانات (تحويل لـ numeric)
         for df in [dep, wit, ret]:
             if 'amount' not in df.columns: df['amount'] = 0.0
             else: df['amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(0.0)
@@ -45,11 +48,11 @@ def calculate_portfolio_metrics():
             
         if 'status' not in trades.columns: trades['status'] = 'Open'
         
-        # تحديد حالة الصفقة (مغلقة/مفتوحة)
-        is_closed = (trades['exit_price'] > 0) | (trades['status'].astype(str).str.lower().isin(['close', 'sold', 'مغلقة']))
+        # منطق الإغلاق الصارم: إذا يوجد سعر خروج، فهي مغلقة
+        is_closed = (trades['exit_price'] > 0)
         trades['status'] = np.where(is_closed, 'Close', 'Open')
         
-        # السعر الحالي للمغلقة هو سعر البيع
+        # للصفقات المغلقة، السعر الحالي هو سعر البيع (لتجميد الربح)
         trades.loc[is_closed, 'current_price'] = trades['exit_price']
 
         # الحسابات
@@ -61,26 +64,27 @@ def calculate_portfolio_metrics():
         trades['gain_pct'] = 0.0
         trades.loc[mask_cost, 'gain_pct'] = (trades.loc[mask_cost, 'gain'] / trades.loc[mask_cost, 'total_cost']) * 100
 
-        # المجاميع
+        # فصل البيانات
         open_trades = trades[trades['status'] == 'Open']
         closed_trades = trades[trades['status'] == 'Close']
 
         cost_open = open_trades['total_cost'].sum()
         market_val_open = open_trades['market_value'].sum()
         
-        # الربح المحقق = (قيمة البيع - تكلفة الشراء) للصفقات المغلقة
+        # الأرباح
+        unrealized_pl = market_val_open - cost_open
         realized_pl = closed_trades['market_value'].sum() - closed_trades['total_cost'].sum()
         
-        # الكاش = (إيداع + عوائد + مبيعات) - (سحب + مشتريات)
+        # معادلة الكاش الذهبية
         total_sales = closed_trades['market_value'].sum()
-        total_purchases = trades['total_cost'].sum() # كل الشراء (مفتوح ومغلق)
+        total_purchases = trades['total_cost'].sum()
         
         cash_simple = (total_dep + total_ret - total_wit) + total_sales - total_purchases
 
         return {
             "cost_open": cost_open, 
             "market_val_open": market_val_open,
-            "unrealized_pl": market_val_open - cost_open,
+            "unrealized_pl": unrealized_pl,
             "realized_pl": realized_pl,
             "cash": cash_simple,
             "total_deposited": total_dep, 
@@ -92,10 +96,8 @@ def calculate_portfolio_metrics():
             "returns": ret
         }
     except Exception as e:
-        print(f"Error in analytics: {e}")
+        print(f"Analytics Error: {e}")
         return default_res
-
-# analytics.py
 
 def update_prices():
     """تحديث أسعار السوق للأسهم المفتوحة"""
@@ -103,37 +105,33 @@ def update_prices():
         df = fetch_table("Trades")
         if df.empty: return False
         
-        # الرموز المفتوحة فقط
+        # الرموز المفتوحة فقط لتقليل الضغط
         open_symbols = df[df['status'] == 'Open']['symbol'].unique().tolist()
         if not open_symbols: return True
         
-        # جلب الأسعار
         live_data = fetch_batch_data(open_symbols)
         
-        count = 0
         for sym, data in live_data.items():
-            # ✅ الحل: تحويل القيمة من numpy إلى python native float
-            raw_price = data.get('price', 0)
-            price = float(raw_price) 
-            
+            # تحويل لـ float بايثون أصلي لتجنب مشاكل numpy في SQL
+            price = float(data.get('price', 0))
             if price > 0:
-                # تحديث السعر في قاعدة البيانات
                 query = "UPDATE Trades SET current_price = %s WHERE symbol = %s AND status = 'Open'"
                 execute_query(query, (price, sym))
-                count += 1
         return True
     except Exception as e: 
-        st.error(f"فشل التحديث: {e}") # عرض الخطأ للمتابعة
+        st.error(f"فشل التحديث: {e}")
         return False
-        
-def create_smart_backup(): pass # يمكن تنفيذها لاحقاً
 
 def generate_equity_curve(df):
+    """رسم تطور رأس المال المستثمر"""
     if df.empty: return pd.DataFrame()
-    # ترتيب حسب التاريخ وحساب التراكمي
-    df['date'] = pd.to_datetime(df['date'])
-    df = df.sort_values('date')
-    df['cumulative_invested'] = df['total_cost'].cumsum()
-    return df
-
-def calculate_historical_drawdown(df): return pd.DataFrame()
+    try:
+        curve_df = df.copy()
+        curve_df['date'] = pd.to_datetime(curve_df['date'], errors='coerce')
+        curve_df = curve_df.dropna(subset=['date']).sort_values('date')
+        if curve_df.empty: return pd.DataFrame()
+        
+        # التراكمي
+        curve_df['cumulative_invested'] = curve_df['total_cost'].cumsum()
+        return curve_df
+    except: return pd.DataFrame()
