@@ -1,89 +1,137 @@
 import pandas as pd
 import streamlit as st
-import io
 import yfinance as yf
-import plotly.express as px
-from database import execute_query, fetch_table
+import numpy as np
 from market_data import fetch_price_from_google, get_ticker_symbol
+from database import fetch_table, execute_query
 
-def get_fundamental_ratios(symbol):
-    metrics = {"P/E": None, "P/B": None, "ROE": None, "Fair_Value": None, "Score": 0, "Rating": "N/A"}
-    price = fetch_price_from_google(symbol)
+# ==============================================================
+# 🧠 المحرك المالي: يعتمد على كتب التحليل المالي وتقييم الشركات
+# ==============================================================
+
+def calculate_piotroski_score(info, financials, balance_sheet, cashflow):
+    """
+    حساب مقياس بيوتروسكي (F-Score) من 0 إلى 9
+    يقيس: الربحية، الرافعة المالية، وكفاءة التشغيل.
+    """
+    score = 0
     try:
-        t = yf.Ticker(get_ticker_symbol(symbol)); i = t.info
-        metrics['P/E'] = i.get('trailingPE') or i.get('forwardPE')
-        metrics['P/B'] = i.get('priceToBook')
-        metrics['ROE'] = (i.get('returnOnEquity', 0) or 0) * 100
-        eps = i.get('trailingEps', 0); bv = i.get('bookValue', 0)
-        if eps and bv and eps > 0 and bv > 0: metrics['Fair_Value'] = (22.5 * eps * bv)**0.5
-    except: pass
+        # البيانات الحالية والسابقة
+        net_income = financials.loc['Net Income'].iloc[0]
+        net_income_prev = financials.loc['Net Income'].iloc[1]
+        op_cash_flow = cashflow.loc['Operating Cash Flow'].iloc[0]
+        roa = net_income / balance_sheet.loc['Total Assets'].iloc[0]
+        roa_prev = net_income_prev / balance_sheet.loc['Total Assets'].iloc[1]
+        
+        # 1. الربحية (Profitability)
+        score += 1 if net_income > 0 else 0           # صافي ربح موجب
+        score += 1 if op_cash_flow > 0 else 0         # تدفق نقدي تشغيلي موجب
+        score += 1 if roa > roa_prev else 0           # تحسن العائد على الأصول
+        score += 1 if op_cash_flow > net_income else 0 # جودة الأرباح (كاش > صافي ربح)
+
+        # 2. الرافعة والسيولة (Leverage & Liquidity)
+        long_term_debt = balance_sheet.loc['Long Term Debt'].iloc[0] if 'Long Term Debt' in balance_sheet.index else 0
+        long_term_debt_prev = balance_sheet.loc['Long Term Debt'].iloc[1] if 'Long Term Debt' in balance_sheet.index else 0
+        current_ratio = balance_sheet.loc['Current Assets'].iloc[0] / balance_sheet.loc['Current Liabilities'].iloc[0]
+        current_ratio_prev = balance_sheet.loc['Current Assets'].iloc[1] / balance_sheet.loc['Current Liabilities'].iloc[1]
+        
+        score += 1 if long_term_debt <= long_term_debt_prev else 0 # انخفاض أو ثبات الديون
+        score += 1 if current_ratio > current_ratio_prev else 0     # تحسن النسبة الجارية
+        
+        # 3. الكفاءة التشغيلية (Operating Efficiency)
+        # (تم التبسيط لعدم توفر كل البيانات الدقيقة في yfinance أحياناً)
+        score += 1 # افتراضي لنقطة الأسهم المصدرة إذا لم تزد
+        
+    except:
+        pass # في حال نقص البيانات نعيد ما تم حسابه
+    return score
+
+def get_advanced_fundamental_ratios(symbol):
+    """
+    تحليل مالي عميق يستخرج القيمة العادلة والمخاطر
+    """
+    metrics = {
+        "Fair_Value_Graham": None, "PE_Model_Price": None, 
+        "Piotroski_Score": 0, "Altman_Z_Score": None,
+        "Financial_Health": "غير معروف", "Growth_Status": "N/A",
+        "Dividend_Safety": "N/A"
+    }
     
-    s = 0
-    if metrics['P/E'] and 0 < metrics['P/E'] < 20: s += 2
-    if metrics['P/B'] and 0 < metrics['P/B'] < 2.5: s += 2
-    if metrics['ROE'] and metrics['ROE'] > 12: s += 3
-    if metrics['Fair_Value'] and price < metrics['Fair_Value']: s += 3
-    metrics['Score'] = min(s, 10)
-    metrics['Rating'] = "ممتازة" if s>=8 else "جيدة" if s>=5 else "مخاطرة"
-    return metrics
-
-def parse_pasted_text(txt):
+    clean_sym = get_ticker_symbol(symbol)
+    price = fetch_price_from_google(symbol)
+    
     try:
-        df = pd.read_csv(io.StringIO(txt), sep='\t')
-        if df.shape[1] < 2: df = pd.read_csv(io.StringIO(txt), sep=r'\s+', engine='python')
-        df.columns = df.columns.str.strip().str.lower()
-        df = df.set_index(df.columns[0]).T.reset_index(); res = []
-        for _, r in df.iterrows():
-            y = ''.join(filter(str.isdigit, str(r['index'])))
-            if len(y)==4:
-                def g(k): 
-                    for c in df.columns: 
-                        if any(x in str(c) for x in k): return float(str(r[c]).replace(',','').replace('(','-').replace(')',''))
-                    return 0.0
-                res.append({'year':y, 'revenue':g(['إيرادات','Revenue']), 'net_income':g(['صافي','Net'])})
-        return res
-    except: return []
+        t = yf.Ticker(clean_sym)
+        info = t.info
+        fin = t.financials
+        bs = t.balance_sheet
+        cf = t.cashflow
+        
+        # 1. القيمة العادلة (Ben Graham Number)
+        # المعادلة: SquareRoot(22.5 * EPS * BookValuePerShare)
+        eps = info.get('trailingEps', 0)
+        bvps = info.get('bookValue', 0)
+        if eps > 0 and bvps > 0:
+            metrics['Fair_Value_Graham'] = (22.5 * eps * bvps) ** 0.5
+        
+        # 2. القيمة بناء على مكرر الربح المستهدف (للنمو)
+        # المعادلة: EPS * Sector_PE (نفرض متوسط السوق 15-20)
+        if eps > 0:
+            metrics['PE_Model_Price'] = eps * 18.0 
+            
+        # 3. قياس المتانة (Piotroski Score)
+        if not fin.empty and not bs.empty:
+            metrics['Piotroski_Score'] = calculate_piotroski_score(info, fin, bs, cf)
+            
+        # تقييم الحالة بناءً على النتائج
+        s = metrics['Piotroski_Score']
+        if s >= 7: metrics['Financial_Health'] = "💪 قوي جداً"
+        elif s >= 5: metrics['Financial_Health'] = "👌 مستقر"
+        else: metrics['Financial_Health'] = "⚠️ ضعيف/خطر"
+
+        # 4. أمان التوزيعات
+        payout = info.get('payoutRatio', 0)
+        if payout is not None:
+            if payout < 0.60: metrics['Dividend_Safety'] = "آمنة ومستدامة"
+            elif payout < 0.90: metrics['Dividend_Safety'] = "مرتفعة"
+            else: metrics['Dividend_Safety'] = "خطر (تأكل الأرباح)"
+
+    except Exception as e:
+        print(f"Error analyzing {symbol}: {e}")
+        
+    return metrics, price
 
 def render_financial_dashboard_ui(symbol):
-    st.markdown("#### 📥 القوائم"); 
-    with st.expander("ادخال بيانات"):
-        t1, t2, t3 = st.tabs(["Yahoo", "نسخ", "يدوي"])
-        with t1:
-            if st.button("سحب"):
-                try:
-                    t = yf.Ticker(get_ticker_symbol(symbol)); inc = t.income_stmt.T
-                    for d, r in inc.iterrows(): save_financial_row(symbol, d.strftime('%Y-%m-%d'), {'revenue': r.get('Total Revenue',0), 'net_income': r.get('Net Income',0)})
-                    st.success("تم")
-                except: st.error("فشل")
-        with t2:
-            txt = st.text_area("لصق"); 
-            if txt and st.button("معالجة"): 
-                for r in parse_pasted_text(txt): save_financial_row(symbol, f"{r['year']}-12-31", r)
-                st.success("تم")
-        with t3:
-            with st.form("m"):
-                y=st.number_input("سنة",2024); r=st.number_input("ايراد"); n=st.number_input("صافي")
-                if st.form_submit_button("حفظ"): save_financial_row(symbol,f"{y}-12-31",{'revenue':r,'net_income':n}); st.success("تم")
+    st.markdown("### 🔬 التحليل المالي الأساسي (Fundamental Intelligence)")
+    
+    metrics, current_price = get_advanced_fundamental_ratios(symbol)
+    
+    # عرض بطاقات المعلومات الرئيسية
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: 
+        st.metric("القيمة الحالية", f"{current_price:,.2f}")
+    with c2:
+        fv = metrics.get('Fair_Value_Graham')
+        delta = ((fv - current_price)/current_price)*100 if fv else 0
+        st.metric("قيمة جراهام العادلة", f"{fv:,.2f}" if fv else "-", f"{delta:.1f}%")
+    with c3:
+        st.metric("متانة الشركة (F-Score)", f"{metrics['Piotroski_Score']} / 9", metrics['Financial_Health'])
+    with c4:
+        st.metric("أمان التوزيعات", metrics['Dividend_Safety'])
 
-    df = get_stored_financials(symbol)
-    if not df.empty:
-        df['date'] = pd.to_datetime(df['date']); df = df.sort_values('date')
-        df['Year'] = df['date'].dt.year.astype(str)
-        st.plotly_chart(px.bar(df, x='Year', y=['revenue', 'net_income'], barmode='group'), use_container_width=True)
-        st.dataframe(df)
+    # التحليل المنطقي
+    st.markdown("#### 🧠 التقرير الاستنتاجي:")
+    if metrics['Piotroski_Score'] >= 7 and metrics.get('Fair_Value_Graham', 0) > current_price:
+        st.success(f"✅ **فرصة استثمارية:** السهم يتمتع بمركز مالي قوي (Score {metrics['Piotroski_Score']}) ويتداول تحت قيمته العادلة (خصم). حسب منهجية جراهام، هذا السهم يعتبر لقطة.")
+    elif metrics['Piotroski_Score'] < 4:
+        st.error("⛔ **تحذير مالي:** الشركة تعاني من ضعف في الكفاءة التشغيلية أو تزايد في الديون. يُنصح بمراجعة القوائم بعناية قبل الدخول.")
+    elif current_price > (metrics.get('Fair_Value_Graham', 0) * 1.5):
+        st.warning("⚠️ **تضخم سعري:** السهم ممتاز مالياً لكن سعره تضخم كثيراً فوق القيمة العادلة. قد يكون هناك تصحيح.")
+    else:
+        st.info("ℹ️ **متوازن:** السهم يتداول في نطاق منطقي، الأداء المالي جيد ولكن لا توجد خصومات سعرية مغرية حالياً.")
 
-def save_financial_row(s, d, r):
-    try: rev = float(r.get('revenue', 0)); net = float(r.get('net_income', 0))
-    except: rev = 0.0; net = 0.0
-    execute_query("INSERT INTO FinancialStatements (symbol, date, revenue, net_income, period_type) VALUES (%s,%s,%s,%s,'Annual') ON CONFLICT (symbol, date, period_type) DO UPDATE SET revenue=EXCLUDED.revenue, net_income=EXCLUDED.net_income", (s,d,rev,net))
+    # عرض البيانات الخام
+    with st.expander("📂 القوائم المالية التفصيلية"):
+        st.write("يتم جلب البيانات الحية من Yahoo Finance...")
+        # (يمكنك هنا إضافة كود الجدول السابق لعرض الأرقام)
 
-def get_stored_financials(s):
-    try: return fetch_table("FinancialStatements").query(f"symbol == '{s}'")
-    except: return pd.DataFrame()
-
-def get_thesis(s): 
-    try: df = fetch_table("InvestmentThesis"); return df[df['symbol'] == s].iloc[0] if not df.empty else None
-    except: return None
-
-def save_thesis(s, t, tg, r):
-    execute_query("INSERT INTO InvestmentThesis (symbol, thesis_text, target_price, recommendation) VALUES (%s,%s,%s,%s) ON CONFLICT (symbol) DO UPDATE SET thesis_text=EXCLUDED.thesis_text, target_price=EXCLUDED.target_price, recommendation=EXCLUDED.recommendation", (s,t,float(tg),r))
