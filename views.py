@@ -302,9 +302,12 @@ def view_sukuk_portfolio(fin):
             if st.button("➕ إضافة صك", use_container_width=True, type="primary"):
                 st.session_state.page = 'add'; st.rerun()
 
-        if not op.empty:
+                if not op.empty:
             op['company_name'] = op['company_name'].fillna(op['symbol'])
             op['months_held'] = ((pd.to_datetime(date.today()) - pd.to_datetime(op['date'])).dt.days / 30).astype(int)
+            
+            # ✅ التعديل 1: نسخ سعر الشراء ليصبح هو السعر الحالي
+            op['current_price'] = op['entry_price'] 
             
             c_sort, _ = st.columns([1, 3])
             sort_by = c_sort.selectbox("فرز الصكوك حسب:", ["التاريخ (الأحدث)", "القيمة (الأعلى)", "الاسم"], key="sort_sukuk")
@@ -315,12 +318,16 @@ def view_sukuk_portfolio(fin):
 
             cols = [
                 ('company_name', 'اسم الصك', 'text'), 
-                ('quantity', 'عدد الصكوك', 'text'),  
-                ('entry_price', 'قيمة الصك الواحد', 'money'),
+                ('quantity', 'العدد', 'text'),  
+                ('entry_price', 'التكلفة (للوحدة)', 'money'),   # سعر الشراء
+                ('current_price', 'السعر الحالي', 'money'),    # ✅ التعديل 2: إضافة العمود الجديد هنا
                 ('total_cost', 'الاجمالي', 'money'),
                 ('months_held', 'المده (شهر)', 'text')
             ]
             render_custom_table(op, cols)
+            
+            # ... (باقي كود الأزرار والإجراءات كما هو دون تغيير) ...
+
             
             c_act1, c_act2 = st.columns(2)
             with c_act1:
