@@ -258,6 +258,37 @@ def view_portfolio(fin, key):
         else:
             st.info("لا توجد صفقات قائمة حالياً")
 
+                  # قسم 2: تعديل صفقة (الجديد لتصحيح الخطأ) ✅
+            with st.expander("✏️ تعديل بيانات صفقة (تصحيح خطأ)"):
+                # ننشئ قائمة لسهولة اختيار الصفقة بناء على الرمز والتاريخ
+                if 'id' in op.columns:
+                    # ماب لربط النص برقم المعرف
+                    edit_map = {f"{row['symbol']} - {row['date']} (الكمية: {row['quantity']})": row['id'] for i, row in op.iterrows()}
+                    
+                    sel_label = st.selectbox("اختر الصفقة التي بها خطأ:", list(edit_map.keys()), key=f"edit_sel_{key}")
+                    
+                    if sel_label:
+                        trade_id = edit_map[sel_label]
+                        # جلب بيانات الصفقة الحالية لعرضها
+                        current_data = op[op['id'] == trade_id].iloc[0]
+                        
+                        with st.form(f"edit_form_{trade_id}"):
+                            st.write(f"تعديل: **{current_data['company_name']}**")
+                            c_e1, c_e2, c_e3 = st.columns(3)
+                            new_qty = c_e1.number_input("الكمية الصحيحة", value=float(current_data['quantity']))
+                            new_price = c_e2.number_input("السعر الصحيح", value=float(current_data['entry_price']))
+                            new_date = c_e3.date_input("التاريخ الصحيح", pd.to_datetime(current_data['date']))
+                            
+                            if st.form_submit_button("حفظ التعديلات"):
+                                execute_query(
+                                    "UPDATE Trades SET quantity=%s, entry_price=%s, date=%s WHERE id=%s",
+                                    (new_qty, new_price, str(new_date), trade_id)
+                                )
+                                st.success("تم تصحيح الصفقة بنجاح")
+                                st.rerun()
+                else:
+                    st.error("عفواً، لا يمكن التعديل حالياً (معرف الصفقة غير متوفر)")
+
     # --- تبويب الأرشيف ---
     with t2:
         total_cost = cl['total_cost'].sum() if not cl.empty else 0
