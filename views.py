@@ -12,24 +12,19 @@ from backtester import run_backtest
 from financial_analysis import render_financial_dashboard_ui, get_fundamental_ratios, get_thesis, save_thesis
 from classical_analysis import render_classical_analysis
 
-# --- 1. Navigation Bar (القائمة المنسدلة) ---
+# --- 1. Navigation Bar ---
 def render_navbar():
-    # تقسيم الشريط العلوي إلى 10 أعمدة
     c1, c2, c3, c4, c5, c6, c7, c8, c9, c10 = st.columns(10)
     buttons = [
         ('🏠 الرئيسية','home'), ('⚡ مضاربة','spec'), ('💎 استثمار','invest'), 
         ('💓 نبض','pulse'), ('📜 صكوك','sukuk'), ('🔍 تحليل','analysis'), 
         ('🧪 المختبر','backtest'), ('💰 السيولة','cash'), ('🔄 تحديث','update')
     ]
-    
-    # رسم أزرار التنقل
     for i, (label, key) in enumerate(buttons):
         with [c1,c2,c3,c4,c5,c6,c7,c8,c9][i]:
             if st.button(label, use_container_width=True): 
                 st.session_state.page = key
                 st.rerun()
-    
-    # القائمة المنسدلة (في الزاوية اليسرى)
     with c10:
         with st.popover("👤 القائمة"):
             st.write(f"مرحباً {st.session_state.get('username','User')}")
@@ -88,9 +83,8 @@ def view_dashboard(fin):
         closed_pl = fin['realized_pl']
         closed_sales = closed_df['market_value'].sum()
         closed_pct = (closed_pl / closed_cost * 100) if closed_cost != 0 else 0.0
-        closed_count = len(closed_df)
     else:
-        closed_cost = closed_pl = closed_sales = closed_pct = closed_count = 0
+        closed_cost = closed_pl = closed_sales = closed_pct = 0
 
     st.markdown("##### 📜 ملخص الصفقات المنفذة (Executed)")
     x1, x2, x3, x4 = st.columns(4)
@@ -103,16 +97,11 @@ def view_dashboard(fin):
 
     if not df.empty:
         open_trades = df[df['status'] == 'Open']
-        
         invest_val = open_trades[open_trades['strategy'].astype(str).str.contains('استثمار')]['market_value'].sum()
         spec_val = open_trades[open_trades['strategy'].astype(str).str.contains('مضاربة')]['market_value'].sum()
         sukuk_val = open_trades[open_trades['asset_type'] == 'Sukuk']['market_value'].sum()
         cash_val = fin['cash']
-        
-        alloc_df = pd.DataFrame({
-            'Asset': ['استثمار', 'مضاربة', 'صكوك', 'كاش'],
-            'Value': [invest_val, spec_val, sukuk_val, cash_val]
-        })
+        alloc_df = pd.DataFrame({'Asset': ['استثمار', 'مضاربة', 'صكوك', 'كاش'], 'Value': [invest_val, spec_val, sukuk_val, cash_val]})
         alloc_df = alloc_df[alloc_df['Value'] > 0]
         
         col_chart1, col_chart2 = st.columns(2)
@@ -133,16 +122,14 @@ def view_dashboard(fin):
                 fig3.update_layout(margin=dict(t=0, b=0, l=0, r=0), height=250, yaxis_title="القيمة التراكمية")
                 st.plotly_chart(fig3, use_container_width=True)
             else: st.info("لا توجد بيانات تاريخية")
-            
     else:
-        st.info("👋 مرحباً بك! ابدأ بإضافة صفقات أو رصيد لتفعيل لوحة القيادة.")
+        st.info("👋 مرحباً بك! ابدأ بإضافة صفقات.")
 
-# --- 3. Portfolio View (الكلاسيكي + زر إضافة) ---
+# --- 3. Portfolio View ---
 def view_portfolio(fin, key):
     ts = "مضاربة" if key == 'spec' else "استثمار"
     st.header(f"💼 محفظة {ts}")
     
-    # CSS للجدول العريض
     st.markdown("""
         <style>
         .finance-table td, .finance-table th {
@@ -155,7 +142,7 @@ def view_portfolio(fin, key):
     
     df = fin['all_trades']
     if df.empty:
-        sub = pd.DataFrame(columns=['status', 'total_cost', 'market_value', 'gain', 'symbol', 'date'])
+        sub = pd.DataFrame(columns=['status', 'total_cost', 'market_value', 'gain', 'symbol', 'date', 'id'])
     else:
         sub = df[df['strategy'].astype(str).str.contains(ts, na=False)].copy()
     
@@ -164,7 +151,6 @@ def view_portfolio(fin, key):
     
     t1, t2 = st.tabs(["الصفقات القائمة", "الأرشيف"])
     
-    # --- تبويب القائمة ---
     with t1:
         total_cost = op['total_cost'].sum() if not op.empty else 0
         total_market = op['market_value'].sum() if not op.empty else 0
@@ -179,31 +165,26 @@ def view_portfolio(fin, key):
         
         st.markdown("---")
         
-        # ✅ زر إضافة سهم (تم إصلاح المسافة البادئة)
+        # زر إضافة سهم (فوق الجدول)
         c_add, _ = st.columns([1, 4])
         with c_add:
             if st.button("➕ إضافة سهم", use_container_width=True, type="primary"):
                 st.session_state.page = 'add'; st.rerun()
         
         if not op.empty:
-            # تحضير البيانات
             from market_data import fetch_batch_data
             from data_source import get_company_details
             
             live_data = fetch_batch_data(op['symbol'].unique().tolist())
-            
             op['sector'] = op['symbol'].apply(lambda x: get_company_details(x)[1])
             op['status_ar'] = "مفتوحة"
             op['exit_date_display'] = "-"
-            
             op['prev_close'] = op['symbol'].apply(lambda x: live_data.get(x, {}).get('prev_close', 0))
             op['year_high'] = op['symbol'].apply(lambda x: live_data.get(x, {}).get('year_high', 0))
             op['year_low'] = op['symbol'].apply(lambda x: live_data.get(x, {}).get('year_low', 0))
-            
             op['day_change'] = ((op['current_price'] - op['prev_close']) / op['prev_close'] * 100).fillna(0)
             op['weight'] = (op['market_value'] / total_market * 100).fillna(0)
 
-            # الفرز
             c_sort, _ = st.columns([1, 3])
             sort_options = [
                 "الرمز", "الشركة", "القطاع", "تاريخ الشراء", "الكمية", 
@@ -221,89 +202,65 @@ def view_portfolio(fin, key):
             elif sort_by == "التكلفة": op = op.sort_values(by='total_cost', ascending=False)
             else: op = op.sort_values(by='date', ascending=False)
             
-            # الأعمدة
             cols = [
-                ('company_name', 'اسم الشركة', 'text'),
-                ('sector', 'القطاع', 'text'),
-                ('status_ar', 'الحالة', 'badge'),
-                ('symbol', 'رمز الشركة', 'text'),
-                ('date', 'تاريخ الشراء', 'date'),
-                ('exit_date_display', 'تاريخ البيع', 'text'),
-                ('quantity', 'الكمية', 'money'),
-                ('entry_price', 'سعر الشراء', 'money'),
-                ('total_cost', 'التكلفة', 'money'),
-                ('year_high', 'اعلى سنوي', 'money'),
-                ('current_price', 'السعر الحالي', 'money'),
-                ('year_low', 'ادنى سنوي', 'money'),
-                ('market_value', 'سعر السوق', 'money'),
-                ('gain', 'الربح والخسارة', 'colorful'),
-                ('gain_pct', 'نسبة الربح والخسارة', 'percent'),
-                ('weight', 'وزن السهم', 'percent'),
-                ('day_change', 'نسبة التغير اليومي', 'percent'),
-                ('prev_close', 'اغلاق الامس', 'money')
+                ('company_name', 'اسم الشركة', 'text'), ('sector', 'القطاع', 'text'),
+                ('status_ar', 'الحالة', 'badge'), ('symbol', 'رمز الشركة', 'text'),
+                ('date', 'تاريخ الشراء', 'date'), ('exit_date_display', 'تاريخ البيع', 'text'),
+                ('quantity', 'الكمية', 'money'), ('entry_price', 'سعر الشراء', 'money'),
+                ('total_cost', 'التكلفة', 'money'), ('year_high', 'اعلى سنوي', 'money'),
+                ('current_price', 'السعر الحالي', 'money'), ('year_low', 'ادنى سنوي', 'money'),
+                ('market_value', 'سعر السوق', 'money'), ('gain', 'الربح والخسارة', 'colorful'),
+                ('gain_pct', 'نسبة الربح والخسارة', 'percent'), ('weight', 'وزن السهم', 'percent'),
+                ('day_change', 'نسبة التغير اليومي', 'percent'), ('prev_close', 'اغلاق الامس', 'money')
             ]
             
-            # رسم الجدول الكلاسيكي
             render_custom_table(op, cols)
             
-            # فورم البيع الكلاسيكي
-            with st.expander("🔴 تسجيل بيع"):
-                with st.form(f"s_{key}"):
-                    s = st.selectbox("سهم", op['symbol'].unique())
-                    p = st.number_input("سعر البيع")
-                    d = st.date_input("تاريخ")
-                    if st.form_submit_button("تأكيد"):
-                        execute_query("UPDATE Trades SET status='Close', exit_price=%s, exit_date=%s WHERE symbol=%s AND strategy=%s AND status='Open'", (p, str(d), s, ts))
-                        st.rerun()
+            # --- قسم الإجراءات (بيع + تعديل) ---
+            c_act1, c_act2 = st.columns(2)
+            
+            with c_act1:
+                with st.expander("🔴 تسجيل بيع / إغلاق"):
+                    with st.form(f"s_{key}"):
+                        s = st.selectbox("سهم", op['symbol'].unique())
+                        p = st.number_input("سعر البيع")
+                        d = st.date_input("تاريخ")
+                        if st.form_submit_button("تأكيد"):
+                            execute_query("UPDATE Trades SET status='Close', exit_price=%s, exit_date=%s WHERE symbol=%s AND strategy=%s AND status='Open'", (p, str(d), s, ts))
+                            st.rerun()
+            
+            # ✅ كود التعديل الذي كان ناقصاً
+            with c_act2:
+                with st.expander("✏️ تعديل صفقة (تصحيح خطأ)"):
+                    if 'id' in op.columns:
+                        edit_map = {f"{row['symbol']} - {row['date']} (الكمية: {row['quantity']})": row['id'] for i, row in op.iterrows()}
+                        sel_label = st.selectbox("اختر الصفقة للتعديل:", list(edit_map.keys()), key=f"edit_sel_{key}")
+                        
+                        if sel_label:
+                            trade_id = edit_map[sel_label]
+                            current_data = op[op['id'] == trade_id].iloc[0]
+                            
+                            with st.form(f"edit_form_{trade_id}"):
+                                st.caption(f"تعديل: {current_data['company_name']}")
+                                c_e1, c_e2, c_e3 = st.columns(3)
+                                new_qty = c_e1.number_input("الكمية الصحيحة", value=float(current_data['quantity']))
+                                new_price = c_e2.number_input("سعر الشراء الصحيح", value=float(current_data['entry_price']))
+                                new_date = c_e3.date_input("تاريخ الشراء الصحيح", pd.to_datetime(current_data['date']))
+                                
+                                if st.form_submit_button("حفظ التعديلات"):
+                                    execute_query(
+                                        "UPDATE Trades SET quantity=%s, entry_price=%s, date=%s WHERE id=%s",
+                                        (new_qty, new_price, str(new_date), trade_id)
+                                    )
+                                    st.success("تم التعديل!")
+                                    st.rerun()
+                    else:
+                        st.error("لا يمكن التعديل: معرف الصفقة مفقود")
+
         else:
             st.info("لا توجد صفقات قائمة حالياً")
 
-                  # قسم 2: تعديل صفقة (الجديد لتصحيح الخطأ) ✅
-            with st.expander("✏️ تعديل بيانات صفقة (تصحيح خطأ)"):
-                # ننشئ قائمة لسهولة اختيار الصفقة بناء على الرمز والتاريخ
-                if 'id' in op.columns:
-                    # ماب لربط النص برقم المعرف
-                    edit_map = {f"{row['symbol']} - {row['date']} (الكمية: {row['quantity']})": row['id'] for i, row in op.iterrows()}
-                    
-                    sel_label = st.selectbox("اختر الصفقة التي بها خطأ:", list(edit_map.keys()), key=f"edit_sel_{key}")
-                    
-                    if sel_label:
-                        trade_id = edit_map[sel_label]
-                        # جلب بيانات الصفقة الحالية لعرضها
-                        current_data = op[op['id'] == trade_id].iloc[0]
-                        
-                        with st.form(f"edit_form_{trade_id}"):
-                            st.write(f"تعديل: **{current_data['company_name']}**")
-                            c_e1, c_e2, c_e3 = st.columns(3)
-                            new_qty = c_e1.number_input("الكمية الصحيحة", value=float(current_data['quantity']))
-                            new_price = c_e2.number_input("السعر الصحيح", value=float(current_data['entry_price']))
-                            new_date = c_e3.date_input("التاريخ الصحيح", pd.to_datetime(current_data['date']))
-                            
-                            if st.form_submit_button("حفظ التعديلات"):
-                                execute_query(
-                                    "UPDATE Trades SET quantity=%s, entry_price=%s, date=%s WHERE id=%s",
-                                    (new_qty, new_price, str(new_date), trade_id)
-                                )
-                                st.success("تم تصحيح الصفقة بنجاح")
-                                st.rerun()
-                else:
-                    st.error("عفواً، لا يمكن التعديل حالياً (معرف الصفقة غير متوفر)")
-
-    # --- تبويب الأرشيف ---
     with t2:
-        total_cost = cl['total_cost'].sum() if not cl.empty else 0
-        total_exit = cl['market_value'].sum() if not cl.empty else 0
-        total_gain = cl['gain'].sum() if not cl.empty else 0
-        total_pct = (total_gain / total_cost * 100) if total_cost != 0 else 0.0
-        
-        k1, k2, k3, k4 = st.columns(4)
-        with k1: render_kpi("إجمالي التكلفة", safe_fmt(total_cost), "neutral", "📜")
-        with k2: render_kpi("قيمة البيع", safe_fmt(total_exit), "blue", "💵")
-        with k3: render_kpi("الربح المحقق", safe_fmt(total_gain), "success" if total_gain >= 0 else "danger", "✅")
-        with k4: render_kpi("النسبة %", f"{total_pct:.2f}%", "success" if total_pct >= 0 else "danger", "٪")
-        
-        st.markdown("---")
-
         if not cl.empty:
             c_sort, _ = st.columns([1, 3])
             sort_by = c_sort.selectbox(f"فرز {ts} (أرشيف) حسب:", ["التاريخ (الأحدث)", "الربح (الأعلى)", "قيمة البيع (الأعلى)"], key=f"sort_cl_{key}")
@@ -323,7 +280,7 @@ def view_sukuk_portfolio(fin):
     st.header("📜 محفظة الصكوك")
     df = fin['all_trades']
     
-    if df.empty: sukuk = pd.DataFrame(columns=['asset_type', 'total_cost', 'market_value', 'gain', 'date'])
+    if df.empty: sukuk = pd.DataFrame(columns=['asset_type', 'total_cost', 'market_value', 'gain', 'date', 'id'])
     else: sukuk = df[df['asset_type'] == 'Sukuk'].copy()
     
     total_cost = sukuk['total_cost'].sum() if not sukuk.empty else 0
@@ -355,9 +312,8 @@ def view_sukuk_portfolio(fin):
         render_custom_table(sukuk, [('symbol', 'رمز', 'text'), ('company_name', 'اسم الصك', 'text'), 
                                     ('quantity', 'القيمة الاسمية', 'money'), ('current_price', 'السعر الحالي', 'money'),
                                     ('gain', 'الربح', 'colorful')])
-    else:
-        st.info("لا توجد صكوك مضافة")
-           # ميزة تعديل الصكوك (لتصحيح الخطأ) ✅
+        
+        # ميزة تعديل الصكوك
         with st.expander("✏️ تعديل بيانات صك (تصحيح خطأ)"):
             if 'id' in sukuk.columns:
                 edit_map_s = {f"{row['company_name']} ({row['symbol']})": row['id'] for i, row in sukuk.iterrows()}
@@ -382,6 +338,8 @@ def view_sukuk_portfolio(fin):
                             st.rerun()
             else:
                 st.info("لا يمكن التعديل")
+    else:
+        st.info("لا توجد صكوك مضافة")
 
 # --- 5. Cash Log View ---
 def view_cash_log():
