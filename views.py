@@ -602,8 +602,7 @@ def view_add_trade():
             st.success(f"تمت إضافة {nm}"); st.cache_data.clear()
 
 def view_tools(): st.header("🛠️ أدوات"); st.info("الزكاة")
-def view_settings(): st.header("⚙️ إعدادات"); st.info("الاستيراد")
-# مثال لإضافة الزر في الإعدادات
+def view_settings(): # مثال لإضافة الزر في الإعدادات
 from analytics import create_smart_backup
 
 if st.button("💾 إنشاء نسخة احتياطية الآن"):
@@ -614,7 +613,8 @@ if st.button("💾 إنشاء نسخة احتياطية الآن"):
             data=file_data,
             file_name=file_name,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+        ) 
+st.header("⚙️ إعدادات"); st.info("الاستيراد")
 
 def router():
     if 'page' not in st.session_state:
