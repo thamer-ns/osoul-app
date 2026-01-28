@@ -276,19 +276,26 @@ def view_portfolio(fin, key):
             st.info("الأرشيف فارغ")
 
 # --- 4. Sukuk View ---
-# --- 4. Sukuk View (معدلة لعرض العدد والقيمة بشكل صحيح) ---
+# ---------------------------------------------------------
+# استبدل دالة view_sukuk_portfolio بهذا الكود المعدل
+# ---------------------------------------------------------
 def view_sukuk_portfolio(fin):
     st.header("📜 محفظة الصكوك")
     df = fin['all_trades']
     
-    if df.empty: sukuk = pd.DataFrame(columns=['asset_type', 'total_cost', 'market_value', 'gain', 'date', 'id'])
-    else: sukuk = df[df['asset_type'] == 'Sukuk'].copy()
+    # التأكد من وجود البيانات أو إنشاء إطار فارغ
+    if df.empty: 
+        sukuk = pd.DataFrame(columns=['asset_type', 'total_cost', 'market_value', 'gain', 'date', 'id', 'quantity', 'entry_price'])
+    else: 
+        sukuk = df[df['asset_type'] == 'Sukuk'].copy()
     
+    # حساب الملخصات العلوية
     total_cost = sukuk['total_cost'].sum() if not sukuk.empty else 0
     total_market = sukuk['market_value'].sum() if not sukuk.empty else 0
     total_gain = sukuk['gain'].sum() if not sukuk.empty else 0
     total_pct = (total_gain / total_cost * 100) if total_cost != 0 else 0.0
     
+    # عرض البطاقات (KPIs)
     k1, k2, k3, k4 = st.columns(4)
     with k1: render_kpi("إجمالي الاستثمار", safe_fmt(total_cost), "neutral", "🕌")
     with k2: render_kpi("القيمة الحالية", safe_fmt(total_market), "blue", "📊")
@@ -297,62 +304,104 @@ def view_sukuk_portfolio(fin):
     
     st.markdown("---")
     
+    # زر الإضافة
     c_add, _ = st.columns([1, 4])
     with c_add:
         if st.button("➕ إضافة صك", use_container_width=True, type="primary"):
             st.session_state.page = 'add'; st.rerun()
 
     if not sukuk.empty:
-        # حساب القيمة الاسمية الإجمالية (العدد * 1000) للتوضيح
-        # نفترض أن القيمة الاسمية للصك الواحد 1000 ريال دائماً
-        sukuk['nominal_total'] = sukuk['quantity'] * 1000
-
-        c_sort, _ = st.columns([1, 3])
-        sort_by = c_sort.selectbox("فرز الصكوك حسب:", ["التاريخ (الأحدث)", "القيمة (الأعلى)", "الربح (الأعلى)"], key="sort_sukuk")
+        # 1. حساب المدة بالشهور (من تاريخ الشراء لليوم)
+        sukuk['months_held'] = ((pd.to_datetime(date.today()) - pd.to_datetime(sukuk['date'])).dt.days / 30).astype(int)
         
-        if "القيمة" in sort_by: sukuk = sukuk.sort_values(by='market_value', ascending=False)
-        elif "الربح" in sort_by: sukuk = sukuk.sort_values(by='gain', ascending=False)
+        # 2. الفرز
+        c_sort, _ = st.columns([1, 3])
+        sort_by = c_sort.selectbox("فرز الصكوك حسب:", ["التاريخ (الأحدث)", "القيمة (الأعلى)", "الاسم"], key="sort_sukuk")
+        
+        if "القيمة" in sort_by: sukuk = sukuk.sort_values(by='total_cost', ascending=False)
+        elif "الاسم" in sort_by: sukuk = sukuk.sort_values(by='company_name')
         else: sukuk = sukuk.sort_values(by='date', ascending=False)
 
-        # ✅ تحديث الأعمدة: فصلنا العدد عن القيمة الاسمية
+        # 3. تعريف الأعمدة حسب طلبك الجديد
+        # (اسم الصك، العدد، القيمة الاسمية للواحد، الاجمالي، المدة)
         cols = [
-            ('symbol', 'الرمز', 'text'), 
             ('company_name', 'اسم الصك', 'text'), 
-            ('quantity', 'العدد', 'text'),  # يظهر العدد الفعلي (مثلاً 1)
-            ('nominal_total', 'القيمة الاسمية', 'money'), # يظهر القيمة (مثلاً 1000)
-            ('current_price', 'السعر السوقي', 'money'),
-            ('gain', 'الربح', 'colorful')
+            ('quantity', 'عدد الصكوك', 'text'),  
+            ('entry_price', 'قيمة الصك الواحد', 'money'), # القيمة الاسمية
+            ('total_cost', 'الاجمالي', 'money'),
+            ('months_held', 'المده (شهر)', 'text')
         ]
         render_custom_table(sukuk, cols)
         
-        # ميزة تعديل الصكوك
-        with st.expander("✏️ تعديل بيانات صك (تصحيح خطأ)"):
-            if 'id' in sukuk.columns:
-                edit_map_s = {f"{row['company_name']} ({row['symbol']})": row['id'] for i, row in sukuk.iterrows()}
-                sel_label_s = st.selectbox("اختر الصك:", list(edit_map_s.keys()), key="edit_sel_sukuk")
+        # --- قسم الإجراءات (بيع وتعديل) ---
+        c_act1, c_act2 = st.columns(2)
+        
+        # أ: تسجيل بيع (تصفية الصك)
+        with c_act1:
+            with st.expander("💰 بيع / تصفية صك"):
+                # نستخدم المعرف ID لضمان الدقة
+                sell_opts = {f"{row['company_name']} (العدد: {row['quantity']})": row['id'] for i, row in sukuk.iterrows()}
+                sel_sell_id = st.selectbox("اختر الصك للبيع:", list(sell_opts.keys()), key="sell_sukuk_sel")
                 
-                if sel_label_s:
-                    sukuk_id = edit_map_s[sel_label_s]
-                    curr_s = sukuk[sukuk['id'] == sukuk_id].iloc[0]
+                if sel_sell_id:
+                    tid_sell = sell_opts[sel_sell_id]
+                    curr_sell = sukuk[sukuk['id'] == tid_sell].iloc[0]
                     
-                    with st.form(f"edit_form_s_{sukuk_id}"):
-                        c_s1, c_s2 = st.columns(2)
-                        # هنا نعدل "العدد" وليس القيمة
-                        n_qty = c_s1.number_input("العدد الصحيح", value=float(curr_s['quantity']), step=1.0)
-                        n_prc = c_s2.number_input("سعر الشراء", value=float(curr_s['entry_price']))
-                        n_date = st.date_input("تاريخ الشراء", pd.to_datetime(curr_s['date']))
+                    with st.form(f"sell_form_s_{tid_sell}"):
+                        st.write(f"تصفية: **{curr_sell['company_name']}**")
+                        # طلبك: تسجيل المبلغ الاجمالي بالعائد
+                        total_exit_amount = st.number_input("المبلغ المستلم كاملاً (رأس المال + العائد)", 
+                                                          min_value=0.0, step=100.0)
+                        exit_date = st.date_input("تاريخ البيع/الاستحقاق", date.today())
                         
-                        if st.form_submit_button("حفظ التصحيح"):
-                            execute_query(
-                                "UPDATE Trades SET quantity=%s, entry_price=%s, date=%s WHERE id=%s",
-                                (n_qty, n_prc, str(n_date), sukuk_id)
-                            )
-                            st.success("تم التعديل")
-                            st.rerun()
-            else:
-                st.info("لا يمكن التعديل حالياً")
+                        if st.form_submit_button("تأكيد البيع"):
+                            # نحسب سعر الخروج للوحدة ليتم تخزينه في قاعدة البيانات
+                            # سعر الخروج = المبلغ الاجمالي / العدد
+                            qty = float(curr_sell['quantity'])
+                            if qty > 0:
+                                unit_exit_price = total_exit_amount / qty
+                                execute_query(
+                                    "UPDATE Trades SET status='Close', exit_price=%s, exit_date=%s WHERE id=%s",
+                                    (unit_exit_price, str(exit_date), tid_sell)
+                                )
+                                st.success("تم تسجيل البيع وحفظ العائد بنجاح")
+                                st.cache_data.clear() # مسح الكاش للتحديث
+                                st.rerun()
+                            else:
+                                st.error("خطأ: الكمية صفر")
+
+        # ب: تعديل بيانات (تصحيح خطأ)
+        with c_act2:
+            with st.expander("✏️ تعديل بيانات صك (تصحيح)"):
+                if 'id' in sukuk.columns:
+                    # القائمة تعتمد على ID لضمان تعديل الصفقة الصحيحة
+                    edit_map_s = {f"{row['company_name']} - {row['date']}": row['id'] for i, row in sukuk.iterrows()}
+                    sel_label_s = st.selectbox("اختر الصك للتعديل:", list(edit_map_s.keys()), key="edit_sel_sukuk")
+                    
+                    if sel_label_s:
+                        sukuk_id = edit_map_s[sel_label_s]
+                        curr_s = sukuk[sukuk['id'] == sukuk_id].iloc[0]
+                        
+                        with st.form(f"edit_form_s_{sukuk_id}"):
+                            st.caption("أدخل البيانات الصحيحة:")
+                            c_s1, c_s2 = st.columns(2)
+                            n_qty = c_s1.number_input("عدد الصكوك", value=float(curr_s['quantity']), step=1.0)
+                            n_prc = c_s2.number_input("قيمة الصك الواحد", value=float(curr_s['entry_price']), step=100.0)
+                            n_date = st.date_input("تاريخ الشراء", pd.to_datetime(curr_s['date']))
+                            
+                            if st.form_submit_button("حفظ التصحيح"):
+                                execute_query(
+                                    "UPDATE Trades SET quantity=%s, entry_price=%s, date=%s WHERE id=%s",
+                                    (n_qty, n_prc, str(n_date), sukuk_id)
+                                )
+                                st.success("تم تعديل البيانات")
+                                st.cache_data.clear() # مهم جداً: مسح الكاش لظهور التعديل
+                                st.rerun()
+                else:
+                    st.info("لا يمكن التعديل (المعرف مفقود)")
     else:
-        st.info("لا توجد صكوك مضافة")
+        st.info("لا توجد صفقات صكوك مضافة")
+
 
 
 # --- 5. Cash Log View ---
