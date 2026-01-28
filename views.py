@@ -12,7 +12,7 @@ from backtester import run_backtest
 from financial_analysis import render_financial_dashboard_ui, get_fundamental_ratios, get_thesis, save_thesis
 from classical_analysis import render_classical_analysis
 
-# --- 1. Navigation Bar (استعادة القائمة المنسدلة) ---
+# --- 1. Navigation Bar (القائمة المنسدلة) ---
 def render_navbar():
     # تقسيم الشريط العلوي إلى 10 أعمدة
     c1, c2, c3, c4, c5, c6, c7, c8, c9, c10 = st.columns(10)
@@ -29,7 +29,7 @@ def render_navbar():
                 st.session_state.page = key
                 st.rerun()
     
-    # القائمة المنسدلة (بدل القائمة الجانبية)
+    # القائمة المنسدلة (في الزاوية اليسرى)
     with c10:
         with st.popover("👤 القائمة"):
             st.write(f"مرحباً {st.session_state.get('username','User')}")
@@ -137,12 +137,12 @@ def view_dashboard(fin):
     else:
         st.info("👋 مرحباً بك! ابدأ بإضافة صفقات أو رصيد لتفعيل لوحة القيادة.")
 
-# --- 3. Portfolio View (عودة للجدول الكلاسيكي) ---
+# --- 3. Portfolio View (الكلاسيكي + زر إضافة) ---
 def view_portfolio(fin, key):
     ts = "مضاربة" if key == 'spec' else "استثمار"
     st.header(f"💼 محفظة {ts}")
     
-    # CSS للجدول العريض (كما طلبت سابقاً)
+    # CSS للجدول العريض
     st.markdown("""
         <style>
         .finance-table td, .finance-table th {
@@ -164,7 +164,7 @@ def view_portfolio(fin, key):
     
     t1, t2 = st.tabs(["الصفقات القائمة", "الأرشيف"])
     
-    # --- تبويب القائمة (تمت إعادة الجدول القديم) ---
+    # --- تبويب القائمة ---
     with t1:
         total_cost = op['total_cost'].sum() if not op.empty else 0
         total_market = op['market_value'].sum() if not op.empty else 0
@@ -178,8 +178,10 @@ def view_portfolio(fin, key):
         with k4: render_kpi("النسبة %", f"{total_pct:.2f}%", "success" if total_pct >= 0 else "danger", "٪")
         
         st.markdown("---")
-          c_add, _ = st.columns([1, 4])
-         with c_add:
+        
+        # ✅ زر إضافة سهم (تم إصلاح المسافة البادئة)
+        c_add, _ = st.columns([1, 4])
+        with c_add:
             if st.button("➕ إضافة سهم", use_container_width=True, type="primary"):
                 st.session_state.page = 'add'; st.rerun()
         
@@ -305,10 +307,12 @@ def view_sukuk_portfolio(fin):
     with k4: render_kpi("النسبة %", f"{total_pct:.2f}%", "success" if total_pct >= 0 else "danger", "٪")
     
     st.markdown("---")
+    
     c_add, _ = st.columns([1, 4])
     with c_add:
         if st.button("➕ إضافة صك", use_container_width=True, type="primary"):
             st.session_state.page = 'add'; st.rerun()
+
     if not sukuk.empty:
         c_sort, _ = st.columns([1, 3])
         sort_by = c_sort.selectbox("فرز الصكوك حسب:", ["التاريخ (الأحدث)", "القيمة (الأعلى)", "الربح (الأعلى)"], key="sort_sukuk")
