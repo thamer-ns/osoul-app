@@ -357,6 +357,31 @@ def view_sukuk_portfolio(fin):
                                     ('gain', 'الربح', 'colorful')])
     else:
         st.info("لا توجد صكوك مضافة")
+           # ميزة تعديل الصكوك (لتصحيح الخطأ) ✅
+        with st.expander("✏️ تعديل بيانات صك (تصحيح خطأ)"):
+            if 'id' in sukuk.columns:
+                edit_map_s = {f"{row['company_name']} ({row['symbol']})": row['id'] for i, row in sukuk.iterrows()}
+                sel_label_s = st.selectbox("اختر الصك:", list(edit_map_s.keys()), key="edit_sel_sukuk")
+                
+                if sel_label_s:
+                    sukuk_id = edit_map_s[sel_label_s]
+                    curr_s = sukuk[sukuk['id'] == sukuk_id].iloc[0]
+                    
+                    with st.form(f"edit_form_s_{sukuk_id}"):
+                        c_s1, c_s2 = st.columns(2)
+                        n_qty = c_s1.number_input("القيمة الاسمية الصحيحة", value=float(curr_s['quantity']))
+                        n_prc = c_s2.number_input("سعر الشراء الصحيح", value=float(curr_s['entry_price']))
+                        n_date = st.date_input("تاريخ الشراء", pd.to_datetime(curr_s['date']))
+                        
+                        if st.form_submit_button("حفظ التصحيح"):
+                            execute_query(
+                                "UPDATE Trades SET quantity=%s, entry_price=%s, date=%s WHERE id=%s",
+                                (n_qty, n_prc, str(n_date), sukuk_id)
+                            )
+                            st.success("تم التعديل")
+                            st.rerun()
+            else:
+                st.info("لا يمكن التعديل")
 
 # --- 5. Cash Log View ---
 def view_cash_log():
