@@ -522,19 +522,15 @@ def view_cash_log():
 
 # --- Other Views ---
 def view_analysis(fin):
-    st.header("🔬 التحليل")
+    st.header("🔬 التحليل الشامل")
     trades = fin['all_trades']
     
-    # استيراد قائمة المراقبة لدمجها في البحث
     from database import fetch_table
     wl = fetch_table("Watchlist")
-    
-    # تجميع الرموز
     syms = list(set(trades['symbol'].unique().tolist() + wl['symbol'].unique().tolist())) if not trades.empty else []
     
     c1, c2 = st.columns([1, 2])
     ns = c1.text_input("بحث")
-    
     options = [ns] + syms if ns else syms
     sym = c2.selectbox("اختر", options) if options else None
     
@@ -542,35 +538,57 @@ def view_analysis(fin):
         n, s = get_company_details(sym)
         st.markdown(f"### {n} ({sym})")
         
-        # التبويبات المحدثة
-        t1, t2, t3, t4, t5 = st.tabs(["💰 مالي (القوائم)", "📈 فني (شارت)", "🏛️ كلاسيكي", "📝 أطروحة", "ℹ️ مؤشرات"])
+        # استيراد المحرك الذكي
+        try: from ai_engine import generate_ai_report
+        except ImportError: generate_ai_report = None
+
+        # التبويبات (المستشار الذكي هو الأول)
+        tabs = st.tabs(["🤖 المستشار الذكي", "💰 مالي", "📈 فني", "🏛️ كلاسيكي", "📝 أطروحة"])
         
-        # 1. المالي (الجديد المدمج مع القديم)
-        with t1:
-            render_financial_dashboard_ui(sym)
+        # 1. المستشار الذكي (AI Report)
+        with tabs[0]:
+            if generate_ai_report:
+                report = generate_ai_report(sym)
+                
+                # عنوان التوصية الكبير
+                st.markdown(f"""
+                <div style="text-align:center; padding: 20px; background-color: #f8f9fa; border-radius: 15px; border: 2px solid {report['color']}; margin-bottom: 20px;">
+                    <h2 style="color: {report['color']}; margin:0;">{report['recommendation']}</h2>
+                    <p style="color: #666; margin-top:10px; font-size:1.1rem;">{report['strategy']}</p>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # تفاصيل النقاط
+                c_ai1, c_ai2 = st.columns(2)
+                with c_ai1:
+                    st.subheader("النقاط الفنية")
+                    for r in report['tech_reasons']: st.write(f"• {r}")
+                with c_ai2:
+                    st.subheader("النقاط المالية")
+                    for r in report['fund_reasons']: st.write(f"• {r}")
+                    
+            else:
+                st.warning("محرك الذكاء الاصطناعي غير متوفر (تأكد من وجود ملف ai_engine.py)")
+
+        # 2. المالي
+        with tabs[1]: render_financial_dashboard_ui(sym)
             
-        # 2. الفني (المطور - جون ميرفي)
-        with t2:
-            render_technical_chart(sym)
+        # 3. الفني
+        with tabs[2]: render_technical_chart(sym)
             
-        # 3. الكلاسيكي (فيبوناتشي)
-        with t3:
-            render_classical_analysis(sym)
+        # 4. الكلاسيكي
+        with tabs[3]: render_classical_analysis(sym)
             
-        # 4. الأطروحة (مع زر الحفظ)
-        with t4:
+        # 5. الأطروحة
+        with tabs[4]:
             th = get_thesis(sym)
             curr_text = th['thesis_text'] if th else ""
-            with st.form("thesis_form"):
-                new_text = st.text_area("نص الأطروحة الاستثمارية", value=curr_text, height=200)
-                if st.form_submit_button("حفظ الأطروحة"):
-                    save_thesis(sym, new_text, 0, "Hold") # يمكنك إضافة حقول السعر المستهدف لاحقاً
+            with st.form("save_thesis_form"):
+                new_text = st.text_area("نص الأطروحة", value=curr_text, height=200)
+                if st.form_submit_button("💾 حفظ الأطروحة"):
+                    save_thesis(sym, new_text, 0, "Hold")
                     st.success("تم الحفظ")
-                    
-        # 5. المؤشرات السريعة (للمراجعة فقط)
-        with t5:
-            d = get_fundamental_ratios(sym)
-            st.json(d) 
+
 
 
 def view_backtester_ui(fin):
