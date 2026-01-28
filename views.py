@@ -602,19 +602,29 @@ def view_add_trade():
             st.success(f"تمت إضافة {nm}"); st.cache_data.clear()
 
 def view_tools(): st.header("🛠️ أدوات"); st.info("الزكاة")
-def view_settings(): # مثال لإضافة الزر في الإعدادات
-from analytics import create_smart_backup
 
-if st.button("💾 إنشاء نسخة احتياطية الآن"):
-    file_data, file_name = create_smart_backup()
-    if file_data:
-        st.download_button(
-            label="📥 اضغط لتحميل الملف",
-            data=file_data,
-            file_name=file_name,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        ) 
-st.header("⚙️ إعدادات"); st.info("الاستيراد")
+def view_settings():
+    st.header("⚙️ إعدادات")
+    st.info("الاستيراد")
+    
+    # --- كود النسخ الاحتياطي يجب أن يكون هنا (داخل الدالة) ---
+    from analytics import create_smart_backup
+
+    st.markdown("---")
+    st.subheader("📦 النسخ الاحتياطي")
+    
+    if st.button("💾 إنشاء نسخة احتياطية الآن", key="btn_backup"):
+        with st.spinner("جاري إنشاء الملف..."):
+            file_data, file_name = create_smart_backup()
+            
+        if file_data:
+            st.success("تم إنشاء النسخة بنجاح!")
+            st.download_button(
+                label="📥 اضغط لتحميل الملف",
+                data=file_data,
+                file_name=file_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
 def router():
     if 'page' not in st.session_state:
