@@ -179,7 +179,7 @@ def view_portfolio(fin, key):
         
         st.markdown("---")
           c_add, _ = st.columns([1, 4])
-        with c_add:
+         with c_add:
             if st.button("➕ إضافة سهم", use_container_width=True, type="primary"):
                 st.session_state.page = 'add'; st.rerun()
         
