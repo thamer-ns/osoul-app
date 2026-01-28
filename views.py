@@ -277,17 +277,19 @@ def view_portfolio(fin, key):
 
 # --- 4. Sukuk View ---
 # ---------------------------------------------------------
-# استبدل دالة view_sukuk_portfolio بهذا الكود (تم إضافة تعديل الاسم)
+# استبدل دالة view_sukuk_portfolio بهذا الكود (تعديل شامل للاسم)
 # ---------------------------------------------------------
 def view_sukuk_portfolio(fin):
     st.header("📜 محفظة الصكوك")
     df = fin['all_trades']
     
+    # التأكد من الأعمدة الأساسية
     if df.empty: 
         sukuk = pd.DataFrame(columns=['asset_type', 'total_cost', 'market_value', 'gain', 'date', 'id', 'quantity', 'entry_price', 'symbol', 'company_name'])
     else: 
         sukuk = df[df['asset_type'] == 'Sukuk'].copy()
     
+    # --- حسابات الملخص ---
     total_cost = sukuk['total_cost'].sum() if not sukuk.empty else 0
     total_market = sukuk['market_value'].sum() if not sukuk.empty else 0
     total_gain = sukuk['gain'].sum() if not sukuk.empty else 0
@@ -307,6 +309,8 @@ def view_sukuk_portfolio(fin):
             st.session_state.page = 'add'; st.rerun()
 
     if not sukuk.empty:
+        # معالجة القيم الفارغة في الاسم لتظهر بشكل لائق بدلاً من None
+        sukuk['company_name'] = sukuk['company_name'].fillna(sukuk['symbol'])
         sukuk['months_held'] = ((pd.to_datetime(date.today()) - pd.to_datetime(sukuk['date'])).dt.days / 30).astype(int)
         
         c_sort, _ = st.columns([1, 3])
@@ -331,7 +335,7 @@ def view_sukuk_portfolio(fin):
         # أ: بيع
         with c_act1:
             with st.expander("💰 بيع / تصفية صك"):
-                sell_opts = {f"{row['company_name']} (العدد: {row['quantity']})": row['id'] for i, row in sukuk.iterrows()}
+                sell_opts = {f"{row['company_name']} ({row['quantity']})": row['id'] for i, row in sukuk.iterrows()}
                 sel_sell_id = st.selectbox("اختر الصك للبيع:", list(sell_opts.keys()), key="sell_sukuk_sel")
                 
                 if sel_sell_id:
@@ -356,9 +360,9 @@ def view_sukuk_portfolio(fin):
                                 st.rerun()
                             else: st.error("خطأ: الكمية صفر")
 
-        # ب: تعديل (تصحيح خطأ) - تم إضافة تعديل الاسم هنا ✅
+        # ب: تعديل (تصحيح خطأ الاسم والبيانات) ✅
         with c_act2:
-            with st.expander("✏️ تعديل بيانات صك (تصحيح)"):
+            with st.expander("✏️ تعديل بيانات صك (الاسم والبيانات)"):
                 if 'id' in sukuk.columns:
                     edit_map_s = {f"{row['company_name']} - {row['date']}": row['id'] for i, row in sukuk.iterrows()}
                     sel_label_s = st.selectbox("اختر الصك للتعديل:", list(edit_map_s.keys()), key="edit_sel_sukuk")
@@ -368,10 +372,11 @@ def view_sukuk_portfolio(fin):
                         curr_s = sukuk[sukuk['id'] == sukuk_id].iloc[0]
                         
                         with st.form(f"edit_form_s_{sukuk_id}"):
-                            st.caption("البيانات الصحيحة:")
+                            st.caption("تعديل البيانات الأساسية:")
                             
-                            # ✅ تم إضافة حقل تعديل الاسم هنا
-                            n_name = st.text_input("اسم الصك", value=str(curr_s['symbol']))
+                            # ✅ حقل اسم الصك (نستخدمه لتحديث الرمز واسم الشركة معاً)
+                            current_name = str(curr_s['company_name']) if curr_s['company_name'] else str(curr_s['symbol'])
+                            n_name = st.text_input("اسم الصك", value=current_name)
                             
                             c_s1, c_s2 = st.columns(2)
                             n_qty = c_s1.number_input("عدد الصكوك", value=float(curr_s['quantity']), step=1.0)
@@ -379,18 +384,33 @@ def view_sukuk_portfolio(fin):
                             n_date = st.date_input("تاريخ الشراء", pd.to_datetime(curr_s['date']))
                             
                             if st.form_submit_button("حفظ التصحيح"):
-                                execute_query(
-                                    # ✅ تم تحديث الاستعلام ليشمل الرمز (الاسم)
-                                    "UPDATE Trades SET symbol=%s, quantity=%s, entry_price=%s, date=%s WHERE id=%s",
-                                    (n_name, n_qty, n_prc, str(n_date), sukuk_id)
-                                )
-                                st.success("تم تعديل البيانات والاسم")
-                                st.cache_data.clear()
-                                st.rerun()
+                                # ✅ التحديث: نحدث 'symbol' ليكون هو نفسه الاسم، لأن الصكوك ليس لها رموز سوقية ثابتة دائماً
+                                # ونحدث 'company_name' أيضاً لضمان الظهور الصحيح
+                                try:
+                                    execute_query(
+                                        """
+                                        UPDATE Trades 
+                                        SET symbol=%s, quantity=%s, entry_price=%s, date=%s 
+                                        WHERE id=%s
+                                        """,
+                                        (n_name, n_qty, n_prc, str(n_date), sukuk_id)
+                                    )
+                                    # محاولة تحديث company_name إذا كان العمود موجوداً في قاعدة البيانات (للاحتياط)
+                                    try:
+                                        execute_query("UPDATE Trades SET company_name=%s WHERE id=%s", (n_name, sukuk_id))
+                                    except:
+                                        pass # نتجاهل الخطأ إذا لم يكن العمود موجوداً
+
+                                    st.success("تم تعديل الاسم والبيانات بنجاح")
+                                    st.cache_data.clear()
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"حدث خطأ: {e}")
                 else:
                     st.info("لا يمكن التعديل (المعرف مفقود)")
     else:
         st.info("لا توجد صفقات صكوك مضافة")
+
 
 
 
