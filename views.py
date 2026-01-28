@@ -533,10 +533,7 @@ def view_analysis(fin):
         with t2: render_technical_chart(sym)
         with t3: render_financial_dashboard_ui(sym)
         with t4: render_classical_analysis(sym)
-        with t5: th=get_thesis(sym); st.text_area("نص", value=th['thesis_text'] if th else ""
-        with t1: render_financial_dashboard_ui(sym) # استدعاء النسخة الجديدة
-        with t2: render_technical_chart(sym)        # استدعاء النسخة الجديدة
-        with t4: render_classical_analysis(sym)     # استدعاء النسخة الجديدة
+        with t5: th=get_thesis(sym); st.text_area("نص", value=th['thesis_text'] if th else "")
 
 def view_backtester_ui(fin):
     st.header("🧪 المختبر"); c1,c2,c3 = st.columns(3)
