@@ -7,9 +7,9 @@ from components import render_kpi, render_custom_table, render_ticker_card, safe
 from analytics import calculate_portfolio_metrics, update_prices, generate_equity_curve
 from database import execute_query, fetch_table
 from market_data import get_static_info, get_tasi_data, get_chart_history, fetch_batch_data
-from data_source import get_company_details # ✅ هذا الملف الذي أرسلته
+from data_source import get_company_details 
 
-# استيراد الوحدات مع حماية (Stubbing)
+# استيراد الوحدات مع حماية
 try:
     from charts import render_technical_chart
     from backtester import run_backtest
@@ -264,8 +264,7 @@ def view_portfolio(fin, key):
         else:
             st.info("الأرشيف فارغ")
 
-# --- 4. Sukuk View (Updated with Tabs) ---
-# ✅ التغيير الوحيد هنا: تقسيم الصفحة إلى تبويبات (قائمة / أرشيف)
+# --- 4. Sukuk View ---
 def view_sukuk_portfolio(fin):
     st.header("📜 محفظة الصكوك")
     df = fin['all_trades']
@@ -302,11 +301,12 @@ def view_sukuk_portfolio(fin):
             if st.button("➕ إضافة صك", use_container_width=True, type="primary"):
                 st.session_state.page = 'add'; st.rerun()
 
-                if not op.empty:
+        # ✅ هنا كان الخطأ: تم إخراج الشرط من داخل الزر وضبط المسافات
+        if not op.empty:
             op['company_name'] = op['company_name'].fillna(op['symbol'])
             op['months_held'] = ((pd.to_datetime(date.today()) - pd.to_datetime(op['date'])).dt.days / 30).astype(int)
             
-            # ✅ التعديل 1: نسخ سعر الشراء ليصبح هو السعر الحالي
+            # اضافة السعر الحالي
             op['current_price'] = op['entry_price'] 
             
             c_sort, _ = st.columns([1, 3])
@@ -319,15 +319,12 @@ def view_sukuk_portfolio(fin):
             cols = [
                 ('company_name', 'اسم الصك', 'text'), 
                 ('quantity', 'العدد', 'text'),  
-                ('entry_price', 'التكلفة (للوحدة)', 'money'),   # سعر الشراء
-                ('current_price', 'السعر الحالي', 'money'),    # ✅ التعديل 2: إضافة العمود الجديد هنا
+                ('entry_price', 'التكلفة (للوحدة)', 'money'),
+                ('current_price', 'السعر الحالي', 'money'),
                 ('total_cost', 'الاجمالي', 'money'),
                 ('months_held', 'المده (شهر)', 'text')
             ]
             render_custom_table(op, cols)
-            
-            # ... (باقي كود الأزرار والإجراءات كما هو دون تغيير) ...
-
             
             c_act1, c_act2 = st.columns(2)
             with c_act1:
@@ -375,7 +372,6 @@ def view_sukuk_portfolio(fin):
     with t2:
         if not cl.empty:
             cl['company_name'] = cl['company_name'].fillna(cl['symbol'])
-            # حساب العائد المحقق
             cl['realized_return'] = cl['market_value'] - cl['total_cost']
             
             c_sort, _ = st.columns([1, 3])
@@ -459,7 +455,6 @@ def view_analysis(fin):
     syms = list(set(trades['symbol'].unique().tolist() + wl['symbol'].unique().tolist())) if not trades.empty else []
     c1,c2=st.columns([1,2]); ns=c1.text_input("بحث"); sym=c2.selectbox("اختر", [ns]+syms if ns else syms) if syms or ns else None
     if sym:
-        # ✅ استخدام دالة data_source لضمان الاسم العربي
         n, s = get_company_details(sym)
         st.markdown(f"### {n} ({sym})")
         t1,t2,t3,t4,t5 = st.tabs(["مؤشرات", "فني", "قوائم", "كلاسيكي", "أطروحة"])
@@ -501,16 +496,12 @@ def view_tools(): st.header("🛠️ أدوات"); st.info("الزكاة")
 def view_settings(): st.header("⚙️ إعدادات"); st.info("الاستيراد")
 
 def router():
-    # === START ADDITION: Navigation Guard ===
-    # 1. ضمان وجود صفحة افتراضية لمنع الانهيار
     if 'page' not in st.session_state:
         st.session_state.page = 'home'
     
-    # 2. الحماية من التحديث غير المصرح به
     if st.session_state.page == 'update' and 'username' not in st.session_state:
         st.session_state.page = 'home'
         st.rerun()
-    # === END ADDITION ===
     
     render_navbar()
     pg = st.session_state.page
