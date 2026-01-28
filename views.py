@@ -178,6 +178,10 @@ def view_portfolio(fin, key):
         with k4: render_kpi("النسبة %", f"{total_pct:.2f}%", "success" if total_pct >= 0 else "danger", "٪")
         
         st.markdown("---")
+          c_add, _ = st.columns([1, 4])
+        with c_add:
+            if st.button("➕ إضافة سهم", use_container_width=True, type="primary"):
+                st.session_state.page = 'add'; st.rerun()
         
         if not op.empty:
             # تحضير البيانات
