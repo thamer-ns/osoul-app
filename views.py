@@ -305,7 +305,10 @@ def view_sukuk_portfolio(fin):
     with k4: render_kpi("النسبة %", f"{total_pct:.2f}%", "success" if total_pct >= 0 else "danger", "٪")
     
     st.markdown("---")
-    
+    c_add, _ = st.columns([1, 4])
+    with c_add:
+        if st.button("➕ إضافة صك", use_container_width=True, type="primary"):
+            st.session_state.page = 'add'; st.rerun()
     if not sukuk.empty:
         c_sort, _ = st.columns([1, 3])
         sort_by = c_sort.selectbox("فرز الصكوك حسب:", ["التاريخ (الأحدث)", "القيمة (الأعلى)", "الربح (الأعلى)"], key="sort_sukuk")
