@@ -392,14 +392,17 @@ def view_sukuk_portfolio(fin):
             st.info("أرشيف الصكوك فارغ")
 
 # --- 5. Cash Log View ---
+# --- 5. Cash Log View (Updated with Edit Feature) ---
 def view_cash_log():
     st.header("💰 السيولة والسجلات المالية")
     fin = calculate_portfolio_metrics()
     
+    # جلب البيانات
     deposits = fin.get('deposits', pd.DataFrame())
     withdrawals = fin.get('withdrawals', pd.DataFrame())
     returns = fin.get('returns', pd.DataFrame())
 
+    # عرض الملخص العلوي
     c1, c2, c3 = st.columns(3)
     d_sum = deposits['amount'].sum() if not deposits.empty else 0
     w_sum = withdrawals['amount'].sum() if not withdrawals.empty else 0
@@ -413,7 +416,9 @@ def view_cash_log():
     t1, t2, t3 = st.tabs(["📥 سجل الإيداعات", "📤 سجل السحوبات", "🎁 سجل العوائد"])
     cols_base = [('date', 'التاريخ', 'date'), ('amount', 'المبلغ', 'money'), ('note', 'ملاحظات', 'text')]
     
+    # --- 1. تبويب الإيداعات ---
     with t1:
+        # أ: إضافة جديد
         with st.expander("➕ تسجيل إيداع جديد"):
             with st.form("add_dep"):
                 a = st.number_input("المبلغ", min_value=0.0, step=100.0)
@@ -421,11 +426,34 @@ def view_cash_log():
                 n = st.text_input("ملاحظة")
                 if st.form_submit_button("حفظ"):
                     execute_query("INSERT INTO Deposits (date, amount, note) VALUES (%s,%s,%s)", (str(d), a, n))
-                    st.success("تم"); st.rerun()
+                    st.success("تم"); st.cache_data.clear(); st.rerun()
+        
+        # ب: العرض والتعديل
         if not deposits.empty:
             render_custom_table(deposits.sort_values('date', ascending=False), cols_base)
+            
+            st.markdown("---")
+            # ✅ قسم التعديل الجديد للإيداعات
+            with st.expander("✏️ تعديل سجل إيداع سابق"):
+                # ننشئ قائمة للاختيار
+                dep_map = {f"{row['date']} - {row['amount']} ({row['note']})": row['id'] for i, row in deposits.iterrows()}
+                sel_dep = st.selectbox("اختر العملية للتعديل:", list(dep_map.keys()), key="edit_dep_sel")
+                
+                if sel_dep:
+                    tid = dep_map[sel_dep]
+                    curr = deposits[deposits['id'] == tid].iloc[0]
+                    with st.form(f"edit_dep_form_{tid}"):
+                        na = st.number_input("المبلغ الصحيح", value=float(curr['amount']))
+                        nd = st.date_input("التاريخ الصحيح", pd.to_datetime(curr['date']))
+                        nn = st.text_input("ملاحظة", value=str(curr['note']) if curr['note'] else "")
+                        
+                        if st.form_submit_button("حفظ التعديلات"):
+                            execute_query("UPDATE Deposits SET amount=%s, date=%s, note=%s WHERE id=%s", (na, str(nd), nn, tid))
+                            st.success("تم التعديل بنجاح"); st.cache_data.clear(); st.rerun()
 
+    # --- 2. تبويب السحوبات ---
     with t2:
+        # أ: إضافة جديد
         with st.expander("➖ تسجيل سحب جديد"):
             with st.form("add_wit"):
                 a = st.number_input("المبلغ", min_value=0.0, step=100.0)
@@ -433,11 +461,33 @@ def view_cash_log():
                 n = st.text_input("ملاحظة")
                 if st.form_submit_button("حفظ"):
                     execute_query("INSERT INTO Withdrawals (date, amount, note) VALUES (%s,%s,%s)", (str(d), a, n))
-                    st.success("تم"); st.rerun()
+                    st.success("تم"); st.cache_data.clear(); st.rerun()
+        
+        # ب: العرض والتعديل
         if not withdrawals.empty:
             render_custom_table(withdrawals.sort_values('date', ascending=False), cols_base)
+            
+            st.markdown("---")
+            # ✅ قسم التعديل الجديد للسحوبات
+            with st.expander("✏️ تعديل سجل سحب سابق"):
+                wit_map = {f"{row['date']} - {row['amount']} ({row['note']})": row['id'] for i, row in withdrawals.iterrows()}
+                sel_wit = st.selectbox("اختر العملية للتعديل:", list(wit_map.keys()), key="edit_wit_sel")
+                
+                if sel_wit:
+                    tid = wit_map[sel_wit]
+                    curr = withdrawals[withdrawals['id'] == tid].iloc[0]
+                    with st.form(f"edit_wit_form_{tid}"):
+                        na = st.number_input("المبلغ الصحيح", value=float(curr['amount']))
+                        nd = st.date_input("التاريخ الصحيح", pd.to_datetime(curr['date']))
+                        nn = st.text_input("ملاحظة", value=str(curr['note']) if curr['note'] else "")
+                        
+                        if st.form_submit_button("حفظ التعديلات"):
+                            execute_query("UPDATE Withdrawals SET amount=%s, date=%s, note=%s WHERE id=%s", (na, str(nd), nn, tid))
+                            st.success("تم التعديل بنجاح"); st.cache_data.clear(); st.rerun()
 
+    # --- 3. تبويب العوائد ---
     with t3:
+        # أ: إضافة جديد
         with st.expander("💵 تسجيل عائد/توزيع"):
             with st.form("add_ret"):
                 s = st.text_input("رمز السهم")
@@ -445,9 +495,30 @@ def view_cash_log():
                 d = st.date_input("التاريخ", date.today())
                 if st.form_submit_button("حفظ"):
                     execute_query("INSERT INTO ReturnsGrants (date, symbol, amount) VALUES (%s,%s,%s)", (str(d), s, a))
-                    st.success("تم"); st.rerun()
+                    st.success("تم"); st.cache_data.clear(); st.rerun()
+        
+        # ب: العرض والتعديل
         if not returns.empty:
             render_custom_table(returns.sort_values('date', ascending=False), cols_base)
+            
+            st.markdown("---")
+            # ✅ قسم التعديل الجديد للعوائد
+            with st.expander("✏️ تعديل سجل عائد سابق"):
+                ret_map = {f"{row['date']} - {row['symbol']} - {row['amount']}": row['id'] for i, row in returns.iterrows()}
+                sel_ret = st.selectbox("اختر العملية للتعديل:", list(ret_map.keys()), key="edit_ret_sel")
+                
+                if sel_ret:
+                    tid = ret_map[sel_ret]
+                    curr = returns[returns['id'] == tid].iloc[0]
+                    with st.form(f"edit_ret_form_{tid}"):
+                        ns = st.text_input("رمز السهم", value=str(curr['symbol']))
+                        na = st.number_input("المبلغ الصحيح", value=float(curr['amount']))
+                        nd = st.date_input("التاريخ الصحيح", pd.to_datetime(curr['date']))
+                        
+                        if st.form_submit_button("حفظ التعديلات"):
+                            execute_query("UPDATE ReturnsGrants SET symbol=%s, amount=%s, date=%s WHERE id=%s", (ns, na, str(nd), tid))
+                            st.success("تم التعديل بنجاح"); st.cache_data.clear(); st.rerun()
+
 
 # --- Other Views ---
 def view_analysis(fin):
