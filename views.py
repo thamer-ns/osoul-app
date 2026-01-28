@@ -436,7 +436,6 @@ def view_add_trade():
         c3,c4,c5=st.columns(3); q=c3.number_input("كمية"); p=c4.number_input("سعر"); d=c5.date_input("تاريخ", date.today())
         if st.form_submit_button("حفظ"):
             at = "Sukuk" if t=="صكوك" else "Stock"
-            # ✅ التعديل الجوهري: جلب الاسم والقطاع قبل الحفظ
             nm, sec = get_company_details(s)
             execute_query("INSERT INTO Trades (symbol, company_name, sector, asset_type, date, quantity, entry_price, strategy, status) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'Open')", (s,nm,sec,at,str(d),q,p,t))
             st.success(f"تمت إضافة {nm}"); st.cache_data.clear()
@@ -445,6 +444,17 @@ def view_tools(): st.header("🛠️ أدوات"); st.info("الزكاة")
 def view_settings(): st.header("⚙️ إعدادات"); st.info("الاستيراد")
 
 def router():
+    # === START ADDITION: Navigation Guard ===
+    # 1. ضمان وجود صفحة افتراضية لمنع الانهيار
+    if 'page' not in st.session_state:
+        st.session_state.page = 'home'
+    
+    # 2. الحماية من التحديث غير المصرح به
+    if st.session_state.page == 'update' and 'username' not in st.session_state:
+         st.session_state.page = 'home'
+         st.rerun()
+    # === END ADDITION ===
+    
     render_navbar()
     pg = st.session_state.page
     fin = calculate_portfolio_metrics()
