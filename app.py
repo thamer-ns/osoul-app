@@ -5,26 +5,15 @@ from security import login_system
 from views import router
 from database import init_db
 
-# 1. إعداد الصفحة (يجب أن يكون أول أمر Streamlit)
-st.set_page_config(
-    page_title=APP_NAME,
-    page_icon=APP_ICON,
-    layout="wide",
-    initial_sidebar_state="collapsed"
-)
+st.set_page_config(page_title=APP_NAME, page_icon=APP_ICON, layout="wide", initial_sidebar_state="collapsed")
+st.markdown("<style>#MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}</style>", unsafe_allow_html=True)
 
-# 2. تهيئة قاعدة البيانات
 if 'db_initialized' not in st.session_state:
-    init_db()
-    st.session_state['db_initialized'] = True
+    try: init_db(); st.session_state['db_initialized']=True
+    except Exception as e: st.error(f"DB Error: {e}"); st.stop()
 
-# 3. تطبيق التصميم
 apply_custom_css()
 
-# 4. إدارة الحالة والجلسة
-if 'page' not in st.session_state: 
-    st.session_state.page = 'home'
+if 'page' not in st.session_state: st.session_state.page = 'home'
 
-# 5. نظام الدخول والتوجيه
-if login_system():
-    router()
+if login_system(): router()
