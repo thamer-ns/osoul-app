@@ -451,8 +451,8 @@ def router():
     
     # 2. الحماية من التحديث غير المصرح به
     if st.session_state.page == 'update' and 'username' not in st.session_state:
-         st.session_state.page = 'home'
-         st.rerun()
+        st.session_state.page = 'home'
+        st.rerun()
     # === END ADDITION ===
     
     render_navbar()
