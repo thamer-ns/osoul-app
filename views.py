@@ -7,11 +7,22 @@ from components import render_kpi, render_custom_table, render_ticker_card, safe
 from analytics import calculate_portfolio_metrics, update_prices, generate_equity_curve
 from database import execute_query, fetch_table
 from market_data import get_static_info, get_tasi_data, get_chart_history, fetch_batch_data
-from charts import render_technical_chart
-from backtester import run_backtest
-from financial_analysis import render_financial_dashboard_ui, get_fundamental_ratios, get_thesis, save_thesis
-from classical_analysis import render_classical_analysis
-from data_source import get_company_details
+from data_source import get_company_details # ✅ هذا الملف الذي أرسلته
+
+# استيراد الوحدات مع حماية (Stubbing)
+try:
+    from charts import render_technical_chart
+    from backtester import run_backtest
+    from financial_analysis import render_financial_dashboard_ui, get_fundamental_ratios, get_thesis, save_thesis
+    from classical_analysis import render_classical_analysis
+except ImportError:
+    def render_technical_chart(*a): st.warning("وحدة الرسوم البيانية غير متوفرة")
+    def run_backtest(*a): st.warning("وحدة الاختبار غير متوفرة"); return None
+    def render_financial_dashboard_ui(*a): st.warning("التحليل المالي غير متوفر")
+    def get_fundamental_ratios(*a): return {"Score": 0, "Rating": "N/A"}
+    def get_thesis(*a): return {}
+    def save_thesis(*a): pass
+    def render_classical_analysis(*a): st.warning("التحليل الكلاسيكي غير متوفر")
 
 # --- 1. Navigation Bar ---
 def render_navbar():
@@ -101,8 +112,12 @@ def view_dashboard(fin):
 
     if not df.empty:
         open_trades = df[df['status'] == 'Open']
-        invest_val = open_trades[open_trades['strategy'].astype(str).str.contains('استثمار')]['market_value'].sum()
-        spec_val = open_trades[open_trades['strategy'].astype(str).str.contains('مضاربة')]['market_value'].sum()
+        try:
+            invest_val = open_trades[open_trades['strategy'].astype(str).str.contains('استثمار')]['market_value'].sum()
+            spec_val = open_trades[open_trades['strategy'].astype(str).str.contains('مضاربة')]['market_value'].sum()
+        except:
+            invest_val = spec_val = 0
+            
         sukuk_val = open_trades[open_trades['asset_type'] == 'Sukuk']['market_value'].sum()
         cash_val = fin['cash']
         alloc_df = pd.DataFrame({'Asset': ['استثمار', 'مضاربة', 'صكوك', 'كاش'], 'Value': [invest_val, spec_val, sukuk_val, cash_val]})
@@ -404,7 +419,9 @@ def view_analysis(fin):
     syms = list(set(trades['symbol'].unique().tolist() + wl['symbol'].unique().tolist())) if not trades.empty else []
     c1,c2=st.columns([1,2]); ns=c1.text_input("بحث"); sym=c2.selectbox("اختر", [ns]+syms if ns else syms) if syms or ns else None
     if sym:
-        n, s = get_static_info(sym); st.markdown(f"### {n} ({sym})")
+        # ✅ استخدام دالة data_source لضمان الاسم العربي
+        n, s = get_company_details(sym)
+        st.markdown(f"### {n} ({sym})")
         t1,t2,t3,t4,t5 = st.tabs(["مؤشرات", "فني", "قوائم", "كلاسيكي", "أطروحة"])
         with t1: d=get_fundamental_ratios(sym); st.metric("التقييم", f"{d['Score']}/10", d['Rating']); st.write(d.get('Opinions'))
         with t2: render_technical_chart(sym)
