@@ -9,11 +9,8 @@ def _clean_num(df, col):
     if col not in df.columns: df[col] = 0.0
     df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
 
-@st.cache_data(ttl=60) # تحديث تلقائي كل دقيقة للكاش
+@st.cache_data(ttl=60)
 def calculate_portfolio_metrics():
-    """
-    قلب النظام المحاسبي: يحسب كل الأرقام بدقة عالية
-    """
     default_res = {
         "cost_open": 0.0, "market_val_open": 0.0, "cash": 0.0,
         "unrealized_pl": 0.0, "realized_pl": 0.0,
@@ -23,13 +20,11 @@ def calculate_portfolio_metrics():
     }
     
     try:
-        # 1. جلب البيانات
         trades = fetch_table("Trades")
         dep = fetch_table("Deposits")
         wit = fetch_table("Withdrawals")
         ret = fetch_table("ReturnsGrants")
         
-        # 2. تنظيف الجداول المالية
         for df in [dep, wit, ret]: _clean_num(df, 'amount')
             
         total_dep = dep['amount'].sum()
@@ -45,14 +40,12 @@ def calculate_portfolio_metrics():
             })
             return default_res
 
-        # 3. تجهيز الصفقات
         for c in ['quantity', 'entry_price', 'exit_price', 'current_price']:
             _clean_num(trades, c)
 
         trades['total_cost'] = trades['quantity'] * trades['entry_price']
         total_purchases = trades['total_cost'].sum()
 
-        # 4. تحديد الحالة (Open/Close)
         if 'status' not in trades.columns: trades['status'] = 'Open'
         if 'exit_date' not in trades.columns: trades['exit_date'] = None
         if 'asset_type' not in trades.columns: trades['asset_type'] = 'Stock'
@@ -64,15 +57,14 @@ def calculate_portfolio_metrics():
         )
         trades['status'] = np.where(is_closed, 'Close', 'Open')
 
-        # 5. منطق التسعير (الحماية)
         trades.loc[is_closed, 'current_price'] = trades['exit_price']
-        # حماية الصكوك من تذبذب السعر الوهمي
+        
+        # حماية الصكوك
         is_open_sukuk = (trades['status'] == 'Open') & (trades['asset_type'] == 'Sukuk')
         trades.loc[is_open_sukuk, 'current_price'] = trades.loc[is_open_sukuk, 'entry_price']
-        # تعبئة الأسعار الناقصة بسعر الشراء مؤقتاً
+        
         trades['current_price'] = trades['current_price'].replace(0, np.nan).fillna(trades['entry_price'])
 
-        # 6. الحسابات النهائية
         trades['market_value'] = trades['quantity'] * trades['current_price']
         trades['gain'] = trades['market_value'] - trades['total_cost']
         
@@ -85,8 +77,10 @@ def calculate_portfolio_metrics():
         
         total_sales = closed_trades['market_value'].sum()
         
-        # معادلة الكاش الجوهرية
         cash_calculated = (total_dep + total_ret - total_wit) + total_sales - total_purchases
+        
+        # أمان: منع الكاش السالب (اختياري، يفضل تركه لكشف الأخطاء، لكن هنا نمنعه لتجميل الواجهة)
+        # cash_calculated = max(0.0, cash_calculated) 
 
         cost_open = open_trades['total_cost'].sum()
         market_val_open = open_trades['market_value'].sum()
@@ -110,12 +104,10 @@ def calculate_portfolio_metrics():
         return default_res
 
 def update_prices():
-    """تحديث الأسعار في قاعدة البيانات"""
     try:
         df = fetch_table("Trades")
         if df.empty: return True
         
-        # نأخذ فقط الأسهم المفتوحة (غير الصكوك)
         if 'asset_type' in df.columns:
             open_stocks = df[(df['status'] == 'Open') & (df['asset_type'] != 'Sukuk')]['symbol'].unique().tolist()
         else:
@@ -125,15 +117,18 @@ def update_prices():
         
         live_data = fetch_batch_data(open_stocks)
         
+        # التغيير هنا: حماية الحلقة من التوقف
         for sym, data in live_data.items():
-            price = float(data.get('price', 0))
-            if price > 0:
-                execute_query(
-                    "UPDATE Trades SET current_price = %s WHERE symbol = %s AND status = 'Open'",
-                    (price, sym)
-                )
+            try:
+                price = float(data.get('price', 0))
+                if price > 0:
+                    execute_query(
+                        "UPDATE Trades SET current_price = %s WHERE symbol = %s AND status = 'Open'",
+                        (price, sym)
+                    )
+            except:
+                continue # لو فشل سهم، انتقل للتالي
         
-        # ⚠️ مهم جداً: مسح الكاش بعد التحديث لتظهر الأسعار الجديدة
         st.cache_data.clear()
         return True
     except Exception as e:
@@ -151,9 +146,14 @@ def generate_equity_curve(df):
     except:
         return pd.DataFrame()
 
+# ربطنا الدالة بنظام النسخ الاحتياطي الجديد
 def create_smart_backup():
-    # سنقوم بتفعيلها في الخطوة القادمة
-    pass
+    try:
+        from backup_system import generate_full_backup
+        return generate_full_backup()
+    except Exception as e:
+        st.error(f"فشل النسخ الاحتياطي: {e}")
+        return None
 
 def calculate_historical_drawdown(df):
     return pd.DataFrame()
