@@ -55,30 +55,41 @@ def calculate_portfolio_metrics():
             trades[c] = pd.to_numeric(trades[c], errors='coerce').fillna(0.0)
 
         # ---------------------------------------------------------
-        # 🔧 التصحيح هنا: التعامل مع الصفقة المغلقة بصفر
+        # تحديد حالة الصفقات (Open/Close)
         # ---------------------------------------------------------
         if 'status' not in trades.columns:
             trades['status'] = 'Open'
             
-        # التأكد من وجود عمود التاريخ لتجنب الأخطاء
         if 'exit_date' not in trades.columns:
             trades['exit_date'] = None
 
-        # الصفقة مغلقة إذا: (سعر البيع > 0) أو (الحالة نصياً Close) أو (يوجد تاريخ خروج)
+        # منطق البيع بصفر (حافظنا عليه كما هو)
         has_exit_date = trades['exit_date'].notna() & (trades['exit_date'].astype(str) != 'None') & (trades['exit_date'].astype(str) != '')
         
         is_closed = (
             (trades['exit_price'] > 0) | 
             (trades['status'].astype(str).str.lower().isin(['close', 'sold', 'مغلقة'])) |
-            has_exit_date  # ✅ تمت إضافة هذا الشرط ليقبل البيع بصفر طالما يوجد تاريخ
+            has_exit_date 
         )
         
         trades['status'] = np.where(is_closed, 'Close', 'Open')
-        # ---------------------------------------------------------
 
-        # في حال الإغلاق، السعر الحالي هو سعر الخروج
+        # ---------------------------------------------------------
+        # ✅ التعديل 1: ضبط الأسعار للصكوك المفتوحة
+        # ---------------------------------------------------------
+        # أولاً: الصفقات المغلقة تأخذ سعر الخروج
         trades.loc[is_closed, 'current_price'] = trades['exit_price']
         
+        # ثانياً: الصكوك المفتوحة تأخذ سعر الدخول (عشان ما تظهر خسارة -100%)
+        if 'asset_type' in trades.columns:
+            # نحدد الصكوك المفتوحة فقط
+            is_open_sukuk = (trades['status'] == 'Open') & (trades['asset_type'] == 'Sukuk')
+            # نجعل السعر الحالي = سعر الشراء
+            trades.loc[is_open_sukuk, 'current_price'] = trades.loc[is_open_sukuk, 'entry_price']
+
+        # ---------------------------------------------------------
+        # الحسابات النهائية
+        # ---------------------------------------------------------
         trades['total_cost'] = trades['quantity'] * trades['entry_price']
         trades['market_value'] = trades['quantity'] * trades['current_price']
         trades['gain'] = trades['market_value'] - trades['total_cost']
@@ -93,13 +104,11 @@ def calculate_portfolio_metrics():
         cost_open = open_trades['total_cost'].sum()
         market_val_open = open_trades['market_value'].sum()
         
-        # الربح المحقق = قيمة البيع - التكلفة
         realized_pl = closed_trades['market_value'].sum() - closed_trades['total_cost'].sum()
         
         total_sales = closed_trades['market_value'].sum()
         total_purchases = trades['total_cost'].sum()
         
-        # معادلة الكاش فلو
         cash_simple = (total_dep + total_ret - total_wit) + total_sales - total_purchases
         
         return {
@@ -126,9 +135,12 @@ def update_prices():
         df = fetch_table("Trades")
         if df.empty: return False
         
-        # نأخذ فقط المفتوحة حسب الداتا بيس لتحديث أسعارها
-        # نعتمد هنا على الحالة المسجلة لتجنب تحديث صفقة مغلقة بصفر
-        open_symbols = df[df['status'] == 'Open']['symbol'].unique().tolist()
+        # ✅ التعديل 2: تحديث الأسهم فقط واستثناء الصكوك
+        # نفترض أن العمود asset_type موجود، وإذا لم يكن موجوداً نعامل الكل كأسهم
+        if 'asset_type' in df.columns:
+            open_symbols = df[(df['status'] == 'Open') & (df['asset_type'] != 'Sukuk')]['symbol'].unique().tolist()
+        else:
+            open_symbols = df[df['status'] == 'Open']['symbol'].unique().tolist()
         
         if not open_symbols: return True
         
@@ -149,10 +161,13 @@ def update_prices():
 def generate_equity_curve(df):
     if df.empty: return pd.DataFrame()
     df = df.copy()
-    df['date'] = pd.to_datetime(df['date'])
-    df = df.sort_values('date')
-    df['cumulative_invested'] = df['total_cost'].cumsum()
-    return df
+    try:
+        df['date'] = pd.to_datetime(df['date'])
+        df = df.sort_values('date')
+        df['cumulative_invested'] = df['total_cost'].cumsum()
+        return df
+    except:
+        return pd.DataFrame()
 
 def create_smart_backup():
     pass
