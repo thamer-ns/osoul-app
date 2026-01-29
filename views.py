@@ -24,7 +24,7 @@ except ImportError:
 try:
     from backtester import run_backtest
 except ImportError:
-    run_backtest = None 
+    run_backtest = None # سنفحص هذا المتغير لاحقاً
 
 # 3. التحليل المالي
 try:
@@ -44,7 +44,7 @@ except ImportError:
 try:
     from ai_engine import generate_ai_report, calculate_portfolio_risk_score, run_stress_test, generate_rebalancing_suggestions
 except ImportError:
-    def generate_ai_report(s): return {} 
+    def generate_ai_report(s): return {} # يرجع قاموس فارغ ليتم التعامل معه
     def calculate_portfolio_risk_score(df, c): return 50
     def run_stress_test(v, df): return {"scenarios": [], "insight": ""}
     def generate_rebalancing_suggestions(df, c): return []
@@ -64,6 +64,7 @@ def render_navbar():
     cols = st.columns(len(buttons) + 1)
     for i, (label, key) in enumerate(buttons):
         with cols[i]:
+            # تمييز الزر النشط
             is_active = st.session_state.page == key
             if st.button(label, key=f"nav_{key}", type="primary" if is_active else "secondary"):
                 st.session_state.page = key
@@ -80,7 +81,7 @@ def render_navbar():
                 except: st.session_state.clear(); st.rerun()
 
 # ========================================================
-# 2. لوحة القيادة (Dashboard) - (تم نقل التنبيهات من هنا)
+# 2. لوحة القيادة (Dashboard)
 # ========================================================
 def view_dashboard(fin):
     try: tp, tc = get_tasi_data()
@@ -113,9 +114,11 @@ def view_dashboard(fin):
         r_col = "success" if risk_score < 40 else "warning" if risk_score < 70 else "danger"
         render_kpi("مستوى المخاطرة", f"{risk_score}/100", r_col, "🛡️")
 
+    # [تم الحذف من هنا] تم نقل تنبيهات الذكاء الاصطناعي إلى صفحة التحليل
+
     st.divider()
 
-    # 2. الملخص المالي
+    # 3. الملخص المالي
     c1, c2, c3, c4 = st.columns(4)
     total_pl = fin['unrealized_pl'] + fin['realized_pl']
     with c1: render_kpi(f"الكاش المتوفر ({cash_pct:.1f}%)", safe_fmt(fin['cash']), "blue", "💵")
@@ -123,7 +126,7 @@ def view_dashboard(fin):
     with c3: render_kpi("قيمة الأصول الحالية", safe_fmt(fin['market_val_open']), "neutral", "📊")
     with c4: render_kpi("الربح الكلي (المحقق+الورقي)", safe_fmt(total_pl), 'success' if total_pl>=0 else 'danger', "💰")
 
-    # 3. الرسوم البيانية
+    # 4. الرسوم البيانية
     if not df.empty:
         col_chart1, col_chart2 = st.columns(2)
         with col_chart1:
@@ -165,6 +168,7 @@ def view_portfolio(fin, key):
         st.info("لا توجد صفقات.")
         return
 
+    # فلترة حسب الاستراتيجية
     sub = df[df['strategy'].astype(str).str.contains(ts, na=False)].copy()
     
     op = sub[sub['status'] == 'Open'].copy()
@@ -174,6 +178,7 @@ def view_portfolio(fin, key):
 
     with tab1:
         if not op.empty:
+            # مؤشرات سريعة
             tot_cost = op['total_cost'].sum()
             tot_val = op['market_value'].sum()
             tot_gain = op['gain'].sum()
@@ -184,12 +189,15 @@ def view_portfolio(fin, key):
             
             st.divider()
             
+            # جلب البيانات الحية
             live_data = fetch_batch_data(op['symbol'].unique().tolist())
             
+            # تحديث البيانات للعرض
             op['prev_close'] = op['symbol'].apply(lambda x: live_data.get(x, {}).get('prev_close', 0))
             op['day_change'] = op.apply(lambda r: ((r['current_price'] - r['prev_close']) / r['prev_close'] * 100) if r['prev_close'] > 0 else 0, axis=1)
             op['status_ar'] = "مفتوحة"
 
+            # الجدول
             cols = [
                 ('company_name', 'الشركة', 'text'), 
                 ('symbol', 'الرمز', 'text'),
@@ -202,6 +210,7 @@ def view_portfolio(fin, key):
             ]
             render_custom_table(op, cols)
 
+            # أدوات التحكم (بيع / تعديل)
             c_act1, c_act2 = st.columns(2)
             with c_act1:
                 with st.expander("🔴 إغلاق صفقة (بيع)"):
@@ -256,6 +265,7 @@ def view_sukuk_portfolio(fin):
     op = sukuk[sukuk['status'] == 'Open']
     
     if not op.empty:
+        # عرض الصكوك
         total_inv = op['total_cost'].sum()
         st.metric("إجمالي الاستثمار في الصكوك", safe_fmt(total_inv))
         
@@ -263,6 +273,7 @@ def view_sukuk_portfolio(fin):
                 ('entry_price', 'قيمة الصك', 'money'), ('total_cost', 'الإجمالي', 'money'), ('date', 'تاريخ الشراء', 'date')]
         render_custom_table(op, cols)
         
+        # خيار التصفية
         with st.expander("استرداد / بيع صك"):
             opts = {f"{r['company_name']}": r['id'] for _, r in op.iterrows()}
             s = st.selectbox("اختر الصك", list(opts.keys()))
@@ -272,6 +283,7 @@ def view_sukuk_portfolio(fin):
                     val = st.number_input("المبلغ المسترد كاملاً")
                     dt = st.date_input("تاريخ الاسترداد")
                     if st.form_submit_button("تأكيد"):
+                        # حساب سعر الخروج للوحدة
                         qty = float(op[op['id']==tid].iloc[0]['quantity'])
                         ep = val / qty if qty else 0
                         execute_query("UPDATE Trades SET status='Close', exit_price=%s, exit_date=%s WHERE id=%s", (ep, str(dt), tid))
@@ -319,17 +331,17 @@ def view_cash_log():
         if not fin['returns'].empty: render_custom_table(fin['returns'], [('date','التاريخ','date'),('symbol','السهم','text'),('amount','المبلغ','money')])
 
 # ========================================================
-# 6. التحليل الشامل (Analysis) - (تم إضافة التنبيهات هنا ✅)
+# 6. التحليل الشامل (Analysis) - تم الإصلاح الجذري هنا 🛠️
 # ========================================================
 def view_analysis(fin):
     st.header("🔬 التحليل الشامل والمستشار الذكي")
     
     trades = fin['all_trades']
-
-    # حساب نسبة الكاش هنا لأننا نحتاجها للتنبيهات
+    
+    # [إضافة] حساب نسبة الكاش هنا لأننا نحتاجها للتنبيهات التي نقلناها
     total_assets = fin['market_val_open'] + fin['cash']
     cash_pct = (fin['cash'] / total_assets * 100) if total_assets else 0
-    
+
     # 1. تحليل المحفظة الكلي
     if not trades.empty:
         open_pos = trades[trades['status']=='Open']
@@ -349,6 +361,7 @@ def view_analysis(fin):
         st.divider()
 
     # 2. التحليل الفردي للسهم
+    # تجميع قائمة الأسهم (من المحفظة + المراقبة)
     wl = fetch_table("Watchlist")
     my_stocks = trades['symbol'].unique().tolist() if not trades.empty else []
     wl_stocks = wl['symbol'].unique().tolist() if not wl.empty else []
@@ -367,7 +380,7 @@ def view_analysis(fin):
         # التبويبات الفرعية
         at1, at2, at3, at4, at5 = st.tabs(["🤖 المستشار", "💰 القوائم المالية", "📈 الشارت الفني", "🏛️ كلاسيكي", "📝 ملاحظاتي"])
         
-        # أ. المستشار الذكي
+        # أ. المستشار الذكي (مع الحماية من KeyError)
         with at1:
             # === [START] تم نقل التنبيهات إلى هنا ===
             ai_suggestions = generate_rebalancing_suggestions(trades, cash_pct)
@@ -383,11 +396,12 @@ def view_analysis(fin):
             with st.spinner("جاري تحليل البيانات..."):
                 report = generate_ai_report(selected_sym)
             
-            # استخراج البيانات بأمان
+            # استخراج البيانات بأمان باستخدام .get()
             rec_text = report.get('recommendation', 'غير متوفر')
-            rec_color = report.get('color', '#6c757d')
+            rec_color = report.get('color', '#6c757d') # رمادي افتراضي في حال عدم وجود لون
             rec_strat = report.get('strategy', 'لا توجد بيانات كافية للتحليل')
             
+            # عرض النتيجة
             st.markdown(f"""
             <div style="text-align:center; padding: 20px; background-color: #f8f9fa; border-radius: 15px; border: 2px solid {rec_color}; margin-bottom: 20px;">
                 <h2 style="color: {rec_color}; margin:0;">{rec_text}</h2>
@@ -431,6 +445,7 @@ def view_backtester_ui(fin):
         st.error("⚠️ وحدة الاختبار غير متوفرة. تأكد من وجود الملف backtester.py")
         return
 
+    # قائمة الأسهم
     all_syms = fin['all_trades']['symbol'].unique().tolist()
     if "1120.SR" not in all_syms: all_syms.append("1120.SR")
     
@@ -441,7 +456,7 @@ def view_backtester_ui(fin):
     
     if st.button("🚀 تشغيل المحاكاة"):
         with st.spinner("جاري العودة بالزمن واختبار البيانات..."):
-            hist = get_chart_history(s, period="2y")
+            hist = get_chart_history(s, period="2y") # سنتين
             res = run_backtest(hist, strat, amount)
             
             if res:
@@ -463,6 +478,7 @@ def view_backtester_ui(fin):
 # ========================================================
 def render_pulse_dashboard():
     st.header("💓 نبض السوق (قائمة المراقبة)")
+    # جلب الأسهم من Watchlist + المحفظة
     wl = fetch_table("Watchlist")
     trades = fetch_table("Trades")
     syms = list(set(wl['symbol'].tolist() + trades['symbol'].tolist()))
@@ -473,6 +489,7 @@ def render_pulse_dashboard():
         
     data = fetch_batch_data(syms)
     
+    # عرض بشكل شبكة
     cols = st.columns(4)
     for i, (sym, info) in enumerate(data.items()):
         chg = ((info['price'] - info['prev_close'])/info['prev_close']*100) if info['prev_close'] else 0
@@ -495,6 +512,7 @@ def view_add_trade():
             if not s or qty <= 0 or price <= 0:
                 st.error("الرجاء إدخال بيانات صحيحة")
             else:
+                # جلب اسم الشركة آلياً
                 nm, sec = get_company_details(s)
                 asset_t = "Sukuk" if typ == "صكوك" else "Stock"
                 
@@ -526,7 +544,7 @@ def router():
     render_navbar()
     
     pg = st.session_state.page
-    fin = calculate_portfolio_metrics()
+    fin = calculate_portfolio_metrics() # حسابات مركزية مرة واحدة
     
     if pg == 'home': view_dashboard(fin)
     elif pg == 'spec': view_portfolio(fin, 'spec')
