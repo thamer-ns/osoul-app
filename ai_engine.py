@@ -3,192 +3,212 @@ import numpy as np
 from market_data import get_chart_history
 from financial_analysis import get_advanced_fundamental_ratios
 
-# ==========================================
-# 🧠 المحرك الاستشاري الذكي (Expert System V2)
-# ==========================================
+# ============================================================
+# 📚 المحرك المعرفي: مبني على مراجع التحليل الفني والمالي
+# ============================================================
+
+def _analyze_vsa_art_of_trading(df):
+    """
+    تحليل الحجم والمدى (Volume Spread Analysis)
+    المصدر: كتاب فن التداول
+    """
+    if df is None or len(df) < 20: return 0, []
+    
+    score = 0
+    obs = []
+    
+    curr = df.iloc[-1]
+    prev = df.iloc[-2]
+    avg_vol = df['Volume'].rolling(20).mean().iloc[-1]
+    
+    # 1. جهد عالي بدون نتيجة (High Volume, Small Body) -> انعكاس محتمل
+    body_size = abs(curr['Close'] - curr['Open'])
+    avg_body = abs(df['Close'] - df['Open']).rolling(20).mean().iloc[-1]
+    
+    if curr['Volume'] > avg_vol * 1.5 and body_size < avg_body * 0.5:
+        if curr['Close'] > prev['Close']: # في قمة
+            score -= 2
+            obs.append("VSA: جهد شرائي عالي بمدى ضيق (تصريف محتمل)")
+        else: # في قاع
+            score += 2
+            obs.append("VSA: جهد بيعي عالي بمدى ضيق (تجميع محتمل)")
+
+    # 2. اختراق وهمي (Up-thrust)
+    # ذيل علوي طويل مع فوليوم عالي وإغلاق منخفض
+    upper_wick = curr['High'] - max(curr['Close'], curr['Open'])
+    if upper_wick > body_size * 2 and curr['Volume'] > avg_vol:
+        score -= 2
+        obs.append("VSA: إشارة Up-thrust (محاولة صعود فاشلة)")
+
+    # 3. اختبار الطلب (Test for Supply)
+    # نزول ثم إغلاق مرتفع بفوليوم منخفض
+    lower_wick = min(curr['Close'], curr['Open']) - curr['Low']
+    if lower_wick > body_size * 2 and curr['Volume'] < avg_vol:
+        score += 2
+        obs.append("VSA: اختبار ناجح للعرض (No Supply) - إيجابي")
+
+    return score, obs
+
+def _analyze_dow_theory_murphy(df):
+    """
+    تحليل الاتجاه والقمم والقيعان
+    المصدر: كتاب جون ميرفي للتحليل الفني
+    """
+    if df is None or len(df) < 50: return 0, [], "غير واضح"
+    
+    score = 0
+    obs = []
+    
+    # تحديد آخر قمتين وآخر قاعين (تقريبي)
+    # نستخدم نافذة زمنية لتحديد القمم المحلية
+    last_close = df['Close'].iloc[-1]
+    sma_50 = df['Close'].rolling(50).mean().iloc[-1]
+    sma_200 = df['Close'].rolling(200).mean().iloc[-1]
+    
+    # 1. المتوسطات المتحركة (أساس الاتجاه)
+    if last_close > sma_200:
+        score += 2
+        trend = "صاعد (سوق ثيران)"
+        obs.append("السعر يتداول فوق متوسط 200 يوم (إيجابية طويلة المدى)")
+    else:
+        score -= 2
+        trend = "هابط (سوق دببة)"
+        obs.append("السعر يتداول تحت متوسط 200 يوم (سلبية طويلة المدى)")
+        
+    # 2. التقاطعات (Golden/Death Cross)
+    if sma_50 > sma_200:
+        score += 1
+    elif sma_50 < sma_200:
+        score -= 1
+        obs.append("تقاطع سلبي للمتوسطات (Death Cross)")
+
+    return score, obs, trend
+
+def _analyze_deep_financials(symbol):
+    """
+    التحليل المالي العميق (السيولة، النشاط، الربحية)
+    المصدر: كتب القوائم المالية وسلسلة التحليل المالي
+    """
+    metrics, price = get_advanced_fundamental_ratios(symbol)
+    score = 0
+    obs = []
+    
+    # استرجاع البيانات المحسوبة
+    f_score = metrics.get('Piotroski_Score', 0)
+    graham = metrics.get('Fair_Value_Graham', 0)
+    
+    # 1. تقييم المتانة (F-Score)
+    if f_score >= 7:
+        score += 3
+        obs.append(f"مركز مالي صلب جداً (Piotroski {f_score}/9)")
+    elif f_score <= 3:
+        score -= 3
+        obs.append("تحذير: مؤشرات ضعف مالي أو مشاكل تشغيلية")
+        
+    # 2. تقييم السعر (Graham)
+    if graham and graham > 0:
+        discount = ((graham - price) / graham) * 100
+        if discount > 20:
+            score += 3
+            obs.append(f"سعر لقطة: يتداول بخصم {discount:.1f}% عن قيمته العادلة")
+        elif discount < -30:
+            score -= 2
+            obs.append("السعر متضخم مقارنة بالقيمة العادلة")
+    
+    # 3. توزيعات الأرباح (إن وجدت)
+    div_safety = metrics.get('Dividend_Safety', 'N/A')
+    if div_safety == "آمنة ومستدامة":
+        score += 1
+        obs.append("توزيعات الأرباح آمنة ومستدامة")
+        
+    return score, obs, metrics
 
 def _detect_candlestick_patterns(df):
     """
-    اكتشاف نماذج الشموع اليابانية بناءً على الكتب المرفقة
-    (المطرقة، دوجي، الابتلاع، الشهاب)
+    النماذج اليابانية الانعكاسية
+    المصدر: كتاب الشموع اليابانية
     """
     if df is None or len(df) < 3: return 0, []
-    
     score = 0
     patterns = []
     
-    # بيانات آخر شمعة
     curr = df.iloc[-1]
     prev = df.iloc[-2]
     
-    # حساب جسم الشمعة والذيول
     body = abs(curr['Close'] - curr['Open'])
-    upper_shadow = curr['High'] - max(curr['Close'], curr['Open'])
-    lower_shadow = min(curr['Close'], curr['Open']) - curr['Low']
-    total_range = curr['High'] - curr['Low']
-    avg_body = abs(df['Close'] - df['Open']).rolling(10).mean().iloc[-1]
+    upper_wick = curr['High'] - max(curr['Close'], curr['Open'])
+    lower_wick = min(curr['Close'], curr['Open']) - curr['Low']
     
-    # 1. المطرقة (Hammer) - إشارة إيجابية في القاع
-    # شرط: ذيل سفلي طويل (ضعف الجسم)، جسم صغير، ذيل علوي صغير
-    is_hammer = (lower_shadow > body * 2) and (upper_shadow < body * 0.5)
-    
-    # 2. الشهاب (Shooting Star) - إشارة سلبية في القمة
-    is_shooting_star = (upper_shadow > body * 2) and (lower_shadow < body * 0.5)
-    
-    # 3. دوجي (Doji) - حيرة وانعكاس محتمل
-    is_doji = body <= (total_range * 0.1)
-    
-    # 4. الابتلاع الشرائي (Bullish Engulfing) - إيجابي قوي
-    # شرط: الشمعة الحالية خضراء وتبتلع جسم الشمعة الحمراء السابقة
-    is_bull_engulfing = (curr['Close'] > curr['Open']) and \
-                        (prev['Close'] < prev['Open']) and \
-                        (curr['Close'] > prev['Open']) and \
-                        (curr['Open'] < prev['Close'])
-
-    # 5. الابتلاع البيعي (Bearish Engulfing) - سلبي قوي
-    is_bear_engulfing = (curr['Close'] < curr['Open']) and \
-                        (prev['Close'] > prev['Open']) and \
-                        (curr['Close'] < prev['Close']) and \
-                        (curr['Open'] > prev['Open'])
-
-    # تسجيل النتائج
-    if is_bull_engulfing:
-        score += 2
-        patterns.append("نموذج ابتلاع شرائي (Bullish Engulfing) - إشارة قوية للصعود")
-    elif is_hammer:
+    # المطرقة (Hammer)
+    if lower_wick > body * 2 and upper_wick < body * 0.5:
         score += 1
-        patterns.append("شمعة المطرقة (Hammer) - احتمال انعكاس إيجابي")
+        patterns.append("شمعة المطرقة (Hammer) - احتمال ارتداد")
         
-    if is_bear_engulfing:
-        score -= 2
-        patterns.append("نموذج ابتلاع بيعي (Bearish Engulfing) - إشارة سلبية")
-    elif is_shooting_star:
-        score -= 1
-        patterns.append("شمعة الشهاب (Shooting Star) - احتمال هبوط")
-        
-    if is_doji:
-        patterns.append("شمعة دوجي (Doji) - حيرة في السوق (ترقب)")
-
+    # الابتلاع الشرائي
+    if curr['Close'] > curr['Open'] and prev['Close'] < prev['Open']:
+        if curr['Close'] > prev['Open'] and curr['Open'] < prev['Close']:
+            score += 2
+            patterns.append("الابتلاع الشرائي (Bullish Engulfing) - إشارة قوية")
+            
     return score, patterns
 
-def _analyze_technicals(df):
-    """تحليل فني (مؤشرات + شموع)"""
-    if df is None or len(df) < 200: return 0, ["بيانات غير كافية"], "محايد"
-    
-    score = 0
-    reasons = []
-    
-    # --- أ. المؤشرات الكلاسيكية (جون ميرفي) ---
-    curr = df['Close'].iloc[-1]
-    sma50 = df['Close'].rolling(50).mean().iloc[-1]
-    sma200 = df['Close'].rolling(200).mean().iloc[-1]
-    
-    # الاتجاه
-    if curr > sma200:
-        score += 2
-        reasons.append("السعر فوق متوسط 200 يوم (مسار صاعد)")
-    else:
-        score -= 2
-        reasons.append("السعر تحت متوسط 200 يوم (مسار هابط)")
-        
-    # التقاطعات
-    if sma50 > sma200:
-        score += 1
-    elif sma50 < sma200:
-        score -= 1
-        
-    # RSI
-    delta = df['Close'].diff()
-    gain = (delta.where(delta > 0, 0)).ewm(alpha=1/14, adjust=False).mean()
-    loss = (-delta.where(delta < 0, 0)).ewm(alpha=1/14, adjust=False).mean()
-    rs = gain / loss
-    rsi = 100 - (100 / (1 + rs))
-    last_rsi = rsi.iloc[-1]
-    
-    if last_rsi < 30:
-        score += 2
-        reasons.append("RSI: تشبع بيعي (مناطق ارتداد)")
-    elif last_rsi > 70:
-        score -= 1
-        reasons.append("RSI: تشبع شرائي (تضخم)")
-
-    # --- ب. الشموع اليابانية (الإضافة الجديدة) ---
-    candle_score, candle_patterns = _detect_candlestick_patterns(df)
-    score += candle_score
-    reasons.extend(candle_patterns)
-    
-    trend_desc = "إيجابي" if score > 0 else "سلبي"
-    return score, reasons, trend_desc
-
-def _analyze_fundamentals(symbol):
-    """تحليل مالي (جراهام + بيوتروسكي)"""
-    metrics, price = get_advanced_fundamental_ratios(symbol)
-    score = 0
-    reasons = []
-    
-    # F-Score
-    f_score = metrics.get('Piotroski_Score', 0)
-    if f_score >= 7:
-        score += 3
-        reasons.append(f"مالية قوية (F-Score {f_score}/9)")
-    elif f_score <= 3:
-        score -= 2
-        reasons.append("ضعف مالي أو ديون مرتفعة")
-        
-    # Graham Value
-    fv = metrics.get('Fair_Value_Graham')
-    if fv and fv > 0:
-        if price < fv:
-            score += 2
-            reasons.append(f"سعر مغري (أقل من القيمة العادلة {fv:.2f})")
-        elif price > fv * 1.5:
-            score -= 2
-            reasons.append("سعر متضخم جداً")
-            
-    return score, reasons, metrics
-
 def generate_ai_report(symbol):
-    """توليد التقرير النهائي"""
+    """
+    المعالج المركزي: يجمع كل المدارس ويصدر الحكم النهائي
+    """
     df = get_chart_history(symbol, period='2y')
     
-    t_score, t_reasons, t_trend = _analyze_technicals(df)
-    f_score, f_reasons, f_metrics = _analyze_fundamentals(symbol)
+    # تشغيل المحركات الفرعية
+    score_dow, obs_dow, trend = _analyze_dow_theory_murphy(df)
+    score_vsa, obs_vsa = _analyze_vsa_art_of_trading(df)
+    score_candle, obs_candle = _detect_candlestick_patterns(df)
+    score_fund, obs_fund, metrics = _analyze_deep_financials(symbol)
     
-    total_score = t_score + f_score
+    # التجميع النهائي
+    total_tech_score = score_dow + score_vsa + score_candle
+    total_score = total_tech_score + score_fund
     
-    # مصفوفة اتخاذ القرار
-    recommendation = "احتفاظ / مراقبة"
-    color = "#6c757d" # رمادي
-    strategy = "تضارب في الإشارات. يفضل الانتظار."
+    # صناعة القرار
+    recommendation = "محايد / مراقبة"
+    color = "#6c757d"
+    strategy = "تضارب الأدلة الفنية والمالية. يفضل الانتظار لظهور إشارة أوضح."
     
-    if total_score >= 6:
-        recommendation = "💎 فرصة ذهبية (Strong Buy)"
-        color = "#198754" # أخضر غامق
-        strategy = "توافق فني ومالي ممتاز. الشموع والمؤشرات تدعم الصعود، والشركة قوية مالياً."
-    elif total_score >= 3:
-        recommendation = "✅ شراء / زيادة مراكز"
-        color = "#28a745" # أخضر
-        strategy = "الإيجابية تغلب على السهم. جيد للتمركز الاستثماري."
+    if total_score >= 7:
+        recommendation = "💎 استثمار ذهبي (Strong Buy)"
+        color = "#198754"
+        strategy = "توافق مذهل بين القوة المالية والاتجاه الفني والسيولة. فرصة نادرة."
+    elif total_score >= 4:
+        recommendation = "✅ شراء / زيادة كميات"
+        color = "#28a745"
+        strategy = "السهم إيجابي في الغالب. جيد للتمركز."
     elif total_score <= -4:
-        recommendation = "⛔ خروج / تجنب"
-        color = "#dc3545" # أحمر
-        strategy = "إشارات سلبية قوية (مالية وفنية). خطر الهبوط مرتفع."
-    elif t_score > 2 and f_score < 0:
-        recommendation = "⚡ مضاربة لحظية فقط"
-        color = "#ffc107" # أصفر
-        strategy = "فنيا جيد لكن مالياً ضعيف. ضارب مع وقف خسارة صارم ولا تستثمر."
-    elif f_score > 3 and t_score < 0:
-        recommendation = "📉 تجميع استثماري (القيمة)"
-        color = "#0d6efd" # أزرق
-        strategy = "السعر يهبط لكن الشركة قوية جداً. فرصة للمستثمر طويل الأمد (Buy the Dip)."
+        recommendation = "⛔ خروج / وقف خسارة"
+        color = "#dc3545"
+        strategy = "الإشارات سلبية جداً فنياً ومالياً. البقاء مخاطرة."
+    elif total_tech_score >= 3 and score_fund < 0:
+        recommendation = "⚡ مضاربة بحذر"
+        color = "#ffc107"
+        strategy = "فني ممتاز للمضاربة السريعة، لكن احذر فالشركة ضعيفة مالياً."
+    elif score_fund >= 4 and total_tech_score < 0:
+        recommendation = "📉 صيد قيعان (Value Invest)"
+        color = "#0d6efd"
+        strategy = "السعر يهبط لكن الشركة قوية جداً. فرصة للمستثمر طويل النفس."
+
+    # دمج الملاحظات
+    tech_reasons = obs_dow + obs_vsa + obs_candle
+    fund_reasons = obs_fund
+    
+    if not tech_reasons: tech_reasons.append("لا توجد إشارات فنية بارزة حالياً")
+    if not fund_reasons: fund_reasons.append("البيانات المالية طبيعية، لا نقاط قوة أو ضعف حادة")
 
     return {
         "recommendation": recommendation,
         "color": color,
         "strategy": strategy,
-        "tech_score": t_score,
-        "fund_score": f_score,
-        "tech_reasons": t_reasons,
-        "fund_reasons": f_reasons,
-        "trend": t_trend
+        "tech_score": total_tech_score,
+        "fund_score": score_fund,
+        "tech_reasons": tech_reasons,
+        "fund_reasons": fund_reasons,
+        "trend": trend,
+        "graham_price": metrics.get('Fair_Value_Graham')
     }
