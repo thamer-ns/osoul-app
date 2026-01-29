@@ -338,15 +338,17 @@ def render_data_import_ui_content(symbol):
         
         with st.spinner("جاري تحليل النصوص واستخراج الأرقام..."):
             if uploaded_file:
-                results, detected_symbol = parser.process_file_or_text(uploaded_file=uploaded_file)
+                results, detected_symbol, err = parser.process_file_or_text(uploaded_file=uploaded_file)
             elif pasted_text:
-                results, detected_symbol = parser.process_file_or_text(text_input=pasted_text)
-                
-        if isinstance(results, tuple): 
-             results, detected_symbol, err_msg = results
-             if err_msg:
-                 st.error(err_msg)
-                 return
+                results, detected_symbol, err = parser.process_file_or_text(text_input=pasted_text)
+            else:
+                st.warning("الرجاء اختيار ملف أو لصق نص.")
+                return
+
+        # معالجة الخطأ إن وجد
+        if 'err' in locals() and err:
+             st.error(err)
+             return
 
         if results:
             st.success(f"تم استخراج {len(results)} سجلات بنجاح!")
@@ -423,9 +425,9 @@ def render_financial_dashboard_ui(symbol):
             render_data_import_ui_content(symbol)
             
         with t3:
-            # === [START] النموذج اليدوي الجديد والمفصل ===
+            # === النموذج اليدوي المفصل ===
             st.markdown("##### تسجيل البيانات المالية يدوياً")
-            st.caption("أدخل البيانات اللازمة للتحليل المالي (جراهام، بيوتروسكي، وجودة الأرباح).")
+            st.caption("أدخل البيانات اللازمة للتحليل المالي.")
             
             with st.form("manual_fin_entry"):
                 col_meta1, col_meta2 = st.columns(2)
@@ -435,29 +437,29 @@ def render_financial_dashboard_ui(symbol):
                 st.divider()
                 st.markdown("**1. قائمة الدخل (Income Statement)**")
                 c_inc1, c_inc2 = st.columns(2)
-                rev = c_inc1.number_input("إجمالي الإيرادات (Revenue)", min_value=0.0, format="%.2f")
-                net_inc = c_inc2.number_input("صافي الربح (Net Income)", format="%.2f")
+                rev = c_inc1.number_input("إجمالي الإيرادات", min_value=0.0, format="%.2f")
+                net_inc = c_inc2.number_input("صافي الربح", format="%.2f")
                 
                 st.divider()
-                st.markdown("**2. قائمة التدفقات النقدية (Cash Flow)**")
-                ocf = st.number_input("التدفق النقدي التشغيلي (Operating Cash Flow)", help="مهم جداً لقياس جودة الأرباح", format="%.2f")
+                st.markdown("**2. قائمة التدفقات النقدية**")
+                ocf = st.number_input("التدفق النقدي التشغيلي", help="Operating Cash Flow", format="%.2f")
                 
                 st.divider()
                 st.markdown("**3. المركز المالي (Balance Sheet)**")
                 c_bs1, c_bs2 = st.columns(2)
-                tot_assets = c_bs1.number_input("إجمالي الأصول (Total Assets)", min_value=0.0, format="%.2f")
-                tot_liab = c_bs2.number_input("إجمالي المطلوبات (Total Liabilities)", min_value=0.0, format="%.2f")
+                tot_assets = c_bs1.number_input("إجمالي الأصول", min_value=0.0, format="%.2f")
+                tot_liab = c_bs2.number_input("إجمالي المطلوبات", min_value=0.0, format="%.2f")
                 
                 c_bs3, c_bs4 = st.columns(2)
-                cur_assets = c_bs3.number_input("الأصول المتداولة (Current Assets)", min_value=0.0, format="%.2f")
-                cur_liab = c_bs4.number_input("المطلوبات المتداولة (Current Liabilities)", min_value=0.0, format="%.2f")
+                cur_assets = c_bs3.number_input("الأصول المتداولة", min_value=0.0, format="%.2f")
+                cur_liab = c_bs4.number_input("المطلوبات المتداولة", min_value=0.0, format="%.2f")
                 
                 c_bs5, c_bs6 = st.columns(2)
-                tot_equity = c_bs5.number_input("إجمالي حقوق الملكية (Equity)", format="%.2f")
-                lt_debt = c_bs6.number_input("الديون طويلة الأجل (Long Term Debt)", min_value=0.0, format="%.2f")
+                tot_equity = c_bs5.number_input("إجمالي حقوق الملكية", format="%.2f")
+                lt_debt = c_bs6.number_input("الديون طويلة الأجل", min_value=0.0, format="%.2f")
 
                 st.divider()
-                if st.form_submit_button("💾 حفظ البيانات المالية"):
+                if st.form_submit_button("💾 حفظ البيانات"):
                     data = {
                         'revenue': rev, 'net_income': net_inc, 'operating_cash_flow': ocf,
                         'total_assets': tot_assets, 'total_liabilities': tot_liab,
@@ -465,11 +467,10 @@ def render_financial_dashboard_ui(symbol):
                         'total_equity': tot_equity, 'long_term_debt': lt_debt
                     }
                     if save_financial_record(symbol, str(f_date), data, f_type, 'Manual_Full'):
-                        st.success("تم الحفظ بنجاح! سيتم تحديث التحليل الآن.")
+                        st.success("تم الحفظ بنجاح!")
                         st.rerun()
                     else:
-                        st.error("فشل الحفظ. تأكد من إدخال قيم صالحة.")
-            # === [END] ===
+                        st.error("فشل الحفظ. تأكد من البيانات.")
 
 def view_analysis(fin):
     st.header("🔬 التحليل الشامل والمستشار الذكي")
@@ -592,24 +593,24 @@ def view_backtester_ui(fin):
                 st.error("فشل الاختبار. قد لا تتوفر بيانات تاريخية كافية.")
 
 # ========================================================
-# 8. نبض السوق (Market Pulse) - النسخة المصححة (بدون تكرار) ✅
+# 8. نبض السوق (Market Pulse) - المطور والمصحح ✅
 # ========================================================
 def render_pulse_dashboard():
     st.header("💓 نبض السوق")
     
     # 1. تجهيز قائمة الأسهم (تنظيف وتوحيد الرموز)
-    # القياديات (نضع الرموز مجردة بدون .SR لتوحيد الصيغة)
+    # القياديات (رموز مجردة)
     market_leaders = ['1120', '2222', '2010', '7010', '1180', '1150']
     
-    # جلب أسهمك من قاعدة البيانات
+    # جلب أسهمك
     wl = fetch_table("Watchlist")
     trades = fetch_table("Trades")
     raw_stocks = list(set(wl['symbol'].tolist() + trades['symbol'].tolist()))
     
-    # تنظيف رموز المحفظة (حذف .SR إذا وجدت لضمان عدم التكرار)
+    # تنظيف رموز المحفظة (حذف .SR)
     my_stocks = [str(s).replace('.SR', '').strip() for s in raw_stocks]
     
-    # دمج القائمتين وإزالة التكرار نهائياً
+    # دمج القائمتين وإزالة التكرار
     all_syms = list(set(market_leaders + my_stocks))
     
     if not all_syms:
@@ -620,57 +621,61 @@ def render_pulse_dashboard():
     with st.spinner("جاري قراءة نبض السوق..."):
         data = fetch_batch_data(all_syms)
     
-    # تحويل البيانات إلى قائمة
     rows = []
+    seen_symbols = set() # مجموعة لمنع التكرار في العرض
+
     for sym, info in data.items():
+        # تنظيف المفتاح القادم من البيانات لضمان التطابق
+        clean_sym = str(sym).replace('.SR', '').strip()
+        
+        # منع التكرار (إذا تمت معالجة الرمز مسبقاً نتخطاه)
+        if clean_sym in seen_symbols:
+            continue
+        seen_symbols.add(clean_sym)
+
         price = info.get('price', 0)
         prev = info.get('prev_close', 0)
         high_yr = info.get('year_high', 0)
         low_yr = info.get('year_low', 0)
         
-        # جلب الاسم العربي
-        name, _ = get_company_details(sym)
-        if name == sym: name = f"شركة {sym}"
+        name, _ = get_company_details(clean_sym)
+        if name == clean_sym: name = f"شركة {clean_sym}"
         
-        # حساب التغير
         change_pct = ((price - prev) / prev * 100) if prev > 0 else 0
         
-        # موقع السعر من القمة والقاع
         range_pos = 0
         if high_yr > low_yr:
             range_pos = (price - low_yr) / (high_yr - low_yr) * 100
             
         rows.append({
-            'symbol': sym,
+            'symbol': clean_sym,
             'name': name,
             'price': price,
             'change': change_pct,
             'range_pos': range_pos,
             'year_low': low_yr,
             'year_high': high_yr,
-            'is_leader': sym in market_leaders
+            'is_leader': clean_sym in market_leaders
         })
     
     df_pulse = pd.DataFrame(rows)
     if df_pulse.empty: return
 
-    # --- دالة رسم البطاقة (Card Renderer) ---
+    # دالة رسم البطاقة
     def render_pro_card(row):
-        # تحديد الألوان بناءً على التغير
         if row['change'] > 0:
-            val_color = "#10B981" # أخضر
+            val_color = "#10B981"
             bg_badge = "#D1FAE5"
             arrow = "▲"
         elif row['change'] < 0:
-            val_color = "#EF4444" # أحمر
+            val_color = "#EF4444"
             bg_badge = "#FEE2E2"
             arrow = "▼"
         else:
-            val_color = "#6B7280" # رمادي
+            val_color = "#6B7280"
             bg_badge = "#F3F4F6"
             arrow = "-"
             
-        # لون شريط التقدم (أزرق غامق إذا كان السعر عالياً، نيلي إذا منخفض)
         bar_color = "#3B82F6" 
         
         st.markdown(f"""
@@ -687,7 +692,6 @@ def render_pulse_dashboard():
                     </div>
                 </div>
             </div>
-            
             <div style="display: flex; align-items: center; gap: 5px;">
                 <span style="font-size: 0.6rem; color: #9CA3AF;">قاع {row['year_low']}</span>
                 <div style="flex-grow: 1; height: 6px; background-color: #F3F4F6; border-radius: 3px; overflow: hidden; position: relative;">
@@ -698,9 +702,7 @@ def render_pulse_dashboard():
         </div>
         """, unsafe_allow_html=True)
 
-    # --- العرض الرئيسي ---
-    
-    # شريط الملخص
+    # العرض الرئيسي
     gainers = len(df_pulse[df_pulse['change'] > 0])
     losers = len(df_pulse[df_pulse['change'] < 0])
     neutral = len(df_pulse) - gainers - losers
@@ -712,7 +714,6 @@ def render_pulse_dashboard():
     
     st.divider()
 
-    # التبويبات
     t_leaders, t_gainers, t_losers, t_all = st.tabs(["🏛️ القياديات", "🚀 الأكثر ارتفاعاً", "🩸 الأكثر انخفاضاً", "📋 القائمة كاملة"])
     
     with t_leaders:
@@ -747,6 +748,35 @@ def render_pulse_dashboard():
         for i, row in enumerate(df_pulse.to_dict('records')):
             with cols[i % 4]:
                 render_pro_card(row)
+
+def view_add_trade():
+    st.header("➕ تسجيل عملية جديدة")
+    with st.form("add_t"):
+        c1, c2 = st.columns(2)
+        s = c1.text_input("رمز السهم (مثال: 1120)")
+        typ = c2.selectbox("تصنيف الصفقة", ["استثمار", "مضاربة", "صكوك"])
+        
+        c3, c4, c5 = st.columns(3)
+        qty = c3.number_input("الكمية", min_value=1.0)
+        price = c4.number_input("سعر الشراء", min_value=0.0)
+        dt = c5.date_input("التاريخ", date.today())
+        
+        if st.form_submit_button("✅ حفظ العملية"):
+            if not s or qty <= 0 or price <= 0:
+                st.error("الرجاء إدخال بيانات صحيحة")
+            else:
+                nm, sec = get_company_details(s)
+                asset_t = "Sukuk" if typ == "صكوك" else "Stock"
+                
+                execute_query(
+                    "INSERT INTO Trades (symbol, company_name, sector, asset_type, date, quantity, entry_price, strategy, status) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'Open')",
+                    (s, nm, sec, asset_t, str(dt), qty, price, typ)
+                )
+                st.success(f"تمت إضافة {nm} بنجاح!")
+                st.session_state.page = 'home'
+                st.cache_data.clear()
+                st.rerun()
+
 def view_settings():
     st.header("⚙️ الإعدادات والنظام")
     
