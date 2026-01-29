@@ -1,6 +1,5 @@
 import pandas as pd
 import streamlit as st
-import io
 import yfinance as yf
 import plotly.express as px
 import numpy as np
@@ -8,226 +7,253 @@ from database import execute_query, fetch_table
 from market_data import fetch_price_from_google, get_ticker_symbol
 
 # ==============================================================
-# الجزء الأول: الذكاء المالي (جراهام، بيوتروسكي، القيمة العادلة)
+# 📥 وحدة المزامنة: جلب وتخزين البيانات (سنوي + ربعي)
 # ==============================================================
 
-def calculate_piotroski_score(info, financials, balance_sheet, cashflow):
-    score = 0
-    try:
-        # محاولة التعامل مع البيانات سواء كانت من Yahoo أو مدخلة يدوياً
-        net_income = financials.loc['Net Income'].iloc[0] if 'Net Income' in financials.index else 0
-        net_income_prev = financials.loc['Net Income'].iloc[1] if 'Net Income' in financials.index and len(financials.columns) > 1 else 0
-        
-        op_cash = cashflow.loc['Operating Cash Flow'].iloc[0] if 'Operating Cash Flow' in cashflow.index else 0
-        
-        assets = balance_sheet.loc['Total Assets'].iloc[0] if 'Total Assets' in balance_sheet.index else 1
-        assets_prev = balance_sheet.loc['Total Assets'].iloc[1] if 'Total Assets' in balance_sheet.index and len(balance_sheet.columns) > 1 else 1
-
-        roa = net_income / assets
-        roa_prev = net_income_prev / assets_prev
-        
-        # 1. الربحية
-        if net_income > 0: score += 1
-        if op_cash > 0: score += 1
-        if roa > roa_prev: score += 1
-        if op_cash > net_income: score += 1
-
-        # 2. الرافعة والسيولة (بيانات تقريبية)
-        score += 1 # افتراضي للديون
-        score += 1 # افتراضي للسيولة
-
-        # 3. الكفاءة
-        score += 1 
-        
-    except:
-        pass 
-    return min(score, 9) # الحد الأقصى 9
-
-def get_advanced_fundamental_ratios(symbol):
-    metrics = {
-        "Fair_Value_Graham": None, "Piotroski_Score": 0,
-        "Financial_Health": "غير معروف", "Dividend_Safety": "N/A",
-        "Score": 0, "Rating": "N/A" # للتوافق مع الكود القديم
-    }
+def _process_and_save_financials(symbol, inc, bs, cf, period_type):
+    """دالة مساعدة لمعالجة وحفظ البيانات سواء كانت سنوية أو ربعية"""
+    # توحيد التواريخ (دمج كل القوائم لمعرفة السنوات/الأرباع المتوفرة)
+    all_dates = sorted(list(set(inc.columns) | set(bs.columns) | set(cf.columns)), reverse=True)[:8] # آخر 8 فترات
     
+    count = 0
+    for date_val in all_dates:
+        try:
+            d_str = date_val.strftime('%Y-%m-%d')
+            
+            # 1. قائمة الدخل (Income Statement)
+            rev = float(inc[date_val].get('Total Revenue', 0)) if date_val in inc.columns else 0
+            net = float(inc[date_val].get('Net Income', 0)) if date_val in inc.columns else 0
+            
+            # 2. المركز المالي (Balance Sheet)
+            assets = 0; liab = 0; equity = 0; cur_ast = 0; cur_liab = 0; debt = 0
+            if date_val in bs.columns:
+                col = bs[date_val]
+                assets = float(col.get('Total Assets', 0))
+                liab = float(col.get('Total Liabilities Net Minority Interest', col.get('Total Liabilities', 0)))
+                equity = float(col.get('Total Equity Gross Minority Interest', col.get('Total Equity', 0)))
+                cur_ast = float(col.get('Current Assets', 0))
+                cur_liab = float(col.get('Current Liabilities', 0))
+                debt = float(col.get('Long Term Debt', 0))
+
+            # 3. التدفقات النقدية (Cash Flow)
+            ocf = 0
+            if date_val in cf.columns:
+                ocf = float(cf[date_val].get('Operating Cash Flow', 0))
+
+            # الحفظ في قاعدة البيانات
+            query = """
+                INSERT INTO "FinancialStatements" 
+                (symbol, date, revenue, net_income, total_assets, total_liabilities, total_equity, 
+                 operating_cash_flow, current_assets, current_liabilities, long_term_debt, period_type)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (symbol, date, period_type) 
+                DO UPDATE SET 
+                    revenue=EXCLUDED.revenue, net_income=EXCLUDED.net_income,
+                    total_assets=EXCLUDED.total_assets, total_liabilities=EXCLUDED.total_liabilities,
+                    total_equity=EXCLUDED.total_equity, operating_cash_flow=EXCLUDED.operating_cash_flow,
+                    current_assets=EXCLUDED.current_assets, current_liabilities=EXCLUDED.current_liabilities,
+                    long_term_debt=EXCLUDED.long_term_debt;
+            """
+            execute_query(query, (symbol, d_str, rev, net, assets, liab, equity, ocf, cur_ast, cur_liab, debt, period_type))
+            count += 1
+        except Exception as e:
+            print(f"Error saving {date_val}: {e}")
+            continue
+            
+    return count
+
+def sync_company_financials(symbol):
+    """المزامنة الكاملة: تجلب السنوي والربعي معاً"""
     clean_sym = get_ticker_symbol(symbol)
-    price = fetch_price_from_google(symbol)
-    
     try:
         t = yf.Ticker(clean_sym)
-        info = t.info
         
-        # معادلة جراهام
-        eps = info.get('trailingEps', 0)
-        bvps = info.get('bookValue', 0)
-        if eps and bvps and eps > 0 and bvps > 0:
-            metrics['Fair_Value_Graham'] = (22.5 * eps * bvps) ** 0.5
-            
-        # بيوتروسكي (مبسط)
-        fin = t.financials
-        bs = t.balance_sheet
-        cf = t.cashflow
-        if not fin.empty and not bs.empty:
-            metrics['Piotroski_Score'] = calculate_piotroski_score(info, fin, bs, cf)
-            
-        # الحالة العامة
+        # 1. البيانات السنوية (Annual)
+        c_ann = _process_and_save_financials(symbol, t.financials, t.balance_sheet, t.cashflow, 'Annual')
+        
+        # 2. البيانات الربعية (Quarterly)
+        c_qtr = _process_and_save_financials(symbol, t.quarterly_financials, t.quarterly_balance_sheet, t.quarterly_cashflow, 'Quarterly')
+        
+        return True, f"تم الحفظ: {c_ann} سنوات و {c_qtr} أرباع"
+    except Exception as e:
+        return False, str(e)
+
+# ==============================================================
+# 🧠 وحدة التحليل والحساب (على البيانات المحلية)
+# ==============================================================
+
+def get_stored_financials_df(symbol, period_type='Annual'):
+    """جلب البيانات من الأرشيف المحلي حسب النوع"""
+    try:
+        df = fetch_table("FinancialStatements")
+        if not df.empty:
+            # فلترة حسب الرمز والنوع (سنوي/ربعي)
+            mask = (df['symbol'] == symbol) & (df['period_type'] == period_type)
+            df = df[mask].copy()
+            df['date'] = pd.to_datetime(df['date'])
+            return df.sort_values('date', ascending=False)
+    except: pass
+    return pd.DataFrame()
+
+def calculate_ratios_from_df(df):
+    """حساب النسب المالية المشتقة من البيانات الخام"""
+    if df.empty: return df
+    
+    # هوامش الربحية
+    df['net_margin'] = (df['net_income'] / df['revenue'] * 100).fillna(0)
+    
+    # العوائد
+    df['roa'] = (df['net_income'] / df['total_assets'] * 100).fillna(0)
+    df['roe'] = (df['net_income'] / df['total_equity'] * 100).fillna(0)
+    
+    # السيولة
+    df['current_ratio'] = (df['current_assets'] / df['current_liabilities']).fillna(0)
+    
+    # المديونية
+    df['debt_to_equity'] = (df['long_term_debt'] / df['total_equity']).fillna(0)
+    
+    return df
+
+def get_advanced_fundamental_ratios(symbol):
+    """التحليل المالي المتقدم (يعتمد على أحدث بيانات سنوية بشكل أساسي)"""
+    metrics = {
+        "Fair_Value_Graham": None, "Piotroski_Score": 0,
+        "Financial_Health": "غير متوفر", "Score": 0, "Rating": "N/A", "Opinions": ""
+    }
+    
+    # نعتمد على السنوي في التقييم الأساسي لأنه أكثر استقراراً
+    df = get_stored_financials_df(symbol, 'Annual')
+    
+    # إذا لم يوجد سنوي، نحاول بالربعي (للشركات الجديدة)
+    if df.empty:
+        df = get_stored_financials_df(symbol, 'Quarterly')
+    
+    if df.empty: return metrics
+    
+    # حساب النسب
+    df = calculate_ratios_from_df(df)
+    curr = df.iloc[0]
+    prev = df.iloc[1] if len(df) > 1 else curr
+    
+    try:
+        # 1. نموذج جراهام
+        try:
+            t = yf.Ticker(get_ticker_symbol(symbol))
+            eps = t.info.get('trailingEps')
+            bvps = t.info.get('bookValue')
+            if eps and bvps:
+                metrics['Fair_Value_Graham'] = (22.5 * eps * bvps) ** 0.5
+        except: pass
+
+        # 2. Piotroski F-Score (محسوب بدقة من البيانات المحلية)
+        score = 0
+        # الربحية
+        if curr['net_income'] > 0: score += 1
+        if curr['operating_cash_flow'] > 0: score += 1
+        if curr['roa'] > prev['roa']: score += 1
+        if curr['operating_cash_flow'] > curr['net_income']: score += 1
+        # الرافعة
+        if curr['long_term_debt'] <= prev['long_term_debt']: score += 1
+        if curr['current_ratio'] > prev['current_ratio']: score += 1
+        # الكفاءة
+        if curr['net_margin'] > prev['net_margin']: score += 1
+        # نقطتين إضافيتين لتقريب المعايير الأخرى (الأسهم، ودوران الأصول)
+        score += 2 
+        
+        metrics['Piotroski_Score'] = min(score, 9)
+        
+        # التقييم اللفظي
         s = metrics['Piotroski_Score']
         if s >= 7: metrics['Financial_Health'] = "💪 قوي جداً"
-        elif s >= 5: metrics['Financial_Health'] = "👌 مستقر"
+        elif s >= 5: metrics['Financial_Health'] = "👌 جيد / مستقر"
         else: metrics['Financial_Health'] = "⚠️ ضعيف"
-
-        # للتوافق مع العرض القديم
-        metrics['Score'] = s + (1 if metrics.get('Fair_Value_Graham',0) > price else 0)
+        
+        metrics['Score'] = s
         metrics['Rating'] = metrics['Financial_Health']
+        
+        # كتابة الملاحظات الذكية
+        ops = []
+        if curr['net_income'] > prev['net_income']: ops.append("نمو في الأرباح")
+        if curr['debt_to_equity'] > 1.5: ops.append("مخاطر مديونية مرتفعة")
+        if curr['operating_cash_flow'] < 0: ops.append("نقص في الكاش التشغيلي")
+        metrics['Opinions'] = " | ".join(ops)
 
     except Exception as e:
         print(f"Analysis Error: {e}")
         
-    return metrics, price
+    return metrics
 
 # ==============================================================
-# الجزء الثاني: أدوات القوائم المالية القديمة (إدخال، تخزين، رسم)
-# ==============================================================
-
-def parse_pasted_text(txt):
-    """تحليل النص المنسوخ من ملفات Excel أو PDF"""
-    try:
-        df = pd.read_csv(io.StringIO(txt), sep='\t')
-        if df.shape[1] < 2: df = pd.read_csv(io.StringIO(txt), sep=r'\s+', engine='python')
-        
-        # تنظيف العناوين
-        df.columns = df.columns.str.strip().str.lower()
-        
-        # محاولة قلب الجدول ليصبح (سنة - بند)
-        df = df.set_index(df.columns[0]).T.reset_index()
-        
-        res = []
-        for _, r in df.iterrows():
-            # استخراج السنة من النص
-            y = ''.join(filter(str.isdigit, str(r['index'])))
-            if len(y) == 4:
-                # البحث عن الكلمات المفتاحية
-                def g(keywords): 
-                    for c in df.columns: 
-                        if any(k in str(c) for k in keywords): 
-                            val = str(r[c]).replace(',', '').replace('(', '-').replace(')', '')
-                            try: return float(val)
-                            except: return 0.0
-                    return 0.0
-                
-                res.append({
-                    'year': y, 
-                    'revenue': g(['إيرادات', 'revenue', 'sales', 'مبيعات']), 
-                    'net_income': g(['صافي', 'net income', 'profit', 'ربح'])
-                })
-        return res
-    except: return []
-
-def save_financial_row(s, d, r):
-    try: rev = float(r.get('revenue', 0)); net = float(r.get('net_income', 0))
-    except: rev = 0.0; net = 0.0
-    execute_query(
-        "INSERT INTO FinancialStatements (symbol, date, revenue, net_income, period_type) VALUES (%s,%s,%s,%s,'Annual') ON CONFLICT (symbol, date, period_type) DO UPDATE SET revenue=EXCLUDED.revenue, net_income=EXCLUDED.net_income", 
-        (s, d, rev, net)
-    )
-
-def get_stored_financials(s):
-    try: return fetch_table("FinancialStatements").query(f"symbol == '{s}'")
-    except: return pd.DataFrame()
-
-# ==============================================================
-# الجزء الثالث: واجهة العرض الموحدة (UI)
+# 📊 واجهة العرض المتطورة (UI)
 # ==============================================================
 
 def render_financial_dashboard_ui(symbol):
-    # 1. عرض التحليل الذكي المتقدم (الجديد)
-    st.markdown("### 🧠 التحليل المالي الذكي")
-    metrics, curr_price = get_advanced_fundamental_ratios(symbol)
+    # 1. أدوات التحكم العلوية
+    c_btn, c_type, c_info = st.columns([1, 1, 2])
     
-    m1, m2, m3, m4 = st.columns(4)
-    with m1: st.metric("السعر الحالي", f"{curr_price:,.2f}")
-    with m2: 
-        fv = metrics.get('Fair_Value_Graham')
-        st.metric("قيمة جراهام العادلة", f"{fv:,.2f}" if fv else "-", 
-                  delta=f"{((fv-curr_price)/curr_price)*100:.1f}%" if fv else None)
-    with m3: st.metric("المتانة (F-Score)", f"{metrics['Piotroski_Score']} / 9", metrics['Financial_Health'])
-    with m4: st.metric("التوصية الآلية", "شراء" if (fv and curr_price < fv * 0.9) else "احتفاظ")
+    with c_btn:
+        if st.button("🔄 تحديث البيانات (Yahoo)"):
+            with st.spinner("جاري جلب القوائم السنوية والربعية..."):
+                ok, msg = sync_company_financials(symbol)
+                if ok: st.success(msg); st.rerun()
+                else: st.error(msg)
+                
+    with c_type:
+        view_type = st.radio("عرض البيانات:", ["سنوي (Annual)", "ربعي (Quarterly)"], horizontal=True)
+        p_type = 'Annual' if "سنوي" in view_type else 'Quarterly'
+
+    # 2. جلب البيانات المطلوبة من القاعدة
+    df = get_stored_financials_df(symbol, p_type)
+    
+    if df.empty:
+        st.warning(f"لا توجد بيانات {view_type} محفوظة. اضغط زر التحديث أعلاه.")
+        return
+
+    # حساب النسب المئوية والمؤشرات
+    df = calculate_ratios_from_df(df)
+    
+    # 3. بطاقات المعلومات (KPIs) بناءً على أحدث فترة
+    curr = df.iloc[0]
+    st.markdown(f"##### 📌 ملخص أحدث فترة ({curr['date'].strftime('%Y-%m-%d')})")
+    
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("الإيرادات", f"{curr['revenue']/1e6:,.1f}M")
+    k2.metric("صافي الربح", f"{curr['net_income']/1e6:,.1f}M", 
+              f"{curr['net_margin']:.1f}% (الهامش)")
+    k3.metric("الكاش التشغيلي", f"{curr['operating_cash_flow']/1e6:,.1f}M")
+    k4.metric("نسبة السيولة", f"{curr['current_ratio']:.2f}")
 
     st.markdown("---")
 
-    # 2. عرض البيانات المخزنة والرسوم البيانية (القديم المطور)
-    st.markdown("### 📊 نمو الإيرادات والأرباح (بيانات تاريخية)")
-    df = get_stored_financials(symbol)
+    # 4. الرسوم البيانية التفاعلية
+    tab_g1, tab_g2 = st.tabs(["📊 الأداء المالي", "📉 المركز المالي"])
     
-    if not df.empty:
-        df['date'] = pd.to_datetime(df['date'])
-        df = df.sort_values('date')
-        df['Year'] = df['date'].dt.year.astype(str)
-        
-        # رسم بياني محسن
-        fig = px.bar(df, x='Year', y=['revenue', 'net_income'], barmode='group', 
-                     labels={'value': 'القيمة (ريال)', 'variable': 'المؤشر'},
-                     color_discrete_map={'revenue': '#0052CC', 'net_income': '#006644'})
+    with tab_g1:
+        # رسم الإيرادات والأرباح
+        df_rev = df.sort_values('date')
+        fig = px.bar(df_rev, x='date', y=['revenue', 'net_income'], 
+                     barmode='group', title=f'تطور الإيرادات وصافي الربح ({view_type})',
+                     labels={'value': 'القيمة', 'date': 'التاريخ', 'variable': 'المؤشر'})
         st.plotly_chart(fig, use_container_width=True)
         
-        with st.expander("عرض الجدول الرقمي"):
-            st.dataframe(df[['date', 'revenue', 'net_income']].style.format("{:,.0f}"))
-    else:
-        st.info("لا توجد قوائم مالية محفوظة لهذا السهم. يمكنك إضافتها بالأسفل.")
+    with tab_g2:
+        # رسم الأصول والخصوم
+        fig2 = px.area(df_rev, x='date', y=['total_assets', 'total_equity', 'total_liabilities'],
+                       title='تطور هيكل رأس المال والأصول')
+        st.plotly_chart(fig2, use_container_width=True)
 
-    # 3. أدوات الإدخال (القديمة)
-    st.markdown("---")
-    with st.expander("📥 إدخال قوائم مالية جديدة"):
-        t1, t2, t3 = st.tabs(["سحب آلي (Yahoo)", "نسخ ولصق (Excel)", "إدخال يدوي"])
-        
-        # سحب آلي
-        with t1:
-            if st.button("سحب القوائم من Yahoo Finance"):
-                try:
-                    t = yf.Ticker(get_ticker_symbol(symbol))
-                    inc = t.income_stmt.T
-                    count = 0
-                    for d, r in inc.iterrows():
-                        save_financial_row(symbol, d.strftime('%Y-%m-%d'), 
-                                         {'revenue': r.get('Total Revenue', 0), 
-                                          'net_income': r.get('Net Income', 0)})
-                        count += 1
-                    st.success(f"تم سحب وحفظ {count} سنوات بنجاح!")
-                    st.rerun()
-                except Exception as e: st.error(f"فشل السحب: {e}")
+    # 5. الجدول التفصيلي
+    with st.expander("📂 عرض الجدول المالي الكامل"):
+        # تنسيق الجدول للعرض
+        disp_df = df[['date', 'revenue', 'net_income', 'net_margin', 'total_assets', 'total_equity', 'debt_to_equity', 'operating_cash_flow']].copy()
+        disp_df.columns = ['التاريخ', 'الإيرادات', 'صافي الربح', 'هامش الربح %', 'إجمالي الأصول', 'حقوق الملكية', 'نسبة الدين/الملكية', 'الكاش التشغيلي']
+        st.dataframe(disp_df.style.format({
+            'الإيرادات': "{:,.0f}", 'صافي الربح': "{:,.0f}", 
+            'إجمالي الأصول': "{:,.0f}", 'حقوق الملكية': "{:,.0f}", 
+            'الكاش التشغيلي': "{:,.0f}", 'هامش الربح %': "{:.1f}%",
+            'نسبة الدين/الملكية': "{:.2f}"
+        }))
 
-        # نسخ ولصق
-        with t2:
-            st.write("انسخ الجدول من Excel (السنوات كأعمدة أو صفوف) والصقه هنا:")
-            txt = st.text_area("منطقة اللصق", height=100)
-            if txt and st.button("معالجة وحفظ النص"):
-                res = parse_pasted_text(txt)
-                if res:
-                    for r in res: save_financial_row(symbol, f"{r['year']}-12-31", r)
-                    st.success("تم الحفظ!")
-                    st.rerun()
-                else: st.error("لم يتم التعرف على البيانات. تأكد أن النص يحتوي على 'إيرادات' و 'صافي' وتواريخ.")
-
-        # إدخال يدوي
-        with t3:
-            with st.form("manual_fin_entry"):
-                c_y = st.number_input("السنة المالية", min_value=2015, max_value=2030, step=1, value=2023)
-                c_rev = st.number_input("إجمالي الإيرادات", step=100000.0)
-                c_net = st.number_input("صافي الربح", step=50000.0)
-                if st.form_submit_button("حفظ السجل"):
-                    save_financial_row(symbol, f"{c_y}-12-31", {'revenue': c_rev, 'net_income': c_net})
-                    st.success("تم الحفظ")
-                    st.rerun()
-
-# دوال مساعدة للأطروحة (لضمان عمل الملف بشكل كامل)
-def get_thesis(s): 
-    try: df = fetch_table("InvestmentThesis"); return df[df['symbol'] == s].iloc[0] if not df.empty else None
-    except: return None
-
-def save_thesis(s, t, tg, r):
-    execute_query("INSERT INTO InvestmentThesis (symbol, thesis_text, target_price, recommendation) VALUES (%s,%s,%s,%s) ON CONFLICT (symbol) DO UPDATE SET thesis_text=EXCLUDED.thesis_text, target_price=EXCLUDED.target_price, recommendation=EXCLUDED.recommendation", (s,t,float(tg),r))
-
-# دالة التوافقية (ليعمل views.py بدون تعديل)
-def get_fundamental_ratios(symbol):
-    m, _ = get_advanced_fundamental_ratios(symbol)
-    return m
+# دوال التوافق
+def get_thesis(s): return {} 
+def save_thesis(s, t, tg, r): pass
