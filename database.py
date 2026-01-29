@@ -32,6 +32,7 @@ def execute_query(query, params=()):
         if conn:
             try:
                 with conn.cursor() as cur:
+                    # تحويل ؟ إلى %s لدعم postgres
                     fixed_query = query.replace('?', '%s')
                     cur.execute(fixed_query, params)
                     conn.commit()
@@ -52,10 +53,9 @@ def fetch_table(table_name):
                 except: pass
     return pd.DataFrame()
 
-# 3. الترحيل (Migration) - يضيف الأعمدة الناقصة تلقائياً
+# 3. الترحيل وتحديث الجداول (لحل مشكلة الأعمدة الناقصة)
 def migrate_financial_schema():
-    """ضمان وجود كل الأعمدة المطلوبة في جدول القوائم المالية"""
-    required_cols = [
+    columns = [
         ("total_assets", "DOUBLE PRECISION"),
         ("total_liabilities", "DOUBLE PRECISION"),
         ("total_equity", "DOUBLE PRECISION"),
@@ -68,7 +68,7 @@ def migrate_financial_schema():
     with get_db() as conn:
         if conn:
             with conn.cursor() as cur:
-                for col, dtype in required_cols:
+                for col, dtype in columns:
                     try:
                         cur.execute(f'ALTER TABLE "FinancialStatements" ADD COLUMN IF NOT EXISTS {col} {dtype}')
                     except: conn.rollback()
@@ -94,6 +94,7 @@ def init_db():
         )""",
         "CREATE TABLE IF NOT EXISTS InvestmentThesis (symbol VARCHAR(20) PRIMARY KEY, thesis_text TEXT, target_price DOUBLE PRECISION, recommendation VARCHAR(20), last_updated DATE)"
     ]
+    
     with get_db() as conn:
         if conn:
             with conn.cursor() as cur:
@@ -101,7 +102,7 @@ def init_db():
             conn.commit()
     migrate_financial_schema()
 
-# 4. المصادقة (إصلاح SyntaxError السابق)
+# 4. دوال المصادقة (موجودة هنا بالتأكيد)
 def db_create_user(u, p):
     try:
         h = bcrypt.hashpw(p.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
