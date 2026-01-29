@@ -594,24 +594,129 @@ def view_backtester_ui(fin):
 # ========================================================
 # 8. نبض السوق وإضافة صفقة والإعدادات
 # ========================================================
+# ========================================================
+# 8. نبض السوق (Market Pulse) - المطور
+# ========================================================
 def render_pulse_dashboard():
-    st.header("💓 نبض السوق (قائمة المراقبة)")
+    st.header("💓 نبض السوق والقياديات")
+    
+    # 1. تحديد قائمة الأسهم (أسهمك + القياديات للمراقبة)
+    # أهم 5 شركات تؤثر في تاسي
+    market_leaders = ['1120.SR', '2222.SR', '2010.SR', '7010.SR', '1180.SR'] 
+    
+    # جلب أسهمك
     wl = fetch_table("Watchlist")
     trades = fetch_table("Trades")
-    syms = list(set(wl['symbol'].tolist() + trades['symbol'].tolist()))
+    my_stocks = list(set(wl['symbol'].tolist() + trades['symbol'].tolist()))
     
-    if not syms:
-        st.info("القائمة فارغة.")
+    # دمج القائمتين (بدون تكرار)
+    all_syms = list(set(market_leaders + my_stocks))
+    
+    if not all_syms:
+        st.info("لا توجد أسهم للمراقبة.")
         return
         
-    data = fetch_batch_data(syms)
+    # جلب البيانات مرة واحدة (Batch Request)
+    with st.spinner("جاس قياس النبض..."):
+        data = fetch_batch_data(all_syms)
     
-    cols = st.columns(4)
-    for i, (sym, info) in enumerate(data.items()):
-        chg = ((info['price'] - info['prev_close'])/info['prev_close']*100) if info['prev_close'] else 0
-        with cols[i % 4]:
-            render_ticker_card(sym, "سهم", info['price'], chg)
+    # تحويل البيانات إلى DataFrame للمعالجة
+    rows = []
+    for sym, info in data.items():
+        price = info.get('price', 0)
+        prev = info.get('prev_close', 0)
+        high_yr = info.get('year_high', 0)
+        low_yr = info.get('year_low', 0)
+        
+        # حساب نسبة التغير
+        change_pct = ((price - prev) / prev * 100) if prev > 0 else 0
+        
+        # تحديد موقع السعر من القمة والقاع السنوي
+        # 0% تعني عند القاع، 100% تعني عند القمة
+        range_pos = 0
+        if high_yr > low_yr:
+            range_pos = (price - low_yr) / (high_yr - low_yr) * 100
+            
+        rows.append({
+            'symbol': sym,
+            'price': price,
+            'change': change_pct,
+            'range_pos': range_pos,
+            'is_leader': f"{sym}.SR" in market_leaders or sym in market_leaders
+        })
+    
+    df_pulse = pd.DataFrame(rows)
+    if df_pulse.empty: return
 
+    # --- القسم 1: شريط القياديات (أعلى الصفحة) ---
+    st.markdown("##### 🏛️ قياديات السوق (المؤشر)")
+    leaders = df_pulse[df_pulse['is_leader'] == True]
+    cols_l = st.columns(len(leaders))
+    for i, row in enumerate(leaders.to_dict('records')):
+        with cols_l[i]:
+            render_ticker_card(row['symbol'], "قيادي", row['price'], row['change'])
+    
+    st.divider()
+    
+    # --- القسم 2: الأكثر ارتفاعاً وانخفاضاً (السيولة) ---
+    c_winners, c_losers = st.columns(2)
+    
+    with c_winners:
+        st.markdown("##### 🚀 الأكثر ارتفاعاً (Top Gainers)")
+        # أعلى 5 رابحين
+        winners = df_pulse.sort_values('change', ascending=False).head(5)
+        for _, row in winners.iterrows():
+            if row['change'] > 0:
+                st.markdown(f"""
+                <div style="background:white; padding:10px; border-radius:10px; margin-bottom:10px; border-right: 4px solid #4caf50; display:flex; justify-content:space-between;">
+                    <div style="font-weight:bold;">{row['symbol']}</div>
+                    <div style="color:#4caf50;">{row['price']} (+{row['change']:.2f}%)</div>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.caption("لا يوجد ارتفاعات حالياً")
+                break
+
+    with c_losers:
+        st.markdown("##### 🩸 الأكثر انخفاضاً (Top Losers)")
+        # أدنى 5 خاسرين
+        losers = df_pulse.sort_values('change', ascending=True).head(5)
+        for _, row in losers.iterrows():
+            if row['change'] < 0:
+                st.markdown(f"""
+                <div style="background:white; padding:10px; border-radius:10px; margin-bottom:10px; border-right: 4px solid #f44336; display:flex; justify-content:space-between;">
+                    <div style="font-weight:bold;">{row['symbol']}</div>
+                    <div style="color:#f44336;">{row['price']} ({row['change']:.2f}%)</div>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.caption("لا يوجد انخفاضات حالياً")
+                break
+    
+    # --- القسم 3: قنص الفرص (أسهم قريبة من القاع أو القمة) ---
+    st.markdown("---")
+    st.markdown("##### 🎯 رادار الفرص")
+    c_low, c_high = st.columns(2)
+    
+    with c_low:
+        st.info("📉 أسهم قريبة من قاع سنوي (مناطق تجميع محتملة)")
+        # الأسهم التي في أقل 10% من مداها السنوي
+        near_low = df_pulse[df_pulse['range_pos'] < 15]
+        if not near_low.empty:
+            for _, row in near_low.iterrows():
+                st.write(f"**{row['symbol']}**: {row['price']} (قريب من القاع بنسبة {row['range_pos']:.1f}%)")
+        else:
+            st.write("لا يوجد")
+
+    with c_high:
+        st.warning("📈 أسهم قريبة من قمة سنوية (اختراق محتمل)")
+        # الأسهم التي في أعلى 10% من مداها السنوي
+        near_high = df_pulse[df_pulse['range_pos'] > 85]
+        if not near_high.empty:
+            for _, row in near_high.iterrows():
+                st.write(f"**{row['symbol']}**: {row['price']} (قريب من القمة بنسبة {100-row['range_pos']:.1f}%)")
+        else:
+            st.write("لا يوجد")
 def view_add_trade():
     st.header("➕ تسجيل عملية جديدة")
     with st.form("add_t"):
