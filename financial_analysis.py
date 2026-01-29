@@ -3,6 +3,7 @@ import streamlit as st
 import io
 import yfinance as yf
 import numpy as np
+import plotly.express as px
 from database import execute_query, fetch_table
 from market_data import fetch_price_from_google, get_ticker_symbol
 
@@ -47,7 +48,6 @@ def save_financial_record(symbol, date_str, data, period_type='Annual', source='
         ))
         return True
     except Exception as e:
-        print(f"Save Error: {e}")
         return False
 
 def sync_auto_yahoo(symbol):
@@ -60,14 +60,12 @@ def sync_auto_yahoo(symbol):
             c = 0
             if df_fin.empty and df_bs.empty: return 0
             dates = sorted(list(set(df_fin.columns) | set(df_bs.columns) | set(df_cf.columns)), reverse=True)[:6]
-            
             for d in dates:
                 try:
                     d_str = d.strftime('%Y-%m-%d')
                     def get_val(df, key):
                         if d in df.columns and key in df.index: return df.loc[key, d]
                         return 0
-
                     data = {
                         'revenue': get_val(df_fin, 'Total Revenue'),
                         'net_income': get_val(df_fin, 'Net Income'),
@@ -148,7 +146,6 @@ def get_advanced_fundamental_ratios(symbol):
     prev = df.iloc[1] if len(df) > 1 else curr
     
     try:
-        # Piotroski F-Score
         score = 0
         if curr.get('net_income', 0) > 0: score += 1
         if curr.get('operating_cash_flow', 0) > 0: score += 1
@@ -159,18 +156,17 @@ def get_advanced_fundamental_ratios(symbol):
         
         if curr.get('operating_cash_flow', 0) > curr.get('net_income', 0): score += 1
         if curr.get('long_term_debt', 0) < prev.get('long_term_debt', 0): score += 1
-        if curr.get('current_assets',0)/curr.get('current_liabilities',1) > prev.get('current_assets',0)/prev.get('current_liabilities',1): score += 1
         
-        metrics['Piotroski_Score'] = min(score + 3, 9) # تقريب للواقع
+        metrics['Piotroski_Score'] = min(score + 3, 9)
         
-        # ✅ إصلاح معادلة جراهام (منع الأرقام المركبة)
+        # ✅ إصلاح معادلة جراهام لمنع الأرقام الخيالية (Complex Numbers)
         try:
             t = yf.Ticker(get_ticker_symbol(symbol))
             eps = t.info.get('trailingEps')
             bvps = t.info.get('bookValue')
             if eps and bvps:
                 product = 22.5 * eps * bvps
-                # إذا كان الناتج سالب (خسائر)، القيمة العادلة تعتبر صفر أو غير قابلة للحساب
+                # إذا الرقم سالب (خسائر)، نعتبر القيمة 0 بدلاً من خطأ رياضي
                 if product > 0:
                     metrics['Fair_Value_Graham'] = product ** 0.5
                 else:
@@ -184,7 +180,7 @@ def get_advanced_fundamental_ratios(symbol):
 
         ops = []
         if curr.get('net_income',0) > prev.get('net_income',0): ops.append("نمو في الأرباح")
-        if curr.get('operating_cash_flow',0) < 0: ops.append("تدفق نقدي تشغيلي سالب ⚠️")
+        if curr.get('operating_cash_flow',0) < 0: ops.append("تدفق نقدي سالب ⚠️")
         metrics['Opinions'] = " | ".join(ops)
 
     except: pass
@@ -209,9 +205,8 @@ def render_financial_dashboard_ui(symbol):
             c1, c2, c3 = st.columns(3)
             c1.metric("المتانة (F-Score)", f"{metrics['Piotroski_Score']}/9", metrics['Financial_Health'])
             
-            # عرض قيمة جراهام بشكل صحيح
             fv = metrics.get('Fair_Value_Graham', 0)
-            c2.metric("قيمة جراهام", f"{fv:,.2f}" if fv > 0 else "غير قابل للحساب (خسائر)")
+            c2.metric("قيمة جراهام", f"{fv:,.2f}" if fv > 0 else "غير متاح (خسائر)")
             
             c3.write(f"**ملاحظات:** {metrics.get('Opinions', '-')}")
             st.markdown("---")
@@ -244,3 +239,17 @@ def render_financial_dashboard_ui(symbol):
                     for r in res: save_financial_record(symbol, r['date'], r['data'])
                     st.success("تم الحفظ"); st.rerun()
                 else: st.error("تنسيق غير مدعوم")
+        with src_t3:
+            st.info("الإدخال اليدوي متاح عبر قاعدة البيانات مباشرة")
+
+# ✅✅ هذا هو الجزء الذي كان ناقصاً وتسبب في تعطل المستشار الذكي والتحليل
+# ربط الاسم القديم بالدالة الجديدة لضمان توافق جميع الملفات
+def get_fundamental_ratios(symbol):
+    return get_advanced_fundamental_ratios(symbol)
+
+def get_thesis(s): 
+    try: df = fetch_table("InvestmentThesis"); return df[df['symbol'] == s].iloc[0] if not df.empty else None
+    except: return None
+
+def save_thesis(s, t, tg, r):
+    execute_query("INSERT INTO InvestmentThesis (symbol, thesis_text, target_price, recommendation) VALUES (%s,%s,%s,%s) ON CONFLICT (symbol) DO UPDATE SET thesis_text=EXCLUDED.thesis_text, target_price=EXCLUDED.target_price, recommendation=EXCLUDED.recommendation", (s,t,float(tg),r))
