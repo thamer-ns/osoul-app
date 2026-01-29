@@ -11,4 +11,8 @@ enableCORS = true
 enableXsrfProtection = true
 [client]
 toolbarMode = "viewer"
+maxUploadSize = 500 # زيادة الحد إلى 500 ميجابايت مثلاً إذا لزم الأمر
+fileWatcherType = "none" # توفير الموارد في السيرفر (فقط عند الرفع النهائي)
 
+[browser]
+gatherUsageStats = false # لزيادة الخصوصية ومنع إرسال إحصائيات الاستخدام لشركة Streamlit
