@@ -8,32 +8,31 @@ from analytics import calculate_portfolio_metrics, update_prices, generate_equit
 from database import execute_query, fetch_table
 from market_data import get_static_info, get_tasi_data, get_chart_history, fetch_batch_data
 from data_source import get_company_details 
-from security import validate_trade_inputs 
+from security import validate_trade_inputs  # ✅ 1. استيراد دالة الحماية الجديدة
 
-# --- استيراد الوحدات الذكية (Safe Import) ---
+# استيراد الوحدات الذكية مع حماية
 try:
     from charts import render_technical_chart
     from backtester import run_backtest
     from financial_analysis import render_financial_dashboard_ui, get_fundamental_ratios, get_thesis, save_thesis
     from classical_analysis import render_classical_analysis
+    # ✅ 2. استيراد محرك الذكاء الجديد
     from ai_engine import generate_ai_report, calculate_portfolio_risk_score, run_stress_test, generate_rebalancing_suggestions
 except ImportError:
-    # دوال وهمية لمنع توقف النظام
-    def render_technical_chart(*a): st.warning("الرسوم البيانية غير متوفرة")
-    def run_backtest(*a): return None
+    def render_technical_chart(*a): st.warning("وحدة الرسوم البيانية غير متوفرة")
+    def run_backtest(*a): st.warning("وحدة الاختبار غير متوفرة"); return None
     def render_financial_dashboard_ui(*a): st.warning("التحليل المالي غير متوفر")
-    def get_fundamental_ratios(*a): return {}
+    def get_fundamental_ratios(*a): return {"Score": 0, "Rating": "N/A"}
     def get_thesis(*a): return {}
     def save_thesis(*a): pass
-    def render_classical_analysis(*a): pass
-    def generate_ai_report(*a): return {}
+    def render_classical_analysis(*a): st.warning("التحليل الكلاسيكي غير متوفر")
+    # دوال وهمية للذكاء الاصطناعي في حال عدم التوفر
     def calculate_portfolio_risk_score(*a): return 50
     def run_stress_test(*a): return {"scenarios": [], "insight": ""}
     def generate_rebalancing_suggestions(*a): return []
+    def generate_ai_report(*a): return {}
 
-# ========================================================
-# 1. شريط التنقل (Navigation)
-# ========================================================
+# --- 1. Navigation Bar ---
 def render_navbar():
     buttons = [
         ('🏠 الرئيسية','home'), ('⚡ مضاربة','spec'), ('💎 استثمار','invest'), 
@@ -61,36 +60,33 @@ def render_navbar():
                 except: st.session_state.clear(); st.rerun()
     st.markdown("---")
 
-# ========================================================
-# 2. لوحة القيادة (Dashboard)
-# ========================================================
+# --- 2. Dashboard (محدثة بالذكاء) ---
 def view_dashboard(fin):
-    # 1. بيانات السوق
     try: tp, tc = get_tasi_data()
     except: tp, tc = 0, 0
     ar = "🔼" if tc >= 0 else "🔽"
     
-    # 2. البيانات المالية
+    # ✅ 3. حساب المخاطرة وعرض التنبيهات
     df = fin['all_trades']
     total_assets = fin['market_val_open'] + fin['cash']
     cash_pct = (fin['cash'] / total_assets * 100) if total_assets else 0
     
-    # 3. الذكاء الاصطناعي والمخاطر
+    # عداد المخاطرة
     risk_score = calculate_portfolio_risk_score(df, cash_pct)
     risk_color = "success" if risk_score < 40 else "danger" if risk_score > 70 else "neutral"
-    risk_label = "آمنة" if risk_score < 40 else "عالية الخطورة" if risk_score > 70 else "متوسطة"
+    risk_label = "منخفضة" if risk_score < 40 else "عالية" if risk_score > 70 else "متوسطة"
 
-    # عرض التنبيهات
+    # التنبيهات الذكية (Auto Insights)
     ai_suggestions = generate_rebalancing_suggestions(df, cash_pct)
     if ai_suggestions:
-        with st.expander(f"🤖 المستشار الذكي لديه {len(ai_suggestions)} ملاحظات هامة", expanded=True):
+        with st.expander(f"🤖 المستشار الذكي ({len(ai_suggestions)} ملاحظات)", expanded=True):
             for level, msg in ai_suggestions:
                 if level == 'priority': st.error(msg, icon="🚨")
                 elif level == 'warning': st.warning(msg, icon="⚠️")
                 elif level == 'success': st.success(msg, icon="✅")
                 else: st.info(msg, icon="ℹ️")
 
-    # بطاقة تاسي والمخاطرة
+    # عرض البطاقات
     c_tasi, c_risk = st.columns([3, 1])
     with c_tasi:
         st.markdown(f"""
@@ -99,11 +95,11 @@ def view_dashboard(fin):
             <div style="background:rgba(255,255,255,0.2); padding:5px 15px; border-radius:10px; font-weight:bold; direction:ltr;">{ar} {tc:.2f}%</div>
         </div>""", unsafe_allow_html=True)
     with c_risk:
-        render_kpi(f"مستوى المخاطرة ({risk_label})", f"{risk_score}/100", risk_color, "🛡️")
+        render_kpi(f"المخاطرة ({risk_label})", f"{risk_score}/100", risk_color, "🛡️")
     
-    # ملخص الأصول
     c1, c2, c3, c4 = st.columns(4)
     total_pl = fin['unrealized_pl'] + fin['realized_pl']
+
     with c1: render_kpi(f"الكاش ({cash_pct:.1f}%)", safe_fmt(fin['cash']), "blue", "💵")
     with c2: render_kpi("صافي الإيداعات", safe_fmt(fin['total_deposited']-fin['total_withdrawn']), "neutral", "🏗️")
     with c3: render_kpi("إجمالي الأصول", safe_fmt(total_assets), "neutral", "🏦")
@@ -111,7 +107,6 @@ def view_dashboard(fin):
     
     st.markdown("---")
     
-    # ملخص الصفقات المفتوحة
     open_cost = fin['cost_open']
     open_market = fin['market_val_open']
     open_pl = fin['unrealized_pl']
@@ -126,7 +121,6 @@ def view_dashboard(fin):
 
     st.markdown("<div style='margin-bottom: 25px;'></div>", unsafe_allow_html=True)
 
-    # ملخص الصفقات المغلقة
     if not df.empty:
         closed_df = df[df['status'] == 'Close']
         closed_cost = closed_df['total_cost'].sum()
@@ -145,13 +139,13 @@ def view_dashboard(fin):
 
     st.markdown("---")
 
-    # الرسومات البيانية
     if not df.empty:
         open_trades = df[df['status'] == 'Open']
         try:
             invest_val = open_trades[open_trades['strategy'].astype(str).str.contains('استثمار', na=False)]['market_value'].sum()
             spec_val = open_trades[open_trades['strategy'].astype(str).str.contains('مضاربة', na=False)]['market_value'].sum()
-        except: invest_val = spec_val = 0
+        except:
+            invest_val = spec_val = 0
             
         sukuk_val = open_trades[open_trades['asset_type'] == 'Sukuk']['market_value'].sum()
         cash_val = fin['cash']
@@ -179,9 +173,7 @@ def view_dashboard(fin):
     else:
         st.info("👋 مرحباً بك! ابدأ بإضافة صفقات.")
 
-# ========================================================
-# 3. عرض المحفظة (Portfolio)
-# ========================================================
+# --- 3. Portfolio View ---
 def view_portfolio(fin, key):
     ts = "مضاربة" if key == 'spec' else "استثمار"
     st.header(f"💼 محفظة {ts}")
@@ -267,6 +259,7 @@ def view_portfolio(fin, key):
                             p = st.number_input("سعر البيع")
                             d = st.date_input("تاريخ")
                             if st.form_submit_button("تأكيد"):
+                                # ✅ 4. تطبيق حماية المدخلات
                                 valid, msg = validate_trade_inputs(1, p)
                                 if not valid: st.error(msg)
                                 else:
@@ -285,6 +278,7 @@ def view_portfolio(fin, key):
                             np = st.number_input("سعر الشراء", value=float(curr['entry_price']))
                             nd = st.date_input("تاريخ", pd.to_datetime(curr['date']))
                             if st.form_submit_button("حفظ"):
+                                # ✅ تطبيق حماية المدخلات
                                 valid, msg = validate_trade_inputs(nq, np)
                                 if not valid: st.error(msg)
                                 else:
@@ -308,9 +302,7 @@ def view_portfolio(fin, key):
         else:
             st.info("الأرشيف فارغ")
 
-# ========================================================
-# 4. محفظة الصكوك (Sukuk)
-# ========================================================
+# --- 4. Sukuk View ---
 def view_sukuk_portfolio(fin):
     st.header("📜 محفظة الصكوك")
     df = fin['all_trades']
@@ -576,6 +568,7 @@ def view_cash_log():
                                 execute_query("UPDATE ReturnsGrants SET symbol=%s, amount=%s, date=%s WHERE id=%s", (ns, na, str(nd), tid))
                                 st.success("تم التعديل بنجاح"); st.cache_data.clear(); st.rerun()
 
+
 # ========================================================
 # 6. التحليل الشامل (Analysis & AI)
 # ========================================================
@@ -583,7 +576,7 @@ def view_analysis(fin):
     st.header("🔬 التحليل الشامل")
     trades = fin['all_trades']
     
-    # 🔥 الميزة الجديدة: تحليل صحة المحفظة بالكامل (Stress Test)
+    # 🔥 5. الميزة الجديدة: اختبار التحمل (Stress Test)
     if not trades.empty:
         open_pos = trades[trades['status']=='Open']
         st.subheader("📊 صحة المحفظة واختبار التحمل")
@@ -620,14 +613,13 @@ def view_analysis(fin):
         n, s = get_company_details(sym)
         st.markdown(f"### {n} ({sym})")
         
-        # التبويبات (المستشار الذكي هو الأول)
+        # التبويبات
         tabs = st.tabs(["🤖 المستشار الذكي", "💰 مالي", "📈 فني", "🏛️ كلاسيكي", "📝 أطروحة"])
         
-        # 1. المستشار الذكي (AI Report)
+        # 1. المستشار الذكي
         with tabs[0]:
             if generate_ai_report:
                 report = generate_ai_report(sym)
-                
                 st.markdown(f"""
                 <div style="text-align:center; padding: 20px; background-color: #f8f9fa; border-radius: 15px; border: 2px solid {report['color']}; margin-bottom: 20px;">
                     <h2 style="color: {report['color']}; margin:0;">{report['recommendation']}</h2>
@@ -662,7 +654,7 @@ def view_analysis(fin):
                     st.success("تم الحفظ")
 
 # ========================================================
-# 7. الصفحات الإضافية (Backtest, Add Trade, Tools)
+# 7. الصفحات الإضافية
 # ========================================================
 def view_backtester_ui(fin):
     st.header("🧪 المختبر"); c1,c2,c3 = st.columns(3)
@@ -687,7 +679,7 @@ def view_add_trade():
         c1,c2=st.columns(2); s=c1.text_input("رمز"); t=c2.selectbox("نوع", ["استثمار","مضاربة","صكوك"])
         c3,c4,c5=st.columns(3); q=c3.number_input("كمية"); p=c4.number_input("سعر"); d=c5.date_input("تاريخ", date.today())
         if st.form_submit_button("حفظ"):
-            # ✅ تطبيق التحقق الأمني هنا
+            # ✅ تطبيق حماية المدخلات
             valid, msg = validate_trade_inputs(q, p)
             if not valid:
                 st.error(msg)
