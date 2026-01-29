@@ -7,7 +7,7 @@ import random
 import time
 
 # ==============================
-# 🛠️ Helpers & Configuration
+# 🛠️ Configuration
 # ==============================
 USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -76,41 +76,53 @@ def fetch_from_google(symbol):
     return data
 
 # ==============================
-# 3️⃣ Investing.com (محاولة)
+# 3️⃣ Investing.com Scraper
 # ==============================
 def fetch_from_investing(symbol):
-    # نتركها فارغة كـ fallback خفيف، يمكن تطوير لاحقاً
-    return {}
+    data = {}
+    try:
+        # تحويل الرمز لنسخة Investing تقريبية
+        clean_sym = symbol.replace('.SR', '').upper()
+        url = f"https://www.investing.com/equities/{clean_sym}-saudi-arabia"
+        r = requests.get(url, headers=get_headers(), timeout=5)
+        if r.status_code == 200:
+            soup = BeautifulSoup(r.text, 'html.parser')
+            price_div = soup.find('span', {'id': 'last_last'})
+            if price_div:
+                data['price'] = _safe_float(price_div.text)
+                data['source'] = 'Investing'
+    except:
+        pass
+    return data
 
 # ==============================
 # 4️⃣ الدمج الذكي بين المصادر
 # ==============================
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_comprehensive_data(symbol):
-    y_data = fetch_from_yahoo(symbol)
-    g_data = fetch_from_google(symbol)
-    i_data = fetch_from_investing(symbol)
+    sources = [fetch_from_yahoo, fetch_from_google, fetch_from_investing]
+    final_data = {}
+    used_sources = []
 
-    final_data = {
-        'price': y_data.get('price') or g_data.get('price') or i_data.get('price') or 0.0,
-        'prev_close': y_data.get('prev_close') or 0.0,
-        'high': y_data.get('high') or 0.0,
-        'low': y_data.get('low') or 0.0,
-        'volume': y_data.get('volume') or 0.0,
-        'pe_ratio': y_data.get('pe_ratio') or 0.0,
-        'source': y_data.get('source', 'None')
-    }
-    if g_data.get('price'):
-        final_data['source'] += ' & Google'
-    if i_data.get('price'):
-        final_data['source'] += ' & Investing'
+    for func in sources:
+        d = func(symbol)
+        if d.get('price'):
+            for k, v in d.items():
+                if k not in final_data or final_data[k] in [0, None]:
+                    final_data[k] = v
+            used_sources.append(d.get('source', 'Unknown'))
 
-    # fallback: إذا Yahoo لم يعطي سعر
-    if final_data['price'] == 0 and g_data.get('price'):
-        final_data['price'] = g_data['price']
-        final_data['prev_close'] = g_data['price']
-        final_data['source'] = 'Google Only'
-    
+    final_data['source'] = ' & '.join(used_sources) if used_sources else 'None'
+
+    # fallback: إذا لم يتم جلب السعر
+    if final_data.get('price', 0) == 0:
+        final_data['price'] = 0.0
+        final_data['prev_close'] = 0.0
+        final_data['high'] = 0.0
+        final_data['low'] = 0.0
+        final_data['volume'] = 0.0
+        final_data['pe_ratio'] = 0.0
+
     return final_data
 
 # ==============================
@@ -139,7 +151,7 @@ def get_chart_history(symbol, period='1y', interval='1d'):
         return None
 
 # ==============================
-# 7️⃣ Batch Fetch
+# 7️⃣ Batch Fetch آمن
 # ==============================
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_batch_data(symbols_list):
@@ -148,19 +160,20 @@ def fetch_batch_data(symbols_list):
         try:
             data = fetch_comprehensive_data(sym)
             results[sym] = {
-                'price': data['price'],
-                'prev_close': data['prev_close'],
-                'high': data['high'],
-                'low': data['low'],
-                'pe_ratio': data['pe_ratio'],
-                'source': data['source']
+                'price': data.get('price',0),
+                'prev_close': data.get('prev_close',0),
+                'high': data.get('high',0),
+                'low': data.get('low',0),
+                'pe_ratio': data.get('pe_ratio',0),
+                'volume': data.get('volume',0),
+                'source': data.get('source','None')
             }
         except:
             continue
     return results
 
 # ==============================
-# 8️⃣ Static Info
+# 8️⃣ معلومات ثابتة
 # ==============================
 def get_static_info(symbol):
     try:
