@@ -52,7 +52,7 @@ def fetch_table(table_name):
                 except: pass
     return pd.DataFrame()
 
-# 3. الترحيل (Migration) - حل مشكلة الأعمدة المفقودة
+# 3. الترحيل (Migration) - يضيف الأعمدة الناقصة تلقائياً
 def migrate_financial_schema():
     """ضمان وجود كل الأعمدة المطلوبة في جدول القوائم المالية"""
     required_cols = [
