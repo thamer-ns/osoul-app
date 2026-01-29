@@ -4,13 +4,20 @@ from database import fetch_table, execute_query
 from market_data import fetch_batch_data
 import streamlit as st
 
-# دالة مساعدة لتنظيف الأرقام
+# === START ADDITION: Performance & Stability ===
 def _clean_num(df, col):
-    if col not in df.columns: df[col] = 0.0
+    """تنظيف البيانات الرقمية لضمان عدم توقف الحسابات"""
+    if col not in df.columns: 
+        df[col] = 0.0
+    # التحويل القسري إلى أرقام مع استبدال الأخطاء بصفر
     df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0.0)
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=60, show_spinner=False)
 def calculate_portfolio_metrics():
+    """
+    حساب مقاييس المحفظة بالكامل.
+    يتم تخزين النتيجة في الكاش لمدة 60 ثانية لتقليل الضغط على قاعدة البيانات.
+    """
     default_res = {
         "cost_open": 0.0, "market_val_open": 0.0, "cash": 0.0,
         "unrealized_pl": 0.0, "realized_pl": 0.0,
@@ -20,12 +27,15 @@ def calculate_portfolio_metrics():
     }
     
     try:
+        # جلب الجداول دفعة واحدة
         trades = fetch_table("Trades")
         dep = fetch_table("Deposits")
         wit = fetch_table("Withdrawals")
         ret = fetch_table("ReturnsGrants")
         
-        for df in [dep, wit, ret]: _clean_num(df, 'amount')
+        # تنظيف الأرقام المالية
+        for df in [dep, wit, ret]: 
+            _clean_num(df, 'amount')
             
         total_dep = dep['amount'].sum()
         total_wit = wit['amount'].sum()
@@ -40,12 +50,13 @@ def calculate_portfolio_metrics():
             })
             return default_res
 
+        # تنظيف أرقام الصفقات
         for c in ['quantity', 'entry_price', 'exit_price', 'current_price']:
             _clean_num(trades, c)
 
         trades['total_cost'] = trades['quantity'] * trades['entry_price']
-        total_purchases = trades['total_cost'].sum()
-
+        
+        # تحديد حالة الصفقات بدقة
         if 'status' not in trades.columns: trades['status'] = 'Open'
         if 'exit_date' not in trades.columns: trades['exit_date'] = None
         if 'asset_type' not in trades.columns: trades['asset_type'] = 'Stock'
@@ -57,14 +68,15 @@ def calculate_portfolio_metrics():
         )
         trades['status'] = np.where(is_closed, 'Close', 'Open')
 
+        # منطق التسعير (للمغلقة وللصكوك)
         trades.loc[is_closed, 'current_price'] = trades['exit_price']
         
-        # حماية الصكوك
         is_open_sukuk = (trades['status'] == 'Open') & (trades['asset_type'] == 'Sukuk')
         trades.loc[is_open_sukuk, 'current_price'] = trades.loc[is_open_sukuk, 'entry_price']
         
         trades['current_price'] = trades['current_price'].replace(0, np.nan).fillna(trades['entry_price'])
 
+        # الحسابات النهائية
         trades['market_value'] = trades['quantity'] * trades['current_price']
         trades['gain'] = trades['market_value'] - trades['total_cost']
         
@@ -76,21 +88,15 @@ def calculate_portfolio_metrics():
         closed_trades = trades[trades['status'] == 'Close']
         
         total_sales = closed_trades['market_value'].sum()
+        total_purchases = trades['total_cost'].sum()
         
         cash_calculated = (total_dep + total_ret - total_wit) + total_sales - total_purchases
         
-        # أمان: منع الكاش السالب (اختياري، يفضل تركه لكشف الأخطاء، لكن هنا نمنعه لتجميل الواجهة)
-        # cash_calculated = max(0.0, cash_calculated) 
-
-        cost_open = open_trades['total_cost'].sum()
-        market_val_open = open_trades['market_value'].sum()
-        realized_pl = closed_trades['market_value'].sum() - closed_trades['total_cost'].sum()
-
         return {
-            "cost_open": cost_open,
-            "market_val_open": market_val_open,
-            "unrealized_pl": market_val_open - cost_open,
-            "realized_pl": realized_pl,
+            "cost_open": open_trades['total_cost'].sum(),
+            "market_val_open": open_trades['market_value'].sum(),
+            "unrealized_pl": open_trades['market_value'].sum() - open_trades['total_cost'].sum(),
+            "realized_pl": closed_trades['market_value'].sum() - closed_trades['total_cost'].sum(),
             "cash": cash_calculated,
             "total_deposited": total_dep,
             "total_withdrawn": total_wit,
@@ -100,24 +106,21 @@ def calculate_portfolio_metrics():
         }
         
     except Exception as e:
-        st.error(f"خطأ في الحسابات: {e}")
+        st.error(f"خطأ في التحليل المالي: {e}")
         return default_res
 
 def update_prices():
+    """تحديث الأسعار مع معالجة الأخطاء لكل سهم على حدة"""
     try:
         df = fetch_table("Trades")
         if df.empty: return True
         
-        if 'asset_type' in df.columns:
-            open_stocks = df[(df['status'] == 'Open') & (df['asset_type'] != 'Sukuk')]['symbol'].unique().tolist()
-        else:
-            open_stocks = df[df['status'] == 'Open']['symbol'].unique().tolist()
+        open_stocks = df[(df['status'] == 'Open') & (df.get('asset_type', 'Stock') != 'Sukuk')]['symbol'].unique().tolist()
         
         if not open_stocks: return True
         
         live_data = fetch_batch_data(open_stocks)
         
-        # التغيير هنا: حماية الحلقة من التوقف
         for sym, data in live_data.items():
             try:
                 price = float(data.get('price', 0))
@@ -126,16 +129,16 @@ def update_prices():
                         "UPDATE Trades SET current_price = %s WHERE symbol = %s AND status = 'Open'",
                         (price, sym)
                     )
-            except:
-                continue # لو فشل سهم، انتقل للتالي
+            except: continue 
         
-        st.cache_data.clear()
+        st.cache_data.clear() # مسح الكاش لإجبار التحديث
         return True
     except Exception as e:
-        st.error(f"فشل التحديث: {e}")
+        st.error(f"فشل تحديث الأسعار: {e}")
         return False
 
 def generate_equity_curve(df):
+    """توليد منحنى النمو"""
     if df.empty or 'date' not in df.columns: return pd.DataFrame()
     df = df.copy()
     try:
@@ -143,17 +146,13 @@ def generate_equity_curve(df):
         df = df.sort_values('date')
         df['cumulative_invested'] = df['total_cost'].cumsum()
         return df
-    except:
-        return pd.DataFrame()
+    except: return pd.DataFrame()
 
-# ربطنا الدالة بنظام النسخ الاحتياطي الجديد
 def create_smart_backup():
     try:
         from backup_system import generate_full_backup
         return generate_full_backup()
     except Exception as e:
         st.error(f"فشل النسخ الاحتياطي: {e}")
-        return None
-
-def calculate_historical_drawdown(df):
-    return pd.DataFrame()
+        return None, None
+# === END ADDITION ===
