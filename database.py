@@ -68,6 +68,7 @@ def fetch_table(table_name):
 
 # 3. تحديث هيكلية البيانات (Migration)
 def migrate_financial_schema():
+    # هنا التعديل الوحيد: أضفنا الأعمدة الناقصة (source, period_type)
     columns_to_add = [
         ("total_assets", "DOUBLE PRECISION"),
         ("total_liabilities", "DOUBLE PRECISION"),
@@ -75,7 +76,9 @@ def migrate_financial_schema():
         ("operating_cash_flow", "DOUBLE PRECISION"),
         ("current_assets", "DOUBLE PRECISION"),
         ("current_liabilities", "DOUBLE PRECISION"),
-        ("long_term_debt", "DOUBLE PRECISION")
+        ("long_term_debt", "DOUBLE PRECISION"),
+        ("source", "VARCHAR(20)"), # جديد
+        ("period_type", "VARCHAR(20)") # جديد
     ]
     
     with get_db() as conn:
