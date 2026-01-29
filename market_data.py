@@ -5,13 +5,11 @@ import yfinance as yf
 import pandas as pd
 import time
 
-# ==============================
-# 🛠️ Helpers & Configuration
-# ==============================
+# === START ADDITION: API Safety & Caching ===
 HEADERS = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'}
 
 def get_ticker_symbol(symbol):
-    """توحيد صيغة الرموز لتناسب Yahoo Finance"""
+    """توحيد الرموز لتوافق Yahoo Finance"""
     s = str(symbol).strip().upper()
     if not s: return ""
     if s in ['TASI', '.TASI', '^TASI']: return '^TASI.SR'
@@ -20,22 +18,21 @@ def get_ticker_symbol(symbol):
     return s
 
 def _safe_float(val):
+    """تحويل آمن للأرقام"""
     try:
         return float(val)
     except:
         return 0.0
 
-# ==============================
-# 🌐 Data Fetching Engines
-# ==============================
-
 def fetch_price_from_google(symbol):
-    """المحرك الاحتياطي: جلب السعر من جوجل"""
+    """مصدر احتياطي (Scraping)"""
     ticker = symbol.replace('.SR', '').replace('^', '')
     if ticker == '^TASI': ticker = '.TASI'
     
     url = f"https://www.google.com/finance/quote/{ticker}:TADAWUL"
     try:
+        # إضافة مهلة زمنية بسيطة لتجنب الحظر
+        # time.sleep(0.5) 
         r = requests.get(url, headers=HEADERS, timeout=3)
         if r.status_code == 200:
             soup = BeautifulSoup(r.text, 'html.parser')
@@ -48,20 +45,20 @@ def fetch_price_from_google(symbol):
 
 @st.cache_data(ttl=300, show_spinner=False)
 def get_tasi_data():
-    """جلب بيانات المؤشر العام (كاش لمدة 5 دقائق)"""
-    # 1. محاولة Yahoo
+    """جلب بيانات المؤشر العام (كاش 5 دقائق)"""
     try:
         tick = yf.Ticker("^TASI.SR")
-        # fast_info أسرع من history
-        curr = tick.fast_info.last_price
-        prev = tick.fast_info.previous_close
+        # fast_info أسرع وأخف
+        fi = tick.fast_info
+        curr = fi.last_price
+        prev = fi.previous_close
         if curr and prev:
             chg = ((curr - prev) / prev) * 100
             return _safe_float(curr), round(_safe_float(chg), 2)
     except:
         pass
     
-    # 2. محاولة Google
+    # محاولة البديل
     price = fetch_price_from_google(".TASI")
     return price, 0.0
 
@@ -75,21 +72,22 @@ def get_chart_history(symbol, period='1y', interval='1d'):
     except:
         return None
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=120, show_spinner=False)
 def fetch_batch_data(symbols_list):
-    """جلب أسعار مجموعة أسهم دفعة واحدة (كاش لمدة دقيقة)"""
+    """
+    جلب جماعي للأسعار (Batch Fetching).
+    كاش دقيقتين لتقليل استدعاءات API.
+    """
     results = {}
     if not symbols_list: return results
     
     clean_syms = list(set([get_ticker_symbol(s) for s in symbols_list]))
     
-    # 1. محاولة Yahoo Batch (الأسرع)
+    # 1. محاولة Yahoo Batch
     try:
         if len(clean_syms) == 1:
-            # معالجة سهم واحد
             sym = clean_syms[0]
-            t = yf.Ticker(sym)
-            fi = t.fast_info
+            fi = yf.Ticker(sym).fast_info
             results[sym.replace('.SR','')] = {
                 'price': _safe_float(fi.last_price),
                 'prev_close': _safe_float(fi.previous_close),
@@ -97,7 +95,6 @@ def fetch_batch_data(symbols_list):
                 'year_low': _safe_float(fi.year_low)
             }
         else:
-            # معالجة مجموعة
             tickers = yf.Tickers(" ".join(clean_syms))
             for sym in clean_syms:
                 try:
@@ -129,3 +126,4 @@ def get_static_info(symbol):
         return get_company_details(symbol)
     except:
         return symbol, "سوق الأسهم"
+# === END ADDITION ===
