@@ -595,32 +595,31 @@ def view_backtester_ui(fin):
 # 8. نبض السوق وإضافة صفقة والإعدادات
 # ========================================================
 # ========================================================
-# 8. نبض السوق (Market Pulse) - المطور
-# ========================================================
-# ========================================================
-# 8. نبض السوق (Market Pulse) - التصميم المطور 🌟
+# 8. نبض السوق (Market Pulse) - النسخة الاحترافية 📊
 # ========================================================
 def render_pulse_dashboard():
-    st.header("💓 نبض السوق والفرص")
+    st.header("💓 نبض السوق")
     
-    # 1. تحديد القوائم
-    market_leaders = ['1120.SR', '2222.SR', '2010.SR', '7010.SR', '1180.SR'] 
-    
+    # 1. تجهيز قائمة الأسهم
+    # القياديات (ثابتة للمراقبة)
+    market_leaders = ['1120.SR', '2222.SR', '2010.SR', '7010.SR', '1180.SR', '1150.SR']
+    # أسهمك (من المحفظة والمراقبة)
     wl = fetch_table("Watchlist")
     trades = fetch_table("Trades")
     my_stocks = list(set(wl['symbol'].tolist() + trades['symbol'].tolist()))
     
+    # دمج الكل
     all_syms = list(set(market_leaders + my_stocks))
     
     if not all_syms:
-        st.info("لا توجد أسهم للمراقبة.")
+        st.info("لا توجد أسهم للمراقبة حالياً.")
         return
         
-    # جلب البيانات
-    with st.spinner("جاري مسح السوق..."):
+    # جلب البيانات الحية (Batch Fetch)
+    with st.spinner("جاري قراءة نبض السوق..."):
         data = fetch_batch_data(all_syms)
     
-    # تجهيز البيانات
+    # تحويل البيانات إلى قائمة غنية بالمعلومات
     rows = []
     for sym, info in data.items():
         price = info.get('price', 0)
@@ -628,12 +627,14 @@ def render_pulse_dashboard():
         high_yr = info.get('year_high', 0)
         low_yr = info.get('year_low', 0)
         
-        # جلب الاسم العربي
+        # جلب الاسم العربي (من ملف data_source.py)
         name, _ = get_company_details(sym)
+        # إذا لم نجد اسماً، نستخدم الرمز
+        if name == sym: name = f"شركة {sym}"
         
         change_pct = ((price - prev) / prev * 100) if prev > 0 else 0
         
-        # موقع السعر من القمة والقاع (0 - 100)
+        # موقع السعر من القمة والقاع (للرسم البياني المصغر)
         range_pos = 0
         if high_yr > low_yr:
             range_pos = (price - low_yr) / (high_yr - low_yr) * 100
@@ -643,90 +644,108 @@ def render_pulse_dashboard():
             'name': name,
             'price': price,
             'change': change_pct,
-            'range_pos': range_pos,
-            'year_low': low_yr,
-            'year_high': high_yr,
+            'range_pos': range_pos, # نسبة من 0 إلى 100
             'is_leader': f"{sym}.SR" in market_leaders or sym in market_leaders
         })
     
     df_pulse = pd.DataFrame(rows)
     if df_pulse.empty: return
 
-    # --- 1. القياديات (مؤشرات السوق) ---
-    st.markdown("##### 🏛️ القياديات (اتجاه السوق)")
-    leaders = df_pulse[df_pulse['is_leader'] == True]
-    cols_l = st.columns(len(leaders))
-    for i, row in enumerate(leaders.to_dict('records')):
-        with cols_l[i]:
-            # عرض مبسط للقياديات
-            st.metric(row['name'], f"{row['price']}", f"{row['change']:.2f}%")
-    
-    st.divider()
-    
-    # --- 2. الأكثر حركة (السيولة) ---
-    c_win, c_lose = st.columns(2)
-    
-    def render_card(r):
-        color = "#059669" if r['change'] >= 0 else "#DC2626"
-        bg_color = "#ECFDF5" if r['change'] >= 0 else "#FEF2F2"
-        arrow = "🔼" if r['change'] >= 0 else "🔽"
+    # --- دالة رسم البطاقة الاحترافية (HTML/CSS) ---
+    def render_pro_card(row):
+        # تحديد الألوان
+        if row['change'] > 0:
+            val_color = "#10B981" # أخضر
+            bg_badge = "#D1FAE5"
+            arrow = "▲"
+        elif row['change'] < 0:
+            val_color = "#EF4444" # أحمر
+            bg_badge = "#FEE2E2"
+            arrow = "▼"
+        else:
+            val_color = "#6B7280" # رمادي
+            bg_badge = "#F3F4F6"
+            arrow = "-"
+            
+        # شريط النطاق السنوي (Progress Bar)
+        bar_color = "#3B82F6" if row['range_pos'] > 50 else "#6366F1"
         
+        # كود البطاقة
         st.markdown(f"""
-        <div style="background:white; border:1px solid #E5E7EB; border-radius:12px; padding:12px; margin-bottom:10px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-                <div>
-                    <div style="font-weight:bold; font-size:1rem; color:#1F2937;">{r['name']}</div>
-                    <div style="font-size:0.8rem; color:#6B7280; font-family:monospace;">{r['symbol']}</div>
+        <div style="background: white; border: 1px solid #E5E7EB; border-radius: 12px; padding: 12px; margin-bottom: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.02); transition: transform 0.2s;">
+            <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 8px;">
+                <div style="text-align: right;">
+                    <div style="font-weight: 800; font-size: 1rem; color: #111827; margin-bottom: 2px;">{row['name']}</div>
+                    <div style="font-size: 0.75rem; color: #6B7280; font-family: monospace; background: #F9FAFB; padding: 1px 6px; border-radius: 4px; display: inline-block;">{row['symbol']}</div>
                 </div>
-                <div style="text-align:left;">
-                    <div style="font-weight:bold; font-size:1.1rem; color:#111827;">{r['price']}</div>
-                    <div style="font-size:0.85rem; color:{color}; background:{bg_color}; padding:2px 6px; border-radius:6px; font-weight:600;">
-                        {r['change']:+.2f}%
+                <div style="text-align: left;">
+                    <div style="font-weight: 900; font-size: 1.1rem; color: #1F2937; direction: ltr;">{row['price']:,.2f}</div>
+                    <div style="font-size: 0.75rem; font-weight: 700; color: {val_color}; background: {bg_badge}; padding: 2px 8px; border-radius: 10px; direction: ltr; display: inline-block;">
+                        {row['change']:+.2f}% {arrow}
                     </div>
                 </div>
+            </div>
+            
+            <div style="display: flex; align-items: center; gap: 5px;">
+                <span style="font-size: 0.6rem; color: #9CA3AF;">قاع</span>
+                <div style="flex-grow: 1; height: 4px; background-color: #F3F4F6; border-radius: 2px; overflow: hidden;">
+                    <div style="width: {row['range_pos']}%; height: 100%; background-color: {bar_color};"></div>
+                </div>
+                <span style="font-size: 0.6rem; color: #9CA3AF;">قمة</span>
             </div>
         </div>
         """, unsafe_allow_html=True)
 
-    with c_win:
-        st.markdown("##### 🚀 الأكثر ارتفاعاً")
-        winners = df_pulse.sort_values('change', ascending=False).head(5)
-        for _, row in winners.iterrows():
-            if row['change'] > 0: render_card(row)
-            else: st.caption("لا يوجد")
+    # --- العرض الرئيسي ---
+    
+    # 1. شريط الملخص العلوي
+    gainers = len(df_pulse[df_pulse['change'] > 0])
+    losers = len(df_pulse[df_pulse['change'] < 0])
+    neutral = len(df_pulse) - gainers - losers
+    
+    m1, m2, m3 = st.columns(3)
+    m1.metric("الشركات الخضراء", f"{gainers}", delta="ارتفاع", delta_color="normal")
+    m2.metric("الشركات الحمراء", f"{losers}", delta="-هبوط", delta_color="inverse")
+    m3.metric("المستقرة", f"{neutral}")
+    
+    st.divider()
 
-    with c_lose:
-        st.markdown("##### 🩸 الأكثر انخفاضاً")
-        losers = df_pulse.sort_values('change', ascending=True).head(5)
-        for _, row in losers.iterrows():
-            if row['change'] < 0: render_card(row)
-            else: st.caption("لا يوجد")
-            
-    # --- 3. رادار القمم والقيعان (Visual Radar) ---
-    st.markdown("---")
-    st.markdown("##### 🎯 رادار الأسعار (موقع السعر من أدنى وأعلى سنوي)")
+    # 2. التبويبات الذكية
+    t_leaders, t_gainers, t_losers, t_all = st.tabs(["🏛️ القياديات", "🚀 الأكثر ارتفاعاً", "🩸 الأكثر انخفاضاً", "📋 القائمة كاملة"])
     
-    # تصفية الأسهم التي قريبة من القاع (أقل من 20%) أو القمة (أكثر من 80%)
-    opportunities = df_pulse[(df_pulse['range_pos'] < 20) | (df_pulse['range_pos'] > 80)].sort_values('range_pos')
-    
-    if not opportunities.empty:
-        for _, row in opportunities.iterrows():
-            c1, c2 = st.columns([1, 3])
-            with c1:
-                st.markdown(f"**{row['name']}**")
-                st.caption(f"{row['symbol']}")
-            with c2:
-                # شريط التقدم المرئي
-                val = int(row['range_pos'])
-                st.progress(val / 100)
+    with t_leaders:
+        leaders_df = df_pulse[df_pulse['is_leader'] == True]
+        cols = st.columns(3)
+        for i, row in enumerate(leaders_df.to_dict('records')):
+            with cols[i % 3]:
+                render_pro_card(row)
                 
-                # وصف الحالة
-                if val < 20:
-                    st.caption(f"🟢 في مناطق قاع (الأدنى: {row['year_low']}) - السعر الحالي: {row['price']}")
-                else:
-                    st.caption(f"🔴 في مناطق قمة (الأعلى: {row['year_high']}) - السعر الحالي: {row['price']}")
-    else:
-        st.info("جميع الأسهم تتداول في مناطق متوسطة حالياً.")
+    with t_gainers:
+        top_gain = df_pulse.sort_values('change', ascending=False).head(6)
+        if top_gain.empty or top_gain.iloc[0]['change'] <= 0:
+            st.info("لا يوجد ارتفاعات ملحوظة.")
+        else:
+            cols = st.columns(3)
+            for i, row in enumerate(top_gain[top_gain['change'] > 0].to_dict('records')):
+                with cols[i % 3]:
+                    render_pro_card(row)
+
+    with t_losers:
+        top_loss = df_pulse.sort_values('change', ascending=True).head(6)
+        if top_loss.empty or top_loss.iloc[0]['change'] >= 0:
+            st.info("لا يوجد انخفاضات ملحوظة.")
+        else:
+            cols = st.columns(3)
+            for i, row in enumerate(top_loss[top_loss['change'] < 0].to_dict('records')):
+                with cols[i % 3]:
+                    render_pro_card(row)
+                    
+    with t_all:
+        # عرض شبكي لكل الأسهم
+        cols = st.columns(4)
+        for i, row in enumerate(df_pulse.to_dict('records')):
+            with cols[i % 4]:
+                render_pro_card(row)
 def view_settings():
     st.header("⚙️ الإعدادات والنظام")
     
