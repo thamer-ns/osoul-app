@@ -8,13 +8,13 @@ from database import execute_query, fetch_table
 from market_data import fetch_price_from_google, get_ticker_symbol
 
 # ==============================================================
-# 📥 1. وحدة التخزين والمزامنة (Storage Engine)
+# 📥 1. وحدة التخزين والمزامنة (Input & Storage)
 # ==============================================================
 
 def save_financial_record(symbol, date_str, data, period_type='Annual', source='Manual'):
     """حفظ سجل مالي واحد في قاعدة البيانات"""
     try:
-        # استخراج القيم بأمان مع قيم افتراضية 0
+        # استخراج القيم بأمان
         vals = {k: float(data.get(k, 0) or 0) for k in [
             'revenue', 'net_income', 'total_assets', 'total_liabilities', 
             'total_equity', 'operating_cash_flow', 'current_assets', 
@@ -79,7 +79,7 @@ def sync_auto_yahoo(symbol):
     except Exception as e: return False, str(e)
 
 def parse_pasted_text(txt):
-    """تحليل النسخ واللصق الذكي"""
+    """تحليل النسخ واللصق الذكي (الكود القديم المفضل لديك)"""
     try:
         df = pd.read_csv(io.StringIO(txt), sep='\t')
         if df.shape[1] < 2: df = pd.read_csv(io.StringIO(txt), sep=r'\s+', engine='python')
@@ -138,7 +138,7 @@ def get_advanced_fundamental_ratios(symbol):
     prev = df.iloc[1] if len(df) > 1 else curr
     
     try:
-        # 1. Piotroski F-Score
+        # 1. Piotroski F-Score (محسوب محلياً)
         score = 0
         if curr.get('net_income', 0) > 0: score += 1
         if curr.get('operating_cash_flow', 0) > 0: score += 1
@@ -149,7 +149,7 @@ def get_advanced_fundamental_ratios(symbol):
         
         if curr.get('operating_cash_flow', 0) > curr.get('net_income', 0): score += 1
         
-        metrics['Piotroski_Score'] = min(score + 3, 9) # +3 تعويض تقريبي
+        metrics['Piotroski_Score'] = min(score + 3, 9) # +3 تعويض تقريبي عن البيانات الناقصة
         
         # 2. Graham (تقريبي)
         try:
@@ -164,6 +164,12 @@ def get_advanced_fundamental_ratios(symbol):
         metrics['Score'] = metrics['Piotroski_Score']
         metrics['Rating'] = metrics['Financial_Health']
 
+        # الملاحظات
+        ops = []
+        if curr.get('net_income',0) > prev.get('net_income',0): ops.append("نمو الربحية")
+        if curr.get('operating_cash_flow',0) < 0: ops.append("كاش تشغيلي سالب")
+        metrics['Opinions'] = " | ".join(ops)
+
     except: pass
     return metrics
 
@@ -174,12 +180,12 @@ def get_advanced_fundamental_ratios(symbol):
 def render_financial_dashboard_ui(symbol):
     # أدوات التحكم
     st.markdown("### 💰 التحليل المالي (Data Warehouse)")
-    t_control, t_view = st.tabs(["⚙️ إدارة البيانات", "📊 لوحة المعلومات"])
+    t_control, t_view = st.tabs(["⚙️ إدارة البيانات (قديم/جديد)", "📊 لوحة المعلومات"])
     
     with t_control:
         c1, c2 = st.columns(2)
         with c1:
-            st.markdown("##### ⚡ جلب آلي")
+            st.markdown("##### ⚡ جلب آلي (جديد)")
             if st.button("تحديث من Yahoo (سنوي + ربعي)", key="sync_btn"):
                 with st.spinner("جاري المزامنة..."):
                     ok, msg = sync_auto_yahoo(symbol)
@@ -187,7 +193,7 @@ def render_financial_dashboard_ui(symbol):
                     else: st.error(msg)
         
         with c2:
-            st.markdown("##### ✍️ إدخال يدوي / نسخ")
+            st.markdown("##### ✍️ إدخال يدوي / نسخ (قديم)")
             with st.expander("فتح نموذج الإدخال"):
                 sub_t1, sub_t2 = st.tabs(["نسخ جدول", "يدوي"])
                 with sub_t1:
@@ -226,7 +232,8 @@ def render_financial_dashboard_ui(symbol):
             # الرسم البياني (مع حماية ضد ValueError)
             df['Year'] = df['date'].dt.strftime('%Y-%m') if not df.empty else []
             plot_cols = ['revenue', 'net_income']
-            if 'operating_cash_flow' in df.columns: plot_cols.append('operating_cash_flow')
+            if 'operating_cash_flow' in df.columns and df['operating_cash_flow'].sum() != 0: 
+                plot_cols.append('operating_cash_flow')
             
             # التأكد من أن الأعمدة رقمية
             for c in plot_cols: df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
@@ -235,12 +242,12 @@ def render_financial_dashboard_ui(symbol):
                 fig = px.bar(df.sort_values('date'), x='Year', y=plot_cols, barmode='group', title="الأداء المالي")
                 st.plotly_chart(fig, use_container_width=True)
             except Exception as e:
-                st.error(f"خطأ في الرسم: {e}")
+                st.error(f"لا يمكن الرسم حالياً: {e}")
             
             with st.expander("جدول البيانات"):
                 st.dataframe(df)
 
-# دوال مساعدة
+# دوال مساعدة لضمان عمل باقي النظام
 def get_fundamental_ratios(symbol): return get_advanced_fundamental_ratios(symbol)
 def get_thesis(s): 
     try: df = fetch_table("InvestmentThesis"); return df[df['symbol'] == s].iloc[0] if not df.empty else None
