@@ -298,17 +298,30 @@ def render_financial_dashboard_ui(symbol):
             
             # الرسم البياني
             try:
-                df['Year'] = df['date'].dt.strftime('%Y-%m')
-                cols_to_plot = [c for c in ['revenue', 'net_income', 'operating_cash_flow'] if c in df.columns and df[c].sum() != 0]
+                # نقوم بإنشاء نسخة للرسم حتى لا نؤثر على الجدول الأصلي
+                plot_df = df.copy()
+                plot_df['Year'] = plot_df['date'].dt.strftime('%Y-%m')
+                cols_to_plot = [c for c in ['revenue', 'net_income', 'operating_cash_flow'] if c in plot_df.columns and plot_df[c].sum() != 0]
                 
                 if cols_to_plot:
-                    fig = px.bar(df.sort_values('date'), x='Year', y=cols_to_plot, barmode='group', 
+                    fig = px.bar(plot_df.sort_values('date'), x='Year', y=cols_to_plot, barmode='group', 
                                  title="الأداء المالي التاريخي", color_discrete_sequence=px.colors.qualitative.Safe)
                     st.plotly_chart(fig, use_container_width=True)
-            except: st.error("تعذر إنشاء الرسم البياني")
+            except Exception as e: 
+                st.error(f"تعذر إنشاء الرسم البياني: {e}")
 
+            # === تصحيح الخطأ هنا ===
             with st.expander("عرض الجدول التفصيلي"):
-                st.dataframe(df.style.format("{:,.0f}"), use_container_width=True)
+                # نحدد الأعمدة الرقمية فقط لتطبيق التنسيق عليها
+                numeric_cols = df.select_dtypes(include=[np.number]).columns
+                # إنشاء قاموس تنسيق لكل عمود رقمي
+                format_dict = {col: "{:,.0f}" for col in numeric_cols}
+                
+                # تطبيق التنسيق بأمان
+                st.dataframe(
+                    df.style.format(format_dict, na_rep="-"), 
+                    use_container_width=True
+                )
 
     # --- التبويب الثاني: إدارة البيانات ---
     with tab_data_mgmt:
@@ -352,7 +365,11 @@ def render_financial_dashboard_ui(symbol):
         
         with st.form(key=f"thesis_form_{symbol}"):
             rec_col, target_col = st.columns(2)
-            new_rec = rec_col.selectbox("التوصية", ["Buy", "Sell", "Hold", "Accumulate"], index=["Buy", "Sell", "Hold", "Accumulate"].index(default_rec) if default_rec in ["Buy", "Sell", "Hold", "Accumulate"] else 2)
+            # التأكد من أن القيمة الافتراضية موجودة في القائمة لتجنب خطأ الـ index
+            options = ["Buy", "Sell", "Hold", "Accumulate"]
+            idx = options.index(default_rec) if default_rec in options else 2
+            
+            new_rec = rec_col.selectbox("التوصية", options, index=idx)
             new_target = target_col.number_input("السعر المستهدف", value=float(default_target))
             
             new_text = st.text_area("لماذا تستثمر في هذا السهم؟ (نقاط القوة/الضعف)", value=default_text, height=200)
@@ -361,7 +378,6 @@ def render_financial_dashboard_ui(symbol):
                 save_thesis(symbol, new_text, new_target, new_rec)
                 st.success("تم حفظ الأطروحة بنجاح!")
                 st.rerun()
-
 # ==============================================================
 # 🔧 4. دوال مساعدة إضافية (Helpers)
 # ==============================================================
