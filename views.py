@@ -321,7 +321,7 @@ def view_cash_log():
         if not fin['returns'].empty: render_custom_table(fin['returns'], [('date','التاريخ','date'),('symbol','السهم','text'),('amount','المبلغ','money')])
 
 # ========================================================
-# 6. التحليل الشامل (Analysis) - (محدث مع دعم الملفات والإدخال اليدوي الكامل)
+# 6. التحليل الشامل (Analysis)
 # ========================================================
 
 def render_data_import_ui_content(symbol):
