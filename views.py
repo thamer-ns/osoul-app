@@ -27,14 +27,14 @@ try:
 except ImportError:
     run_backtest = None 
 
-# 3. التحليل المالي (تحديث الاستيراد لدعم رفع الملفات)
+# 3. التحليل المالي (تم تحديث الاستيراد ليشمل sync_auto_yahoo)
 try:
     from financial_analysis import (
         get_thesis, save_thesis, 
         FinancialParser, save_financial_record, 
-        get_stored_financials_df, get_advanced_fundamental_ratios
+        get_stored_financials_df, get_advanced_fundamental_ratios,
+        sync_auto_yahoo # ✅ تمت استعادته هنا
     )
-    # ملاحظة: قمنا بإزالة render_financial_dashboard_ui من الاستيراد لأننا سنعرفها هنا
 except ImportError:
     def get_thesis(s): return {}
     def save_thesis(s, t, tg, r): pass
@@ -42,6 +42,7 @@ except ImportError:
     def get_advanced_fundamental_ratios(s): return {}
     class FinancialParser: pass
     def save_financial_record(*args): pass
+    def sync_auto_yahoo(s): return False, "Module Missing"
 
 # 4. التحليل الكلاسيكي
 try:
@@ -320,20 +321,16 @@ def view_cash_log():
         if not fin['returns'].empty: render_custom_table(fin['returns'], [('date','التاريخ','date'),('symbol','السهم','text'),('amount','المبلغ','money')])
 
 # ========================================================
-# 6. التحليل الشامل (Analysis) - (محدث مع دعم الملفات)
+# 6. التحليل الشامل (Analysis) - (✅ تم إصلاح التبويبات هنا)
 # ========================================================
 
-# -- [START] دوال العرض الجديدة للبيانات المالية --
-def render_data_management_tab(symbol):
-    st.markdown("#### 📂 استيراد البيانات المالية")
+# دالة مساعدة لتبويب الاستيراد
+def render_data_import_ui_content(symbol):
     st.info("يدعم النظام: ملفات PDF من تداول، ملفات Excel/CSV، أو النسخ واللصق المباشر من TradingView.")
     
     parser = FinancialParser()
     
-    # 1. طريقة الرفع (Upload)
     uploaded_file = st.file_uploader("رفع ملف قوائم مالية (PDF, Excel, CSV)", type=['pdf', 'xlsx', 'xls', 'csv'])
-    
-    # 2. طريقة النسخ واللصق (Paste)
     pasted_text = st.text_area("أو الصق البيانات هنا مباشرة:")
     
     if st.button("🚀 معالجة واستخراج البيانات"):
@@ -346,11 +343,8 @@ def render_data_management_tab(symbol):
             elif pasted_text:
                 results, detected_symbol = parser.process_file_or_text(text_input=pasted_text)
                 
-        # بما أن الدالة process_file_or_text تعيد (results, symbol, error)
-        # نحتاج التعامل معها بشكل صحيح إذا كانت تعيد 3 قيم
+        # معالجة الناتج في حال كان Tuple
         if isinstance(results, tuple): 
-             # تصحيح للتعامل مع الـ tuple إذا لزم الأمر بناء على كود financial_analysis
-             # في الكود السابق كانت تعيد 3 قيم
              results, detected_symbol, err_msg = results
              if err_msg:
                  st.error(err_msg)
@@ -358,22 +352,17 @@ def render_data_management_tab(symbol):
 
         if results:
             st.success(f"تم استخراج {len(results)} سجلات بنجاح!")
+            final_symbol = symbol
             
-            # التحقق من الرمز
-            final_symbol = symbol # الرمز الحالي للصفحة
-            
-            # إذا اكتشفنا رمزاً مختلفاً في الملف، نسأل المستخدم
             if detected_symbol and detected_symbol != symbol:
                 st.warning(f"⚠️ الملف يحتوي على بيانات للشركة {detected_symbol}، بينما أنت في صفحة {symbol}.")
-                use_detected = st.checkbox(f"استخدام الرمز المكتشف ({detected_symbol}) بدلاً من الحالي؟", value=True)
+                use_detected = st.checkbox(f"استخدام الرمز المكتشف ({detected_symbol})؟", value=True)
                 if use_detected: final_symbol = detected_symbol
             
-            # إذا لم يتم اكتشاف رمز وكان المستخدم في صفحة "عامة" (غير محدد سهم)
             if not final_symbol:
-                final_symbol = st.text_input("⚠️ لم نتمكن من تحديد الشركة. الرجاء إدخال رمز السهم (مثال: 1120.SR):")
+                final_symbol = st.text_input("⚠️ الرجاء إدخال رمز السهم (مثال: 1120.SR):")
             
             if final_symbol:
-                # عرض البيانات للمراجعة قبل الحفظ
                 st.write("### 🧐 مراجعة البيانات المستخرجة:")
                 preview_df = pd.DataFrame([{'Date': r['date'], **r['data']} for r in results])
                 st.dataframe(preview_df)
@@ -388,11 +377,11 @@ def render_data_management_tab(symbol):
             else:
                 st.error("يجب تحديد رمز السهم للحفظ.")
         else:
-            st.error("لم يتم العثور على بيانات مالية صالحة. تأكد من الملف أو النص.")
+            st.error("لم يتم العثور على بيانات مالية صالحة.")
 
 def render_financial_dashboard_ui(symbol):
     # تعريف التبويبات الداخلية للوحة المالية
-    tab_dashboard, tab_data_mgmt = st.tabs(["📊 لوحة التحليل المالي", "⚙️ استيراد البيانات"])
+    tab_dashboard, tab_data_mgmt = st.tabs(["📊 لوحة التحليل المالي", "⚙️ إدارة البيانات"])
     
     with tab_dashboard:
         ptype = st.radio("نطاق التحليل:", ["Annual", "Quarterly"], horizontal=True, label_visibility="collapsed")
@@ -400,7 +389,7 @@ def render_financial_dashboard_ui(symbol):
         
         if df.empty:
             st.warning("⚠️ لا توجد بيانات مالية محفوظة لهذا السهم.")
-            st.info("👈 انتقل لتبويب 'استيراد البيانات' لرفع ملف أو جلب المعلومات.")
+            st.info("👈 انتقل لتبويب 'إدارة البيانات' لرفع ملف أو جلب المعلومات.")
         else:
             metrics = get_advanced_fundamental_ratios(symbol)
             c1, c2, c3 = st.columns(3)
@@ -423,7 +412,24 @@ def render_financial_dashboard_ui(symbol):
                 st.dataframe(df, use_container_width=True)
             
     with tab_data_mgmt:
-        render_data_management_tab(symbol)
+        # ✅✅✅ هنا الإصلاح: استعادة التبويبات الفرعية الثلاثة
+        st.markdown("#### مصادر البيانات")
+        t1, t2, t3 = st.tabs(["⚡ تحديث آلي (Yahoo)", "📂 استيراد ملف/نص", "✍️ إدخال يدوي"])
+        
+        with t1:
+            st.caption("جلب البيانات من Yahoo Finance مباشرة")
+            if st.button("بدء المزامنة الآلية"):
+                with st.spinner("جاري الاتصال..."):
+                    ok, msg = sync_auto_yahoo(symbol)
+                    if ok: st.success(msg); st.rerun()
+                    else: st.error(msg)
+        
+        with t2:
+            render_data_import_ui_content(symbol)
+            
+        with t3:
+            st.info("يمكنك تعديل البيانات يدوياً عبر قاعدة البيانات.")
+
 # -- [END] --
 
 def view_analysis(fin):
