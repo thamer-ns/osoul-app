@@ -27,13 +27,13 @@ try:
 except ImportError:
     run_backtest = None 
 
-# 3. التحليل المالي (تم تحديث الاستيراد ليشمل sync_auto_yahoo)
+# 3. التحليل المالي
 try:
     from financial_analysis import (
         get_thesis, save_thesis, 
         FinancialParser, save_financial_record, 
         get_stored_financials_df, get_advanced_fundamental_ratios,
-        sync_auto_yahoo # ✅ تمت استعادته هنا
+        sync_auto_yahoo
     )
 except ImportError:
     def get_thesis(s): return {}
@@ -321,12 +321,11 @@ def view_cash_log():
         if not fin['returns'].empty: render_custom_table(fin['returns'], [('date','التاريخ','date'),('symbol','السهم','text'),('amount','المبلغ','money')])
 
 # ========================================================
-# 6. التحليل الشامل (Analysis) - (✅ تم إصلاح التبويبات هنا)
+# 6. التحليل الشامل (Analysis) - (محدث مع دعم الملفات والإدخال اليدوي الكامل)
 # ========================================================
 
-# دالة مساعدة لتبويب الاستيراد
 def render_data_import_ui_content(symbol):
-    st.info("يدعم النظام: ملفات PDF من تداول، ملفات Excel/CSV، أو النسخ واللصق المباشر من TradingView.")
+    st.info("يدعم النظام: ملفات PDF من تداول، ملفات Excel/CSV، أو النسخ واللصق المباشر.")
     
     parser = FinancialParser()
     
@@ -343,7 +342,6 @@ def render_data_import_ui_content(symbol):
             elif pasted_text:
                 results, detected_symbol = parser.process_file_or_text(text_input=pasted_text)
                 
-        # معالجة الناتج في حال كان Tuple
         if isinstance(results, tuple): 
              results, detected_symbol, err_msg = results
              if err_msg:
@@ -355,9 +353,8 @@ def render_data_import_ui_content(symbol):
             final_symbol = symbol
             
             if detected_symbol and detected_symbol != symbol:
-                st.warning(f"⚠️ الملف يحتوي على بيانات للشركة {detected_symbol}، بينما أنت في صفحة {symbol}.")
-                use_detected = st.checkbox(f"استخدام الرمز المكتشف ({detected_symbol})؟", value=True)
-                if use_detected: final_symbol = detected_symbol
+                st.warning(f"⚠️ الملف لشركة {detected_symbol}، وأنت في صفحة {symbol}.")
+                if st.checkbox(f"استخدام {detected_symbol}؟", value=True): final_symbol = detected_symbol
             
             if not final_symbol:
                 final_symbol = st.text_input("⚠️ الرجاء إدخال رمز السهم (مثال: 1120.SR):")
@@ -372,7 +369,7 @@ def render_data_import_ui_content(symbol):
                     for r in results:
                         if save_financial_record(final_symbol, r['date'], r['data'], source='File/Paste'):
                             count += 1
-                    st.success(f"تم حفظ {count} سجلات في قاعدة البيانات لشركة {final_symbol}.")
+                    st.success(f"تم حفظ {count} سجلات لشركة {final_symbol}.")
                     st.rerun()
             else:
                 st.error("يجب تحديد رمز السهم للحفظ.")
@@ -380,7 +377,6 @@ def render_data_import_ui_content(symbol):
             st.error("لم يتم العثور على بيانات مالية صالحة.")
 
 def render_financial_dashboard_ui(symbol):
-    # تعريف التبويبات الداخلية للوحة المالية
     tab_dashboard, tab_data_mgmt = st.tabs(["📊 لوحة التحليل المالي", "⚙️ إدارة البيانات"])
     
     with tab_dashboard:
@@ -412,9 +408,8 @@ def render_financial_dashboard_ui(symbol):
                 st.dataframe(df, use_container_width=True)
             
     with tab_data_mgmt:
-        # ✅✅✅ هنا الإصلاح: استعادة التبويبات الفرعية الثلاثة
         st.markdown("#### مصادر البيانات")
-        t1, t2, t3 = st.tabs(["⚡ تحديث آلي (Yahoo)", "📂 استيراد ملف/نص", "✍️ إدخال يدوي"])
+        t1, t2, t3 = st.tabs(["⚡ تحديث آلي (Yahoo)", "📂 استيراد ملف/نص", "✍️ إدخال يدوي شامل"])
         
         with t1:
             st.caption("جلب البيانات من Yahoo Finance مباشرة")
@@ -428,9 +423,53 @@ def render_financial_dashboard_ui(symbol):
             render_data_import_ui_content(symbol)
             
         with t3:
-            st.info("يمكنك تعديل البيانات يدوياً عبر قاعدة البيانات.")
+            # === [START] النموذج اليدوي الجديد والمفصل ===
+            st.markdown("##### تسجيل البيانات المالية يدوياً")
+            st.caption("أدخل البيانات اللازمة للتحليل المالي (جراهام، بيوتروسكي، وجودة الأرباح).")
+            
+            with st.form("manual_fin_entry"):
+                col_meta1, col_meta2 = st.columns(2)
+                f_date = col_meta1.date_input("تاريخ القوائم", date.today())
+                f_type = col_meta2.selectbox("الفترة", ["Annual", "Quarterly"])
+                
+                st.divider()
+                st.markdown("**1. قائمة الدخل (Income Statement)**")
+                c_inc1, c_inc2 = st.columns(2)
+                rev = c_inc1.number_input("إجمالي الإيرادات (Revenue)", min_value=0.0, format="%.2f")
+                net_inc = c_inc2.number_input("صافي الربح (Net Income)", format="%.2f")
+                
+                st.divider()
+                st.markdown("**2. قائمة التدفقات النقدية (Cash Flow)**")
+                ocf = st.number_input("التدفق النقدي التشغيلي (Operating Cash Flow)", help="مهم جداً لقياس جودة الأرباح", format="%.2f")
+                
+                st.divider()
+                st.markdown("**3. المركز المالي (Balance Sheet)**")
+                c_bs1, c_bs2 = st.columns(2)
+                tot_assets = c_bs1.number_input("إجمالي الأصول (Total Assets)", min_value=0.0, format="%.2f")
+                tot_liab = c_bs2.number_input("إجمالي المطلوبات (Total Liabilities)", min_value=0.0, format="%.2f")
+                
+                c_bs3, c_bs4 = st.columns(2)
+                cur_assets = c_bs3.number_input("الأصول المتداولة (Current Assets)", min_value=0.0, format="%.2f")
+                cur_liab = c_bs4.number_input("المطلوبات المتداولة (Current Liabilities)", min_value=0.0, format="%.2f")
+                
+                c_bs5, c_bs6 = st.columns(2)
+                tot_equity = c_bs5.number_input("إجمالي حقوق الملكية (Equity)", format="%.2f")
+                lt_debt = c_bs6.number_input("الديون طويلة الأجل (Long Term Debt)", min_value=0.0, format="%.2f")
 
-# -- [END] --
+                st.divider()
+                if st.form_submit_button("💾 حفظ البيانات المالية"):
+                    data = {
+                        'revenue': rev, 'net_income': net_inc, 'operating_cash_flow': ocf,
+                        'total_assets': tot_assets, 'total_liabilities': tot_liab,
+                        'current_assets': cur_assets, 'current_liabilities': cur_liab,
+                        'total_equity': tot_equity, 'long_term_debt': lt_debt
+                    }
+                    if save_financial_record(symbol, str(f_date), data, f_type, 'Manual_Full'):
+                        st.success("تم الحفظ بنجاح! سيتم تحديث التحليل الآن.")
+                        st.rerun()
+                    else:
+                        st.error("فشل الحفظ. تأكد من إدخال قيم صالحة.")
+            # === [END] ===
 
 def view_analysis(fin):
     st.header("🔬 التحليل الشامل والمستشار الذكي")
@@ -439,7 +478,6 @@ def view_analysis(fin):
     total_assets = fin['market_val_open'] + fin['cash']
     cash_pct = (fin['cash'] / total_assets * 100) if total_assets else 0
 
-    # 1. تحليل المحفظة الكلي
     if not trades.empty:
         open_pos = trades[trades['status']=='Open']
         st.subheader("🛡️ اختبار التحمل (Stress Test)")
@@ -456,7 +494,6 @@ def view_analysis(fin):
                 st.info(stress.get('insight', ''))
         st.divider()
 
-    # 2. التحليل الفردي للسهم
     wl = fetch_table("Watchlist")
     my_stocks = trades['symbol'].unique().tolist() if not trades.empty else []
     wl_stocks = wl['symbol'].unique().tolist() if not wl.empty else []
@@ -472,10 +509,8 @@ def view_analysis(fin):
         nm, sc = get_company_details(selected_sym)
         st.markdown(f"## {nm} ({selected_sym}) - {sc}")
         
-        # التبويبات الفرعية
         at1, at2, at3, at4, at5 = st.tabs(["🤖 المستشار", "💰 القوائم المالية", "📈 الشارت الفني", "🏛️ كلاسيكي", "📝 ملاحظاتي"])
         
-        # أ. المستشار الذكي
         with at1:
             ai_suggestions = generate_rebalancing_suggestions(trades, cash_pct)
             if ai_suggestions:
@@ -508,16 +543,9 @@ def view_analysis(fin):
                 st.markdown("##### 📊 الرؤية المالية")
                 for r in report.get('fund_reasons', []): st.write(f"• {r}")
 
-        # ب. المالي (يستخدم الدالة المعرفة محلياً الآن)
         with at2: render_financial_dashboard_ui(selected_sym)
-        
-        # ج. الفني
         with at3: render_technical_chart(selected_sym)
-        
-        # د. الكلاسيكي
         with at4: render_classical_analysis(selected_sym)
-        
-        # هـ. الأطروحة
         with at5:
             thesis = get_thesis(selected_sym)
             old_txt = thesis['thesis_text'] if thesis else ""
