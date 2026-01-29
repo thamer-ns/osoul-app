@@ -8,18 +8,28 @@ from database import execute_query, fetch_table
 from market_data import fetch_price_from_google, get_ticker_symbol
 
 # ==============================================================
-# 🏗️ وحدة إدارة البيانات (Backend Logic)
+# 📥 1. وحدة التخزين والمزامنة (Input & Storage)
 # ==============================================================
 
 def save_financial_record(symbol, date_str, data, period_type='Annual', source='Manual'):
-    """حفظ سجل مالي في قاعدة البيانات"""
+    """حفظ سجل مالي واحد في قاعدة البيانات"""
     try:
-        # تنظيف القيم (تحويل None إلى 0.0)
-        vals = {k: float(data.get(k, 0) or 0) for k in [
+        # استخراج القيم بأمان وتنظيفها
+        def clean(val):
+            try:
+                if pd.isna(val) or val is None: return 0.0
+                return float(val)
+            except: return 0.0
+
+        vals = {k: clean(data.get(k, 0)) for k in [
             'revenue', 'net_income', 'total_assets', 'total_liabilities', 
             'total_equity', 'operating_cash_flow', 'current_assets', 
             'current_liabilities', 'long_term_debt'
         ]}
+
+        # تجاهل السجلات الصفرية بالكامل (لعدم ملء القاعدة ببيانات فارغة)
+        if sum(vals.values()) == 0:
+            return False
 
         query = """
             INSERT INTO "FinancialStatements" 
@@ -46,36 +56,53 @@ def save_financial_record(symbol, date_str, data, period_type='Annual', source='
         return False
 
 def sync_auto_yahoo(symbol):
-    """جلب آلي من Yahoo"""
+    """جلب آلي من Yahoo مع تحسينات للشركات السعودية"""
     try:
-        t = yf.Ticker(get_ticker_symbol(symbol))
+        ticker_sym = get_ticker_symbol(symbol)
+        t = yf.Ticker(ticker_sym)
         count = 0
         
         def _process(df_fin, df_bs, df_cf, p_type):
             c = 0
-            # نأخذ التقاطع بين تواريخ القوائم المتاحة
+            if df_fin.empty and df_bs.empty: return 0
+            
+            # دمج التواريخ المتاحة
             dates = sorted(list(set(df_fin.columns) | set(df_bs.columns) | set(df_cf.columns)), reverse=True)[:6]
+            
             for d in dates:
                 try:
                     d_str = d.strftime('%Y-%m-%d')
+                    
+                    # دالة مساعدة لجلب القيمة بأمان
+                    def get_val(df, key):
+                        if d in df.columns and key in df.index:
+                            return df.loc[key, d]
+                        return 0
+
                     data = {
-                        'revenue': df_fin[d].get('Total Revenue', 0) if d in df_fin else 0,
-                        'net_income': df_fin[d].get('Net Income', 0) if d in df_fin else 0,
-                        'total_assets': df_bs[d].get('Total Assets', 0) if d in df_bs else 0,
-                        'total_liabilities': df_bs[d].get('Total Liabilities Net Minority Interest', 0) if d in df_bs else 0,
-                        'total_equity': df_bs[d].get('Total Equity Gross Minority Interest', 0) if d in df_bs else 0,
-                        'operating_cash_flow': df_cf[d].get('Operating Cash Flow', 0) if d in df_cf else 0,
-                        'current_assets': df_bs[d].get('Current Assets', 0) if d in df_bs else 0,
-                        'current_liabilities': df_bs[d].get('Current Liabilities', 0) if d in df_bs else 0,
-                        'long_term_debt': df_bs[d].get('Long Term Debt', 0) if d in df_bs else 0,
+                        'revenue': get_val(df_fin, 'Total Revenue'),
+                        'net_income': get_val(df_fin, 'Net Income'),
+                        'total_assets': get_val(df_bs, 'Total Assets'),
+                        'total_liabilities': get_val(df_bs, 'Total Liabilities Net Minority Interest'),
+                        'total_equity': get_val(df_bs, 'Total Equity Gross Minority Interest'),
+                        'operating_cash_flow': get_val(df_cf, 'Operating Cash Flow'),
+                        'current_assets': get_val(df_bs, 'Current Assets'),
+                        'current_liabilities': get_val(df_bs, 'Current Liabilities'),
+                        'long_term_debt': get_val(df_bs, 'Long Term Debt'),
                     }
-                    if save_financial_record(symbol, d_str, data, p_type, 'Auto'): c+=1
+                    
+                    if save_financial_record(symbol, d_str, data, p_type, 'Auto'): 
+                        c += 1
                 except: continue
             return c
 
         count += _process(t.financials, t.balance_sheet, t.cashflow, 'Annual')
         count += _process(t.quarterly_financials, t.quarterly_balance_sheet, t.quarterly_cashflow, 'Quarterly')
-        return True, f"تم تحديث {count} سجلات"
+        
+        if count == 0:
+            return False, "لم يتم العثور على بيانات مالية في Yahoo Finance لهذا الرمز."
+            
+        return True, f"تم تحديث {count} سجلات بنجاح"
     except Exception as e: return False, str(e)
 
 def parse_pasted_text(txt):
@@ -110,7 +137,7 @@ def parse_pasted_text(txt):
     except: return []
 
 # ==============================================================
-# 🧠 وحدة التحليل (Analysis Logic)
+# 🧠 2. وحدة التحليل (Analysis Logic)
 # ==============================================================
 
 def get_stored_financials_df(symbol, period_type='Annual'):
@@ -120,10 +147,13 @@ def get_stored_financials_df(symbol, period_type='Annual'):
             mask = (df['symbol'] == symbol) & (df['period_type'] == period_type)
             df = df[mask].copy()
             df['date'] = pd.to_datetime(df['date'])
-            # ضمان وجود الأعمدة لمنع ValueError
+            
+            # ضمان وجود الأعمدة لمنع الأخطاء وتعبئة القيم الفارغة
             required_cols = ['revenue', 'net_income', 'operating_cash_flow', 'total_assets', 'total_equity', 'long_term_debt']
             for c in required_cols:
                 if c not in df.columns: df[c] = 0.0
+                df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0.0)
+                
             return df.sort_values('date', ascending=False)
     except: pass
     return pd.DataFrame()
@@ -174,7 +204,7 @@ def get_advanced_fundamental_ratios(symbol):
     return metrics
 
 # ==============================================================
-# 📊 واجهة المستخدم (UI Layer)
+# 📊 3. واجهة المستخدم (UI Layer) - تم إصلاح الخطأ هنا
 # ==============================================================
 
 def render_financial_dashboard_ui(symbol):
@@ -220,8 +250,20 @@ def render_financial_dashboard_ui(symbol):
             except Exception as e:
                 st.error(f"حدث خطأ أثناء الرسم: {e}")
 
+            # --- هنا الإصلاح لمشكلة ValueError ---
             with st.expander("عرض الأرقام التفصيلية (الجدول)"):
-                st.dataframe(df.style.format("{:,.0f}"))
+                # نستخدم column_config بدلاً من style.format لأنه أكثر استقراراً
+                st.dataframe(
+                    df,
+                    column_config={
+                        "revenue": st.column_config.NumberColumn("الإيرادات", format="%.0f"),
+                        "net_income": st.column_config.NumberColumn("صافي الربح", format="%.0f"),
+                        "operating_cash_flow": st.column_config.NumberColumn("الكاش التشغيلي", format="%.0f"),
+                        "total_assets": st.column_config.NumberColumn("إجمالي الأصول", format="%.0f"),
+                        "total_equity": st.column_config.NumberColumn("حقوق الملكية", format="%.0f"),
+                    },
+                    use_container_width=True
+                )
 
     # --------------------------
     # 2. تبويب الإدارة (المدخلات)
