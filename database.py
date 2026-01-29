@@ -52,9 +52,9 @@ def fetch_table(table_name):
                 except: pass
     return pd.DataFrame()
 
-# 3. التهيئة والترقية (Migration)
+# 3. تحديث الجداول (Migration)
 def migrate_financial_schema():
-    """تحديث جدول القوائم المالية لإضافة الأعمدة الجديدة دون حذف البيانات القديمة"""
+    """تحديث جدول القوائم المالية لإضافة الأعمدة الجديدة"""
     columns_to_add = [
         ("total_assets", "DOUBLE PRECISION"),
         ("total_liabilities", "DOUBLE PRECISION"),
@@ -64,20 +64,16 @@ def migrate_financial_schema():
         ("current_liabilities", "DOUBLE PRECISION"),
         ("long_term_debt", "DOUBLE PRECISION")
     ]
-    
     with get_db() as conn:
         if conn:
             with conn.cursor() as cur:
                 for col_name, col_type in columns_to_add:
                     try:
                         cur.execute(f'ALTER TABLE "FinancialStatements" ADD COLUMN IF NOT EXISTS {col_name} {col_type}')
-                    except Exception as e:
-                        conn.rollback() # تجاهل الخطأ إذا العمود موجود
-                        pass
+                    except: conn.rollback()
             conn.commit()
 
 def init_db():
-    # الجداول الأساسية
     tables = [
         "CREATE TABLE IF NOT EXISTS Users (username VARCHAR(50) PRIMARY KEY, password TEXT, email TEXT)",
         """CREATE TABLE IF NOT EXISTS Trades (
@@ -88,40 +84,39 @@ def init_db():
         )""",
         "CREATE TABLE IF NOT EXISTS Deposits (id SERIAL PRIMARY KEY, date DATE, amount DOUBLE PRECISION, note TEXT)",
         "CREATE TABLE IF NOT EXISTS Withdrawals (id SERIAL PRIMARY KEY, date DATE, amount DOUBLE PRECISION, note TEXT)",
-        "CREATE TABLE IF NOT EXISTS ReturnsGrants (id SERIAL PRIMARY KEY, date DATE, symbol VARCHAR(20), amount DOUBLE PRECISION, note TEXT)",
+        "CREATE TABLE IF NOT EXISTS ReturnsGrants (id SERIAL PRIMARY KEY, date DATE, symbol VARCHAR(20), company_name TEXT, amount DOUBLE PRECISION, note TEXT)",
         "CREATE TABLE IF NOT EXISTS Watchlist (symbol VARCHAR(20) PRIMARY KEY, target_price DOUBLE PRECISION, note TEXT)",
-        "CREATE TABLE IF NOT EXISTS InvestmentThesis (symbol VARCHAR(20) PRIMARY KEY, thesis_text TEXT, target_price DOUBLE PRECISION, recommendation VARCHAR(20))",
-        # الجدول المالي الأساسي
         """CREATE TABLE IF NOT EXISTS FinancialStatements (
-            symbol VARCHAR(20), date DATE, 
-            revenue DOUBLE PRECISION, net_income DOUBLE PRECISION, 
-            period_type VARCHAR(20) DEFAULT 'Annual', 
-            source VARCHAR(20) DEFAULT 'Auto',
+            symbol VARCHAR(20), date DATE, revenue DOUBLE PRECISION, net_income DOUBLE PRECISION, 
+            period_type VARCHAR(20) DEFAULT 'Annual', source VARCHAR(20) DEFAULT 'Auto',
             PRIMARY KEY(symbol, date, period_type)
-        )"""
+        )""",
+        "CREATE TABLE IF NOT EXISTS InvestmentThesis (symbol VARCHAR(20) PRIMARY KEY, thesis_text TEXT, target_price DOUBLE PRECISION, recommendation VARCHAR(20), last_updated DATE)"
     ]
-    
     with get_db() as conn:
         if conn:
             with conn.cursor() as cur:
                 for t in tables: cur.execute(t)
             conn.commit()
-    
-    # تشغيل الترحيل لإضافة الأعمدة الجديدة
     migrate_financial_schema()
 
-# 4. المصادقة
+# 4. دوال المصادقة (هذه التي كانت مفقودة)
 def db_create_user(u, p):
-    h = bcrypt.hashpw(p.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-    return execute_query("INSERT INTO Users (username, password) VALUES (%s, %s)", (u, h))
+    try:
+        h = bcrypt.hashpw(p.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        return execute_query("INSERT INTO Users (username, password) VALUES (%s, %s)", (u, h))
+    except: return False
 
 def db_verify_user(u, p):
     with get_db() as conn:
         if conn:
-            with conn.cursor() as cur:
-                cur.execute("SELECT password FROM Users WHERE username = %s", (u,))
-                res = cur.fetchone()
-                if res and res[0]: return bcrypt.checkpw(p.encode('utf-8'), res[0].encode('utf-8'))
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT password FROM Users WHERE username = %s", (u,))
+                    res = cur.fetchone()
+                    if res and res[0]:
+                        return bcrypt.checkpw(p.encode('utf-8'), res[0].encode('utf-8'))
+            except: pass
     return False
 
 if DB_URL: init_db()
