@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.express as px
 from datetime import date
 from config import DEFAULT_COLORS
@@ -24,15 +25,23 @@ except ImportError:
 try:
     from backtester import run_backtest
 except ImportError:
-    run_backtest = None # سنفحص هذا المتغير لاحقاً
+    run_backtest = None 
 
-# 3. التحليل المالي
+# 3. التحليل المالي (تحديث الاستيراد لدعم رفع الملفات)
 try:
-    from financial_analysis import render_financial_dashboard_ui, get_thesis, save_thesis
+    from financial_analysis import (
+        get_thesis, save_thesis, 
+        FinancialParser, save_financial_record, 
+        get_stored_financials_df, get_advanced_fundamental_ratios
+    )
+    # ملاحظة: قمنا بإزالة render_financial_dashboard_ui من الاستيراد لأننا سنعرفها هنا
 except ImportError:
-    def render_financial_dashboard_ui(s): st.warning("⚠️ ملف financial_analysis.py مفقود.")
     def get_thesis(s): return {}
     def save_thesis(s, t, tg, r): pass
+    def get_stored_financials_df(s, p): return pd.DataFrame()
+    def get_advanced_fundamental_ratios(s): return {}
+    class FinancialParser: pass
+    def save_financial_record(*args): pass
 
 # 4. التحليل الكلاسيكي
 try:
@@ -44,7 +53,7 @@ except ImportError:
 try:
     from ai_engine import generate_ai_report, calculate_portfolio_risk_score, run_stress_test, generate_rebalancing_suggestions
 except ImportError:
-    def generate_ai_report(s): return {} # يرجع قاموس فارغ ليتم التعامل معه
+    def generate_ai_report(s): return {} 
     def calculate_portfolio_risk_score(df, c): return 50
     def run_stress_test(v, df): return {"scenarios": [], "insight": ""}
     def generate_rebalancing_suggestions(df, c): return []
@@ -64,7 +73,6 @@ def render_navbar():
     cols = st.columns(len(buttons) + 1)
     for i, (label, key) in enumerate(buttons):
         with cols[i]:
-            # تمييز الزر النشط
             is_active = st.session_state.page == key
             if st.button(label, key=f"nav_{key}", type="primary" if is_active else "secondary"):
                 st.session_state.page = key
@@ -89,12 +97,10 @@ def view_dashboard(fin):
     ar = "🔼" if tc >= 0 else "🔽"
     clr = "#4caf50" if tc >= 0 else "#f44336"
 
-    # التحليل الذكي للمحفظة
     df = fin['all_trades']
     total_assets = fin['market_val_open'] + fin['cash']
     cash_pct = (fin['cash'] / total_assets * 100) if total_assets else 0
     
-    # 1. بطاقة تاسي والمخاطرة
     c_tasi, c_risk = st.columns([3, 1])
     with c_tasi:
         st.markdown(f"""
@@ -114,11 +120,8 @@ def view_dashboard(fin):
         r_col = "success" if risk_score < 40 else "warning" if risk_score < 70 else "danger"
         render_kpi("مستوى المخاطرة", f"{risk_score}/100", r_col, "🛡️")
 
-    # [تم الحذف من هنا] تم نقل تنبيهات الذكاء الاصطناعي إلى صفحة التحليل
-
     st.divider()
 
-    # 3. الملخص المالي
     c1, c2, c3, c4 = st.columns(4)
     total_pl = fin['unrealized_pl'] + fin['realized_pl']
     with c1: render_kpi(f"الكاش المتوفر ({cash_pct:.1f}%)", safe_fmt(fin['cash']), "blue", "💵")
@@ -126,7 +129,6 @@ def view_dashboard(fin):
     with c3: render_kpi("قيمة الأصول الحالية", safe_fmt(fin['market_val_open']), "neutral", "📊")
     with c4: render_kpi("الربح الكلي (المحقق+الورقي)", safe_fmt(total_pl), 'success' if total_pl>=0 else 'danger', "💰")
 
-    # 4. الرسوم البيانية
     if not df.empty:
         col_chart1, col_chart2 = st.columns(2)
         with col_chart1:
@@ -168,9 +170,7 @@ def view_portfolio(fin, key):
         st.info("لا توجد صفقات.")
         return
 
-    # فلترة حسب الاستراتيجية
     sub = df[df['strategy'].astype(str).str.contains(ts, na=False)].copy()
-    
     op = sub[sub['status'] == 'Open'].copy()
     cl = sub[sub['status'] == 'Close'].copy()
 
@@ -178,7 +178,6 @@ def view_portfolio(fin, key):
 
     with tab1:
         if not op.empty:
-            # مؤشرات سريعة
             tot_cost = op['total_cost'].sum()
             tot_val = op['market_value'].sum()
             tot_gain = op['gain'].sum()
@@ -189,15 +188,11 @@ def view_portfolio(fin, key):
             
             st.divider()
             
-            # جلب البيانات الحية
             live_data = fetch_batch_data(op['symbol'].unique().tolist())
-            
-            # تحديث البيانات للعرض
             op['prev_close'] = op['symbol'].apply(lambda x: live_data.get(x, {}).get('prev_close', 0))
             op['day_change'] = op.apply(lambda r: ((r['current_price'] - r['prev_close']) / r['prev_close'] * 100) if r['prev_close'] > 0 else 0, axis=1)
             op['status_ar'] = "مفتوحة"
 
-            # الجدول
             cols = [
                 ('company_name', 'الشركة', 'text'), 
                 ('symbol', 'الرمز', 'text'),
@@ -210,7 +205,6 @@ def view_portfolio(fin, key):
             ]
             render_custom_table(op, cols)
 
-            # أدوات التحكم (بيع / تعديل)
             c_act1, c_act2 = st.columns(2)
             with c_act1:
                 with st.expander("🔴 إغلاق صفقة (بيع)"):
@@ -239,7 +233,6 @@ def view_portfolio(fin, key):
                             if st.form_submit_button("حفظ التعديل"):
                                 execute_query("UPDATE Trades SET quantity=%s, entry_price=%s, date=%s WHERE id=%s", (nq, np, str(nd), tid))
                                 st.success("تم التعديل!"); st.cache_data.clear(); st.rerun()
-
         else:
             st.info("لا توجد صفقات مفتوحة في هذه المحفظة.")
 
@@ -263,9 +256,7 @@ def view_sukuk_portfolio(fin):
         return
 
     op = sukuk[sukuk['status'] == 'Open']
-    
     if not op.empty:
-        # عرض الصكوك
         total_inv = op['total_cost'].sum()
         st.metric("إجمالي الاستثمار في الصكوك", safe_fmt(total_inv))
         
@@ -273,7 +264,6 @@ def view_sukuk_portfolio(fin):
                 ('entry_price', 'قيمة الصك', 'money'), ('total_cost', 'الإجمالي', 'money'), ('date', 'تاريخ الشراء', 'date')]
         render_custom_table(op, cols)
         
-        # خيار التصفية
         with st.expander("استرداد / بيع صك"):
             opts = {f"{r['company_name']}": r['id'] for _, r in op.iterrows()}
             s = st.selectbox("اختر الصك", list(opts.keys()))
@@ -283,7 +273,6 @@ def view_sukuk_portfolio(fin):
                     val = st.number_input("المبلغ المسترد كاملاً")
                     dt = st.date_input("تاريخ الاسترداد")
                     if st.form_submit_button("تأكيد"):
-                        # حساب سعر الخروج للوحدة
                         qty = float(op[op['id']==tid].iloc[0]['quantity'])
                         ep = val / qty if qty else 0
                         execute_query("UPDATE Trades SET status='Close', exit_price=%s, exit_date=%s WHERE id=%s", (ep, str(dt), tid))
@@ -331,14 +320,116 @@ def view_cash_log():
         if not fin['returns'].empty: render_custom_table(fin['returns'], [('date','التاريخ','date'),('symbol','السهم','text'),('amount','المبلغ','money')])
 
 # ========================================================
-# 6. التحليل الشامل (Analysis) - تم الإصلاح الجذري هنا 🛠️
+# 6. التحليل الشامل (Analysis) - (محدث مع دعم الملفات)
 # ========================================================
+
+# -- [START] دوال العرض الجديدة للبيانات المالية --
+def render_data_management_tab(symbol):
+    st.markdown("#### 📂 استيراد البيانات المالية")
+    st.info("يدعم النظام: ملفات PDF من تداول، ملفات Excel/CSV، أو النسخ واللصق المباشر من TradingView.")
+    
+    parser = FinancialParser()
+    
+    # 1. طريقة الرفع (Upload)
+    uploaded_file = st.file_uploader("رفع ملف قوائم مالية (PDF, Excel, CSV)", type=['pdf', 'xlsx', 'xls', 'csv'])
+    
+    # 2. طريقة النسخ واللصق (Paste)
+    pasted_text = st.text_area("أو الصق البيانات هنا مباشرة:")
+    
+    if st.button("🚀 معالجة واستخراج البيانات"):
+        results = []
+        detected_symbol = None
+        
+        with st.spinner("جاري تحليل النصوص واستخراج الأرقام..."):
+            if uploaded_file:
+                results, detected_symbol = parser.process_file_or_text(uploaded_file=uploaded_file)
+            elif pasted_text:
+                results, detected_symbol = parser.process_file_or_text(text_input=pasted_text)
+                
+        # بما أن الدالة process_file_or_text تعيد (results, symbol, error)
+        # نحتاج التعامل معها بشكل صحيح إذا كانت تعيد 3 قيم
+        if isinstance(results, tuple): 
+             # تصحيح للتعامل مع الـ tuple إذا لزم الأمر بناء على كود financial_analysis
+             # في الكود السابق كانت تعيد 3 قيم
+             results, detected_symbol, err_msg = results
+             if err_msg:
+                 st.error(err_msg)
+                 return
+
+        if results:
+            st.success(f"تم استخراج {len(results)} سجلات بنجاح!")
+            
+            # التحقق من الرمز
+            final_symbol = symbol # الرمز الحالي للصفحة
+            
+            # إذا اكتشفنا رمزاً مختلفاً في الملف، نسأل المستخدم
+            if detected_symbol and detected_symbol != symbol:
+                st.warning(f"⚠️ الملف يحتوي على بيانات للشركة {detected_symbol}، بينما أنت في صفحة {symbol}.")
+                use_detected = st.checkbox(f"استخدام الرمز المكتشف ({detected_symbol}) بدلاً من الحالي؟", value=True)
+                if use_detected: final_symbol = detected_symbol
+            
+            # إذا لم يتم اكتشاف رمز وكان المستخدم في صفحة "عامة" (غير محدد سهم)
+            if not final_symbol:
+                final_symbol = st.text_input("⚠️ لم نتمكن من تحديد الشركة. الرجاء إدخال رمز السهم (مثال: 1120.SR):")
+            
+            if final_symbol:
+                # عرض البيانات للمراجعة قبل الحفظ
+                st.write("### 🧐 مراجعة البيانات المستخرجة:")
+                preview_df = pd.DataFrame([{'Date': r['date'], **r['data']} for r in results])
+                st.dataframe(preview_df)
+                
+                if st.button("💾 تأكيد وحفظ في قاعدة البيانات"):
+                    count = 0
+                    for r in results:
+                        if save_financial_record(final_symbol, r['date'], r['data'], source='File/Paste'):
+                            count += 1
+                    st.success(f"تم حفظ {count} سجلات في قاعدة البيانات لشركة {final_symbol}.")
+                    st.rerun()
+            else:
+                st.error("يجب تحديد رمز السهم للحفظ.")
+        else:
+            st.error("لم يتم العثور على بيانات مالية صالحة. تأكد من الملف أو النص.")
+
+def render_financial_dashboard_ui(symbol):
+    # تعريف التبويبات الداخلية للوحة المالية
+    tab_dashboard, tab_data_mgmt = st.tabs(["📊 لوحة التحليل المالي", "⚙️ استيراد البيانات"])
+    
+    with tab_dashboard:
+        ptype = st.radio("نطاق التحليل:", ["Annual", "Quarterly"], horizontal=True, label_visibility="collapsed")
+        df = get_stored_financials_df(symbol, ptype)
+        
+        if df.empty:
+            st.warning("⚠️ لا توجد بيانات مالية محفوظة لهذا السهم.")
+            st.info("👈 انتقل لتبويب 'استيراد البيانات' لرفع ملف أو جلب المعلومات.")
+        else:
+            metrics = get_advanced_fundamental_ratios(symbol)
+            c1, c2, c3 = st.columns(3)
+            c1.metric("المتانة (F-Score)", f"{metrics['Piotroski_Score']}/9", metrics['Financial_Health'])
+            fv = metrics.get('Fair_Value_Graham', 0)
+            c2.metric("قيمة جراهام", f"{fv:,.2f}" if fv > 0 else "N/A")
+            c3.write(f"**ملاحظات:** {metrics.get('Opinions', '-')}")
+            st.markdown("---")
+            
+            try:
+                plot_df = df.copy()
+                plot_df['Year'] = plot_df['date'].dt.strftime('%Y-%m')
+                cols_to_plot = [c for c in ['revenue', 'net_income', 'operating_cash_flow'] if c in plot_df.columns and plot_df[c].sum() != 0]
+                if cols_to_plot:
+                    fig = px.bar(plot_df.sort_values('date'), x='Year', y=cols_to_plot, barmode='group', title="الأداء المالي التاريخي")
+                    st.plotly_chart(fig, use_container_width=True)
+            except: pass
+
+            with st.expander("عرض الجدول التفصيلي"):
+                st.dataframe(df, use_container_width=True)
+            
+    with tab_data_mgmt:
+        render_data_management_tab(symbol)
+# -- [END] --
+
 def view_analysis(fin):
     st.header("🔬 التحليل الشامل والمستشار الذكي")
     
     trades = fin['all_trades']
-    
-    # [إضافة] حساب نسبة الكاش هنا لأننا نحتاجها للتنبيهات التي نقلناها
     total_assets = fin['market_val_open'] + fin['cash']
     cash_pct = (fin['cash'] / total_assets * 100) if total_assets else 0
 
@@ -346,7 +437,6 @@ def view_analysis(fin):
     if not trades.empty:
         open_pos = trades[trades['status']=='Open']
         st.subheader("🛡️ اختبار التحمل (Stress Test)")
-        
         stress = run_stress_test(fin['market_val_open'], open_pos)
         if stress.get('scenarios'):
             c_ch, c_tx = st.columns([3, 1])
@@ -361,7 +451,6 @@ def view_analysis(fin):
         st.divider()
 
     # 2. التحليل الفردي للسهم
-    # تجميع قائمة الأسهم (من المحفظة + المراقبة)
     wl = fetch_table("Watchlist")
     my_stocks = trades['symbol'].unique().tolist() if not trades.empty else []
     wl_stocks = wl['symbol'].unique().tolist() if not wl.empty else []
@@ -380,9 +469,8 @@ def view_analysis(fin):
         # التبويبات الفرعية
         at1, at2, at3, at4, at5 = st.tabs(["🤖 المستشار", "💰 القوائم المالية", "📈 الشارت الفني", "🏛️ كلاسيكي", "📝 ملاحظاتي"])
         
-        # أ. المستشار الذكي (مع الحماية من KeyError)
+        # أ. المستشار الذكي
         with at1:
-            # === [START] تم نقل التنبيهات إلى هنا ===
             ai_suggestions = generate_rebalancing_suggestions(trades, cash_pct)
             if ai_suggestions:
                 with st.expander(f"📢 تنبيهات المستشار الذكي للمحفظة ({len(ai_suggestions)})", expanded=True):
@@ -391,17 +479,14 @@ def view_analysis(fin):
                         elif level == 'warning': st.warning(msg, icon="⚠️")
                         elif level == 'success': st.success(msg, icon="✅")
                         else: st.info(msg, icon="ℹ️")
-            # === [END] ===
 
             with st.spinner("جاري تحليل البيانات..."):
                 report = generate_ai_report(selected_sym)
             
-            # استخراج البيانات بأمان باستخدام .get()
             rec_text = report.get('recommendation', 'غير متوفر')
-            rec_color = report.get('color', '#6c757d') # رمادي افتراضي في حال عدم وجود لون
+            rec_color = report.get('color', '#6c757d')
             rec_strat = report.get('strategy', 'لا توجد بيانات كافية للتحليل')
             
-            # عرض النتيجة
             st.markdown(f"""
             <div style="text-align:center; padding: 20px; background-color: #f8f9fa; border-radius: 15px; border: 2px solid {rec_color}; margin-bottom: 20px;">
                 <h2 style="color: {rec_color}; margin:0;">{rec_text}</h2>
@@ -417,7 +502,7 @@ def view_analysis(fin):
                 st.markdown("##### 📊 الرؤية المالية")
                 for r in report.get('fund_reasons', []): st.write(f"• {r}")
 
-        # ب. المالي
+        # ب. المالي (يستخدم الدالة المعرفة محلياً الآن)
         with at2: render_financial_dashboard_ui(selected_sym)
         
         # ج. الفني
@@ -445,7 +530,6 @@ def view_backtester_ui(fin):
         st.error("⚠️ وحدة الاختبار غير متوفرة. تأكد من وجود الملف backtester.py")
         return
 
-    # قائمة الأسهم
     all_syms = fin['all_trades']['symbol'].unique().tolist()
     if "1120.SR" not in all_syms: all_syms.append("1120.SR")
     
@@ -456,7 +540,7 @@ def view_backtester_ui(fin):
     
     if st.button("🚀 تشغيل المحاكاة"):
         with st.spinner("جاري العودة بالزمن واختبار البيانات..."):
-            hist = get_chart_history(s, period="2y") # سنتين
+            hist = get_chart_history(s, period="2y")
             res = run_backtest(hist, strat, amount)
             
             if res:
@@ -478,7 +562,6 @@ def view_backtester_ui(fin):
 # ========================================================
 def render_pulse_dashboard():
     st.header("💓 نبض السوق (قائمة المراقبة)")
-    # جلب الأسهم من Watchlist + المحفظة
     wl = fetch_table("Watchlist")
     trades = fetch_table("Trades")
     syms = list(set(wl['symbol'].tolist() + trades['symbol'].tolist()))
@@ -489,7 +572,6 @@ def render_pulse_dashboard():
         
     data = fetch_batch_data(syms)
     
-    # عرض بشكل شبكة
     cols = st.columns(4)
     for i, (sym, info) in enumerate(data.items()):
         chg = ((info['price'] - info['prev_close'])/info['prev_close']*100) if info['prev_close'] else 0
@@ -512,7 +594,6 @@ def view_add_trade():
             if not s or qty <= 0 or price <= 0:
                 st.error("الرجاء إدخال بيانات صحيحة")
             else:
-                # جلب اسم الشركة آلياً
                 nm, sec = get_company_details(s)
                 asset_t = "Sukuk" if typ == "صكوك" else "Stock"
                 
@@ -544,7 +625,7 @@ def router():
     render_navbar()
     
     pg = st.session_state.page
-    fin = calculate_portfolio_metrics() # حسابات مركزية مرة واحدة
+    fin = calculate_portfolio_metrics()
     
     if pg == 'home': view_dashboard(fin)
     elif pg == 'spec': view_portfolio(fin, 'spec')
