@@ -1,8 +1,7 @@
 import pandas as pd
 import numpy as np
+from config import COMMISSION_RATE
 
-# العمولة شاملة الضريبة تقريباً لضمان التحوط
-COMMISSION = 0.00178  
 
 def calculate_indicators(df):
     df = df.copy()
