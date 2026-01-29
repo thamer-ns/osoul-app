@@ -3,6 +3,7 @@ import numpy as np
 from database import fetch_table, execute_query
 from market_data import fetch_batch_data
 import streamlit as st
+from config import COMMISSION_RATE # ✅ استيراد نسبة العمولة من الإعدادات
 
 # === START ADDITION: Performance & Stability ===
 def _clean_num(df, col):
@@ -15,8 +16,7 @@ def _clean_num(df, col):
 @st.cache_data(ttl=60, show_spinner=False)
 def calculate_portfolio_metrics():
     """
-    حساب مقاييس المحفظة بالكامل.
-    يتم تخزين النتيجة في الكاش لمدة 60 ثانية لتقليل الضغط على قاعدة البيانات.
+    حساب مقاييس المحفظة بالكامل مع تصحيح حسابات الكاش والعمولات.
     """
     default_res = {
         "cost_open": 0.0, "market_val_open": 0.0, "cash": 0.0,
@@ -54,7 +54,10 @@ def calculate_portfolio_metrics():
         for c in ['quantity', 'entry_price', 'exit_price', 'current_price']:
             _clean_num(trades, c)
 
-        trades['total_cost'] = trades['quantity'] * trades['entry_price']
+        # ✅ التعديل الجوهري: حساب التكلفة الحقيقية (شاملة العمولة)
+        # التكلفة الإجمالية = (الكمية * السعر) * (1 + نسبة العمولة)
+        # لأنك تدفع قيمة الأسهم + العمولة للبنك
+        trades['total_cost'] = (trades['quantity'] * trades['entry_price']) * (1 + COMMISSION_RATE)
         
         # تحديد حالة الصفقات بدقة
         if 'status' not in trades.columns: trades['status'] = 'Open'
@@ -77,8 +80,20 @@ def calculate_portfolio_metrics():
         trades['current_price'] = trades['current_price'].replace(0, np.nan).fillna(trades['entry_price'])
 
         # الحسابات النهائية
+        # ✅ حساب القيمة السوقية (بدون عمولة لأنها قيمة أصول)
         trades['market_value'] = trades['quantity'] * trades['current_price']
-        trades['gain'] = trades['market_value'] - trades['total_cost']
+        
+        # ✅ حساب صافي القيمة البيعية (للصفقات المغلقة فقط) لخصم العمولة من الكاش المستلم
+        # عند البيع، البنك يخصم العمولة من المبلغ الذي يدخل محفظتك
+        trades['net_sales_value'] = 0.0
+        trades.loc[is_closed, 'net_sales_value'] = (trades.loc[is_closed, 'quantity'] * trades.loc[is_closed, 'exit_price']) * (1 - COMMISSION_RATE)
+
+        # ✅ الربح = (القيمة الحالية أو قيمة البيع الصافية) - التكلفة الشاملة للعمولة
+        trades['gain'] = 0.0
+        # للصفقات المفتوحة: القيمة السوقية - التكلفة
+        trades.loc[~is_closed, 'gain'] = trades.loc[~is_closed, 'market_value'] - trades.loc[~is_closed, 'total_cost']
+        # للصفقات المغلقة: صافي البيع - التكلفة
+        trades.loc[is_closed, 'gain'] = trades.loc[is_closed, 'net_sales_value'] - trades.loc[is_closed, 'total_cost']
         
         mask = trades['total_cost'] != 0
         trades['gain_pct'] = 0.0
@@ -87,16 +102,19 @@ def calculate_portfolio_metrics():
         open_trades = trades[trades['status'] == 'Open']
         closed_trades = trades[trades['status'] == 'Close']
         
-        total_sales = closed_trades['market_value'].sum()
-        total_purchases = trades['total_cost'].sum()
+        # ✅ حساب الكاش بدقة متناهية الآن
+        # المبيعات الصافية (بعد خصم عمولة البيع)
+        total_sales_cash_in = closed_trades['net_sales_value'].sum()
+        # تكلفة الشراء الإجمالية (شاملة عمولة الشراء) لجميع الصفقات (المفتوحة والمغلقة)
+        total_purchases_cash_out = trades['total_cost'].sum()
         
-        cash_calculated = (total_dep + total_ret - total_wit) + total_sales - total_purchases
+        cash_calculated = (total_dep + total_ret - total_wit) + total_sales_cash_in - total_purchases_cash_out
         
         return {
             "cost_open": open_trades['total_cost'].sum(),
             "market_val_open": open_trades['market_value'].sum(),
-            "unrealized_pl": open_trades['market_value'].sum() - open_trades['total_cost'].sum(),
-            "realized_pl": closed_trades['market_value'].sum() - closed_trades['total_cost'].sum(),
+            "unrealized_pl": open_trades['gain'].sum(), # تم تعديله ليحسب بناء على اللوجيك الجديد
+            "realized_pl": closed_trades['gain'].sum(),
             "cash": cash_calculated,
             "total_deposited": total_dep,
             "total_withdrawn": total_wit,
