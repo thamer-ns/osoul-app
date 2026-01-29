@@ -4,10 +4,9 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import random
-import time
 
 # ==============================
-# 🛠️ Configuration
+# 🛠️ Helpers & Configuration
 # ==============================
 USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -44,7 +43,6 @@ def fetch_from_yahoo(symbol):
         info = t.info
         data['price'] = info.get('currentPrice') or info.get('regularMarketPrice')
         data['prev_close'] = info.get('previousClose')
-        data['open'] = info.get('open')
         data['high'] = info.get('dayHigh')
         data['low'] = info.get('dayLow')
         data['volume'] = info.get('volume')
@@ -76,20 +74,19 @@ def fetch_from_google(symbol):
     return data
 
 # ==============================
-# 3️⃣ Investing.com Scraper
+# 3️⃣ Investing.com Scraper (اختياري)
 # ==============================
 def fetch_from_investing(symbol):
     data = {}
     try:
-        # تحويل الرمز لنسخة Investing تقريبية
         clean_sym = symbol.replace('.SR', '').upper()
         url = f"https://www.investing.com/equities/{clean_sym}-saudi-arabia"
         r = requests.get(url, headers=get_headers(), timeout=5)
         if r.status_code == 200:
             soup = BeautifulSoup(r.text, 'html.parser')
-            price_div = soup.find('span', {'id': 'last_last'})
-            if price_div:
-                data['price'] = _safe_float(price_div.text)
+            div = soup.find('span', {'id': 'last_last'})
+            if div:
+                data['price'] = _safe_float(div.text)
                 data['source'] = 'Investing'
     except:
         pass
@@ -98,7 +95,6 @@ def fetch_from_investing(symbol):
 # ==============================
 # 4️⃣ الدمج الذكي بين المصادر
 # ==============================
-@st.cache_data(ttl=60, show_spinner=False)
 def fetch_comprehensive_data(symbol):
     sources = [fetch_from_yahoo, fetch_from_google, fetch_from_investing]
     final_data = {}
@@ -151,7 +147,7 @@ def get_chart_history(symbol, period='1y', interval='1d'):
         return None
 
 # ==============================
-# 7️⃣ Batch Fetch آمن
+# 7️⃣ Batch Fetch (متوافق مع البرنامج القديم)
 # ==============================
 @st.cache_data(ttl=60, show_spinner=False)
 def fetch_batch_data(symbols_list):
@@ -159,14 +155,12 @@ def fetch_batch_data(symbols_list):
     for sym in symbols_list:
         try:
             data = fetch_comprehensive_data(sym)
+            # ⚠️ فقط الحقول الأساسية لإبقاء التوافق
             results[sym] = {
                 'price': data.get('price',0),
                 'prev_close': data.get('prev_close',0),
-                'high': data.get('high',0),
-                'low': data.get('low',0),
-                'pe_ratio': data.get('pe_ratio',0),
-                'volume': data.get('volume',0),
-                'source': data.get('source','None')
+                'year_high': data.get('high',0),
+                'year_low': data.get('low',0)
             }
         except:
             continue
@@ -181,3 +175,10 @@ def get_static_info(symbol):
         return get_company_details(symbol)
     except:
         return symbol, "سوق الأسهم"
+
+# ==============================
+# 9️⃣ النسخة المتقدمة الاختيارية لكل سهم
+# ==============================
+def fetch_advanced_data(symbol):
+    """جلب البيانات المتقدمة: PE, MarketCap, Volume, Source"""
+    return fetch_comprehensive_data(symbol)
