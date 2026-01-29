@@ -8,13 +8,13 @@ from database import execute_query, fetch_table
 from market_data import fetch_price_from_google, get_ticker_symbol
 
 # ==============================================================
-# 📥 1. وحدة التخزين والمزامنة (Storage Engine)
+# 🏗️ وحدة إدارة البيانات (Backend Logic)
 # ==============================================================
 
 def save_financial_record(symbol, date_str, data, period_type='Annual', source='Manual'):
-    """حفظ سجل مالي واحد في قاعدة البيانات"""
+    """حفظ سجل مالي في قاعدة البيانات"""
     try:
-        # استخراج القيم بأمان مع قيم افتراضية 0
+        # تنظيف القيم (تحويل None إلى 0.0)
         vals = {k: float(data.get(k, 0) or 0) for k in [
             'revenue', 'net_income', 'total_assets', 'total_liabilities', 
             'total_equity', 'operating_cash_flow', 'current_assets', 
@@ -46,13 +46,14 @@ def save_financial_record(symbol, date_str, data, period_type='Annual', source='
         return False
 
 def sync_auto_yahoo(symbol):
-    """جلب آلي (سنوي + ربعي)"""
+    """جلب آلي من Yahoo"""
     try:
         t = yf.Ticker(get_ticker_symbol(symbol))
         count = 0
         
         def _process(df_fin, df_bs, df_cf, p_type):
             c = 0
+            # نأخذ التقاطع بين تواريخ القوائم المتاحة
             dates = sorted(list(set(df_fin.columns) | set(df_bs.columns) | set(df_cf.columns)), reverse=True)[:6]
             for d in dates:
                 try:
@@ -74,12 +75,11 @@ def sync_auto_yahoo(symbol):
 
         count += _process(t.financials, t.balance_sheet, t.cashflow, 'Annual')
         count += _process(t.quarterly_financials, t.quarterly_balance_sheet, t.quarterly_cashflow, 'Quarterly')
-        
-        return True, f"تم تحديث {count} سجلات (سنوي/ربعي)"
+        return True, f"تم تحديث {count} سجلات"
     except Exception as e: return False, str(e)
 
 def parse_pasted_text(txt):
-    """تحليل النسخ واللصق الذكي"""
+    """معالج النصوص المنسوخة (Excel/PDF)"""
     try:
         df = pd.read_csv(io.StringIO(txt), sep='\t')
         if df.shape[1] < 2: df = pd.read_csv(io.StringIO(txt), sep=r'\s+', engine='python')
@@ -99,10 +99,10 @@ def parse_pasted_text(txt):
                             except: return 0.0
                     return 0.0
                 
-                data['revenue'] = find_val(['revenue', 'sales', 'إيرادات', 'مبيعات'])
+                data['revenue'] = find_val(['revenue', 'sales', 'إيرادات', 'مبيعات', 'دخل'])
                 data['net_income'] = find_val(['net income', 'profit', 'ربح', 'صافي'])
                 data['operating_cash_flow'] = find_val(['operating', 'تشغيلي', 'نقد'])
-                data['total_assets'] = find_val(['assets', 'أصول'])
+                data['total_assets'] = find_val(['total assets', 'مجموع الأصول', 'إجمالي الأصول'])
                 data['total_equity'] = find_val(['equity', 'حقوق', 'ملكية'])
                 
                 results.append({'date': f"{year}-12-31", 'data': data})
@@ -110,7 +110,7 @@ def parse_pasted_text(txt):
     except: return []
 
 # ==============================================================
-# 🧠 2. وحدة التحليل (Analysis Engine)
+# 🧠 وحدة التحليل (Analysis Logic)
 # ==============================================================
 
 def get_stored_financials_df(symbol, period_type='Annual'):
@@ -120,8 +120,9 @@ def get_stored_financials_df(symbol, period_type='Annual'):
             mask = (df['symbol'] == symbol) & (df['period_type'] == period_type)
             df = df[mask].copy()
             df['date'] = pd.to_datetime(df['date'])
-            # ضمان وجود الأعمدة لمنع الأخطاء
-            for c in ['operating_cash_flow', 'total_assets', 'total_equity']:
+            # ضمان وجود الأعمدة لمنع ValueError
+            required_cols = ['revenue', 'net_income', 'operating_cash_flow', 'total_assets', 'total_equity', 'long_term_debt']
+            for c in required_cols:
                 if c not in df.columns: df[c] = 0.0
             return df.sort_values('date', ascending=False)
     except: pass
@@ -138,20 +139,20 @@ def get_advanced_fundamental_ratios(symbol):
     prev = df.iloc[1] if len(df) > 1 else curr
     
     try:
-        # 1. Piotroski F-Score
+        # Piotroski F-Score (محلي)
         score = 0
         if curr.get('net_income', 0) > 0: score += 1
         if curr.get('operating_cash_flow', 0) > 0: score += 1
         
-        roa_c = curr.get('net_income', 0) / curr.get('total_assets', 1)
-        roa_p = prev.get('net_income', 0) / prev.get('total_assets', 1)
+        roa_c = curr.get('net_income', 0) / (curr.get('total_assets', 1) or 1)
+        roa_p = prev.get('net_income', 0) / (prev.get('total_assets', 1) or 1)
         if roa_c > roa_p: score += 1
         
         if curr.get('operating_cash_flow', 0) > curr.get('net_income', 0): score += 1
         
-        metrics['Piotroski_Score'] = min(score + 3, 9) # +3 تعويض تقريبي
+        metrics['Piotroski_Score'] = min(score + 4, 9) # تقريب
         
-        # 2. Graham (تقريبي)
+        # Graham
         try:
             t = yf.Ticker(get_ticker_symbol(symbol))
             eps = t.info.get('trailingEps')
@@ -160,87 +161,119 @@ def get_advanced_fundamental_ratios(symbol):
         except: pass
 
         if score >= 5: metrics['Financial_Health'] = "جيد / مستقر"
-        else: metrics['Financial_Health'] = "يحتاج مراجعة"
+        else: metrics['Financial_Health'] = "هش / يحتاج مراجعة"
         metrics['Score'] = metrics['Piotroski_Score']
         metrics['Rating'] = metrics['Financial_Health']
+
+        ops = []
+        if curr.get('net_income',0) > prev.get('net_income',0): ops.append("نمو في الأرباح")
+        if curr.get('operating_cash_flow',0) < 0: ops.append("كاش تشغيلي سالب")
+        metrics['Opinions'] = " | ".join(ops)
 
     except: pass
     return metrics
 
 # ==============================================================
-# 📊 3. واجهة المستخدم (UI)
+# 📊 واجهة المستخدم (UI Layer)
 # ==============================================================
 
 def render_financial_dashboard_ui(symbol):
-    # أدوات التحكم
-    st.markdown("### 💰 التحليل المالي (Data Warehouse)")
-    t_control, t_view = st.tabs(["⚙️ إدارة البيانات", "📊 لوحة المعلومات"])
+    # فصلنا التبويبات لتكون واضحة
+    tab_dashboard, tab_data_mgmt = st.tabs(["📊 لوحة التحليل المالي", "⚙️ إدارة القوائم والبيانات"])
     
-    with t_control:
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown("##### ⚡ جلب آلي")
-            if st.button("تحديث من Yahoo (سنوي + ربعي)", key="sync_btn"):
-                with st.spinner("جاري المزامنة..."):
-                    ok, msg = sync_auto_yahoo(symbol)
-                    if ok: st.success(msg); st.rerun()
-                    else: st.error(msg)
-        
-        with c2:
-            st.markdown("##### ✍️ إدخال يدوي / نسخ")
-            with st.expander("فتح نموذج الإدخال"):
-                sub_t1, sub_t2 = st.tabs(["نسخ جدول", "يدوي"])
-                with sub_t1:
-                    txt = st.text_area("الصق الجدول هنا")
-                    if st.button("حفظ المنسوخ"):
-                        res = parse_pasted_text(txt)
-                        if res:
-                            for r in res: save_financial_record(symbol, r['date'], r['data'])
-                            st.success("تم الحفظ"); st.rerun()
-                with sub_t2:
-                    with st.form("man_f"):
-                        dy = st.number_input("السنة", 2020, 2030, 2024)
-                        rev = st.number_input("الإيرادات")
-                        net = st.number_input("صافي الربح")
-                        ocf = st.number_input("الكاش التشغيلي")
-                        if st.form_submit_button("حفظ"):
-                            save_financial_record(symbol, f"{dy}-12-31", {'revenue':rev, 'net_income':net, 'operating_cash_flow':ocf})
-                            st.success("تم"); st.rerun()
-
-    with t_view:
-        ptype = st.radio("نوع الفترة:", ["Annual", "Quarterly"], horizontal=True)
+    # --------------------------
+    # 1. تبويب التحليل (المخرجات)
+    # --------------------------
+    with tab_dashboard:
+        # اختيار الفترة للتحليل
+        ptype = st.radio("نطاق التحليل:", ["Annual", "Quarterly"], horizontal=True, label_visibility="collapsed")
         df = get_stored_financials_df(symbol, ptype)
         
         if df.empty:
-            st.info("لا توجد بيانات محفوظة. الرجاء استخدام تبويب 'إدارة البيانات' لجلبها أو إدخالها.")
+            st.warning("⚠️ لا توجد بيانات مالية محفوظة لهذا السهم.")
+            st.info("👈 يرجى الانتقال لتبويب 'إدارة القوائم والبيانات' لجلب أو إدخال البيانات.")
         else:
-            # بطاقات
-            curr = df.iloc[0]
-            m1, m2, m3 = st.columns(3)
-            m1.metric("الإيرادات", f"{curr.get('revenue',0)/1e6:,.1f}M")
-            m2.metric("صافي الربح", f"{curr.get('net_income',0)/1e6:,.1f}M")
-            m3.metric("الكاش التشغيلي", f"{curr.get('operating_cash_flow',0)/1e6:,.1f}M")
+            # التحليل الذكي
+            metrics = get_advanced_fundamental_ratios(symbol)
+            c1, c2, c3 = st.columns(3)
+            c1.metric("المتانة (F-Score)", f"{metrics['Piotroski_Score']}/9", metrics['Financial_Health'])
+            fv = metrics.get('Fair_Value_Graham')
+            c2.metric("قيمة جراهام", f"{fv:,.2f}" if fv else "غير متاح")
+            c3.write(f"**ملاحظات:** {metrics.get('Opinions', '-')}")
             
             st.markdown("---")
             
-            # الرسم البياني (مع حماية ضد ValueError)
-            df['Year'] = df['date'].dt.strftime('%Y-%m') if not df.empty else []
-            plot_cols = ['revenue', 'net_income']
-            if 'operating_cash_flow' in df.columns: plot_cols.append('operating_cash_flow')
-            
-            # التأكد من أن الأعمدة رقمية
-            for c in plot_cols: df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
-            
+            # الرسوم البيانية (محمية من الأخطاء)
             try:
-                fig = px.bar(df.sort_values('date'), x='Year', y=plot_cols, barmode='group', title="الأداء المالي")
-                st.plotly_chart(fig, use_container_width=True)
+                df['Year'] = df['date'].dt.strftime('%Y-%m')
+                # نختار فقط الأعمدة التي تحتوي على بيانات غير صفرية
+                cols_to_plot = []
+                for col in ['revenue', 'net_income', 'operating_cash_flow']:
+                    if col in df.columns and df[col].sum() != 0:
+                        cols_to_plot.append(col)
+                
+                if cols_to_plot:
+                    fig = px.bar(df.sort_values('date'), x='Year', y=cols_to_plot, barmode='group', title="الأداء المالي التاريخي")
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("البيانات المالية موجودة لكنها أصفار، لا يمكن الرسم.")
             except Exception as e:
-                st.error(f"خطأ في الرسم: {e}")
-            
-            with st.expander("جدول البيانات"):
-                st.dataframe(df)
+                st.error(f"حدث خطأ أثناء الرسم: {e}")
 
-# دوال مساعدة
+            with st.expander("عرض الأرقام التفصيلية (الجدول)"):
+                st.dataframe(df.style.format("{:,.0f}"))
+
+    # --------------------------
+    # 2. تبويب الإدارة (المدخلات)
+    # --------------------------
+    with tab_data_mgmt:
+        st.markdown("#### مصادر البيانات")
+        src_t1, src_t2, src_t3 = st.tabs(["⚡ جلب آلي (Yahoo)", "📋 نسخ ولصق (Excel)", "✍️ إدخال يدوي"])
+        
+        # أ. الجلب الآلي
+        with src_t1:
+            st.write("سيقوم النظام بجلب القوائم السنوية والربعية وحفظها.")
+            if st.button("بدء المزامنة الآلية", key="btn_sync_yahoo"):
+                with st.spinner("جاري الاتصال بالمخدمات..."):
+                    ok, msg = sync_auto_yahoo(symbol)
+                    if ok: st.success(msg); st.rerun()
+                    else: st.error(f"فشل: {msg}")
+        
+        # ب. النسخ واللصق
+        with src_t2:
+            st.info("انسخ الجدول من ملف Excel أو PDF (تأكد أن السنة في الرأس أو الصف الأول).")
+            txt = st.text_area("منطقة اللصق", height=150)
+            if st.button("معالجة وحفظ النص", key="btn_paste_save"):
+                res = parse_pasted_text(txt)
+                if res:
+                    saved_count = 0
+                    for r in res:
+                        if save_financial_record(symbol, r['date'], r['data']): saved_count += 1
+                    st.success(f"تمت معالجة وحفظ {saved_count} سنوات.")
+                    st.rerun()
+                else: st.error("لم نتمكن من قراءة البيانات. تأكد من التنسيق.")
+        
+        # ج. الإدخال اليدوي
+        with src_t3:
+            with st.form("manual_data_form"):
+                c_d1, c_d2 = st.columns(2)
+                f_year = c_d1.number_input("السنة المالية", 2015, 2030, 2024)
+                f_type = c_d2.selectbox("نوع القائمة", ["Annual", "Quarterly"])
+                
+                c_1, c_2 = st.columns(2)
+                v_rev = c_1.number_input("الإيرادات (Revenue)", step=1000.0)
+                v_net = c_2.number_input("صافي الربح (Net Income)", step=1000.0)
+                v_ocf = c_1.number_input("الكاش التشغيلي", step=1000.0)
+                v_ast = c_2.number_input("إجمالي الأصول", step=1000.0)
+                
+                if st.form_submit_button("حفظ السجل"):
+                    date_str = f"{f_year}-12-31" if f_type == "Annual" else f"{f_year}-03-31" # تاريخ تقريبي للربع
+                    data = {'revenue': v_rev, 'net_income': v_net, 'operating_cash_flow': v_ocf, 'total_assets': v_ast}
+                    if save_financial_record(symbol, date_str, data, f_type, 'Manual'):
+                        st.success("تم الحفظ بنجاح")
+                        st.rerun()
+
+# دوال مساعدة لربط باقي النظام
 def get_fundamental_ratios(symbol): return get_advanced_fundamental_ratios(symbol)
 def get_thesis(s): 
     try: df = fetch_table("InvestmentThesis"); return df[df['symbol'] == s].iloc[0] if not df.empty else None
