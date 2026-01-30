@@ -724,7 +724,28 @@ def view_add_trade():
 
 def view_tools(): st.header("🛠️ أدوات"); st.info("حاسبة الزكاة (قريباً)")
 
+from database import db_healthcheck
+
 def view_settings(): 
+   st.header("الإعدادات")
+
+    if st.button("🔎 تشخيص قاعدة البيانات"):
+        rep = db_healthcheck()
+        if not rep["connected"]:
+            st.error("غير متصل بقاعدة البيانات")
+        else:
+            st.success("✅ اتصال ناجح")
+            st.json(rep["db"])
+            st.write("### Counts")
+            st.json(rep["counts"])
+            if rep["dup_tables"]:
+                st.error(f"⚠️ يوجد ازدواج جداول: {rep['dup_tables']}")
+            else:
+                st.success("✅ لا يوجد ازدواج جداول (Case Safe)")
+
+    if st.button("نسخة احتياطية"):
+        d, n = create_smart_backup()
+        if d: st.download_button("تحميل", d, n) 
     st.header("الإعدادات")
     if st.button("نسخة احتياطية"):
         d, n = create_smart_backup()
