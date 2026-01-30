@@ -1163,16 +1163,6 @@ def view_backtester_ui(fin):
     return sym
 
 
-def _normalize_symbol(sym: str) -> str:
-    sym = (sym or "").strip().upper()
-    if sym.isdigit():
-        return f"{sym}.SR"
-    sym = sym.replace(" ", "").replace("-", "")
-    if sym.endswith("SR") and ".SR" not in sym:
-        sym = sym.replace("SR", ".SR")
-    return sym
-
-
 def view_backtester_ui(fin):
     st.header("🧪 المختبر")
 
@@ -1206,10 +1196,15 @@ def view_backtester_ui(fin):
                 data = pd.DataFrame(data)
 
             st.caption(f"📦 rows={len(data)} cols={len(data.columns)}")
+            try:
+                st.caption(f"🗓️ من: {data.index.min()}  إلى: {data.index.max()}")
+            except Exception:
+                pass
+
             st.dataframe(data.tail(5), use_container_width=True)
 
             if len(data) < 120:
-                st.warning("⚠️ أقل من 120 شمعة — غالبًا لن تظهر إشارات (جرّب 5y أو max).")
+                st.warning("⚠️ أقل من 120 شمعة — غالبًا لن تظهر إشارات مؤشرات (جرّب 5y أو max).")
 
             if "Close" not in data.columns and "close" not in data.columns:
                 st.error("❌ لا يوجد عمود Close في البيانات")
@@ -1229,7 +1224,7 @@ def view_backtester_ui(fin):
                     st.dataframe(res.get("trades_log", pd.DataFrame()), use_container_width=True)
             else:
                 st.warning("⚠️ لم يرجع الاختبار نتيجة.")
-                st.info("إذا البيانات كبيرة، فالغالب أن الاستراتيجية لم تعطِ إشارات خلال الفترة.")
+                st.info("إذا rows كبيرة، فالغالب أن الاستراتيجية لم تعطِ أي إشارات خلال الفترة.")
 
         except Exception as e:
             st.error(f"Backtest Error: {e}")
