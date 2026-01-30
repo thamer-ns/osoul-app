@@ -1,4 +1,3 @@
-# views.py
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -72,12 +71,21 @@ try:
         calculate_portfolio_risk_score,
         run_stress_test,
         generate_rebalancing_suggestions,
+        # ✅ جديد: استراتيجيات المستخدم
+        save_user_rule,
+        load_user_rules,
     )
 except Exception:
     def generate_ai_report(s): return {}
     def calculate_portfolio_risk_score(df, c): return 50
     def run_stress_test(v, df): return {"scenarios": [], "insight": ""}
     def generate_rebalancing_suggestions(df, c): return []
+
+    # ✅ Fail-safe
+    def save_user_rule(rule_text: str, title: str = None, enabled: int = 1):
+        return {"ok": False, "reason": "AI Engine missing"}
+    def load_user_rules(enabled_only=True, max_rows=50):
+        return []
 
 
 # ========================================================
@@ -302,7 +310,6 @@ def view_portfolio(fin, key):
         st.markdown("---")
 
         if not op.empty:
-            # تأكد من الأعمدة المهمة
             for col in ["company_name", "sector", "gain_pct", "weight"]:
                 if col not in op.columns:
                     op[col] = ""
@@ -314,7 +321,6 @@ def view_portfolio(fin, key):
             c_sort, _ = st.columns([1, 3])
             sort_by = c_sort.selectbox(f"فرز {ts} حسب:", sort_opts, key=f"s_op_{key}")
 
-            # بيانات مباشرة
             try:
                 live_data = fetch_batch_data(op["symbol"].astype(str).unique().tolist()) if "symbol" in op.columns else {}
             except Exception:
@@ -331,7 +337,6 @@ def view_portfolio(fin, key):
             )
             op["status_ar"] = "مفتوحة"
 
-            # الفرز
             if "الربح" in sort_by and "gain" in op.columns:
                 op = op.sort_values("gain", ascending=False)
             elif "القيمة" in sort_by and "market_value" in op.columns:
@@ -411,7 +416,11 @@ def view_portfolio(fin, key):
                             with st.form(f"frm_edit_{key}_{e_id}"):
                                 nq = st.number_input("الكمية", value=float(rw.get("quantity", 1)), min_value=1.0, key=f"edit_q_{key}_{e_id}")
                                 np_ = st.number_input("سعر الشراء", value=float(rw.get("entry_price", 0)), min_value=0.0, key=f"edit_p_{key}_{e_id}")
-                                nd = st.date_input("تاريخ الشراء", pd.to_datetime(rw.get("date", date.today())), key=f"edit_d_{key}_{e_id}")
+                                try:
+                                    nd_val = pd.to_datetime(rw.get("date", date.today())).date()
+                                except Exception:
+                                    nd_val = date.today()
+                                nd = st.date_input("تاريخ الشراء", nd_val, key=f"edit_d_{key}_{e_id}")
                                 if st.form_submit_button("حفظ"):
                                     valid, msg = validate_trade_inputs(nq, np_)
                                     if valid:
@@ -576,7 +585,11 @@ def view_sukuk_portfolio(fin):
                                 nm = st.text_input("اسم الصك", value=str(rw.get("company_name", "")), key=f"sk_nm_{eid}")
                                 qt = st.number_input("عدد الصكوك", value=float(rw.get("quantity", 1)), min_value=1.0, key=f"sk_qt_{eid}")
                                 pr = st.number_input("قيمة الصك", value=float(rw.get("entry_price", 0)), min_value=0.0, key=f"sk_pr_{eid}")
-                                nd = st.date_input("تاريخ الشراء", pd.to_datetime(rw.get("date", date.today())), key=f"sk_nd_{eid}")
+                                try:
+                                    nd_val = pd.to_datetime(rw.get("date", date.today())).date()
+                                except Exception:
+                                    nd_val = date.today()
+                                nd = st.date_input("تاريخ الشراء", nd_val, key=f"sk_nd_{eid}")
                                 if st.form_submit_button("حفظ التصحيح"):
                                     valid, msg = validate_trade_inputs(qt, pr)
                                     if valid:
@@ -676,7 +689,7 @@ def view_cash_log():
                         curr = dep[dep["id"] == tid].iloc[0]
                         with st.form(f"edit_dep_form_{tid}"):
                             na = st.number_input("المبلغ الصحيح", value=float(curr.get("amount", 0)), key=f"dep_fix_amt_{tid}")
-                            nd = st.date_input("التاريخ الصحيح", pd.to_datetime(curr.get("date", date.today())), key=f"dep_fix_date_{tid}")
+                            nd = st.date_input("التاريخ الصحيح", pd.to_datetime(curr.get("date", date.today())).date(), key=f"dep_fix_date_{tid}")
                             nn = st.text_input("ملاحظة", value=str(curr.get("note", "") or ""), key=f"dep_fix_note_{tid}")
                             if st.form_submit_button("حفظ التعديلات"):
                                 execute_query("UPDATE deposits SET amount=%s, date=%s, note=%s WHERE id=%s", (na, str(nd), nn, tid))
@@ -709,7 +722,7 @@ def view_cash_log():
                         curr = wit[wit["id"] == tid].iloc[0]
                         with st.form(f"edit_wit_form_{tid}"):
                             na = st.number_input("المبلغ الصحيح", value=float(curr.get("amount", 0)), key=f"wit_fix_amt_{tid}")
-                            nd = st.date_input("التاريخ الصحيح", pd.to_datetime(curr.get("date", date.today())), key=f"wit_fix_date_{tid}")
+                            nd = st.date_input("التاريخ الصحيح", pd.to_datetime(curr.get("date", date.today())).date(), key=f"wit_fix_date_{tid}")
                             nn = st.text_input("ملاحظة", value=str(curr.get("note", "") or ""), key=f"wit_fix_note_{tid}")
                             if st.form_submit_button("حفظ التعديلات"):
                                 execute_query("UPDATE withdrawals SET amount=%s, date=%s, note=%s WHERE id=%s", (na, str(nd), nn, tid))
@@ -746,7 +759,7 @@ def view_cash_log():
                         with st.form(f"edit_ret_form_{tid}"):
                             ns = st.text_input("رمز السهم", value=str(curr.get("symbol", "")), key=f"ret_fix_sym_{tid}")
                             na = st.number_input("المبلغ الصحيح", value=float(curr.get("amount", 0)), key=f"ret_fix_amt_{tid}")
-                            nd = st.date_input("التاريخ الصحيح", pd.to_datetime(curr.get("date", date.today())), key=f"ret_fix_date_{tid}")
+                            nd = st.date_input("التاريخ الصحيح", pd.to_datetime(curr.get("date", date.today())).date(), key=f"ret_fix_date_{tid}")
                             if st.form_submit_button("حفظ التعديلات"):
                                 execute_query("UPDATE returnsgrants SET symbol=%s, amount=%s, date=%s WHERE id=%s", (ns, na, str(nd), tid))
                                 st.success("تم التعديل بنجاح")
@@ -944,7 +957,6 @@ def view_analysis(fin):
                 st.info(res.get("insight", ""))
         st.markdown("---")
 
-    # watchlist
     try:
         wl = fetch_table("watchlist")
     except Exception:
@@ -982,13 +994,11 @@ def view_analysis(fin):
                 unsafe_allow_html=True
             )
 
-            # ✅ AI Confidence
             conf = int(rep.get("confidence", 0) or 0)
             conf_label = rep.get("confidence_label", "منخفضة")
             st.write(f"### 🎯 الثقة: {conf}% ({conf_label})")
             st.progress(min(max(conf, 0), 100))
 
-            # ✅ Explainability
             ex = rep.get("explainability", {}) or {}
             pos = ex.get("positives", []) or []
             neg = ex.get("negatives", []) or []
@@ -1010,6 +1020,42 @@ def view_analysis(fin):
 
             st.markdown("---")
 
+            # =====================================================
+            # ✅ استراتيجياتي الخاصة (User Rules) — مدموجة صح هنا
+            # =====================================================
+            st.subheader("🧠 استراتيجياتي الخاصة")
+            st.caption("اكتب قواعدك بصيغة بسيطة مثل: (تقاطع الماكد صعوداً + اختراق خط الصفر) أو (RSI فوق 70)")
+
+            rule_text = st.text_area(
+                "✍️ أدخل الاستراتيجية",
+                key=f"user_rule_text_{sym}",
+                height=110
+            )
+
+            col1, col2 = st.columns([1, 2])
+            with col1:
+                if st.button("💾 حفظ الاستراتيجية", key=f"save_rule_{sym}", type="primary"):
+                    res = save_user_rule(rule_text, title="قاعدة من المستخدم", enabled=1)
+                    if res.get("ok"):
+                        st.success("✅ تم حفظ الاستراتيجية ودمجها مباشرة مع الذكاء")
+                        st.cache_data.clear()
+                        st.rerun()
+                    else:
+                        st.error(f"لم يتم الحفظ: {res.get('reason','')}")
+            with col2:
+                st.caption("ملاحظة: الذكاء سيطبق القواعد تلقائياً عند توليد التقرير.")
+
+            # عرض آخر القواعد (لتأكيد الحفظ)
+            with st.expander("📌 عرض آخر الاستراتيجيات المحفوظة"):
+                rules = load_user_rules(enabled_only=True, max_rows=10) or []
+                if rules:
+                    for r in rules:
+                        st.write(f"- **{r.get('title','قاعدة')}**: {r.get('rule_text','')}")
+                else:
+                    st.info("لا توجد قواعد محفوظة بعد.")
+
+            st.markdown("---")
+
             # ✅ زر Backtest (مُحصّن + يسجل symbol/sector)
             if run_backtest:
                 if st.button("🧪 تشغيل Backtest على هذا السهم", key=f"bt_{sym}"):
@@ -1020,7 +1066,6 @@ def view_analysis(fin):
                         rec_txt = str(rep.get("recommendation", "")).lower()
                         trend_txt = str(rep.get("trend", "")).strip()
 
-                        # افتراضي: Trend/Sniper (تقدر لاحقاً تربطه بالكاتالوج)
                         if ("strong buy" in rec_txt) or ("شراء" in rec_txt):
                             strategy = "Trend"
                         elif ("مضاربة" in rec_txt) or ("⚡" in rec_txt):
@@ -1047,7 +1092,6 @@ def view_analysis(fin):
                 if bt_import_error:
                     st.code(bt_import_error)
 
-            # ✅ الأسباب القديمة (فني/مالي)
             cA, cB = st.columns(2)
             with cA:
                 st.write("فني:")
@@ -1097,7 +1141,6 @@ def view_backtester_ui(fin):
     s = st.text_input("رمز السهم", "1120", key="lab_symbol")
     cap = st.number_input("رأس المال", min_value=1000.0, value=100000.0, step=1000.0, key="lab_cap")
 
-    # استراتيجيات من الكاتالوج (لو موجودة)
     strat_list = list_strategies() or ["Trend", "Sniper"]
     strat = st.selectbox("اختر الاستراتيجية", strat_list, index=0, key="lab_strat")
 
@@ -1232,6 +1275,10 @@ def router():
     elif pg == "settings":
         view_settings()
     elif pg == "update":
-        with st.spinner(".."):
+        with st.spinner("جاري التحديث..."):
             update_prices()
+        st.cache_data.clear()
+        st.rerun()
+    else:
+        st.session_state.page = "home"
         st.rerun()
