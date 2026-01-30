@@ -4,25 +4,52 @@ import streamlit as st
 def apply_custom_css():
     st.markdown("""
         <style>
-        /* 1. استيراد خط Cairo */
+        /* 1) Fonts */
         @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap');
-        
-        /* 2. استيراد خط أيقونات Google */
         @import url('https://fonts.googleapis.com/icon?family=Material+Icons');
 
-        /* 3. القواعد العامة (تطبيق الخط العربي والاتجاه) */
-        html, body, [class*="css"], p, div, label, input, button, textarea, span, h1, h2, h3 {
-            font-family: 'Cairo', sans-serif !important;
+        /* 2) Base: apply Cairo + RTL on main app container (safer than [class*="css"]) */
+        html, body {
+            font-family: 'Cairo', system-ui, -apple-system, "Segoe UI", Arial, sans-serif !important;
+        }
+
+        /* Streamlit main container */
+        [data-testid="stAppViewContainer"],
+        [data-testid="stAppViewContainer"] * {
+            font-family: 'Cairo', system-ui, -apple-system, "Segoe UI", Arial, sans-serif !important;
             direction: rtl !important;
             text-align: right !important;
         }
 
-        /* 4. إصلاح الأيقونات (جعل اتجاهها يسار لليمين لتظهر بشكل صحيح) */
+        /* 3) Keep numbers/inputs/charts LTR where needed */
+        /* Inputs: numbers + text fields should be readable */
+        input, textarea, select {
+            direction: ltr !important;
+            text-align: left !important;
+        }
+
+        /* Metric values + KPI values (already ltr in your kpi) */
+        .kpi-value, .stMetricValue, .stMetricDelta {
+            direction: ltr !important;
+            text-align: left !important;
+        }
+
+        /* Code blocks & dataframes should remain LTR */
+        pre, code, .stCodeBlock, .stDataFrame, [data-testid="stDataFrame"] {
+            direction: ltr !important;
+            text-align: left !important;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
+        }
+
+        /* Plotly charts: prevent RTL breaking hover/axis */
+        .js-plotly-plot, .js-plotly-plot * {
+            direction: ltr !important;
+            text-align: left !important;
+        }
+
+        /* 4) Material icons fix */
         .material-icons,
         [class*="material-icons"],
-        [data-testid="stExpander"] details summary span,
-        [data-testid="stPopover"] button span,
-        [data-testid="stPopoverBody"] span,
         i {
             font-family: 'Material Icons' !important;
             direction: ltr !important;
@@ -35,29 +62,29 @@ def apply_custom_css():
             word-wrap: normal !important;
         }
 
-        /* 5. تنظيف الواجهة */
-        
-        /* إزالة الخط العمودي للقائمة الجانبية ليكون المظهر أنظف */
+        /* 5) Clean UI */
         section[data-testid="stSidebar"] {
             border-right: none !important;
             border-left: none !important;
             box-shadow: none !important;
         }
-        
-        /* إخفاء الهوامش العلوية والسفلية وشريط القائمة الافتراضي (بدون إخفاء السايدبار) */
+
         footer, header, #MainMenu { display: none !important; }
-        
-        /* إخفاء شريط أدوات الجداول */
+
+        /* Toolbars: ok to hide (optional) */
         [data-testid="stElementToolbar"] { display: none !important; }
-        
-        /* إخفاء التلميحات المزعجة */
-        div[role="tooltip"] { display: none !important; opacity: 0 !important; visibility: hidden !important; }
-        
-        /* إخفاء زر التكبير */
+
+        /* IMPORTANT: don't kill all tooltips (Plotly uses tooltips heavily)
+           We'll only reduce Streamlit tooltip annoyances lightly */
+        div[role="tooltip"] {
+            opacity: 0.98 !important;
+        }
+
+        /* Fullscreen button (optional) */
         button[title="View fullscreen"] { display: none !important; }
 
-        /* 6. تنسيقات إضافية (البطاقات والجداول) */
-        
+        /* 6) Components Styling */
+
         /* Expander */
         div[data-testid="stExpander"] {
             border: 1px solid #E5E7EB; border-radius: 12px; background-color: #FAFAFA;
@@ -78,14 +105,16 @@ def apply_custom_css():
             margin-bottom: 15px;
         }
         .kpi-card:hover {
-            transform: translateY(-5px) scale(1.01); box-shadow: 0 15px 30px rgba(0,0,0,0.1); border-color: #BFDBFE;
+            transform: translateY(-5px) scale(1.01);
+            box-shadow: 0 15px 30px rgba(0,0,0,0.1);
+            border-color: #BFDBFE;
         }
         .kpi-icon-bg {
             position: absolute; left: -15px; bottom: -20px; font-size: 5.5rem; opacity: 0.08;
             transform: rotate(15deg); transition: all 0.4s ease; color: #1E293B; pointer-events: none;
         }
         .kpi-card:hover .kpi-icon-bg { transform: rotate(0deg) scale(1.2); opacity: 0.15; left: -5px; }
-        .kpi-value { font-size: 1.8rem; font-weight: 900; color: #1E293B; direction: ltr; position: relative; z-index: 2; }
+        .kpi-value { font-size: 1.8rem; font-weight: 900; color: #1E293B; position: relative; z-index: 2; }
         .kpi-label { color: #64748B; font-size: 0.9rem; font-weight: 700; position: relative; z-index: 2; margin-bottom: 5px; }
 
         /* TASI Card */
@@ -115,17 +144,24 @@ def apply_custom_css():
             color: #334155; font-weight: 600;
         }
         .finance-table tr:hover { background-color: #F8FAFC; }
-        
+
         /* Badges & Colors */
-        .txt-green { color: #059669 !important; } .txt-red { color: #DC2626 !important; } .txt-blue { color: #2563EB !important; }
+        .txt-green { color: #059669 !important; }
+        .txt-red { color: #DC2626 !important; }
+        .txt-blue { color: #2563EB !important; }
         .badge-open { background: #DCFCE7; color: #166534; padding: 4px 12px; border-radius: 20px; font-size: 0.75rem; }
         .badge-closed { background: #F3F4F6; color: #4B5563; padding: 4px 12px; border-radius: 20px; font-size: 0.75rem; }
-        
+
         /* Buttons */
         div.stButton > button {
             width: 100%; border-radius: 12px; height: 50px; font-weight: 800; border: none;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05); background: white; color: #334155; transition: 0.2s;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+            background: white; color: #334155; transition: 0.2s;
         }
-        div.stButton > button:hover { transform: translateY(-2px); box-shadow: 0 5px 10px rgba(0,0,0,0.1); color: #0052CC; }
+        div.stButton > button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 10px rgba(0,0,0,0.1);
+            color: #0052CC;
+        }
         </style>
     """, unsafe_allow_html=True)
