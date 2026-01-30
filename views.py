@@ -64,28 +64,35 @@ except Exception:
     def render_classical_analysis(s):
         st.warning("⚠️ ملف classical_analysis.py مفقود أو به خطأ.")
 
-# 5) AI Engine
+# 5) AI Engine (تشخيص كامل بدل الصمت)
+import traceback
+ai_import_error = None
+
 try:
     from ai_engine import (
         generate_ai_report,
         calculate_portfolio_risk_score,
         run_stress_test,
         generate_rebalancing_suggestions,
-        # ✅ جديد: استراتيجيات المستخدم
         save_user_rule,
         load_user_rules,
     )
 except Exception:
-    def generate_ai_report(s): return {}
+    ai_import_error = traceback.format_exc()
+
+    def generate_ai_report(symbol, timeframe="1D"):
+        return {"__error__": "AI Engine import failed", "__trace__": ai_import_error}
+
     def calculate_portfolio_risk_score(df, c): return 50
     def run_stress_test(v, df): return {"scenarios": [], "insight": ""}
     def generate_rebalancing_suggestions(df, c): return []
 
-    # ✅ Fail-safe
     def save_user_rule(rule_text: str, title: str = None, enabled: int = 1):
-        return {"ok": False, "reason": "AI Engine missing"}
+        return {"ok": False, "reason": "AI Engine missing", "trace": ai_import_error}
+
     def load_user_rules(enabled_only=True, max_rows=50):
         return []
+
 
 
 # ========================================================
@@ -983,7 +990,12 @@ def view_analysis(fin):
 
         # -------------------- المستشار --------------------
         with tabs[0]:
-            rep = generate_ai_report(sym)
+rep = generate_ai_report(sym)
+
+if rep.get("__error__") or rep.get("__trace__"):
+    st.error("فشل تشغيل المستشار (AI Engine).")
+    st.code(rep.get("__trace__", ""))
+    st.stop()
             col = rep.get("color", "#666")
 
             st.markdown(
