@@ -1153,6 +1153,17 @@ def view_backtester_ui(fin):
         st.info("✅ الحل: تأكد أنك استبدلت backtester.py بالنسخة الجديدة التي فيها STRATEGY_CATALOG و list_strategies.")
         return
 
+    def _normalize_symbol(sym: str) -> str:
+        sym = (sym or "").strip().upper()
+        # لو المستخدم كتب رقم بدون لاحقة السوق
+        if sym.isdigit():
+            return f"{sym}.SR"
+        # لو كتب 1120SR أو 1120-SR أو 1120 SR
+        sym = sym.replace(" ", "").replace("-", "")
+        if sym.endswith("SR") and ".SR" not in sym:
+            sym = sym.replace("SR", ".SR")
+        return sym
+
     s = st.text_input("رمز السهم", "1120", key="lab_symbol")
     cap = st.number_input("رأس المال", min_value=1000.0, value=100000.0, step=1000.0, key="lab_cap")
 
@@ -1161,88 +1172,57 @@ def view_backtester_ui(fin):
 
     if st.button("بدء", key="bt_run"):
         try:
-            data = get_chart_history(s, "2y")
-            nm, sec = get_company_details(s)
- def _normalize_symbol(sym: str) -> str:
-    sym = (sym or "").strip().upper()
-    # لو المستخدم كتب رقم بدون لاحقة السوق
-    if sym.isdigit():
-        return f"{sym}.SR"
-    # لو كتب 1120SR أو 1120-SR أو 1120 SR
-    sym = sym.replace(" ", "").replace("-", "")
-    if sym.endswith("SR") and ".SR" not in sym:
-        sym = sym.replace("SR", ".SR")
-    return sym
+            s_norm = _normalize_symbol(s)
+            st.caption(f"🔎 الرمز المستخدم للاختبار: {s_norm}")
 
-# ...
+            data = get_chart_history(s_norm, "2y")
 
-if st.button("بدء", key="bt_run"):
-    try:
-        s_norm = _normalize_symbol(s)
-        st.caption(f"🔎 الرمز المستخدم للاختبار: {s_norm}")
-
-        data = get_chart_history(s_norm, "2y")
-
-        # ✅ تشخيص: هل البيانات رجعت؟
-        if data is None:
-            st.error("❌ get_chart_history رجّعت None")
-            st.stop()
-
-        # إذا data مو DataFrame حاول تحويله
-        if not isinstance(data, pd.DataFrame):
-            try:
-                data = pd.DataFrame(data)
-            except Exception:
-                st.error("❌ البيانات ليست DataFrame ولا يمكن تحويلها")
-                st.write(data)
+            # ✅ تشخيص: هل البيانات رجعت؟
+            if data is None:
+                st.error("❌ get_chart_history رجّعت None")
                 st.stop()
 
-        st.caption(f"📦 شكل البيانات: rows={len(data)} cols={len(data.columns)}")
-        st.write("آخر 5 صفوف من البيانات:")
-        st note  = st.dataframe(data.tail(5), use_container_width=True)
+            # إذا data مو DataFrame حاول تحويله
+            if not isinstance(data, pd.DataFrame):
+                try:
+                    data = pd.DataFrame(data)
+                except Exception:
+                    st.error("❌ البيانات ليست DataFrame ولا يمكن تحويلها")
+                    st.write(data)
+                    st.stop()
 
-        # ✅ أعمدة مطلوبة غالبًا لأي باك تست
-        needed_any = ["Close", "close"]
-        if len(data) < 80:
-            st.warning("⚠️ البيانات قليلة جدًا للاختبار (جرّب 5y أو تأكد من المصدر).")
+            st.caption(f"📦 شكل البيانات: rows={len(data)} cols={len(data.columns)}")
 
-        if not any(col in data.columns for col in needed_any):
-            st.error("❌ لا يوجد عمود سعر إغلاق (Close/close) في البيانات — لذلك الاستراتيجية لن تعمل.")
-            st.write("الأعمدة المتاحة:", list(data.columns))
-            st.stop()
+            with st.expander("عرض آخر 5 صفوف من البيانات"):
+                st.dataframe(data.tail(5), use_container_width=True)
 
-        nm, sec = get_company_details(s_norm)
+            # ✅ أعمدة مطلوبة غالبًا لأي باك تست
+            if len(data) < 80:
+                st.warning("⚠️ البيانات قليلة جدًا للاختبار (جرّب 5y أو تأكد من المصدر).")
 
-        res = run_backtest(data, strat, cap, symbol=s_norm, sector=sec)
+            needed_any = ["Close", "close"]
+            if not any(col in data.columns for col in needed_any):
+                st.error("❌ لا يوجد عمود سعر إغلاق (Close/close) — لذلك الاستراتيجية لن تعمل.")
+                st.write("الأعمدة المتاحة:", list(data.columns))
+                st.stop()
 
-        if res:
-            st.success(f"✅ اكتمل الاختبار ({res.get('strategy_name_ar', strat)})")
-            st.metric("العائد", f"{res.get('return_pct', 0):.2f}%")
-            if "df" in res and isinstance(res["df"], pd.DataFrame) and "Portfolio_Value" in res["df"]:
-                st.line_chart(res["df"]["Portfolio_Value"])
-            with st.expander("سجل الصفقات"):
-                st.dataframe(res.get("trades_log", pd.DataFrame()), use_container_width=True)
-        else:
-            st.warning("⚠️ لم يرجع الاختبار نتيجة.")
-            st.info("إذا البيانات سليمة، فالغالب أن الاستراتيجية لم تعطِ أي إشارات على الفترة المختارة.")
+            nm, sec = get_company_details(s_norm)
 
-    except Exception as e:
-        st.error(f"Backtest Error: {e}")
+            res = run_backtest(data, strat, cap, symbol=s_norm, sector=sec)
 
-            res = run_backtest(data, strat, cap, symbol=s, sector=sec)
             if res:
                 st.success(f"✅ اكتمل الاختبار ({res.get('strategy_name_ar', strat)})")
                 st.metric("العائد", f"{res.get('return_pct', 0):.2f}%")
                 if "df" in res and isinstance(res["df"], pd.DataFrame) and "Portfolio_Value" in res["df"]:
                     st.line_chart(res["df"]["Portfolio_Value"])
-
                 with st.expander("سجل الصفقات"):
                     st.dataframe(res.get("trades_log", pd.DataFrame()), use_container_width=True)
             else:
-                st.warning("⚠️ لم يرجع الاختبار نتيجة (قد تكون البيانات غير كافية أو الاستراتيجية لا تنطبق).")
+                st.warning("⚠️ لم يرجع الاختبار نتيجة.")
+                st.info("إذا البيانات سليمة، فالغالب أن الاستراتيجية لم تعطِ أي إشارات على الفترة المختارة.")
+
         except Exception as e:
             st.error(f"Backtest Error: {e}")
-
 
 def render_pulse_dashboard():
     st.header("نبض السوق")
