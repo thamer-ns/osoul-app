@@ -415,7 +415,7 @@ def view_portfolio(fin, key):
                         st.info("لا توجد صفقات لاختيارها")
 
             with c_a2:
-                  with st.expander("✏️ تعديل صفقة (تصحيح خطأ)"):
+                with st.expander("✏️ تعديل صفقة (تصحيح خطأ)"):
                     if "id" in op.columns and len(op["id"].tolist()) > 0:
                         e_id = st.selectbox("اختر الصفقة", op["id"].tolist(), key=f"edit_{key}")
                         if e_id:
@@ -1162,55 +1162,73 @@ def view_backtester_ui(fin):
         sym = sym.replace("SR", ".SR")
     return sym
 
-period = st.selectbox("الفترة التاريخية", ["6mo", "1y", "2y", "5y", "10y", "max"], index=3, key="bt_period")
 
-if st.button("بدء", key="bt_run"):
-    try:
-        s_norm = _normalize_symbol(s)
-        st.caption(f"🔎 الرمز: {s_norm} | الفترة: {period}")
+def view_backtester_ui(fin):
+    st.header("🧪 المختبر")
 
-        data = get_chart_history(s_norm, period)
+    if not run_backtest:
+        st.warning("Backtester غير متوفر حالياً.")
+        if bt_import_error:
+            st.code(bt_import_error)
+        st.info("✅ الحل: تأكد أنك استبدلت backtester.py بالنسخة الجديدة التي فيها STRATEGY_CATALOG و list_strategies.")
+        return
 
-        if data is None or (isinstance(data, pd.DataFrame) and data.empty):
-            st.error("❌ لم يتم جلب بيانات (DataFrame فارغ)")
-            st.stop()
+    s = st.text_input("رمز السهم", "1120", key="lab_symbol")
+    cap = st.number_input("رأس المال", min_value=1000.0, value=100000.0, step=1000.0, key="lab_cap")
 
-        if not isinstance(data, pd.DataFrame):
-            data = pd.DataFrame(data)
+    strat_list = list_strategies() or ["Trend", "Sniper"]
+    strat = st.selectbox("اختر الاستراتيجية", strat_list, index=0, key="lab_strat")
 
-        st.caption(f"📦 rows={len(data)} cols={len(data.columns)}")
+    period = st.selectbox("الفترة التاريخية", ["6mo", "1y", "2y", "5y", "10y", "max"], index=3, key="lab_period")
+
+    if st.button("بدء", key="bt_run"):
         try:
-            # لو الفهرس تاريخ
-            st.caption(f"🗓️ من: {data.index.min()}  إلى: {data.index.max()}")
-        except Exception:
-            pass
+            s_norm = _normalize_symbol(s)
+            st.caption(f"🔎 الرمز: {s_norm} | الفترة: {period}")
 
-        st.dataframe(data.tail(5), use_container_width=True)
+            data = get_chart_history(s_norm, period)
 
-        if len(data) < 120:
-            st.warning("⚠️ أقل من 120 شمعة — غالبًا لن تظهر إشارات مؤشرات (جرّب 5y أو max).")
+            if data is None or (isinstance(data, pd.DataFrame) and data.empty):
+                st.error("❌ لم يتم جلب بيانات (DataFrame فارغ)")
+                return
 
-        if "Close" not in data.columns and "close" not in data.columns:
-            st.error("❌ لا يوجد عمود Close في البيانات")
-            st.write("الأعمدة:", list(data.columns))
-            st.stop()
+            if not isinstance(data, pd.DataFrame):
+                data = pd.DataFrame(data)
 
-        nm, sec = get_company_details(s_norm)
-        res = run_backtest(data, strat, cap, symbol=s_norm, sector=sec)
+            st.caption(f"📦 rows={len(data)} cols={len(data.columns)}")
+            try:
+                st.caption(f"🗓️ من: {data.index.min()}  إلى: {data.index.max()}")
+            except Exception:
+                pass
 
-        if res:
-            st.success(f"✅ اكتمل الاختبار ({res.get('strategy_name_ar', strat)})")
-            st.metric("العائد", f"{res.get('return_pct', 0):.2f}%")
-            if "df" in res and isinstance(res["df"], pd.DataFrame) and "Portfolio_Value" in res["df"]:
-                st.line_chart(res["df"]["Portfolio_Value"])
-            with st.expander("سجل الصفقات"):
-                st.dataframe(res.get("trades_log", pd.DataFrame()), use_container_width=True)
-        else:
-            st.warning("⚠️ لم يرجع الاختبار نتيجة.")
-            st.info("إذا rows كبيرة، فالغالب الاستراتيجية لم تعطِ أي إشارات خلال الفترة.")
+            st.dataframe(data.tail(5), use_container_width=True)
 
-    except Exception as e:
-        st.error(f"Backtest Error: {e}")
+            if len(data) < 120:
+                st.warning("⚠️ أقل من 120 شمعة — غالبًا لن تظهر إشارات مؤشرات (جرّب 5y أو max).")
+
+            if "Close" not in data.columns and "close" not in data.columns:
+                st.error("❌ لا يوجد عمود Close في البيانات")
+                st.write("الأعمدة:", list(data.columns))
+                return
+
+            nm, sec = get_company_details(s_norm)
+
+            res = run_backtest(data, strat, cap, symbol=s_norm, sector=sec)
+
+            if res:
+                st.success(f"✅ اكتمل الاختبار ({res.get('strategy_name_ar', strat)})")
+                st.metric("العائد", f"{res.get('return_pct', 0):.2f}%")
+                if "df" in res and isinstance(res["df"], pd.DataFrame) and "Portfolio_Value" in res["df"]:
+                    st.line_chart(res["df"]["Portfolio_Value"])
+                with st.expander("سجل الصفقات"):
+                    st.dataframe(res.get("trades_log", pd.DataFrame()), use_container_width=True)
+            else:
+                st.warning("⚠️ لم يرجع الاختبار نتيجة.")
+                st.info("إذا rows كبيرة، فالغالب أن الاستراتيجية لم تعطِ أي إشارات خلال الفترة.")
+
+        except Exception as e:
+            st.error(f"Backtest Error: {e}")
+
 
 def render_pulse_dashboard():
     st.header("نبض السوق")
