@@ -1,3 +1,4 @@
+#app.py
 import streamlit as st
 from config import APP_NAME, APP_ICON
 from styles import apply_custom_css
