@@ -182,5 +182,50 @@ def db_verify_user(u, p):
             except Exception as e:
                 print(f"Verify User Error: {e}")
     return False
+def db_healthcheck():
+    """
+    تشخيص سريع: يعرض معلومات الاتصال + عداد سجلات الجداول + كشف ازدواج الجداول.
+    لا يغير أي بيانات.
+    """
+    info = {"connected": False, "db": {}, "counts": {}, "dup_tables": []}
+
+    with get_db() as conn:
+        if not conn:
+            return info
+
+        info["connected"] = True
+        try:
+            with conn.cursor() as cur:
+                # معلومات قاعدة البيانات
+                cur.execute("SELECT current_database(), current_user, inet_server_addr()::text, inet_server_port();")
+                dbname, user, host, port = cur.fetchone()
+                info["db"] = {"database": dbname, "user": user, "host": host, "port": port}
+
+                # عداد الجداول الأساسية (lowercase)
+                tables = ["users","trades","deposits","withdrawals","returnsgrants","watchlist","investmentthesis","financialstatements"]
+                for t in tables:
+                    try:
+                        cur.execute(f"SELECT COUNT(*) FROM {t};")
+                        info["counts"][t] = cur.fetchone()[0]
+                    except:
+                        info["counts"][t] = None
+
+                # كشف ازدواج أسماء الجداول بسبب الحالة (Trades vs trades)
+                cur.execute("""
+                    SELECT tablename FROM pg_tables
+                    WHERE schemaname='public'
+                    AND tablename IN ('trades','Trades','deposits','Deposits','financialstatements','FinancialStatements');
+                """)
+                found = [r[0] for r in cur.fetchall()]
+                # إذا وجدنا نسخة uppercase و lowercase معًا نبلغ
+                pairs = [("Trades","trades"),("Deposits","deposits"),("FinancialStatements","financialstatements")]
+                for a,b in pairs:
+                    if a in found and b in found:
+                        info["dup_tables"].append((a,b))
+
+        except Exception as e:
+            info["db"]["error"] = str(e)
+
+    return info
 
 # ✅ IMPORTANT: لا تشغل init_db هنا (سيتم تشغيلها من app.py فقط)
