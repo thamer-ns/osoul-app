@@ -1,208 +1,318 @@
-import pandas as pd
-import streamlit as st
 import io
 import re
-import yfinance as yf
-import numpy as np
-import plotly.express as px
+import json
+import time
 from datetime import datetime
+
+import numpy as np
+import pandas as pd
+import streamlit as st
+import yfinance as yf
+import plotly.express as px
+
 from database import execute_query, fetch_table
 from market_data import get_ticker_symbol
 
-# محاولة استيراد مكتبة PDF (اختياري لتجنب توقف النظام إذا لم تثبت)
+# PDF (اختياري)
 try:
     import pdfplumber
-except ImportError:
+except Exception:
     pdfplumber = None
 
-# ==============================================================
-# 🧠 1. محرك معالجة النصوص والملفات (The Parsing Engine)
-# ==============================================================
+# Web (اختياري)
+try:
+    import requests
+    from bs4 import BeautifulSoup
+except Exception:
+    requests = None
+    BeautifulSoup = None
 
+
+# ==============================================================
+# 🧰 Helpers
+# ==============================================================
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    )
+}
+
+
+def _safe_float(x) -> float:
+    try:
+        if x is None:
+            return 0.0
+        if isinstance(x, (np.floating, np.integer)):
+            return float(x)
+        return float(str(x).replace(",", "").strip())
+    except Exception:
+        return 0.0
+
+
+def _safe_date_str(d) -> str:
+    """
+    يحاول تحويل تاريخ yahoo (Timestamp) أو string إلى YYYY-MM-DD
+    """
+    try:
+        if hasattr(d, "strftime"):
+            return d.strftime("%Y-%m-%d")
+        s = str(d).strip()
+        # لو جاء مثل 2024-12-31 00:00:00
+        s = s.split(" ")[0]
+        # لو جاء مثل 2024-12-31T...
+        s = s.split("T")[0]
+        return s
+    except Exception:
+        return datetime.now().strftime("%Y-%m-%d")
+
+
+def _is_year_like(s: str) -> bool:
+    try:
+        y = int(s)
+        return 2000 <= y <= 2099
+    except Exception:
+        return False
+
+
+def _looks_like_date_token(s: str) -> bool:
+    s = str(s or "").strip()
+    return bool(re.search(r"\b(20\d{2})\b", s) or re.search(r"\d{4}-\d{2}-\d{2}", s))
+
+
+# ==============================================================
+# 🧠 1) FinancialParser
+# ==============================================================
 class FinancialParser:
+    """
+    - يدعم PDF تداول
+    - يدعم Excel/CSV نصي
+    - يدعم Copy/Paste من المتصفح (TradingView / أرقام / Investing / Google Finance)
+    """
+
     def __init__(self):
-        # قاموس المصطلحات لربط النصوص العربية/الإنجليزية بقاعدة البيانات
-        # هذا القاموس هو "المترجم" الذي يفهم ملفات تداول و TradingView
+        # ✅ نماذج regex أوسع
         self.mapping = {
-            'revenue': [
-                r'إجمالي الإيرادات', r'مبيعات', r'sales', r'total revenue', r'revenues', 
-                r'المبيعات', r'الإيرادات', r'revenue'
+            "revenue": [
+                r"إجمالي\s*الإيرادات", r"\bالمبيعات\b", r"\bsales\b",
+                r"\btotal\s+revenue\b", r"\brevenues?\b", r"\brevenue\b",
             ],
-            'net_income': [
-                r'صافي الدخل', r'صافي الربح', r'net income', r'profit', r'net profit',
-                r'الربح \(الخسارة\) للفترة', r'ربح \(خسارة\) الفترة', r'صافي الدخل العائد'
+            "net_income": [
+                r"صافي\s*(الدخل|الربح)", r"\bnet\s+income\b", r"\bnet\s+profit\b",
+                r"الربح\s*\(الخسارة\)\s*للفترة", r"صافي\s*الدخل\s*العائد",
             ],
-            'total_assets': [
-                r'إجمالي الموجودات', r'مجموع الموجودات', r'total assets', 
-                r'الموجودات', r'إجمالي الأصول'
+            "total_assets": [
+                r"إجمالي\s*(الموجودات|الأصول)", r"\btotal\s+assets\b", r"\bassets\b",
             ],
-            'total_liabilities': [
-                r'إجمالي المطلوبات', r'مجموع المطلوبات', r'total liabilities', 
-                r'المطلوبات', r'إجمالي الالتزامات'
+            "total_liabilities": [
+                r"إجمالي\s*(المطلوبات|الالتزامات)", r"\btotal\s+liabilities\b", r"\bliabilities\b",
             ],
-            'total_equity': [
-                r'إجمالي حقوق الملكية', r'مجموع حقوق الملكية', r'total equity', 
-                r'حقوق المساهمين', r'total shareholders equity'
+            "total_equity": [
+                r"إجمالي\s*حقوق\s*الملكية", r"حقوق\s*(المساهمين|الملّاك)",
+                r"\btotal\s+equity\b", r"\bshareholders?\s+equity\b",
             ],
-            'operating_cash_flow': [
-                r'صافي التدفقات النقدية من .* التشغيلية', r'operating cash flow', 
-                r'cash from operating', r'التدفقات النقدية التشغيلية', r'نقد من العمليات'
+            "operating_cash_flow": [
+                r"صافي\s*التدفقات\s*النقدية\s*من\s*.*التشغيلية",
+                r"\boperating\s+cash\s+flow\b", r"\bcash\s+from\s+operating\b",
+                r"التدفقات\s*النقدية\s*التشغيلية", r"نقد\s*من\s*العمليات",
             ],
-            'current_assets': [
-                r'الموجودات المتداولة', r'إجمالي الموجودات المتداولة', r'current assets'
+            "current_assets": [
+                r"(إجمالي\s*)?الموجودات\s*المتداولة", r"\bcurrent\s+assets\b",
             ],
-            'current_liabilities': [
-                r'المطلوبات المتداولة', r'إجمالي المطلوبات المتداولة', r'current liabilities'
+            "current_liabilities": [
+                r"(إجمالي\s*)?المطلوبات\s*المتداولة", r"\bcurrent\s+liabilities\b",
             ],
-            'long_term_debt': [
-                r'قروض طويلة الأجل', r'مطلوبات غير متداولة', r'long term debt', 
-                r'non-current liabilities', r'قروض لأجل'
-            ]
+            "long_term_debt": [
+                r"قروض\s*طويلة\s*الأجل", r"\blong\s+term\s+debt\b",
+                r"مطلوبات\s*غير\s*متداولة", r"\bnon[-\s]?current\s+liabilities\b",
+            ],
+        }
+
+        # compiled patterns (أسرع)
+        self._compiled = {
+            k: [re.compile(p, flags=re.IGNORECASE) for p in pats]
+            for k, pats in self.mapping.items()
         }
 
     def _clean_number(self, val_str):
-        """تنظيف الأرقام المعقدة (1.5B, (500), 1,000)"""
-        if pd.isna(val_str): return 0.0
+        """
+        تنظيف أرقام مثل:
+        - 1.5B / 2.1M / 900K
+        - (500) => -500
+        - 1,000
+        - ١٬٠٠٠ (لو جاء عربي — نحاول)
+        """
+        if pd.isna(val_str):
+            return 0.0
+
         s = str(val_str).strip().upper()
-        
-        # معاملات الضرب (B, M, K)
+
+        # أرقام عربية -> إنجليزية (مبدئي)
+        arabic_digits = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
+        s = s.translate(arabic_digits)
+
         multiplier = 1.0
-        if s.endswith('B') or 'مليار' in s: multiplier = 1_000_000_000
-        elif s.endswith('M') or 'مليون' in s: multiplier = 1_000_000
-        elif s.endswith('K') or 'ألف' in s: multiplier = 1_000
-        
-        # إزالة الرموز غير الرقمية ما عدا السالب والنقطة
-        s = re.sub(r'[^\d\.\-\(\)]', '', s)
-        
-        # معالجة الأقواس السالبة: (500) -> -500
-        if '(' in s and ')' in s:
-            s = s.replace('(', '-').replace(')', '')
-        
+        if s.endswith("B") or "مليار" in s:
+            multiplier = 1_000_000_000
+        elif s.endswith("M") or "مليون" in s:
+            multiplier = 1_000_000
+        elif s.endswith("K") or "ألف" in s:
+            multiplier = 1_000
+
+        # إزالة الرموز غير الرقمية (مع السماح بالنقطة والسالب والأقواس)
+        s = re.sub(r"[^\d\.\-\(\)]", "", s)
+
+        # الأقواس تعني سالب
+        if "(" in s and ")" in s:
+            s = s.replace("(", "-").replace(")", "")
+
         try:
-            val = float(s) * multiplier
-            return val
-        except:
+            return float(s) * multiplier
+        except Exception:
             return 0.0
 
     def _extract_symbol(self, text):
-        """محاولة اكتشاف رمز الشركة من النص (4 أرقام)"""
-        # البحث عن 4 أرقام متتالية تكون في بداية سطر أو مسبوقة بكلمة رمز
-        # الأولوية للرموز السعودية (1000-9999)
-        matches = re.findall(r'\b([1-9]\d{3})\b', text)
+        """
+        محاولة اكتشاف رمز شركة سعودي (4 أرقام) مع فلترة السنوات.
+        """
+        txt = str(text or "")
+        matches = re.findall(r"\b([1-9]\d{3})\b", txt)
         for m in matches:
-            # فلترة التواريخ (2020, 2021, etc)
-            if not m.startswith('20'): 
+            if not m.startswith("20"):  # استبعاد 2020/2021...
                 return f"{m}.SR"
         return None
 
     def _detect_format_and_parse(self, text):
-        """العقل المدبر: يحدد نوع الملف (تداول أو ويب) ويوجه للمعالج المناسب"""
-        lines = text.split('\n')
-        
-        # 1. نمط ملفات تداول (يحتوي على أكواد أقسام مثل [300100])
-        if any(re.search(r'\[\d{6}\]', line) for line in lines):
+        lines = (text or "").split("\n")
+
+        # تداول style
+        if any(re.search(r"\[\d{6}\]", line) for line in lines):
             return self._parse_tadawul_style(lines)
-            
-        # 2. نمط الجداول العادية (TradingView / Excel)
+
+        # table style
         return self._parse_table_style(lines)
 
     def _parse_tadawul_style(self, lines):
-        """
-        خوارزمية خاصة لملفات تداول النصية المعقدة
-        """
         extracted_data = {}
         dates = []
         symbol = None
-        
-        # 1. البحث عن الرمز والتواريخ
-        for line in lines:
-            if not symbol: symbol = self._extract_symbol(line)
-            # البحث عن تواريخ بصيغة YYYY-MM-DD
-            date_matches = re.findall(r'(\d{4}-\d{2}-\d{2})', line)
-            if date_matches and not dates:
-                # نأخذ التواريخ الفريدة ونرتبها (الأحدث عادة يكون العمود الأول)
-                dates = sorted(list(set(date_matches)), reverse=True)[:2] 
 
-        if not dates: 
-            # محاولة البحث عن سنوات فقط
+        # 1) symbol + dates
+        for line in lines:
+            if not symbol:
+                symbol = self._extract_symbol(line)
+
+            dm = re.findall(r"(\d{4}-\d{2}-\d{2})", line)
+            if dm and not dates:
+                dates = sorted(list(set(dm)), reverse=True)[:4]
+
+        if not dates:
+            # years only
             for line in lines:
-                year_matches = re.findall(r'\b(20\d{2})\b', line)
-                if len(year_matches) >= 2:
-                    dates = [f"{y}-12-31" for y in sorted(list(set(year_matches)), reverse=True)[:2]]
+                years = re.findall(r"\b(20\d{2})\b", line)
+                years = [y for y in years if _is_year_like(y)]
+                if len(set(years)) >= 2:
+                    dates = [f"{y}-12-31" for y in sorted(list(set(years)), reverse=True)[:4]]
                     break
 
-        if not dates: dates = [pd.Timestamp.now().strftime('%Y-12-31')] # احتياطي
+        if not dates:
+            dates = [datetime.now().strftime("%Y-12-31")]
 
-        # 2. استخراج البيانات
+        # 2) extract numbers per line
         for line in lines:
-            line = line.strip()
-            for key, patterns in self.mapping.items():
-                if any(p in line for p in patterns): # بحث سريع
-                    # إذا وجدنا تطابق، نستخرج الأرقام من السطر
-                    # نمط تداول: النص ثم الأرقام مفصولة بفواصل
-                    nums = re.findall(r'(-?[\d,]{2,}(?:\.\d+)?)', line)
-                    if not nums: continue
-                    
+            line = (line or "").strip()
+            if not line:
+                continue
+
+            for key, patterns in self._compiled.items():
+                if any(p.search(line) for p in patterns):
+                    # أرقام محتملة في السطر
+                    nums = re.findall(r"(\(?-?[\d,]{2,}(?:\.\d+)?\)?)", line)
+                    if not nums:
+                        continue
+
                     clean_nums = [self._clean_number(n) for n in nums]
-                    
-                    # ربط الأرقام بالتواريخ (العمود الأول للتاريخ الأول، وهكذا)
-                    for i, date_val in enumerate(dates):
+
+                    # map numbers to dates (أقرب 1..N)
+                    for i, d in enumerate(dates):
                         if i < len(clean_nums):
-                            if date_val not in extracted_data: extracted_data[date_val] = {}
-                            # نأخذ الرقم الأكبر (لتجنب الأصفار أو القيم الفارغة)
-                            current_val = extracted_data[date_val].get(key, 0)
-                            if abs(clean_nums[i]) > abs(current_val):
-                                extracted_data[date_val][key] = clean_nums[i]
-                    break 
-        
-        results = [{'date': d, 'data': data} for d, data in extracted_data.items()]
+                            extracted_data.setdefault(d, {})
+                            # نختار الأكبر مطلقاً لتفادي القيم الفارغة
+                            prev = extracted_data[d].get(key, 0.0)
+                            if abs(clean_nums[i]) > abs(prev):
+                                extracted_data[d][key] = clean_nums[i]
+                    break
+
+        results = [{"date": d, "data": data} for d, data in extracted_data.items()]
         return results, symbol
 
     def _parse_table_style(self, lines):
         """
-        خوارزمية للجداول المنسوخة (Excel / Web)
+        يدعم جدول نصي ملصوق من المتصفح/Excel:
+        - يبحث عن صف يحتوي سنوات/تواريخ
+        - ثم يبحث عن البنود المالية ويربطها بالأعمدة
         """
         try:
-            # تنظيف النص: استبدال المسافات المتعددة بـ Tab لمحاكاة Excel
-            clean_text = "\n".join([re.sub(r' {2,}|\t', ',', line) for line in lines])
-            df = pd.read_csv(io.StringIO(clean_text), header=None, on_bad_lines='skip')
-            
-            # البحث عن سطر التواريخ
+            raw = "\n".join([str(x) for x in lines if str(x).strip()])
+            if not raw.strip():
+                return [], None
+
+            # نحول whitespace/Tab إلى فواصل
+            clean_text = "\n".join([re.sub(r" {2,}|\t", ",", ln) for ln in raw.split("\n")])
+            df = pd.read_csv(io.StringIO(clean_text), header=None, on_bad_lines="skip")
+
+            # 1) find date row
             date_row_idx = -1
-            dates = []
-            
+            dates = []  # [(col_idx, date_str)]
             for idx, row in df.iterrows():
-                row_str = " ".join([str(x) for x in row.values])
-                years = re.findall(r'\b(20\d{2})\b', row_str)
-                if len(years) >= 2:
+                row_vals = [str(x) for x in row.values if str(x).strip() != "nan"]
+                row_str = " ".join(row_vals)
+
+                # years in row?
+                years = re.findall(r"\b(20\d{2})\b", row_str)
+                years = [y for y in years if _is_year_like(y)]
+                if len(set(years)) >= 2:
                     date_row_idx = idx
-                    # استخراج التواريخ بالترتيب من الأعمدة
                     for col_idx, val in enumerate(row.values):
-                        y_match = re.search(r'\b(20\d{2})\b', str(val))
-                        if y_match:
-                            dates.append((col_idx, f"{y_match.group(1)}-12-31"))
+                        s = str(val)
+                        m = re.search(r"\b(20\d{2})\b", s)
+                        if m:
+                            dates.append((col_idx, f"{m.group(1)}-12-31"))
                     break
-            
-            if date_row_idx == -1: return [], self._extract_symbol("\n".join(lines[:10]))
 
-            results_map = {} # {date: {key: val}}
+                # explicit dates
+                if re.search(r"\d{4}-\d{2}-\d{2}", row_str):
+                    date_row_idx = idx
+                    for col_idx, val in enumerate(row.values):
+                        s = str(val)
+                        m = re.search(r"(\d{4}-\d{2}-\d{2})", s)
+                        if m:
+                            dates.append((col_idx, m.group(1)))
+                    break
 
-            # المرور على البيانات
+            if date_row_idx == -1 or not dates:
+                return [], self._extract_symbol("\n".join(lines[:10]))
+
+            results_map = {}  # {date: {key: val}}
+
+            # 2) scan rows after date row
             for idx, row in df.iterrows():
-                if idx <= date_row_idx: continue
-                row_label = str(row[0])
-                
-                for key, patterns in self.mapping.items():
-                    if any(re.search(p, row_label, re.IGNORECASE) for p in patterns):
-                        # وجدنا بند مالي (مثل "Revenue")
-                        for col_idx, date_val in dates:
+                if idx <= date_row_idx:
+                    continue
+                label = str(row.iloc[0]) if len(row) else ""
+                if not label or label == "nan":
+                    continue
+
+                for key, patterns in self._compiled.items():
+                    if any(p.search(label) for p in patterns):
+                        for col_idx, d in dates:
                             if col_idx < len(row):
-                                val = self._clean_number(row[col_idx])
-                                if date_val not in results_map: results_map[date_val] = {}
-                                results_map[date_val][key] = val
+                                v = self._clean_number(row.iloc[col_idx])
+                                results_map.setdefault(d, {})
+                                results_map[d][key] = v
                         break
-            
-            final_res = [{'date': d, 'data': data} for d, data in results_map.items()]
+
+            final_res = [{"date": d, "data": data} for d, data in results_map.items()]
             symbol = self._extract_symbol("\n".join(lines[:10]))
             return final_res, symbol
 
@@ -211,256 +321,692 @@ class FinancialParser:
             return [], None
 
     def process_file_or_text(self, uploaded_file=None, text_input=None):
-        """الواجهة الرئيسية للمعالجة"""
         text = ""
-        
+
         if text_input:
             text = text_input
+
         elif uploaded_file:
-            filename = uploaded_file.name.lower()
+            filename = (uploaded_file.name or "").lower()
             try:
-                if filename.endswith('.pdf'):
-                    if not pdfplumber: return [], None, "مكتبة pdfplumber غير مثبتة."
+                if filename.endswith(".pdf"):
+                    if not pdfplumber:
+                        return [], None, "مكتبة pdfplumber غير مثبتة."
                     with pdfplumber.open(uploaded_file) as pdf:
                         for page in pdf.pages:
-                            text += page.extract_text() + "\n"
-                            
-                elif filename.endswith(('.xlsx', '.xls')):
+                            t = page.extract_text() or ""
+                            text += t + "\n"
+
+                elif filename.endswith((".xlsx", ".xls")):
                     df = pd.read_excel(uploaded_file)
-                    text = df.to_string() # تحويل لجدول نصي
-                    
-                elif filename.endswith('.csv'):
+                    text = df.to_string(index=False)
+
+                elif filename.endswith(".csv"):
                     df = pd.read_csv(uploaded_file)
-                    text = df.to_string()
+                    text = df.to_string(index=False)
+
+                else:
+                    return [], None, "صيغة الملف غير مدعومة."
+
             except Exception as e:
                 return [], None, f"خطأ في قراءة الملف: {e}"
-        
-        if not text: return [], None, "لا يوجد نص للمعالجة"
-        
+
+        if not text.strip():
+            return [], None, "لا يوجد نص للمعالجة"
+
         results, symbol = self._detect_format_and_parse(text)
         return results, symbol, None
 
-# ==============================================================
-# 📥 2. وظائف التخزين والمزامنة
-# ==============================================================
 
-def save_financial_record(symbol, date_str, data, period_type='Annual', source='Manual'):
-    """حفظ البيانات في قاعدة البيانات مع معالجة التكرار"""
+# ==============================================================
+# 💾 2) DB Save / Fetch
+# ==============================================================
+def save_financial_record(symbol, date_str, data, period_type="Annual", source="Manual"):
+    """
+    ✅ إصلاح أسماء الجداول:
+    - financialstatements (lowercase) بدون quotes
+    """
     try:
-        vals = {k: float(data.get(k, 0)) for k in [
-            'revenue', 'net_income', 'total_assets', 'total_liabilities', 
-            'total_equity', 'operating_cash_flow', 'current_assets', 
-            'current_liabilities', 'long_term_debt'
-        ]}
-        
-        if sum(abs(v) for v in vals.values()) == 0: return False
+        symbol = get_ticker_symbol(symbol)
+        date_str = _safe_date_str(date_str)
+        period_type = str(period_type or "Annual").strip().title()
+        source = str(source or "Manual").strip()[:30]
+
+        keys = [
+            "revenue", "net_income",
+            "total_assets", "total_liabilities", "total_equity",
+            "operating_cash_flow",
+            "current_assets", "current_liabilities",
+            "long_term_debt",
+        ]
+
+        vals = {k: _safe_float(data.get(k, 0)) for k in keys}
+
+        if sum(abs(v) for v in vals.values()) == 0:
+            return False
 
         query = """
-            INSERT INTO "FinancialStatements" 
-            (symbol, date, period_type, source, revenue, net_income, total_assets, total_liabilities, 
-             total_equity, operating_cash_flow, current_assets, current_liabilities, long_term_debt)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (symbol, date, period_type) 
-            DO UPDATE SET 
-                revenue=EXCLUDED.revenue, net_income=EXCLUDED.net_income,
-                total_assets=EXCLUDED.total_assets, total_liabilities=EXCLUDED.total_liabilities,
-                total_equity=EXCLUDED.total_equity, operating_cash_flow=EXCLUDED.operating_cash_flow,
-                current_assets=EXCLUDED.current_assets, current_liabilities=EXCLUDED.current_liabilities,
-                long_term_debt=EXCLUDED.long_term_debt, source=EXCLUDED.source;
+            INSERT INTO financialstatements
+            (symbol, date, period_type, source,
+             revenue, net_income,
+             total_assets, total_liabilities, total_equity,
+             operating_cash_flow, current_assets, current_liabilities, long_term_debt)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            ON CONFLICT (symbol, date, period_type)
+            DO UPDATE SET
+                revenue=EXCLUDED.revenue,
+                net_income=EXCLUDED.net_income,
+                total_assets=EXCLUDED.total_assets,
+                total_liabilities=EXCLUDED.total_liabilities,
+                total_equity=EXCLUDED.total_equity,
+                operating_cash_flow=EXCLUDED.operating_cash_flow,
+                current_assets=EXCLUDED.current_assets,
+                current_liabilities=EXCLUDED.current_liabilities,
+                long_term_debt=EXCLUDED.long_term_debt,
+                source=EXCLUDED.source;
         """
-        execute_query(query, (
-            symbol, date_str, period_type, source,
-            vals['revenue'], vals['net_income'], vals['total_assets'], vals['total_liabilities'],
-            vals['total_equity'], vals['operating_cash_flow'], vals['current_assets'],
-            vals['current_liabilities'], vals['long_term_debt']
-        ))
-        return True
+
+        ok = execute_query(
+            query,
+            (
+                symbol, date_str, period_type, source,
+                vals["revenue"], vals["net_income"],
+                vals["total_assets"], vals["total_liabilities"], vals["total_equity"],
+                vals["operating_cash_flow"], vals["current_assets"], vals["current_liabilities"],
+                vals["long_term_debt"],
+            ),
+        )
+        return bool(ok)
     except Exception as e:
         print(f"DB Error: {e}")
         return False
 
-def sync_auto_yahoo(symbol):
+
+def get_stored_financials_df(symbol, period_type="Annual"):
+    """
+    ✅ يرجع DataFrame من financialstatements
+    """
     try:
-        t = yf.Ticker(get_ticker_symbol(symbol))
-        count = 0
-        
-        # منطق المعالجة (نفس الكود السابق لكن مختصر هنا للتوضيح)
-        def _process(df_fin, df_bs, df_cf, p_type):
-            c = 0
-            if df_fin.empty: return 0
-            dates = sorted(list(set(df_fin.columns) | set(df_bs.columns) | set(df_cf.columns)), reverse=True)[:6]
-            for d in dates:
+        symbol = get_ticker_symbol(symbol)
+        period_type = str(period_type or "Annual").strip().title()
+
+        df = fetch_table("financialstatements")
+        if df is None or df.empty:
+            return pd.DataFrame()
+
+        if "symbol" in df.columns:
+            df = df[df["symbol"].astype(str) == symbol]
+        if "period_type" in df.columns:
+            df = df[df["period_type"].astype(str).str.title() == period_type]
+
+        if "date" in df.columns:
+            df["date"] = pd.to_datetime(df["date"], errors="coerce")
+
+        return df.sort_values("date", ascending=False) if "date" in df.columns else df
+    except Exception:
+        return pd.DataFrame()
+
+
+# ==============================================================
+# 🌍 3) External Sources (Analysis / Financial Statements)
+# ==============================================================
+def fetch_financials_from_yahoo(symbol: str) -> dict:
+    """
+    يجلب أحدث سنة (Annual) من Yahoo إذا متاح.
+    يرجع dict للحقول الرئيسية.
+    """
+    sym = get_ticker_symbol(symbol)
+    out = {}
+
+    try:
+        t = yf.Ticker(sym)
+
+        # Prefer annual
+        fin = t.financials if hasattr(t, "financials") else pd.DataFrame()
+        bs = t.balance_sheet if hasattr(t, "balance_sheet") else pd.DataFrame()
+        cf = t.cashflow if hasattr(t, "cashflow") else pd.DataFrame()
+
+        if fin is None:
+            fin = pd.DataFrame()
+        if bs is None:
+            bs = pd.DataFrame()
+        if cf is None:
+            cf = pd.DataFrame()
+
+        # pick latest date across columns
+        dates = sorted(list(set(fin.columns) | set(bs.columns) | set(cf.columns)), reverse=True)
+        if not dates:
+            return {}
+
+        d = dates[0]
+
+        def g(df, key):
+            try:
+                if df is None or df.empty:
+                    return 0.0
+                if key in df.index and d in df.columns:
+                    return _safe_float(df.loc[key, d])
+            except Exception:
+                pass
+            return 0.0
+
+        out = {
+            "date": _safe_date_str(d),
+            "revenue": g(fin, "Total Revenue"),
+            "net_income": g(fin, "Net Income"),
+            "total_assets": g(bs, "Total Assets"),
+            "total_liabilities": g(bs, "Total Liabilities Net Minority Interest"),
+            "total_equity": g(bs, "Total Equity Gross Minority Interest"),
+            "operating_cash_flow": g(cf, "Operating Cash Flow"),
+            "current_assets": g(bs, "Current Assets"),
+            "current_liabilities": g(bs, "Current Liabilities"),
+            "long_term_debt": g(bs, "Long Term Debt"),
+        }
+        return out
+    except Exception:
+        return {}
+
+
+def _fetch_html(url: str, timeout=6) -> str:
+    if not requests:
+        return ""
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=timeout)
+        if r.status_code != 200:
+            return ""
+        return r.text or ""
+    except Exception:
+        return ""
+
+
+def fetch_financials_from_google_finance(symbol: str) -> dict:
+    """
+    ✅ تحليل فقط (قد تتغير الصفحة).
+    نحاول نجمع نص الصفحة ونمرره للـ parser.
+    """
+    sym = get_ticker_symbol(symbol).replace(".SR", "")
+    if not sym.isdigit():
+        return {}
+
+    url = f"https://www.google.com/finance/quote/{sym}:TADAWUL"
+    html = _fetch_html(url, timeout=6)
+    if not html:
+        return {}
+
+    # نحول HTML إلى نص
+    try:
+        soup = BeautifulSoup(html, "html.parser") if BeautifulSoup else None
+        txt = soup.get_text("\n", strip=True) if soup else ""
+    except Exception:
+        txt = ""
+
+    if not txt.strip():
+        return {}
+
+    parser = FinancialParser()
+    results, detected = parser._detect_format_and_parse(txt)
+    if not results:
+        return {}
+
+    # نأخذ أحدث سجل
+    results = sorted(results, key=lambda x: x.get("date", ""), reverse=True)
+    rec = results[0]
+    data = rec.get("data", {}) or {}
+    data["date"] = rec.get("date")
+    data["_source_url"] = url
+    return data
+
+
+def fetch_financials_from_argaam(symbol: str) -> dict:
+    """
+    ✅ تحليل فقط + يمكن تستخدمه كاحتياط للقوائم.
+    صفحات أرقام قد تتغير؛ نجرب best-effort ونمرر النص للـ parser.
+    """
+    s = get_ticker_symbol(symbol).replace(".SR", "")
+    if not s.isdigit():
+        return {}
+
+    # روابط محتملة
+    urls = [
+        f"https://www.argaam.com/en/company/financials/{s}",
+        f"https://www.argaam.com/ar/company/financials/{s}",
+        f"https://www.argaam.com/en/company/stock/overview/{s}",
+        f"https://www.argaam.com/ar/company/stock/overview/{s}",
+    ]
+
+    for url in urls:
+        html = _fetch_html(url, timeout=7)
+        if not html:
+            continue
+        try:
+            soup = BeautifulSoup(html, "html.parser") if BeautifulSoup else None
+            txt = soup.get_text("\n", strip=True) if soup else ""
+        except Exception:
+            txt = ""
+
+        if not txt.strip():
+            continue
+
+        parser = FinancialParser()
+        results, detected = parser._detect_format_and_parse(txt)
+        if results:
+            results = sorted(results, key=lambda x: x.get("date", ""), reverse=True)
+            rec = results[0]
+            data = rec.get("data", {}) or {}
+            data["date"] = rec.get("date")
+            data["_source_url"] = url
+            return data
+
+    return {}
+
+
+def fetch_financials_from_investing(symbol: str) -> dict:
+    """
+    Placeholder آمن — Investing يتغير كثير.
+    الأفضل تعتمد على Copy/Paste من الصفحة داخل النظام (مدعوم بالـ parser).
+    """
+    return {}
+
+
+def fetch_financials_from_tradingview(symbol: str) -> dict:
+    """
+    Placeholder آمن — TradingView أغلبه dynamic.
+    الأفضل تعتمد على Copy/Paste من TradingView داخل النظام (مدعوم).
+    """
+    return {}
+
+
+def sync_auto_multi_sources(symbol: str, prefer="yahoo") -> tuple[bool, str]:
+    """
+    ✅ حسب طلبك:
+    مصادر القوائم/التحليل يمكن تكون:
+    Yahoo / Google Finance / TradingView / Argaam / Investing / Browser paste
+    هنا نسوي مزامنة "أفضل محاولة" بدون كسر.
+
+    *ملاحظة*: لا نعتمد scraping كمصدر وحيد؛ Yahoo هو الأساسي.
+    """
+    symbol = get_ticker_symbol(symbol)
+    sources = []
+
+    if prefer == "yahoo":
+        sources = ["yahoo", "argaam", "google"]
+    else:
+        sources = ["yahoo", "google", "argaam"]
+
+    fetched = None
+    for src in sources:
+        if src == "yahoo":
+            fetched = fetch_financials_from_yahoo(symbol)
+            if fetched:
+                break
+        if src == "argaam":
+            fetched = fetch_financials_from_argaam(symbol)
+            if fetched:
+                break
+        if src == "google":
+            fetched = fetch_financials_from_google_finance(symbol)
+            if fetched:
+                break
+
+    if not fetched:
+        return False, "لم نتمكن من جلب بيانات مالية آلياً. جرّب الرفع/اللصق."
+
+    d = fetched.get("date") or datetime.now().strftime("%Y-12-31")
+    data = {k: fetched.get(k, 0) for k in [
+        "revenue", "net_income",
+        "total_assets", "total_liabilities", "total_equity",
+        "operating_cash_flow", "current_assets", "current_liabilities", "long_term_debt"
+    ]}
+
+    ok = save_financial_record(symbol, d, data, "Annual", f"Auto_{str(src).title()}")
+    return (ok, f"تمت المزامنة من {src} بتاريخ {d}" if ok else "فشل حفظ البيانات بعد الجلب")
+
+
+# ==============================================================
+# ⚡ 4) Yahoo Sync (used by views.py)
+# ==============================================================
+def sync_auto_yahoo(symbol):
+    """
+    ✅ نفس اسم الدالة لتوافق views.py
+    تحسين:
+    - معالجة اختلاف المفاتيح في Yahoo
+    - حفظ Annual + Quarterly (آخر 6 تواريخ)
+    - إذا فشل Yahoo بالكامل: نجرب multi-source (أرقام/قوقل) كاحتياط
+    """
+    symbol = get_ticker_symbol(symbol)
+    try:
+        t = yf.Ticker(symbol)
+
+        def _process(fin, bs, cf, p_type: str):
+            if fin is None:
+                fin = pd.DataFrame()
+            if bs is None:
+                bs = pd.DataFrame()
+            if cf is None:
+                cf = pd.DataFrame()
+
+            if fin.empty and bs.empty and cf.empty:
+                return 0
+
+            dates = sorted(list(set(fin.columns) | set(bs.columns) | set(cf.columns)), reverse=True)[:6]
+            if not dates:
+                return 0
+
+            def g(df, k, d):
                 try:
-                    d_str = d.strftime('%Y-%m-%d')
-                    # دالة مساعدة لجلب القيمة بأمان
-                    def g(df, k): 
-                        if df.empty: return 0
-                        return df.loc[k, d] if k in df.index and d in df.columns else 0
-                    
-                    data = {
-                        'revenue': g(df_fin, 'Total Revenue'),
-                        'net_income': g(df_fin, 'Net Income'),
-                        'total_assets': g(df_bs, 'Total Assets'),
-                        'total_liabilities': g(df_bs, 'Total Liabilities Net Minority Interest'),
-                        'total_equity': g(df_bs, 'Total Equity Gross Minority Interest'),
-                        'operating_cash_flow': g(df_cf, 'Operating Cash Flow'),
-                        'current_assets': g(df_bs, 'Current Assets'),
-                        'current_liabilities': g(df_bs, 'Current Liabilities'),
-                        'long_term_debt': g(df_bs, 'Long Term Debt')
-                    }
-                    if save_financial_record(symbol, d_str, data, p_type, 'Auto_Yahoo'): c += 1
-                except: continue
+                    if df is None or df.empty:
+                        return 0.0
+                    if k in df.index and d in df.columns:
+                        return _safe_float(df.loc[k, d])
+                except Exception:
+                    return 0.0
+                return 0.0
+
+            c = 0
+            for d in dates:
+                d_str = _safe_date_str(d)
+
+                # مفاتيح Yahoo قد تختلف حسب الشركة
+                data = {
+                    "revenue": g(fin, "Total Revenue", d) or g(fin, "Operating Revenue", d),
+                    "net_income": g(fin, "Net Income", d),
+                    "total_assets": g(bs, "Total Assets", d),
+                    "total_liabilities": (
+                        g(bs, "Total Liabilities Net Minority Interest", d)
+                        or g(bs, "Total Liabilities", d)
+                    ),
+                    "total_equity": (
+                        g(bs, "Total Equity Gross Minority Interest", d)
+                        or g(bs, "Total Stockholder Equity", d)
+                        or g(bs, "Stockholders Equity", d)
+                    ),
+                    "operating_cash_flow": g(cf, "Operating Cash Flow", d),
+                    "current_assets": g(bs, "Current Assets", d),
+                    "current_liabilities": g(bs, "Current Liabilities", d),
+                    "long_term_debt": g(bs, "Long Term Debt", d),
+                }
+
+                if save_financial_record(symbol, d_str, data, p_type, "Auto_Yahoo"):
+                    c += 1
+
             return c
 
-        count += _process(t.financials, t.balance_sheet, t.cashflow, 'Annual')
-        count += _process(t.quarterly_financials, t.quarterly_balance_sheet, t.quarterly_cashflow, 'Quarterly')
-        
-        return True, f"تم تحديث {count} سجلات"
-    except Exception as e: return False, str(e)
+        count = 0
+        count += _process(t.financials, t.balance_sheet, t.cashflow, "Annual")
+        count += _process(t.quarterly_financials, t.quarterly_balance_sheet, t.quarterly_cashflow, "Quarterly")
+
+        if count == 0:
+            ok2, msg2 = sync_auto_multi_sources(symbol, prefer="yahoo")
+            if ok2:
+                return True, f"Yahoo لم يعطِ بيانات كافية. {msg2}"
+            return False, "Yahoo لم يعطِ بيانات، ولم تنجح البدائل."
+
+        return True, f"تم تحديث {count} سجلات من Yahoo"
+
+    except Exception as e:
+        ok2, msg2 = sync_auto_multi_sources(symbol, prefer="yahoo")
+        if ok2:
+            return True, f"تعذر Yahoo. {msg2}"
+        return False, str(e)
+
 
 # ==============================================================
-# 📊 3. واجهة المستخدم (The Dashboard UI)
+# 📐 5) Fundamental Ratios (Piotroski + Graham)
 # ==============================================================
-
-def get_stored_financials_df(symbol, period_type='Annual'):
-    try:
-        df = fetch_table("FinancialStatements")
-        if not df.empty:
-            mask = (df['symbol'] == symbol) & (df['period_type'] == period_type)
-            df = df[mask].copy()
-            df['date'] = pd.to_datetime(df['date'])
-            return df.sort_values('date', ascending=False)
-    except: pass
-    return pd.DataFrame()
-
 def get_advanced_fundamental_ratios(symbol):
-    # نفس دالة النسب المالية السابقة (بيتروسكي وجراهام)
-    metrics = {"Fair_Value_Graham": 0.0, "Piotroski_Score": 0, "Financial_Health": "غير متوفر", "Score": 0, "Rating": "N/A", "Opinions": ""}
-    df = get_stored_financials_df(symbol, 'Annual')
-    if df.empty: df = get_stored_financials_df(symbol, 'Quarterly')
-    if df.empty or len(df) < 1: return metrics
-    
+    """
+    مخرجات متوافقة مع views.py:
+    - Piotroski_Score
+    - Fair_Value_Graham
+    - Financial_Health / Rating / Opinions
+    """
+    metrics = {
+        "Fair_Value_Graham": 0.0,
+        "Piotroski_Score": 0,
+        "Financial_Health": "غير متوفر",
+        "Score": 0,
+        "Rating": "N/A",
+        "Opinions": "",
+    }
+
+    symbol = get_ticker_symbol(symbol)
+
+    df = get_stored_financials_df(symbol, "Annual")
+    if df.empty:
+        df = get_stored_financials_df(symbol, "Quarterly")
+    if df.empty:
+        return metrics
+
     curr = df.iloc[0]
     prev = df.iloc[1] if len(df) > 1 else curr
-    
+
     try:
+        # ✅ Piotroski مبسط
         score = 0
-        if curr.get('net_income', 0) > 0: score += 1
-        if curr.get('operating_cash_flow', 0) > 0: score += 1
-        
-        roa_c = curr.get('net_income', 0) / (curr.get('total_assets', 1) or 1)
-        roa_p = prev.get('net_income', 0) / (prev.get('total_assets', 1) or 1)
-        if roa_c > roa_p: score += 1
-        
-        if curr.get('operating_cash_flow', 0) > curr.get('net_income', 0): score += 1
-        if curr.get('long_term_debt', 0) < prev.get('long_term_debt', 0): score += 1
-        
-        metrics['Piotroski_Score'] = min(score + 3, 9)
-        if score >= 5: metrics['Financial_Health'] = "جيد"
-        else: metrics['Financial_Health'] = "هش"
-        
-        # Graham
+        opinions = []
+
+        net_income_c = _safe_float(curr.get("net_income", 0))
+        ocf_c = _safe_float(curr.get("operating_cash_flow", 0))
+        assets_c = _safe_float(curr.get("total_assets", 1)) or 1.0
+
+        net_income_p = _safe_float(prev.get("net_income", 0))
+        assets_p = _safe_float(prev.get("total_assets", 1)) or 1.0
+
+        # 1) profitability
+        if net_income_c > 0:
+            score += 1
+        if ocf_c > 0:
+            score += 1
+
+        roa_c = net_income_c / assets_c
+        roa_p = net_income_p / assets_p
+        if roa_c > roa_p:
+            score += 1
+
+        if ocf_c > net_income_c:
+            score += 1
+
+        # 2) leverage/liquidity
+        ltd_c = _safe_float(curr.get("long_term_debt", 0))
+        ltd_p = _safe_float(prev.get("long_term_debt", 0))
+        if ltd_c < ltd_p:
+            score += 1
+
+        ca_c = _safe_float(curr.get("current_assets", 0))
+        cl_c = _safe_float(curr.get("current_liabilities", 0))
+        ca_p = _safe_float(prev.get("current_assets", 0))
+        cl_p = _safe_float(prev.get("current_liabilities", 0))
+
+        cr_c = ca_c / (cl_c or 1.0)
+        cr_p = ca_p / (cl_p or 1.0)
+        if cr_c > cr_p:
+            score += 1
+
+        # 3) optional (إذا توفر equity/assets)
+        eq_c = _safe_float(curr.get("total_equity", 0))
+        eq_p = _safe_float(prev.get("total_equity", 0))
+        if eq_c > eq_p and eq_c > 0:
+            score += 1
+
+        # نجعلها ضمن 0..9 بإضافة ثابت لطيف مثل كودك
+        piotroski = int(min(max(score + 2, 0), 9))
+        metrics["Piotroski_Score"] = piotroski
+
+        if piotroski >= 7:
+            metrics["Financial_Health"] = "جيد"
+            metrics["Rating"] = "قوي"
+            opinions.append("✅ جودة أرباح/ملاءة جيدة (Piotroski مرتفع)")
+        elif piotroski <= 3:
+            metrics["Financial_Health"] = "هش"
+            metrics["Rating"] = "ضعيف"
+            opinions.append("⚠️ هشاشة مالية محتملة (Piotroski منخفض)")
+        else:
+            metrics["Financial_Health"] = "متوسط"
+            metrics["Rating"] = "متوسط"
+
+        if ocf_c < 0:
+            opinions.append("⚠️ التدفق النقدي التشغيلي سالب")
+
+        # ✅ Graham Value
         try:
-            t = yf.Ticker(get_ticker_symbol(symbol))
-            eps = t.info.get('trailingEps')
-            bvps = t.info.get('bookValue')
-            if eps and bvps and eps > 0 and bvps > 0:
-                metrics['Fair_Value_Graham'] = (22.5 * eps * bvps) ** 0.5
-        except: pass
-        
-        metrics['Score'] = metrics['Piotroski_Score']
-        metrics['Rating'] = metrics['Financial_Health']
-        
-    except: pass
+            t = yf.Ticker(symbol)
+            info = getattr(t, "info", {}) or {}
+            eps = info.get("trailingEps")
+            bvps = info.get("bookValue")
+
+            eps = _safe_float(eps)
+            bvps = _safe_float(bvps)
+
+            if eps > 0 and bvps > 0:
+                metrics["Fair_Value_Graham"] = float((22.5 * eps * bvps) ** 0.5)
+        except Exception:
+            pass
+
+        metrics["Score"] = metrics["Piotroski_Score"]
+        metrics["Opinions"] = " | ".join(opinions)
+
+    except Exception:
+        pass
+
     return metrics
 
-# التوافقية
+
 def get_fundamental_ratios(symbol):
     return get_advanced_fundamental_ratios(symbol)
 
-# === وظائف الأطروحة ===
-def get_thesis(s): 
-    try: df = fetch_table("InvestmentThesis"); return df[df['symbol'] == s].iloc[0] if not df.empty else None
-    except: return None
-
-def save_thesis(s, t, tg, r):
-    execute_query("INSERT INTO InvestmentThesis (symbol, thesis_text, target_price, recommendation) VALUES (%s,%s,%s,%s) ON CONFLICT (symbol) DO UPDATE SET thesis_text=EXCLUDED.thesis_text, target_price=EXCLUDED.target_price, recommendation=EXCLUDED.recommendation", (s,t,float(tg),r))
 
 # ==============================================================
-# 🖥️ واجهة العرض الرئيسية
+# 📝 6) Thesis (DB fixed)
 # ==============================================================
+def get_thesis(symbol):
+    symbol = get_ticker_symbol(symbol)
+    try:
+        df = fetch_table("investmentthesis")
+        if df is None or df.empty:
+            return None
+        sub = df[df["symbol"].astype(str) == symbol]
+        if sub.empty:
+            return None
+        return sub.iloc[0]
+    except Exception:
+        return None
 
+
+def save_thesis(symbol, thesis_text, target_price, recommendation):
+    """
+    ✅ إصلاح الجدول: investmentthesis lowercase بدون quotes
+    """
+    symbol = get_ticker_symbol(symbol)
+    thesis_text = str(thesis_text or "")
+    recommendation = str(recommendation or "Hold")[:20]
+    try:
+        tp = _safe_float(target_price)
+    except Exception:
+        tp = 0.0
+
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    execute_query(
+        """
+        INSERT INTO investmentthesis (symbol, thesis_text, target_price, recommendation, last_updated)
+        VALUES (%s,%s,%s,%s,%s)
+        ON CONFLICT (symbol)
+        DO UPDATE SET
+            thesis_text=EXCLUDED.thesis_text,
+            target_price=EXCLUDED.target_price,
+            recommendation=EXCLUDED.recommendation,
+            last_updated=EXCLUDED.last_updated;
+        """,
+        (symbol, thesis_text, tp, recommendation, today),
+    )
+
+
+# ==============================================================
+# 🖥️ (Optional) Standalone UI (not required by views.py)
+# ==============================================================
 def render_financial_dashboard_ui(symbol):
+    """
+    هذه صفحة مستقلة لو احتجتها.
+    لكن برنامجك الحالي يستخدم UI داخل views.py، فهذه فقط للتوافق.
+    """
     tab_dashboard, tab_data_mgmt = st.tabs(["📊 لوحة التحليل المالي", "⚙️ استيراد البيانات"])
-    
+
     with tab_dashboard:
-        # كود عرض الداشبورد (نفس السابق)
-        ptype = st.radio("نطاق التحليل:", ["Annual", "Quarterly"], horizontal=True, label_visibility="collapsed")
+        ptype = st.radio(
+            "نطاق التحليل:",
+            ["Annual", "Quarterly"],
+            horizontal=True,
+            label_visibility="collapsed",
+            key=f"fin_ptype_inline_{symbol}",
+        )
         df = get_stored_financials_df(symbol, ptype)
+
         if df.empty:
-            st.warning("⚠️ لا توجد بيانات. يرجى الذهاب لتبويب الاستيراد.")
+            st.warning("⚠️ لا توجد بيانات. استخدم تبويب الاستيراد أو التحديث الآلي.")
         else:
             metrics = get_advanced_fundamental_ratios(symbol)
             c1, c2, c3 = st.columns(3)
-            c1.metric("F-Score", f"{metrics['Piotroski_Score']}/9", metrics['Financial_Health'])
-            c2.metric("Graham Value", f"{metrics.get('Fair_Value_Graham', 0):.2f}")
-            c3.write(metrics.get('Opinions', ''))
-            
+            c1.metric("F-Score", f"{metrics['Piotroski_Score']}/9", metrics["Financial_Health"])
+            c2.metric("Graham Value", f"{metrics.get('Fair_Value_Graham', 0):,.2f}" if metrics.get("Fair_Value_Graham") else "N/A")
+            c3.write(metrics.get("Opinions", ""))
+
             try:
                 plot_df = df.copy()
-                plot_df['Year'] = plot_df['date'].dt.strftime('%Y-%m')
-                fig = px.bar(plot_df.sort_values('date'), x='Year', y=['revenue', 'net_income'], barmode='group')
-                st.plotly_chart(fig, use_container_width=True)
-            except: pass
-            
+                if "date" in plot_df.columns:
+                    plot_df["Year"] = plot_df["date"].dt.strftime("%Y-%m")
+                cols = [c for c in ["revenue", "net_income", "operating_cash_flow"] if c in plot_df.columns]
+                if cols:
+                    fig = px.bar(plot_df.sort_values("date"), x="Year", y=cols, barmode="group")
+                    st.plotly_chart(fig, use_container_width=True)
+            except Exception:
+                pass
+
             with st.expander("البيانات التفصيلية"):
                 st.dataframe(df, use_container_width=True)
 
     with tab_data_mgmt:
-        st.markdown("#### 📂 استيراد البيانات المالية")
-        st.info("يدعم النظام: ملفات PDF من تداول، ملفات Excel/CSV، ونسخ الجداول من TradingView/أرقام.")
-        
+        st.info("يدعم: PDF تداول / Excel/CSV / Copy-Paste من المتصفح (TradingView/أرقام/Investing/Google Finance)")
         parser = FinancialParser()
-        
+
         c_up, c_pst = st.columns(2)
-        
         with c_up:
-            uploaded_file = st.file_uploader("رفع ملف (PDF, Excel, CSV)", type=['pdf', 'xlsx', 'xls', 'csv'])
-        
+            uploaded_file = st.file_uploader("رفع ملف (PDF, Excel, CSV)", type=["pdf", "xlsx", "xls", "csv"], key=f"fin_up_{symbol}")
         with c_pst:
-            pasted_text = st.text_area("أو الصق النص هنا", height=100)
-            
-        if st.button("🚀 معالجة البيانات"):
-            with st.spinner("جاري التحليل الذكي..."):
-                results, detected_symbol, err = parser.process_file_or_text(uploaded_file, pasted_text)
-                
+            pasted_text = st.text_area("أو الصق النص هنا", height=120, key=f"fin_paste_{symbol}")
+
+        cbtn1, cbtn2 = st.columns(2)
+        with cbtn1:
+            if st.button("⚡ تحديث آلي (Yahoo + بدائل)", key=f"fin_sync_{symbol}"):
+                ok, msg = sync_auto_yahoo(symbol)
+                (st.success(msg) if ok else st.error(msg))
+
+        with cbtn2:
+            if st.button("🚀 معالجة البيانات", key=f"fin_parse_{symbol}"):
+                with st.spinner("جاري التحليل..."):
+                    results, detected_symbol, err = parser.process_file_or_text(uploaded_file, pasted_text)
+
                 if err:
                     st.error(err)
-                elif not results:
-                    st.warning("لم نتمكن من استخراج بيانات مفيدة. تأكد من صيغة الملف.")
-                else:
-                    st.success(f"تم استخراج {len(results)} سجلات!")
-                    
-                    # التحقق من الرمز
-                    target_symbol = symbol
-                    if detected_symbol and detected_symbol != symbol:
-                        st.warning(f"⚠️ الملف يبدو أنه لشركة {detected_symbol}، وأنت في صفحة {symbol}.")
-                        if st.checkbox(f"استخدام الرمز المكتشف ({detected_symbol})؟", value=True):
-                            target_symbol = detected_symbol
-                    
-                    if not target_symbol:
-                        target_symbol = st.text_input("لم نتمكن من تحديد الشركة، فضلاً أدخل الرمز (مثال: 1120.SR):")
-                    
-                    if target_symbol:
-                        # عرض للمراجعة
-                        preview = pd.DataFrame([{'Date': r['date'], **r['data']} for r in results])
-                        st.write("مراجعة قبل الحفظ:")
-                        st.dataframe(preview)
-                        
-                        if st.button("💾 حفظ في قاعدة البيانات"):
-                            c = 0
-                            for r in results:
-                                if save_financial_record(target_symbol, r['date'], r['data'], 'Annual', 'FileImport'):
-                                    c += 1
-                            st.success(f"تم حفظ {c} سجلات لشركة {target_symbol}")
-                            st.rerun()
+                    return
+                if not results:
+                    st.warning("لم نتمكن من استخراج بيانات مفيدة. جرّب لصق جدول بشكل أوضح.")
+                    return
+
+                st.success(f"تم استخراج {len(results)} سجلات!")
+
+                target_symbol = detected_symbol or get_ticker_symbol(symbol)
+                if detected_symbol and detected_symbol != get_ticker_symbol(symbol):
+                    st.warning(f"⚠️ يبدو أن الملف لشركة {detected_symbol}، وأنت في {symbol}.")
+                    if st.checkbox("استخدم الرمز المكتشف؟", value=True, key=f"fin_use_detect_{symbol}"):
+                        target_symbol = detected_symbol
+
+                preview_df = pd.DataFrame([{"Date": r["date"], **(r["data"] or {})} for r in results])
+                st.dataframe(preview_df, use_container_width=True)
+
+                if st.button("💾 حفظ البيانات", key=f"fin_save_{symbol}"):
+                    saved = 0
+                    for r in results:
+                        if save_financial_record(target_symbol, r["date"], r["data"], "Annual", "File/Paste"):
+                            saved += 1
+                    st.success(f"تم حفظ {saved} سجل/سجلات")
+                    st.rerun()
