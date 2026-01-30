@@ -6,11 +6,12 @@ from security import login_system
 from views import router
 from database import init_db
 
-# اختياري: ستايلات المكوّنات لو عندك inject_component_styles في components.py
+# اختياري: ستايلات/تعريب المكوّنات
 try:
-    from components import inject_component_styles
+    from components import inject_component_styles, inject_streamlit_ar_i18n
 except Exception:
     inject_component_styles = None
+    inject_streamlit_ar_i18n = None
 
 
 # ============================================================
@@ -57,12 +58,40 @@ if not st.session_state["db_initialized"] and not st.session_state["db_init_lock
 # ============================================================
 apply_custom_css()
 
-# ستايلات المكوّنات (اختياري)
+# (اختياري) ستايلات المكوّنات
 if inject_component_styles:
     try:
         inject_component_styles()
     except Exception:
         pass
+
+# ============================================================
+# ✅ Fix: Streamlit placeholders English (Best-effort)
+# ============================================================
+# 1) تعريب DOM لعبارات Streamlit الافتراضية (Choose an option / Search / ...)
+if inject_streamlit_ar_i18n:
+    try:
+        inject_streamlit_ar_i18n(True)
+    except Exception:
+        pass
+
+# 2) CSS إضافي خفيف لتحسين RTL لبعض inputs (بدون كسر)
+st.markdown(
+    """
+    <style>
+      /* اجبار بعض مدخلات streamlit أن تكون RTL */
+      [data-testid="stSelectbox"], [data-testid="stMultiSelect"], [data-testid="stTextInput"]{
+        direction: rtl !important;
+        text-align: right !important;
+      }
+      /* النصوص داخل select/multi غالبًا تكون LTR افتراضيًا */
+      [data-testid="stSelectbox"] * , [data-testid="stMultiSelect"] *{
+        direction: rtl !important;
+      }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
 # ============================================================
 # ✅ Default Page State
