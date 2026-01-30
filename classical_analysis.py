@@ -57,25 +57,21 @@ def _atr(df: pd.DataFrame, n: int = 14) -> pd.Series:
     close = df["Close"].astype(float)
 
     prev_close = close.shift(1)
-    tr = pd.concat([
-        (high - low).abs(),
-        (high - prev_close).abs(),
-        (low - prev_close).abs()
-    ], axis=1).max(axis=1)
-
-    atr = tr.rolling(n).mean()
-    return atr
+    tr = pd.concat(
+        [(high - low).abs(), (high - prev_close).abs(), (low - prev_close).abs()],
+        axis=1,
+    ).max(axis=1)
+    return tr.rolling(n).mean()
 
 
 def _pivot_points(series: pd.Series, left=3, right=3, mode="high"):
     """Return list of (i, value) where i is positional index"""
     if series is None or len(series) < left + right + 3:
         return []
-
     arr = series.values
     pivots = []
     for i in range(left, len(arr) - right):
-        w = arr[i - left: i + right + 1]
+        w = arr[i - left : i + right + 1]
         if mode == "high":
             if arr[i] == np.nanmax(w):
                 pivots.append((i, float(arr[i])))
@@ -86,13 +82,76 @@ def _pivot_points(series: pd.Series, left=3, right=3, mode="high"):
 
 
 # ============================================================
-# ✅ Fibonacci (Swing-based, not max/min)
+# ✅ Zones + Confirmation
 # ============================================================
+def _zone_bounds(level: float, atr_val: float, close: float):
+    """
+    Zone width:
+    - uses ATR as primary (0.5 ATR)
+    - and price percent as fallback (0.5%)
+    """
+    lv = float(level)
+    c = float(close) if close and close > 0 else lv
+    w_atr = 0.5 * float(atr_val) if atr_val and atr_val > 0 else 0.0
+    w_pct = 0.005 * c
+    w = max(w_atr, w_pct, 0.0)
+    return lv - w, lv + w, w
+
+
+def _vol_confirm(df: pd.DataFrame, factor=1.2):
+    if df is None or df.empty:
+        return 0.0, 0.0, False
+    v = float(df["Volume"].iloc[-1]) if "Volume" in df.columns else 0.0
+    vma = (
+        float(df["Volume"].rolling(20).mean().iloc[-1])
+        if "Volume" in df.columns and len(df) >= 20
+        else 0.0
+    )
+    ok = (vma > 0) and (v >= factor * vma)
+    return v, vma, ok
+
+
+def _cross_up(close, prev_close, level):
+    return (close > level) and (prev_close <= level)
+
+
+def _cross_down(close, prev_close, level):
+    return (close < level) and (prev_close >= level)
+
+
+# ============================================================
+# ✅ Fibonacci (Swing-based)
+# ============================================================
+def _fib_from_range(swing_low: float, swing_high: float, direction="up"):
+    lo = float(swing_low)
+    hi = float(swing_high)
+    diff = hi - lo
+    if diff == 0:
+        return {}
+
+    if direction == "up":
+        return {
+            "Fib 100% (Top)": hi,
+            "Fib 78.6%": hi - (0.214 * diff),
+            "Fib 61.8% (Golden)": hi - (0.382 * diff),
+            "Fib 50%": hi - (0.5 * diff),
+            "Fib 38.2%": hi - (0.618 * diff),
+            "Fib 23.6%": hi - (0.764 * diff),
+            "Fib 0% (Bottom)": lo,
+        }
+    else:
+        return {
+            "Fib 100% (Bottom)": lo,
+            "Fib 78.6%": lo + (0.214 * (hi - lo)),
+            "Fib 61.8% (Golden)": lo + (0.382 * (hi - lo)),
+            "Fib 50%": lo + (0.5 * (hi - lo)),
+            "Fib 38.2%": lo + (0.618 * (hi - lo)),
+            "Fib 23.6%": lo + (0.764 * (hi - lo)),
+            "Fib 0% (Top)": hi,
+        }
+
+
 def calculate_swing_fibonacci_levels(df: pd.DataFrame, left=3, right=3):
-    """
-    يبني فيبوناتشي على آخر موجة Swing (آخر قاع/قمة واضحين).
-    يرجع: dict(level_name -> price), meta
-    """
     if df is None or len(df) < 60:
         return {}, {"ok": False, "reason": "not enough data"}
 
@@ -103,26 +162,23 @@ def calculate_swing_fibonacci_levels(df: pd.DataFrame, left=3, right=3):
     pl = _pivot_points(low, left=left, right=right, mode="low")
 
     if not ph or not pl:
-        # fallback بسيط
         hh = float(high.tail(120).max())
         ll = float(low.tail(120).min())
         if hh <= ll:
             return {}, {"ok": False, "reason": "bad range"}
-        return _fib_from_range(ll, hh, direction="up"), {"ok": True, "fallback": True, "swing_low": ll, "swing_high": hh}
+        return (
+            _fib_from_range(ll, hh, direction="up"),
+            {"ok": True, "fallback": True, "swing_low": ll, "swing_high": hh, "direction": "up"},
+        )
 
-    # pick last pivot high/low
     last_hi_i, last_hi = ph[-1]
     last_lo_i, last_lo = pl[-1]
 
-    # Determine last impulse direction using which came later
     if last_lo_i < last_hi_i:
-        # impulse up: low -> high
-        swing_low, swing_high = last_lo, last_hi
-        direction = "up"
+        swing_low, swing_high, direction = last_lo, last_hi, "up"
     else:
-        # impulse down: high -> low
-        swing_low, swing_high = last_lo, last_hi
-        direction = "down"
+        # آخر حركة ممكن تكون هبوط (نخلي الاتجاه down للتصحيح فوق القاع)
+        swing_low, swing_high, direction = last_lo, last_hi, "down"
 
     if swing_high == swing_low:
         return {}, {"ok": False, "reason": "flat"}
@@ -136,42 +192,6 @@ def calculate_swing_fibonacci_levels(df: pd.DataFrame, left=3, right=3):
         "swing_high": float(swing_high),
     }
     return levels, meta
-
-
-def _fib_from_range(swing_low: float, swing_high: float, direction="up"):
-    """
-    Standard retracement levels:
-    0, 23.6, 38.2, 50, 61.8, 78.6, 100
-    """
-    lo = float(swing_low)
-    hi = float(swing_high)
-    diff = hi - lo
-    if diff == 0:
-        return {}
-
-    ratios = [0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0]
-    out = {}
-
-    if direction == "up":
-        # from low to high, retracements are below top
-        out["Fib 100% (Top)"] = hi
-        out["Fib 78.6%"] = hi - (0.214 * diff)   # (1 - 0.786)=0.214
-        out["Fib 61.8% (Golden)"] = hi - (0.382 * diff)
-        out["Fib 50%"] = hi - (0.5 * diff)
-        out["Fib 38.2%"] = hi - (0.618 * diff)
-        out["Fib 23.6%"] = hi - (0.764 * diff)
-        out["Fib 0% (Bottom)"] = lo
-    else:
-        # impulse down: high to low, retracements are above bottom
-        out["Fib 100% (Bottom)"] = lo
-        out["Fib 78.6%"] = lo + (0.214 * (hi - lo))
-        out["Fib 61.8% (Golden)"] = lo + (0.382 * (hi - lo))
-        out["Fib 50%"] = lo + (0.5 * (hi - lo))
-        out["Fib 38.2%"] = lo + (0.618 * (hi - lo))
-        out["Fib 23.6%"] = lo + (0.764 * (hi - lo))
-        out["Fib 0% (Top)"] = hi
-
-    return out
 
 
 # ============================================================
@@ -222,27 +242,18 @@ def _get_last_completed_ohlc(df: pd.DataFrame, timeframe: str):
 
     dfx = df.copy()
 
-    # We'll exclude "today" candle for daily pivots if market candle not closed.
-    # safest: always use the last *completed* candle -> take -2 if last index is today
     if timeframe == "Daily":
         if len(dfx) < 2:
             return None
-        last = dfx.iloc[-1]
-        prev = dfx.iloc[-2]
-
-        # if last candle is same date as "now" (server timezone unknown), still safest to use prev
-        # we simply use prev candle for daily pivots always.
-        use = prev
+        use = dfx.iloc[-2]  # أمس المكتمل
         ts = str(dfx.index[-2].date()) if isinstance(dfx.index, pd.DatetimeIndex) else "prev"
         return {"H": float(use["High"]), "L": float(use["Low"]), "C": float(use["Close"]), "O": float(use["Open"]), "ts": ts}
 
     if timeframe == "Weekly":
-        # resample to weeks ending Friday for Tadawul (approx)
         wk = dfx.resample("W-FRI").agg({"Open": "first", "High": "max", "Low": "min", "Close": "last", "Volume": "sum"})
         wk.dropna(subset=["Open", "High", "Low", "Close"], inplace=True)
         if len(wk) < 2:
             return None
-        # last full week is wk.iloc[-2]
         use = wk.iloc[-2]
         ts = str(wk.index[-2].date())
         return {"H": float(use["High"]), "L": float(use["Low"]), "C": float(use["Close"]), "O": float(use["Open"]), "ts": ts}
@@ -259,51 +270,79 @@ def _get_last_completed_ohlc(df: pd.DataFrame, timeframe: str):
     return None
 
 
+def _calc_pivots_for_tf(df: pd.DataFrame, tf: str, pivot_type: str):
+    src = _get_last_completed_ohlc(df, tf)
+    if not src:
+        return {}, None
+    H, L, C, O = src["H"], src["L"], src["C"], src["O"]
+    if pivot_type == "Standard":
+        return pivot_standard(H, L, C), src
+    if pivot_type == "Camarilla":
+        return pivot_camarilla(H, L, C), src
+    return pivot_woodie(H, L, C, O), src
+
+
 # ============================================================
-# ✅ Zones + Breakout confirmation (ATR + Volume)
+# ✅ Auto Support/Resistance (Clustered from pivots)
 # ============================================================
-def _zone_bounds(level: float, atr_val: float, close: float):
+def _cluster_levels(levels: list[float], tol: float):
     """
-    Zone width:
-    - uses ATR as primary (0.5 ATR)
-    - and price percent as fallback (0.5%)
+    يجمع المستويات المتقاربة ضمن tol (سعر).
+    يرجع قائمة مستويات "ممثلة" (متوسط المجموعة).
     """
-    lv = float(level)
-    c = float(close) if close and close > 0 else lv
-    w_atr = 0.5 * float(atr_val) if atr_val and atr_val > 0 else 0.0
-    w_pct = 0.005 * c
-    w = max(w_atr, w_pct, 0.0)
-    return lv - w, lv + w, w
+    if not levels:
+        return []
+    lv = sorted([float(x) for x in levels if np.isfinite(x)])
+    clusters = []
+    cur = [lv[0]]
+    for x in lv[1:]:
+        if abs(x - np.mean(cur)) <= tol:
+            cur.append(x)
+        else:
+            clusters.append(float(np.mean(cur)))
+            cur = [x]
+    clusters.append(float(np.mean(cur)))
+    return clusters
 
 
-def _vol_confirm(df: pd.DataFrame, factor=1.2):
-    if df is None or df.empty:
-        return 0.0, 0.0, False
-    v = float(df["Volume"].iloc[-1]) if "Volume" in df.columns else 0.0
-    vma = float(df["Volume"].rolling(20).mean().iloc[-1]) if "Volume" in df.columns and len(df) >= 20 else 0.0
-    ok = (vma > 0) and (v >= factor * vma)
-    return v, vma, ok
+def auto_support_resistance_levels(df: pd.DataFrame, lookback=220, left=3, right=3, max_levels=10):
+    """
+    يطلع مستويات دعم/مقاومة من pivot highs/lows ويعمل clustering لتقليل الضوضاء.
+    """
+    if df is None or df.empty or len(df) < max(80, left + right + 10):
+        return [], []
 
+    d = df.tail(int(lookback)).copy()
+    high = d["High"].astype(float)
+    low = d["Low"].astype(float)
 
-def _cross_up(close, prev_close, level):
-    return (close > level) and (prev_close <= level)
+    ph = _pivot_points(high, left=left, right=right, mode="high")
+    pl = _pivot_points(low, left=left, right=right, mode="low")
 
+    res = [p[1] for p in ph]
+    sup = [p[1] for p in pl]
 
-def _cross_down(close, prev_close, level):
-    return (close < level) and (prev_close >= level)
+    atr_last = float(_atr(d, 14).iloc[-1]) if len(d) >= 20 else 0.0
+    close_last = float(d["Close"].iloc[-1])
+    tol = max(0.35 * atr_last, 0.004 * close_last)  # tolerance
+
+    res_c = _cluster_levels(res, tol=tol)[-max_levels:]
+    sup_c = _cluster_levels(sup, tol=tol)[-max_levels:]
+
+    return sup_c, res_c
 
 
 # ============================================================
 # 🏛️ MAIN UI
 # ============================================================
 def render_classical_analysis(symbol: str):
-    st.markdown("### 🏛️ التحليل الكلاسيكي المطوّر (Fib Swing + Pivot + Zones + ATR + Volume)")
+    st.markdown("### 🏛️ التحليل الكلاسيكي المطوّر (Multi-Pivots + Swing Fib + Auto S/R + Zones + ATR/Volume)")
 
     df = get_chart_history(symbol, period="2y", interval="1d")
     df = _ensure_ohlcv(df)
 
-    if df.empty or len(df) < 120:
-        st.warning("بيانات غير كافية (نحتاج على الأقل ~120 يوم).")
+    if df.empty or len(df) < 150:
+        st.warning("بيانات غير كافية (نحتاج تقريباً 150 يوم أو أكثر).")
         return
 
     # Indicators
@@ -316,75 +355,94 @@ def render_classical_analysis(symbol: str):
     last_atr = float(df["ATR14"].iloc[-1]) if not pd.isna(df["ATR14"].iloc[-1]) else 0.0
     last_sma200 = float(df["SMA200"].iloc[-1]) if not pd.isna(df["SMA200"].iloc[-1]) else np.nan
 
-    # UI controls
-    c1, c2, c3, c4 = st.columns([1.2, 1.2, 1.2, 1.4])
-    pivot_type = c1.selectbox("Pivot Type", ["Standard", "Camarilla", "Woodie"], index=0)
-    pivot_tf = c2.selectbox("Pivot Timeframe", ["Daily", "Weekly", "Monthly"], index=0)
-    fib_sens = c3.selectbox("Swing Sensitivity", ["3", "5", "7"], index=0)
-    show_zones = c4.checkbox("إظهار Zones بدل Lines", value=True)
+    # --------------------------------------------------------
+    # Controls
+    # --------------------------------------------------------
+    colA, colB, colC, colD = st.columns([1.25, 1.25, 1.25, 1.25])
+    pivot_type = colA.selectbox("Pivot Type", ["Standard", "Camarilla", "Woodie"], index=0)
+    show_zones = colB.checkbox("Zones بدل Lines", value=True)
+    show_fib = colC.checkbox("إظهار Fibonacci Swing", value=True)
+    show_sr = colD.checkbox("إظهار Auto Support/Resistance", value=True)
 
-    # ----------------------------
-    # 1) Pivots (Daily/Weekly/Monthly)
-    # ----------------------------
-    piv_src = _get_last_completed_ohlc(df, pivot_tf)
-    pivots = {}
-    piv_label = ""
-    if piv_src:
-        H, L, C, O = piv_src["H"], piv_src["L"], piv_src["C"], piv_src["O"]
-        piv_label = piv_src["ts"]
-        if pivot_type == "Standard":
-            pivots = pivot_standard(H, L, C)
-        elif pivot_type == "Camarilla":
-            pivots = pivot_camarilla(H, L, C)
-        else:
-            pivots = pivot_woodie(H, L, C, O)
+    colE, colF, colG, colH = st.columns([1.25, 1.25, 1.25, 1.25])
+    show_daily = colE.checkbox("Daily Pivots", value=True)
+    show_weekly = colF.checkbox("Weekly Pivots", value=True)
+    show_monthly = colG.checkbox("Monthly Pivots", value=False)
+    fib_sens = colH.selectbox("Swing Sensitivity", ["3", "5", "7"], index=0)
 
-    # ----------------------------
-    # 2) Swing Fibonacci
-    # ----------------------------
-    left = right = int(fib_sens)
-    fibs, fib_meta = calculate_swing_fibonacci_levels(df, left=left, right=right)
+    # --------------------------------------------------------
+    # Compute Pivots (multi)
+    # --------------------------------------------------------
+    pivots_pack = []  # list of dict: {tf, pivots, src}
+    if show_daily:
+        p, src = _calc_pivots_for_tf(df, "Daily", pivot_type)
+        if p and src:
+            pivots_pack.append({"tf": "Daily", "pivots": p, "src": src})
+    if show_weekly:
+        p, src = _calc_pivots_for_tf(df, "Weekly", pivot_type)
+        if p and src:
+            pivots_pack.append({"tf": "Weekly", "pivots": p, "src": src})
+    if show_monthly:
+        p, src = _calc_pivots_for_tf(df, "Monthly", pivot_type)
+        if p and src:
+            pivots_pack.append({"tf": "Monthly", "pivots": p, "src": src})
 
-    # ----------------------------
-    # 3) Chart
-    # ----------------------------
-    plot_df = df.tail(140).copy()  # enough context
+    # --------------------------------------------------------
+    # Fibonacci Swing
+    # --------------------------------------------------------
+    fibs, fib_meta = ({}, {})
+    if show_fib:
+        left = right = int(fib_sens)
+        fibs, fib_meta = calculate_swing_fibonacci_levels(df, left=left, right=right)
+
+    # --------------------------------------------------------
+    # Auto S/R
+    # --------------------------------------------------------
+    supports, resistances = ([], [])
+    if show_sr:
+        supports, resistances = auto_support_resistance_levels(df, lookback=240, left=3, right=3, max_levels=10)
+
+    # --------------------------------------------------------
+    # Chart
+    # --------------------------------------------------------
+    plot_df = df.tail(160).copy()
 
     fig = go.Figure()
-    fig.add_trace(go.Candlestick(
-        x=plot_df.index,
-        open=plot_df["Open"], high=plot_df["High"],
-        low=plot_df["Low"], close=plot_df["Close"],
-        name="السعر"
-    ))
+    fig.add_trace(
+        go.Candlestick(
+            x=plot_df.index,
+            open=plot_df["Open"],
+            high=plot_df["High"],
+            low=plot_df["Low"],
+            close=plot_df["Close"],
+            name="السعر",
+        )
+    )
 
-    # Add SMA200 for trend filter visibility
+    # SMA200
     if not np.isnan(last_sma200):
-        fig.add_trace(go.Scatter(
-            x=plot_df.index, y=plot_df["SMA200"],
-            mode="lines", name="SMA200",
-            line=dict(width=2, color="#1f77b4")
-        ))
+        fig.add_trace(
+            go.Scatter(
+                x=plot_df.index,
+                y=plot_df["SMA200"],
+                mode="lines",
+                name="SMA200",
+                line=dict(width=2, color="#1f77b4"),
+            )
+        )
 
-    # Fib levels as lines/zones
-    if fibs:
+    # -------- Fib levels
+    if show_fib and fibs:
         for name, level in fibs.items():
             y = float(level)
             lo, hi, w = _zone_bounds(y, last_atr, last_close)
 
-            # colors
             if "Golden" in name:
-                color = "gold"
-                width = 2
-                dash = "solid"
+                color, width, dash = "gold", 2, "solid"
             elif "Top" in name or "Bottom" in name:
-                color = "gray"
-                width = 1
-                dash = "dot"
+                color, width, dash = "gray", 1, "dot"
             else:
-                color = "#4c78a8"
-                width = 1
-                dash = "dot"
+                color, width, dash = "#4c78a8", 1, "dot"
 
             if show_zones:
                 fig.add_hrect(
@@ -402,12 +460,24 @@ def render_classical_analysis(symbol: str):
                     annotation_position="top left"
                 )
 
-    # Pivot levels lines/zones
-    if pivots:
-        # ordered display
-        pivot_keys = [k for k in ["R4", "R3", "R2", "R1", "PP", "S1", "S2", "S3", "S4"] if k in pivots]
-        for k in pivot_keys:
-            y = float(pivots[k])
+    # -------- Pivots (multi TF) with different opacity
+    tf_style = {
+        "Daily": {"opacity": 0.08, "dash": "dashdot"},
+        "Weekly": {"opacity": 0.10, "dash": "dash"},
+        "Monthly": {"opacity": 0.12, "dash": "solid"},
+    }
+
+    for pack in pivots_pack:
+        tf = pack["tf"]
+        piv = pack["pivots"]
+        src = pack["src"]
+        dash = tf_style.get(tf, {}).get("dash", "dash")
+        op = tf_style.get(tf, {}).get("opacity", 0.09)
+        ts = src.get("ts", "")
+
+        order = [k for k in ["R4", "R3", "R2", "R1", "PP", "S1", "S2", "S3", "S4"] if k in piv]
+        for k in order:
+            y = float(piv[k])
             lo, hi, w = _zone_bounds(y, last_atr, last_close)
 
             if k.startswith("R"):
@@ -417,11 +487,12 @@ def render_classical_analysis(symbol: str):
             else:
                 color = "#000000"
 
-            label = f"{pivot_tf} {pivot_type} {k} ({piv_label})"
+            label = f"{tf} {pivot_type} {k} ({ts})"
+
             if show_zones:
                 fig.add_hrect(
                     y0=lo, y1=hi,
-                    fillcolor=color, opacity=0.08,
+                    fillcolor=color, opacity=op,
                     line_width=0,
                     annotation_text=label,
                     annotation_position="bottom right"
@@ -429,25 +500,45 @@ def render_classical_analysis(symbol: str):
             else:
                 fig.add_hline(
                     y=y,
-                    line_dash="dashdot", line_color=color, line_width=1,
+                    line_dash=dash, line_color=color, line_width=1,
                     annotation_text=f"{label}: {y:.2f}",
                     annotation_position="bottom right"
                 )
 
+    # -------- Auto S/R
+    if show_sr:
+        # draw as thinner zones/lines to avoid clutter
+        for lvl in supports:
+            y = float(lvl)
+            lo, hi, w = _zone_bounds(y, last_atr, last_close)
+            if show_zones:
+                fig.add_hrect(y0=lo, y1=hi, fillcolor="#2ca02c", opacity=0.06, line_width=0,
+                              annotation_text=f"Auto Support {y:.2f}", annotation_position="bottom left")
+            else:
+                fig.add_hline(y=y, line_dash="dot", line_color="#2ca02c", line_width=1)
+
+        for lvl in resistances:
+            y = float(lvl)
+            lo, hi, w = _zone_bounds(y, last_atr, last_close)
+            if show_zones:
+                fig.add_hrect(y0=lo, y1=hi, fillcolor="#d62728", opacity=0.06, line_width=0,
+                              annotation_text=f"Auto Resistance {y:.2f}", annotation_position="top left")
+            else:
+                fig.add_hline(y=y, line_dash="dot", line_color="#d62728", line_width=1)
+
     fig.update_layout(
         title=f"خريطة المستويات لـ {symbol}",
-        height=520,
+        height=560,
         xaxis_rangeslider_visible=False,
         margin=dict(l=10, r=10, t=30, b=10),
-        hovermode="x unified"
+        hovermode="x unified",
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    # ----------------------------
-    # 4) Dashboard numbers
-    # ----------------------------
+    # --------------------------------------------------------
+    # Summary Cards
+    # --------------------------------------------------------
     st.markdown("#### 🔢 ملخص سريع")
-
     trend_is_bull = False
     trend_note = "غير متاح"
     if not np.isnan(last_sma200):
@@ -460,69 +551,82 @@ def render_classical_analysis(symbol: str):
     d1.metric("السعر الحالي", f"{last_close:.2f}")
     d2.metric("Trend Filter", trend_note)
     d3.metric("ATR(14)", f"{last_atr:.3f}" if last_atr > 0 else "N/A")
-    d4.metric("Volume Confirm", "✅ قوي" if vol_ok else ("⚠️ ضعيف" if vma > 0 else "N/A"))
+    d4.metric("تأكيد الحجم", "✅ قوي" if vol_ok else ("⚠️ ضعيف" if vma > 0 else "N/A"))
 
-    # ----------------------------
-    # 5) Intelligent verdict (Scenario-based)
-    # ----------------------------
+    # --------------------------------------------------------
+    # Verdict: Two scenarios using nearest key levels
+    # --------------------------------------------------------
     st.markdown("---")
     st.markdown("### 🧠 الخلاصة (سيناريوهين + فلترة الاتجاه + تأكيد الحجم)")
 
-    # Choose key pivot levels for scenarios
-    pp = float(pivots.get("PP", np.nan)) if pivots else np.nan
-    r1 = float(pivots.get("R1", np.nan)) if pivots else np.nan
-    s1 = float(pivots.get("S1", np.nan)) if pivots else np.nan
-
-    # Nearest fib level
-    fib_msg = ""
-    if fibs:
+    # Nearest fib info
+    if show_fib and fibs:
         closest_name, closest_lvl = min(fibs.items(), key=lambda x: abs(float(x[1]) - last_close))
         lo, hi, w = _zone_bounds(float(closest_lvl), last_atr, last_close)
         if lo <= last_close <= hi:
-            fib_msg = f"💡 السعر داخل Zone قرب **{closest_name}** ({float(closest_lvl):.2f}) | سماحية≈{w:.2f}"
+            st.info(f"💡 السعر داخل Zone قرب **{closest_name}** ({float(closest_lvl):.2f}) | سماحية≈{w:.2f}")
         else:
-            fib_msg = f"📌 أقرب فيبو: **{closest_name}** ({float(closest_lvl):.2f})"
+            st.info(f"📌 أقرب فيبو: **{closest_name}** ({float(closest_lvl):.2f})")
 
-    if fib_msg:
-        st.info(fib_msg)
+    # Pick a primary pivot set for scenarios:
+    # priority: Weekly -> Daily -> Monthly (because weekly levels are usually more meaningful)
+    primary = None
+    for want in ["Weekly", "Daily", "Monthly"]:
+        for pack in pivots_pack:
+            if pack["tf"] == want:
+                primary = pack
+                break
+        if primary:
+            break
 
-    # Pivot bias (but filtered)
-    if not np.isnan(pp):
-        if last_close > pp:
-            raw_bias = "إيجابي فوق Pivot"
-        else:
-            raw_bias = "سلبي تحت Pivot"
+    # Determine scenario levels (prefer pivot R1/S1, else auto SR, else fib)
+    scen_up_name, scen_up = ("-", np.nan)
+    scen_dn_name, scen_dn = ("-", np.nan)
 
-        # Trend filter adjustment
-        if trend_note != "غير متاح":
-            if (last_close > pp) and (not trend_is_bull):
-                st.warning("⚠️ Pivot إيجابي لكن Trend العام هابط (تفضيل مضاربة/ارتداد بحذر).")
-            elif (last_close < pp) and (trend_is_bull):
-                st.warning("⚠️ Pivot سلبي لكن Trend العام صاعد (قد يكون تصحيح داخل ترند صاعد).")
-            else:
-                st.success(f"✅ اتجاه Pivot: {raw_bias}")
-        else:
-            st.info(f"Pivot Bias: {raw_bias}")
+    if primary and primary.get("pivots"):
+        p = primary["pivots"]
+        if "R1" in p:
+            scen_up_name, scen_up = (f"{primary['tf']} R1", float(p["R1"]))
+        if "S1" in p:
+            scen_dn_name, scen_dn = (f"{primary['tf']} S1", float(p["S1"]))
 
-    # Scenario levels: prefer R1/S1; if missing, fall back to closest fib zones
-    if np.isnan(r1) or np.isnan(s1):
-        # fallback: pick two fib levels around price
-        fb = sorted([(k, float(v)) for k, v in (fibs or {}).items()], key=lambda x: x[1])
+    # fallback to auto SR
+    if np.isnan(scen_up) and resistances:
+        # nearest resistance above price
+        above_res = sorted([x for x in resistances if x > last_close])
+        if above_res:
+            scen_up_name, scen_up = ("Auto Resistance", float(above_res[0]))
+
+    if np.isnan(scen_dn) and supports:
+        below_sup = sorted([x for x in supports if x < last_close])
+        if below_sup:
+            scen_dn_name, scen_dn = ("Auto Support", float(below_sup[-1]))
+
+    # fallback to fib
+    if (np.isnan(scen_up) or np.isnan(scen_dn)) and fibs:
+        fb = sorted([(k, float(v)) for k, v in fibs.items()], key=lambda x: x[1])
         above = [x for x in fb if x[1] > last_close]
         below = [x for x in fb if x[1] < last_close]
-        r_level = above[0] if above else None
-        s_level = below[-1] if below else None
-        scen_up_name, scen_up = (r_level[0], r_level[1]) if r_level else ("-", np.nan)
-        scen_dn_name, scen_dn = (s_level[0], s_level[1]) if s_level else ("-", np.nan)
-    else:
-        scen_up_name, scen_up = ("R1", r1)
-        scen_dn_name, scen_dn = ("S1", s1)
+        if np.isnan(scen_up) and above:
+            scen_up_name, scen_up = (above[0][0], above[0][1])
+        if np.isnan(scen_dn) and below:
+            scen_dn_name, scen_dn = (below[-1][0], below[-1][1])
 
-    # Breakout confirmation logic
+    # Trend/pivot conflict notes
+    if primary and primary.get("pivots") and "PP" in primary["pivots"]:
+        pp = float(primary["pivots"]["PP"])
+        if not np.isnan(last_sma200):
+            if (last_close > pp) and (not trend_is_bull):
+                st.warning("⚠️ فوق Pivot لكن تحت SMA200: الأفضل مضاربة/ارتداد بحذر (احتمال كسر كاذب).")
+            elif (last_close < pp) and trend_is_bull:
+                st.warning("⚠️ تحت Pivot لكن فوق SMA200: قد يكون تصحيح داخل ترند صاعد.")
+            else:
+                st.success("✅ Pivot و Trend متوافقين (قراءة أنظف).")
+
+    # Break confirmations
     up_break = (not np.isnan(scen_up)) and _cross_up(last_close, prev_close, float(scen_up))
     dn_break = (not np.isnan(scen_dn)) and _cross_down(last_close, prev_close, float(scen_dn))
 
-    # Scenario blocks
     cA, cB = st.columns(2)
 
     with cA:
@@ -532,22 +636,28 @@ def render_classical_analysis(symbol: str):
         else:
             lo, hi, w = _zone_bounds(float(scen_up), last_atr, last_close)
             st.write(f"- مستوى الاختراق: **{scen_up_name} = {float(scen_up):.2f}** (Zone ±{w:.2f})")
-            if up_break:
-                if vol_ok:
-                    st.success("✅ تم الاختراق + حجم مؤكد (أقوى احتمال استمرار).")
-                else:
-                    st.warning("⚠️ تم الاختراق لكن بدون تأكيد حجم قوي (احتمال كسر كاذب).")
+            if up_break and vol_ok:
+                st.success("✅ اختراق + حجم مؤكد (إشارة أقوى لاستمرار).")
+            elif up_break and not vol_ok:
+                st.warning("⚠️ اختراق بدون حجم قوي (راقب الكسر الكاذب).")
             else:
                 st.info("📌 لم يحدث اختراق مؤكد بعد (انتظر إغلاق واضح فوق المستوى).")
 
-            # Targets: next pivot R2 (if exists) or next fib above
-            target = pivots.get("R2") if pivots and "R2" in pivots else None
-            if target is None and fibs:
-                above_lvls = sorted([float(v) for v in fibs.values() if float(v) > last_close])
-                target = above_lvls[1] if len(above_lvls) > 1 else (above_lvls[0] if above_lvls else None)
+            # Target: next resistance from pivots/autoSR/fib
+            target = None
+            if primary and "R2" in primary.get("pivots", {}):
+                target = float(primary["pivots"]["R2"])
+            elif resistances:
+                above_res = sorted([x for x in resistances if x > float(scen_up)])
+                if above_res:
+                    target = float(above_res[0])
+            elif fibs:
+                above_lvls = sorted([float(v) for v in fibs.values() if float(v) > float(scen_up)])
+                if above_lvls:
+                    target = float(above_lvls[0])
 
             if target is not None:
-                st.write(f"- هدف محتمل: **{float(target):.2f}**")
+                st.write(f"- هدف محتمل: **{target:.2f}**")
             st.caption("Invalidation: رجوع وإغلاق تحت Zone الاختراق.")
 
     with cB:
@@ -557,26 +667,35 @@ def render_classical_analysis(symbol: str):
         else:
             lo, hi, w = _zone_bounds(float(scen_dn), last_atr, last_close)
             st.write(f"- مستوى الكسر: **{scen_dn_name} = {float(scen_dn):.2f}** (Zone ±{w:.2f})")
-            if dn_break:
-                if vol_ok:
-                    st.error("⛔ تم الكسر + حجم مؤكد (أقوى احتمال استمرار هبوط).")
-                else:
-                    st.warning("⚠️ تم الكسر لكن بدون تأكيد حجم قوي (قد يكون كسر كاذب).")
+            if dn_break and vol_ok:
+                st.error("⛔ كسر + حجم مؤكد (إشارة أقوى لاستمرار هبوط).")
+            elif dn_break and not vol_ok:
+                st.warning("⚠️ كسر بدون حجم قوي (راقب الكسر الكاذب).")
             else:
                 st.info("📌 لم يحدث كسر مؤكد بعد (انتظر إغلاق واضح تحت المستوى).")
 
-            # Targets: next pivot S2 (if exists) or next fib below
-            target = pivots.get("S2") if pivots and "S2" in pivots else None
-            if target is None and fibs:
-                below_lvls = sorted([float(v) for v in fibs.values() if float(v) < last_close])
-                target = below_lvls[-2] if len(below_lvls) > 1 else (below_lvls[-1] if below_lvls else None)
+            # Target: next support from pivots/autoSR/fib
+            target = None
+            if primary and "S2" in primary.get("pivots", {}):
+                target = float(primary["pivots"]["S2"])
+            elif supports:
+                below_sup = sorted([x for x in supports if x < float(scen_dn)])
+                if below_sup:
+                    target = float(below_sup[-1])
+            elif fibs:
+                below_lvls = sorted([float(v) for v in fibs.values() if float(v) < float(scen_dn)])
+                if below_lvls:
+                    target = float(below_lvls[-1])
 
             if target is not None:
-                st.write(f"- هدف محتمل: **{float(target):.2f}**")
+                st.write(f"- هدف محتمل: **{target:.2f}**")
             st.caption("Invalidation: رجوع وإغلاق فوق Zone الكسر.")
 
-    # Extra notes: swing meta
-    with st.expander("🧾 تفاصيل حساب Swing Fib / Pivots (للتوثيق)"):
-        st.write("**Swing Fib Meta:**", fib_meta)
-        st.write("**Pivot Candle Used:**", piv_src if piv_src else "N/A")
+    # --------------------------------------------------------
+    # Debug/Explain (optional)
+    # --------------------------------------------------------
+    with st.expander("🧾 تفاصيل الحساب (للتوثيق وتجنب سوء الفهم)"):
+        st.write("**Fib Meta:**", fib_meta if show_fib else "Fib disabled")
+        st.write("**Pivots Used:**", [{"tf": p["tf"], "src": p["src"], "keys": list(p["pivots"].keys())} for p in pivots_pack])
+        st.write("**Auto S/R:**", {"supports": supports, "resistances": resistances})
         st.write("**Volume:**", {"today_volume": v, "vol_ma20": vma, "confirmed": vol_ok})
