@@ -63,16 +63,23 @@ def get_tasi_data():
     return price, 0.0
 
 @st.cache_data(ttl=3600, show_spinner=False)
-def get_chart_history(symbol, period='1y', interval='1d'):
-    """جلب الشارت التاريخي (كاش لمدة ساعة كاملة)"""
-    try:
-        t = yf.Ticker(get_ticker_symbol(symbol))
-        df = t.history(period=period, interval=interval)
-        return df if not df.empty else None
-    except:
-        return None
+import yfinance as yf
+import pandas as pd
 
-@st.cache_data(ttl=120, show_spinner=False)
+def get_chart_history(symbol: str, period: str = "2y", interval: str = "1d"):
+    sym = (symbol or "").strip().upper()
+    if sym.isdigit():
+        sym = f"{sym}.SR"
+
+    df = yf.download(sym, period=period, interval=interval, auto_adjust=False, progress=False)
+
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    # توحيد الأعمدة (Close/Open/High/Low/Volume)
+    df = df.rename(columns={c: c.title() for c in df.columns})
+    return df
+
 def fetch_batch_data(symbols_list):
     """
     جلب جماعي للأسعار (Batch Fetching).
