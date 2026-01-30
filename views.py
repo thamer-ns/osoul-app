@@ -1240,8 +1240,9 @@ def view_settings():
         if d:
             st.download_button("تحميل", d, n)
 
-st.write(fetch_table("ai_decisions").head(2))
-st.write(fetch_table("lab_trades").head(2))
+st.write(fetch_table("lab_runs").head(2))
+st.write(fetch_table("lab_equity").head(2))
+
 
 # ========================================================
 # 9) Router
