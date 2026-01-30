@@ -874,13 +874,66 @@ def view_analysis(fin):
         tabs = st.tabs(["🤖 المستشار", "💰 مالي", "📈 فني", "🏛️ كلاسيكي", "📝 أطروحة"])
 
         with tabs[0]:
-            rep = generate_ai_report(sym)
-            col = rep.get("color", "#666")
-            st.markdown(
-                f"<div style='padding:15px;border:2px solid {col};border-radius:10px;text-align:center;'><h3>{rep.get('recommendation','-')}</h3><p>{rep.get('strategy','-')}</p></div>",
-                unsafe_allow_html=True,
-            )
-            cA, cB = st.columns(2)
+    rep = generate_ai_report(sym)
+    col = rep.get('color', '#666')
+
+    st.markdown(
+        f"<div style='padding:15px;border:2px solid {col};border-radius:10px;text-align:center;'>"
+        f"<h3>{rep.get('recommendation','-')}</h3>"
+        f"<p>{rep.get('strategy','-')}</p>"
+        f"</div>",
+        unsafe_allow_html=True
+    )
+
+    # ✅ AI Confidence
+    conf = int(rep.get("confidence", 0) or 0)
+    conf_label = rep.get("confidence_label", "منخفضة")
+    st.write(f"### 🎯 الثقة: {conf}% ({conf_label})")
+    st.progress(min(max(conf, 0), 100))
+
+    # ✅ Explainability
+    ex = rep.get("explainability", {}) or {}
+    pos = ex.get("positives", []) or []
+    neg = ex.get("negatives", []) or []
+    notes = ex.get("notes", []) or []
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.write("✅ أسباب داعمة")
+        for x in pos[:8]:
+            st.write(f"- {x}")
+    with c2:
+        st.write("⚠️ أسباب سلبية / مخاطر")
+        for x in neg[:8]:
+            st.write(f"- {x}")
+
+    with st.expander("🧾 ملاحظات إضافية"):
+        for x in notes:
+            st.write(f"- {x}")
+
+    st.markdown("---")
+
+    # ✅ زر Backtest (جاهز للربط بدون تغيير منطقك)
+    # يستخدم نفس run_backtest الموجود عندك في views.py
+    if run_backtest:
+        if st.button("🧪 تشغيل Backtest على هذا السهم"):
+            try:
+                data = get_chart_history(sym, "2y")
+                # اختيار استراتيجية بسيطة حسب توصية AI (تقدر تعدلها لاحقًا)
+                strategy = "Trend" if "شراء" in rep.get("recommendation","") or "Strong Buy" in rep.get("recommendation","") else "MeanReversion"
+                res = run_backtest(data, strategy, 100000)
+                if res:
+                    st.success("✅ اكتمل الاختبار")
+                    st.metric("العائد", f"{res.get('return_pct', 0):.1f}%")
+                    if "df" in res and "Portfolio_Value" in res["df"]:
+                        st.line_chart(res["df"]["Portfolio_Value"])
+                else:
+                    st.warning("لم يرجع الاختبار نتيجة.")
+            except Exception as e:
+                st.error(f"Backtest Error: {e}")
+    else:
+        st.caption("Backtester غير متوفر حالياً.")
+
             with cA:
                 st.write("فني:")
                 for x in rep.get("tech_reasons", []):
