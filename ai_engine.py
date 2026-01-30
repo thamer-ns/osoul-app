@@ -195,6 +195,58 @@ def generate_ai_report(symbol):
         
         if not tech_reasons: tech_reasons.append("حركة السعر طبيعية")
         if not fund_reasons: fund_reasons.append("المؤشرات المالية طبيعية")
+def _calc_confidence(tech_score, fund_score, df):
+    # جودة البيانات
+    quality = 0
+    if df is not None and len(df) >= 120: quality += 25
+    elif df is not None and len(df) >= 60: quality += 15
+    else: quality += 5
+
+    # قوة الإشارة (كلما زاد المطلق زادت الثقة)
+    strength = min(abs(tech_score + fund_score) * 8, 45)  # سقف 45
+
+    # انسجام الفني مع المالي
+    alignment = 0
+    if (tech_score >= 0 and fund_score >= 0) or (tech_score <= 0 and fund_score <= 0):
+        alignment = 25
+    else:
+        alignment = 10
+
+    conf = int(min(quality + strength + alignment, 100))
+
+    if conf >= 75: label = "عالية"
+    elif conf >= 50: label = "متوسطة"
+    else: label = "منخفضة"
+    return conf, label
+
+def _build_explainability(tech_reasons, fund_reasons, total_score, tech_score, fund_score):
+    positives, negatives, notes = [], [], []
+
+    # صنف الأسباب (بسيط وفعّال)
+    for x in tech_reasons:
+        (positives if any(k in x for k in ["اختراق", "نجمة", "ابتلاع", "سيطرة", "إشارة دخول"]) else negatives).append(x)
+
+    for x in fund_reasons:
+        (positives if any(k in x for k in ["قوية", "ملاءة", "عادل", "جيد", "✅", "💎"]) else negatives).append(x)
+
+    notes.append(f"Tech Score = {tech_score} | Fund Score = {fund_score} | Total = {total_score}")
+
+    # لو في تعارض قوي بين الفني والمالي
+    if tech_score > 3 and fund_score < 0:
+        notes.append("يوجد تعارض: الفني قوي لكن المالي ضعيف — الأفضل مضاربة بإدارة مخاطر.")
+    if fund_score > 3 and tech_score < 0:
+        notes.append("يوجد تعارض: المالي قوي لكن السعر ضعيف — مناسب لاستثمار قيمة بصبر.")
+
+    return {"positives": positives[:10], "negatives": negatives[:10], "notes": notes[:10]}
+confidence, confidence_label = _calc_confidence(tech_score, fund_score, df)
+explainability = _build_explainability(tech_reasons, fund_reasons, total_score, tech_score, fund_score)
+
+return {
+    ...
+    "confidence": confidence,
+    "confidence_label": confidence_label,
+    "explainability": explainability
+}
 
         return {
             "recommendation": rec, "color": clr, "strategy": strat,
