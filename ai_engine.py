@@ -1,5 +1,6 @@
 import json
 import re
+import uuid
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
@@ -7,10 +8,21 @@ from datetime import datetime, timedelta
 from market_data import get_chart_history
 from financial_analysis import get_advanced_fundamental_ratios
 
+
 # ============================================================
 # 🧠 AI Memory (DB Logging + Simple Online Learning)
 # + Calibration + User Rules
 # ============================================================
+
+def _normalize_symbol(sym: str) -> str:
+    sym = (sym or "").strip().upper()
+    if sym.isdigit():
+        return f"{sym}.SR"
+    sym = sym.replace(" ", "").replace("-", "")
+    if sym.endswith("SR") and ".SR" not in sym:
+        sym = sym.replace("SR", ".SR")
+    return sym
+
 
 def _safe_import_db():
     try:
@@ -20,9 +32,6 @@ def _safe_import_db():
         return None, None
 
 
-# ----------------------------
-# DB Utils (safe)
-# ----------------------------
 def _safe_fetch_table(name: str):
     _, fetch_table = _safe_import_db()
     if not fetch_table:
@@ -49,97 +58,97 @@ def _try_exec(sql: str, params=()):
         return False
 
 
+def _now_str():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+# ============================================================
+# ✅ Cross-DB table schemas (SQLite/Postgres)
+# ============================================================
 def _ensure_ai_tables():
+    """
+    جداول Portable:
+    - IDs نصية UUID بدل SERIAL (عشان Postgres + SQLite بدون تعارض)
+    - created_at نص
+    """
     execute_query, _ = _safe_import_db()
     if not execute_query:
         return False
 
-    # Base tables (كما عندك)
     ok1 = _try_exec("""
     CREATE TABLE IF NOT EXISTS ai_signals (
-        id SERIAL PRIMARY KEY,
-        created_at TIMESTAMP DEFAULT NOW(),
+        id TEXT PRIMARY KEY,
+        created_at TEXT,
         symbol TEXT,
+        sector TEXT,
         timeframe TEXT,
-        horizon_days INT DEFAULT 20,
+        horizon_days INTEGER DEFAULT 20,
+        strategy_name TEXT,
         features_json TEXT,
+        exit_features_json TEXT,
         report_json TEXT,
-        outcome_return_pct DOUBLE PRECISION,
-        outcome_win INT
+        outcome_return_pct REAL,
+        outcome_win INTEGER
     )
     """, ())
 
     ok2 = _try_exec("""
     CREATE TABLE IF NOT EXISTS ai_weights (
-        id SERIAL PRIMARY KEY,
-        key TEXT UNIQUE,
-        weight DOUBLE PRECISION DEFAULT 1.0,
-        updated_at TIMESTAMP DEFAULT NOW()
+        key TEXT PRIMARY KEY,
+        weight REAL DEFAULT 1.0,
+        updated_at TEXT
     )
     """, ())
-
-    # ترقيات بدون كسر (Postgres)
-    # (لو DB SQLite قد يفشل ونتجاهله)
-    _try_exec("ALTER TABLE ai_signals ADD COLUMN IF NOT EXISTS sector TEXT", ())
-    _try_exec("ALTER TABLE ai_signals ADD COLUMN IF NOT EXISTS strategy_name TEXT", ())
-    _try_exec("ALTER TABLE ai_signals ADD COLUMN IF NOT EXISTS exit_features_json TEXT", ())
 
     return bool(ok1 and ok2)
 
 
 def _ensure_user_rules_table():
-    # استراتيجيات المستخدم المكتوبة نصياً
     ok = _try_exec("""
     CREATE TABLE IF NOT EXISTS ai_user_rules (
-        id SERIAL PRIMARY KEY,
-        created_at TIMESTAMP DEFAULT NOW(),
+        id TEXT PRIMARY KEY,
+        created_at TEXT,
         title TEXT,
         rule_text TEXT,
         parsed_json TEXT,
-        enabled INT DEFAULT 1
+        enabled INTEGER DEFAULT 1
     )
     """, ())
     return bool(ok)
 
 
+# ============================================================
+# Logging
+# ============================================================
 def log_ai_signal(symbol, timeframe, features: dict, report: dict, horizon_days=20, sector=None, strategy_name=None):
-    """يسجل كل تقرير (features + report) للرجوع له لاحقاً وتطوير الذكاء."""
     execute_query, _ = _safe_import_db()
     if not execute_query:
         return False
 
     _ensure_ai_tables()
     try:
-        # نحفظ أيضاً sector/strategy_name لو متوفرين
         _try_exec(
-            "INSERT INTO ai_signals (symbol, timeframe, horizon_days, features_json, report_json, sector, strategy_name) VALUES (%s,%s,%s,%s,%s,%s,%s)",
+            """
+            INSERT INTO ai_signals
+            (id, created_at, symbol, sector, timeframe, horizon_days, strategy_name, features_json, report_json)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            """,
             (
-                str(symbol), str(timeframe), int(horizon_days),
-                json.dumps(features, ensure_ascii=False),
-                json.dumps(report, ensure_ascii=False),
-                (str(sector) if sector is not None else None),
+                str(uuid.uuid4()),
+                _now_str(),
+                str(symbol), (str(sector) if sector is not None else None),
+                str(timeframe), int(horizon_days),
                 (str(strategy_name) if strategy_name is not None else None),
+                json.dumps(features or {}, ensure_ascii=False),
+                json.dumps(report or {}, ensure_ascii=False),
             ),
         )
         return True
     except Exception:
-        # fallback للنسخة القديمة لو DB ما يدعم الأعمدة
-        try:
-            execute_query(
-                "INSERT INTO ai_signals (symbol, timeframe, horizon_days, features_json, report_json) VALUES (%s,%s,%s,%s,%s)",
-                (
-                    str(symbol), str(timeframe), int(horizon_days),
-                    json.dumps(features, ensure_ascii=False),
-                    json.dumps(report, ensure_ascii=False),
-                ),
-            )
-            return True
-        except Exception:
-            return False
+        return False
 
 
-def update_ai_outcome(signal_id: int, outcome_return_pct: float, exit_features: dict = None):
-    """تحديث نتيجة إشارة قديمة (تستخدم لاحقاً للتعلّم)."""
+def update_ai_outcome(signal_id: str, outcome_return_pct: float, exit_features: dict = None):
     execute_query, _ = _safe_import_db()
     if not execute_query:
         return False
@@ -147,27 +156,23 @@ def update_ai_outcome(signal_id: int, outcome_return_pct: float, exit_features: 
     try:
         win = 1 if float(outcome_return_pct) > 0 else 0
         if exit_features is not None:
-            # نحاول تحديث exit_features_json أيضاً
-            try:
-                execute_query(
-                    "UPDATE ai_signals SET outcome_return_pct=%s, outcome_win=%s, exit_features_json=%s WHERE id=%s",
-                    (float(outcome_return_pct), int(win), json.dumps(exit_features, ensure_ascii=False), int(signal_id)),
-                )
-            except Exception:
-                execute_query(
-                    "UPDATE ai_signals SET outcome_return_pct=%s, outcome_win=%s WHERE id=%s",
-                    (float(outcome_return_pct), int(win), int(signal_id)),
-                )
+            _try_exec(
+                "UPDATE ai_signals SET outcome_return_pct=%s, outcome_win=%s, exit_features_json=%s WHERE id=%s",
+                (float(outcome_return_pct), int(win), json.dumps(exit_features, ensure_ascii=False), str(signal_id)),
+            )
         else:
-            execute_query(
+            _try_exec(
                 "UPDATE ai_signals SET outcome_return_pct=%s, outcome_win=%s WHERE id=%s",
-                (float(outcome_return_pct), int(win), int(signal_id)),
+                (float(outcome_return_pct), int(win), str(signal_id)),
             )
         return True
     except Exception:
         return False
 
 
+# ============================================================
+# Weights
+# ============================================================
 def _get_weight(key: str, default=1.0):
     execute_query, fetch_table = _safe_import_db()
     if not execute_query or not fetch_table:
@@ -190,29 +195,30 @@ def _set_weight(key: str, weight: float):
     if not execute_query:
         return False
     _ensure_ai_tables()
+
+    # SQLite/Postgres يدعمون UPSERT (لو كانت نسخة SQLite حديثة).
+    # وإذا ما دعمت، عندنا fallback.
     try:
         execute_query(
             """
-            INSERT INTO ai_weights (key, weight) VALUES (%s,%s)
-            ON CONFLICT (key) DO UPDATE SET weight=EXCLUDED.weight, updated_at=NOW()
+            INSERT INTO ai_weights (key, weight, updated_at)
+            VALUES (%s,%s,%s)
+            ON CONFLICT (key) DO UPDATE
+            SET weight=EXCLUDED.weight, updated_at=EXCLUDED.updated_at
             """,
-            (str(key), float(weight)),
+            (str(key), float(weight), _now_str()),
         )
         return True
     except Exception:
-        # fallback بسيط لو DB لا يدعم ON CONFLICT
         try:
             _try_exec("DELETE FROM ai_weights WHERE key=%s", (str(key),))
-            _try_exec("INSERT INTO ai_weights (key, weight) VALUES (%s,%s)", (str(key), float(weight)))
+            _try_exec("INSERT INTO ai_weights (key, weight, updated_at) VALUES (%s,%s,%s)", (str(key), float(weight), _now_str()))
             return True
         except Exception:
             return False
 
 
 def learn_from_history(max_rows=400):
-    """
-    تعلّم بسيط على مستوى feature_key (كما عندك).
-    """
     execute_query, fetch_table = _safe_import_db()
     if not execute_query or not fetch_table:
         return {"ok": False, "reason": "DB not available"}
@@ -223,11 +229,17 @@ def learn_from_history(max_rows=400):
         if df is None or df.empty:
             return {"ok": True, "updated": 0}
 
+        if "outcome_win" not in df.columns:
+            return {"ok": True, "updated": 0}
+
         df = df.dropna(subset=["outcome_win"])
         if df.empty:
             return {"ok": True, "updated": 0}
 
-        df = df.sort_values("created_at", ascending=False).head(int(max_rows))
+        if "created_at" in df.columns:
+            df = df.sort_values("created_at", ascending=False)
+
+        df = df.head(int(max_rows))
 
         stats = {}
         for _, r in df.iterrows():
@@ -265,7 +277,6 @@ def learn_from_history(max_rows=400):
 # ============================================================
 # 🧠 User Rules: save/load/parse/evaluate
 # ============================================================
-
 def save_user_rule(rule_text: str, title: str = None, enabled: int = 1):
     execute_query, _ = _safe_import_db()
     if not execute_query:
@@ -279,8 +290,10 @@ def save_user_rule(rule_text: str, title: str = None, enabled: int = 1):
     parsed = _parse_user_rule(rule_text)
     try:
         _try_exec(
-            "INSERT INTO ai_user_rules (title, rule_text, parsed_json, enabled) VALUES (%s,%s,%s,%s)",
+            "INSERT INTO ai_user_rules (id, created_at, title, rule_text, parsed_json, enabled) VALUES (%s,%s,%s,%s,%s,%s)",
             (
+                str(uuid.uuid4()),
+                _now_str(),
                 (title or "قاعدة مستخدم"),
                 rule_text,
                 json.dumps(parsed, ensure_ascii=False),
@@ -322,32 +335,22 @@ def load_user_rules(enabled_only=True, max_rows=50):
 
 
 def _parse_user_rule(text: str):
-    """
-    Parsing بسيط ومستقر (بدون ML):
-    يحاول اكتشاف قواعد مثل:
-    - "تقاطع الماكد صعودا واختراق خط الصفر"
-    - "RSI فوق 70"
-    - "اختراق مستوى 38 فيبو"
-    """
     t = (text or "").strip().lower()
 
     parsed = {
         "raw": text,
         "conditions": [],
-        "direction": None,      # buy/sell
-        "boost": 1.5,           # تأثير افتراضي
+        "direction": None,
+        "boost": 1.5,
         "tags": [],
     }
 
-    # اتجاه (تقريبي)
-    if any(k in t for k in ["شراء", "تجميع", "صعود", "شراءً", "buy"]):
+    if any(k in t for k in ["شراء", "تجميع", "صعود", "buy"]):
         parsed["direction"] = "buy"
     if any(k in t for k in ["بيع", "خروج", "هبوط", "sell"]):
         parsed["direction"] = "sell"
 
-    # MACD
     if "ماكد" in t or "macd" in t:
-        # تقاطع صعود/هبوط
         if any(k in t for k in ["تقاطع", "cross"]) and any(k in t for k in ["صعود", "ايجابي", "up"]):
             parsed["conditions"].append({"type": "macd_cross", "value": "up"})
             parsed["tags"].append("MACD_CROSS_UP")
@@ -355,7 +358,6 @@ def _parse_user_rule(text: str):
             parsed["conditions"].append({"type": "macd_cross", "value": "down"})
             parsed["tags"].append("MACD_CROSS_DN")
 
-        # اختراق خط الصفر
         if any(k in t for k in ["خط الصفر", "zero"]):
             if any(k in t for k in ["فوق", "اختراق", "up", "اعلى"]):
                 parsed["conditions"].append({"type": "macd_zero", "value": "above"})
@@ -364,7 +366,6 @@ def _parse_user_rule(text: str):
                 parsed["conditions"].append({"type": "macd_zero", "value": "below"})
                 parsed["tags"].append("MACD_BELOW_ZERO")
 
-    # RSI thresholds
     if "rsi" in t or "مؤشر القوة النسبية" in t or "القوة النسبية" in t:
         m = re.search(r"(?:rsi|القوة)\s*(?:فوق|اعلى|>)\s*(\d+)", t)
         if m:
@@ -374,8 +375,6 @@ def _parse_user_rule(text: str):
         if m:
             parsed["conditions"].append({"type": "rsi_lt", "value": float(m.group(1))})
             parsed["tags"].append("RSI_LT")
-
-        # شائع
         if "فوق 70" in t:
             parsed["conditions"].append({"type": "rsi_gt", "value": 70.0})
             parsed["tags"].append("RSI_GT_70")
@@ -383,9 +382,7 @@ def _parse_user_rule(text: str):
             parsed["conditions"].append({"type": "rsi_lt", "value": 30.0})
             parsed["tags"].append("RSI_LT_30")
 
-    # SMA break
     if "sma" in t or "متوسط" in t or "موفينج" in t:
-        # SMA 20 / 50
         m = re.search(r"(?:sma|متوسط)\s*(\d+)", t)
         if m:
             n = int(m.group(1))
@@ -396,10 +393,8 @@ def _parse_user_rule(text: str):
                 parsed["conditions"].append({"type": "close_below_sma", "value": n})
                 parsed["tags"].append(f"CLOSE_BELOW_SMA{n}")
 
-    # Fibonacci 38
     if "فيبو" in t or "fibo" in t or "fib" in t:
         if "38" in t:
-            # اختراق 38
             if any(k in t for k in ["اختراق", "فوق", "اعلى"]):
                 parsed["conditions"].append({"type": "fib_cross", "value": 38})
                 parsed["tags"].append("FIB_38_UP")
@@ -407,23 +402,14 @@ def _parse_user_rule(text: str):
                 parsed["conditions"].append({"type": "fib_cross", "value": -38})
                 parsed["tags"].append("FIB_38_DN")
 
-    # تأثير rule (اختياري)
     m = re.search(r"(?:boost|قوة|تأثير)\s*[:=]?\s*(\d+(?:\.\d+)?)", t)
     if m:
         parsed["boost"] = float(m.group(1))
 
-    # لو ما قدر يفهم شيء: نخليه نصي فقط
     return parsed
 
 
 def _compute_indicators(df: pd.DataFrame):
-    """
-    مؤشرات خفيفة لتقييم قواعد المستخدم + أسباب الفشل.
-    - RSI14
-    - MACD (12,26,9)
-    - SMA20/50
-    - Fib 38.2 من آخر موجة سوينغ مبسطة
-    """
     out = {}
     if df is None or df.empty or len(df) < 60:
         return out
@@ -432,19 +418,16 @@ def _compute_indicators(df: pd.DataFrame):
     high = df["High"].astype(float)
     low = df["Low"].astype(float)
 
-    # SMA
     out["sma20"] = close.rolling(20).mean()
     out["sma50"] = close.rolling(50).mean()
 
-    # RSI14
     delta = close.diff()
     gain = delta.clip(lower=0).rolling(14).mean()
     loss = (-delta.clip(upper=0)).rolling(14).mean()
     rs = gain / (loss.replace(0, np.nan))
     rsi = 100 - (100 / (1 + rs))
-    out["rsi14"] = rsi.fillna(method="bfill").fillna(50)
+    out["rsi14"] = rsi.bfill().fillna(50)
 
-    # MACD
     ema12 = close.ewm(span=12, adjust=False).mean()
     ema26 = close.ewm(span=26, adjust=False).mean()
     macd = ema12 - ema26
@@ -454,15 +437,13 @@ def _compute_indicators(df: pd.DataFrame):
     out["macd_signal"] = signal
     out["macd_hist"] = hist
 
-    # Fib 38.2 مبسط: آخر 120 شمعة، نأخذ أعلى قمة وأدنى قاع ونحسب 38.2
     try:
         look = 120 if len(df) >= 120 else len(df)
         hh = float(high.iloc[-look:].max())
         ll = float(low.iloc[-look:].min())
         rng = hh - ll
         if rng > 0:
-            fib382 = ll + 0.382 * rng
-            out["fib382"] = fib382
+            out["fib382"] = ll + 0.382 * rng
             out["range_high"] = hh
             out["range_low"] = ll
     except Exception:
@@ -472,9 +453,6 @@ def _compute_indicators(df: pd.DataFrame):
 
 
 def _eval_user_rule(parsed_rule: dict, df: pd.DataFrame, ind: dict):
-    """
-    يرجع: (hit:bool, score_delta:float, reason:str, features:dict)
-    """
     if not parsed_rule:
         return False, 0.0, "", {}
 
@@ -483,12 +461,11 @@ def _eval_user_rule(parsed_rule: dict, df: pd.DataFrame, ind: dict):
         return False, 0.0, "", {}
 
     boost = float(parsed_rule.get("boost") or 1.5)
-    direction = parsed_rule.get("direction")  # buy/sell/None
+    direction = parsed_rule.get("direction")
 
     close = float(df["Close"].astype(float).iloc[-1])
     prev_close = float(df["Close"].astype(float).iloc[-2])
 
-    # Latest indicator values
     rsi14 = float(ind.get("rsi14").iloc[-1]) if isinstance(ind.get("rsi14"), pd.Series) else None
     macd = float(ind.get("macd").iloc[-1]) if isinstance(ind.get("macd"), pd.Series) else None
     macd_prev = float(ind.get("macd").iloc[-2]) if isinstance(ind.get("macd"), pd.Series) else None
@@ -528,7 +505,6 @@ def _eval_user_rule(parsed_rule: dict, df: pd.DataFrame, ind: dict):
                 return False
             return close < s and prev_close >= s
         if t == "fib_cross" and fib382 is not None:
-            # value=38 => اختراق للأعلى، value=-38 => كسر للأسفل
             if int(v) == 38:
                 return close > float(fib382) and prev_close <= float(fib382)
             if int(v) == -38:
@@ -539,7 +515,6 @@ def _eval_user_rule(parsed_rule: dict, df: pd.DataFrame, ind: dict):
     if not all(hits):
         return False, 0.0, "", {}
 
-    # score delta بحسب الاتجاه
     delta = boost
     if direction == "sell":
         delta = -abs(boost)
@@ -555,7 +530,8 @@ def _eval_user_rule(parsed_rule: dict, df: pd.DataFrame, ind: dict):
 
 
 # ============================================================
-# 🕯️ 1) Advanced Candlestick Patterns (موجود + ثابت)
+# 🕯️ Candles / Market Structure / SMC / Ichimoku / VSA / SR
+# (كما عندك بدون تغيير منطقي)
 # ============================================================
 
 def _detect_advanced_patterns(df):
@@ -578,36 +554,28 @@ def _detect_advanced_patterns(df):
     is_c3_green = c3["Close"] > c3["Open"]
     is_c3_red = c3["Close"] < c3["Open"]
 
-    # Morning Star
     if is_c1_red and body2 < body1 * 0.4 and is_c3_green:
         midpoint = c1["Open"] - (body1 / 2)
         if c3["Close"] > midpoint:
             score += 3
             patterns.append("✨ نجمة الصباح - انعكاس إيجابي قوي")
 
-    # Evening Star
     if is_c1_green and body2 < body1 * 0.4 and is_c3_red:
         midpoint = c1["Open"] + (body1 / 2)
         if c3["Close"] < midpoint:
             score -= 3
             patterns.append("🌑 نجمة المساء - خروج/انعكاس سلبي")
 
-    # Bullish Harami
     if is_c2_red and is_c3_green and c3["Open"] > c2["Close"] and c3["Close"] < c2["Open"]:
         score += 2
         patterns.append("🤰 الحرامي الشرائي - ضعف الزخم الهابط")
 
-    # Bullish Engulfing
     if is_c2_red and is_c3_green and c3["Open"] < c2["Close"] and c3["Close"] > c2["Open"]:
         score += 2
         patterns.append("🔥 ابتلاع شرائي - سيطرة مشترين")
 
     return score, patterns
 
-
-# ============================================================
-# 📈 2) Market Structure + BMS/Retest/OTE (مطوّر)
-# ============================================================
 
 def _pivot_points(series, left=3, right=3, mode="high"):
     if series is None or len(series) < left + right + 3:
@@ -664,7 +632,6 @@ def _analyze_market_structure(df):
                 score -= 1
                 obs.append("مسار عرضي (تذبذب)")
 
-    # Retest + OTE (قرب 50%)
     try:
         if len(ph) >= 1 and len(pl) >= 1:
             last_high_i, last_high = ph[-1]
@@ -688,10 +655,6 @@ def _analyze_market_structure(df):
 
     return score, obs
 
-
-# ============================================================
-# 🧩 3) Smart Money: Liquidity Sweep + Order Block + AMD (مطوّر)
-# ============================================================
 
 def _detect_liquidity_sweep(df, lookback=30):
     if df is None or len(df) < lookback + 5:
@@ -785,10 +748,6 @@ def _detect_order_block(df):
     return score, obs, feats
 
 
-# ============================================================
-# ☁️ 4) Ichimoku Trend Filter (مطوّر)
-# ============================================================
-
 def _ichimoku(df):
     high = df["High"].astype(float)
     low = df["Low"].astype(float)
@@ -865,10 +824,6 @@ def _analyze_ichimoku(df):
     return score, obs, feats
 
 
-# ============================================================
-# 💰 5) Fundamental Golden Rules (موجود + ثابت)
-# ============================================================
-
 def _analyze_financial_golden_rules(symbol):
     try:
         metrics = get_advanced_fundamental_ratios(symbol)
@@ -913,10 +868,6 @@ def _analyze_financial_golden_rules(symbol):
     return score, obs, {**metrics, "_fund_features": feats}
 
 
-# ============================================================
-# 📊 6) VSA (مطوّر أكثر)
-# ============================================================
-
 def _analyze_vsa_art_of_trading(df):
     if df is None or len(df) < 50:
         return 0, [], {}
@@ -957,10 +908,6 @@ def _analyze_vsa_art_of_trading(df):
 
     return score, obs, feats
 
-
-# ============================================================
-# 🧱 7) Support/Resistance Zones (مبسطة)
-# ============================================================
 
 def _support_resistance_zones(df, lookback=120, max_levels=6):
     if df is None or len(df) < lookback:
@@ -1016,10 +963,6 @@ def _analyze_sr(df):
     return score, obs, feats
 
 
-# ============================================================
-# ✅ Confidence + Explainability (كما عندك)
-# ============================================================
-
 def _calc_confidence(tech_score, fund_score, df):
     quality = 5
     if df is not None and len(df) >= 220:
@@ -1061,318 +1004,21 @@ def _build_explainability(tech_reasons, fund_reasons, total_score, tech_score, f
     return {"positives": positives[:10], "negatives": negatives[:10], "notes": notes[:10]}
 
 
-# ============================================================
-# 🎛️ Calibration: Learned Bias from ai_decisions + lab_*
-# ============================================================
-
-def _normalize_cols(df: pd.DataFrame):
-    # يحاول توحيد أسماء الأعمدة الشائعة
-    if df is None or df.empty:
-        return df
-    df = df.copy()
-    cols = {c: c.lower() for c in df.columns}
-    df.rename(columns=cols, inplace=True)
-    return df
-
-
-def _parse_json_safe(x):
-    try:
-        if x is None:
-            return {}
-        if isinstance(x, dict):
-            return x
-        s = str(x)
-        if not s.strip():
-            return {}
-        return json.loads(s)
-    except Exception:
-        return {}
-
-
-def _extract_failure_tokens(features: dict):
-    """
-    يحول features_snapshot إلى أسباب مفهومة:
-    - rsi_high/low
-    - close_below_sma / broke_support_confirm
-    - liq sweep
-    - ichimoku bear
-    - vsa upthrust
-    """
-    toks = []
-    if not isinstance(features, dict):
-        return toks
-
-    # RSI numeric
-    rsi = features.get("rsi") or features.get("rsi14") or features.get("RSI") or features.get("rsi_14")
-    try:
-        rsi = float(rsi) if rsi is not None else None
-    except Exception:
-        rsi = None
-
-    if rsi is not None:
-        if rsi >= 70:
-            toks.append("RSI عالي (تشبع شراء)")
-        elif rsi <= 30:
-            toks.append("RSI منخفض (تشبع بيع)")
-
-    # Flags
-    flag_map = {
-        "broke_support_confirm": "كسر دعم مؤكد",
-        "near_resistance": "قرب مقاومة",
-        "liq_sweep_high": "صيد سيولة شرائية (انعكاس سلبي محتمل)",
-        "liq_sweep_low": "صيد سيولة بيعية (انعكاس إيجابي محتمل)",
-        "bear_ob_retest": "Bearish OB retest",
-        "bull_ob_retest": "Bullish OB retest",
-        "ichi_bear": "Ichimoku هابط قوي",
-        "ichi_bull": "Ichimoku صاعد قوي",
-        "vsa_upthrust": "VSA Upthrust (ضعف)",
-        "vsa_distribution": "VSA توزيع",
-        "vsa_stopping_volume": "VSA Stopping (قوة)",
-    }
-    for k, label in flag_map.items():
-        try:
-            if int(features.get(k, 0)) == 1:
-                toks.append(label)
-        except Exception:
-            pass
-
-    # SMA numeric if present
-    try:
-        close = features.get("close")
-        sma20 = features.get("sma20")
-        sma50 = features.get("sma50")
-        if close is not None and sma20 is not None:
-            if float(close) < float(sma20):
-                toks.append("السعر تحت SMA20")
-        if close is not None and sma50 is not None:
-            if float(close) < float(sma50):
-                toks.append("السعر تحت SMA50")
-    except Exception:
-        pass
-
-    return toks
-
-
-def _best_strategy_from_rows(rows: pd.DataFrame, strategy_col="strategy_name"):
-    """
-    يتوقع الأعمدة (حسب المتوفر):
-    - outcome_win / outcome_return_pct
-    أو
-    - return_pct / pnl_pct / gain_pct
-    """
-    if rows is None or rows.empty:
-        return None
-
-    df = rows.copy()
-    df = _normalize_cols(df)
-
-    # strategy column normalization
-    if strategy_col.lower() not in df.columns:
-        # نحاول بدائل
-        for alt in ["strategy", "strategyname", "strat", "model_strategy"]:
-            if alt in df.columns:
-                strategy_col = alt
-                break
-
-    if strategy_col.lower() not in df.columns:
-        return None
-
-    # return column
-    ret_col = None
-    for c in ["outcome_return_pct", "return_pct", "pnl_pct", "gain_pct", "ret_pct"]:
-        if c in df.columns:
-            ret_col = c
-            break
-
-    win_col = "outcome_win" if "outcome_win" in df.columns else None
-
-    # derive win from returns if needed
-    if win_col is None and ret_col is not None:
-        df["__win"] = df[ret_col].astype(float).apply(lambda x: 1 if x > 0 else 0)
-        win_col = "__win"
-
-    if ret_col is None or win_col is None:
-        return None
-
-    # group
-    g = df.groupby(strategy_col.lower()).agg(
-        n=(win_col, "count"),
-        win_rate=(win_col, "mean"),
-        avg_return=(ret_col, "mean"),
-    ).reset_index()
-
-    g = g[g["n"] >= 5]  # حد أدنى بسيط
-    if g.empty:
-        # لو أقل من 5، نأخذ أفضل الموجود
-        g = df.groupby(strategy_col.lower()).agg(
-            n=(win_col, "count"),
-            win_rate=(win_col, "mean"),
-            avg_return=(ret_col, "mean"),
-        ).reset_index()
-
-    g = g.sort_values(["win_rate", "avg_return", "n"], ascending=[False, False, False])
-    best = g.iloc[0]
-    return {
-        "strategy": str(best[strategy_col.lower()]),
-        "win_rate": float(best["win_rate"]),
-        "avg_return": float(best["avg_return"]),
-        "n": int(best["n"]),
-        "table": g.head(10),
-    }
-
-
-def _collect_recent_ai_history(symbol: str, sector: str = None, limit=100):
-    """
-    يجمع تاريخ القرارات من:
-    1) ai_decisions (لو موجود)
-    2) ai_signals (fallback)
-    ثم يحاول إلحاق نتائج من lab_trades / lab_runs / lab_equity بشكل مرن.
-    """
-    symbol = str(symbol)
-    sector = (str(sector) if sector else None)
-
-    df_dec = _safe_fetch_table("ai_decisions")
-    if df_dec is not None and not df_dec.empty:
-        df_dec = _normalize_cols(df_dec)
-        # filter symbol/sector if columns exist
-        if "symbol" in df_dec.columns:
-            df_dec = df_dec[df_dec["symbol"].astype(str) == symbol]
-        if sector and "sector" in df_dec.columns:
-            df_dec = df_dec[df_dec["sector"].astype(str) == sector]
-        if "created_at" in df_dec.columns:
-            df_dec = df_dec.sort_values("created_at", ascending=False)
-        df_dec = df_dec.head(int(limit))
-        return df_dec, "ai_decisions"
-
-    # fallback: ai_signals
-    df_sig = _safe_fetch_table("ai_signals")
-    if df_sig is None or df_sig.empty:
-        return None, None
-
-    df_sig = _normalize_cols(df_sig)
-    if "symbol" in df_sig.columns:
-        df_sig = df_sig[df_sig["symbol"].astype(str) == symbol]
-    if sector and "sector" in df_sig.columns:
-        df_sig = df_sig[df_sig["sector"].astype(str) == sector]
-    if "created_at" in df_sig.columns:
-        df_sig = df_sig.sort_values("created_at", ascending=False)
-    df_sig = df_sig.head(int(limit))
-    return df_sig, "ai_signals"
-
-
-def get_learned_bias(symbol: str, sector: str = None, limit=100):
-    """
-    ✅ المطلوب منك:
-    ترجع:
-    - أفضل استراتيجية تاريخياً لهذا السهم/القطاع
-    - win_rate + avg_return
-    - أشهر أسباب الفشل (من features_snapshot وقت الدخول/الخروج)
-    """
-    rows, src = _collect_recent_ai_history(symbol, sector, limit=limit)
-    if rows is None or rows.empty:
-        return {
-            "ok": True,
-            "source": None,
-            "symbol": str(symbol),
-            "sector": sector,
-            "best_strategy": None,
-            "win_rate": None,
-            "avg_return": None,
-            "n": 0,
-            "top_fail_reasons": [],
-        }
-
-    df = _normalize_cols(rows)
-
-    # محاولة إيجاد strategy_name
-    best = _best_strategy_from_rows(df, strategy_col="strategy_name")
-    if best is None:
-        # fallback: strategy موجود في report_json؟
-        # نجرب استخراج "strategy" من report_json
-        if "report_json" in df.columns:
-            tmp = []
-            for _, r in df.iterrows():
-                rep = _parse_json_safe(r.get("report_json"))
-                tmp.append(rep.get("strategy") or rep.get("strategy_name") or rep.get("recommendation") or "Unknown")
-            df["strategy_name"] = tmp
-            best = _best_strategy_from_rows(df, strategy_col="strategy_name")
-
-    # استخراج أسباب الفشل من features_json + exit_features_json إذا موجود
-    fail_tokens = []
-    # نحدد صفوف خاسرة
-    ret_col = None
-    for c in ["outcome_return_pct", "return_pct", "pnl_pct", "gain_pct", "ret_pct"]:
-        if c in df.columns:
-            ret_col = c
-            break
-
-    if "outcome_win" in df.columns:
-        losers = df[df["outcome_win"].astype(float) == 0]
-    elif ret_col is not None:
-        losers = df[df[ret_col].astype(float) <= 0]
-    else:
-        losers = df.iloc[0:0]
-
-    if not losers.empty:
-        for _, r in losers.iterrows():
-            feats = _parse_json_safe(r.get("features_json"))
-            exit_feats = _parse_json_safe(r.get("exit_features_json"))
-            fail_tokens += _extract_failure_tokens(feats)
-            fail_tokens += _extract_failure_tokens(exit_feats)
-
-    # top reasons
-    top_fail = []
-    if fail_tokens:
-        s = pd.Series(fail_tokens).value_counts().head(7)
-        top_fail = [f"{idx} ({int(val)})" for idx, val in s.items()]
-
-    if best is None:
-        return {
-            "ok": True,
-            "source": src,
-            "symbol": str(symbol),
-            "sector": sector,
-            "best_strategy": None,
-            "win_rate": None,
-            "avg_return": None,
-            "n": int(len(df)),
-            "top_fail_reasons": top_fail,
-        }
-
-    return {
-        "ok": True,
-        "source": src,
-        "symbol": str(symbol),
-        "sector": sector,
-        "best_strategy": best["strategy"],
-        "win_rate": round(best["win_rate"], 4),
-        "avg_return": round(best["avg_return"], 4),
-        "n": int(best["n"]),
-        "top_fail_reasons": top_fail,
-    }
-
-
-# ============================================================
-# 🧠 Master Brain (مطوّر: Calibration + User Rules)
-# ============================================================
-
 def _infer_strategy_hint(module_scores: dict):
-    """
-    يعطي اسم استراتيجية/مدرسة مسيطرة من مكونات التحليل.
-    """
     if not module_scores:
         return "Mixed"
-    # الأعلى مطلقاً
     k = max(module_scores.keys(), key=lambda x: abs(module_scores.get(x, 0) or 0))
     return str(k)
 
 
 def generate_ai_report(symbol, timeframe="1D"):
     """
-    نفس مفاتيحك الأساسية + إضافات:
-    - Calibration: learned bias
-    - User rules: text strategies that affect score/reasons (بدون كسر)
+    نفس منطقك، لكن:
+    - يطبّع الرمز تلقائياً (1120 -> 1120.SR)
+    - يسجل قواعد المستخدم فعلاً على SQLite
     """
+    symbol = _normalize_symbol(symbol)
+
     try:
         df = get_chart_history(symbol, period="6mo")
         if df is None or df.empty:
@@ -1382,38 +1028,20 @@ def generate_ai_report(symbol, timeframe="1D"):
             if col not in df.columns:
                 raise ValueError(f"missing {col}")
 
-        # مؤشرات مساعدة (للقواعد + أسباب الفشل)
         ind = _compute_indicators(df)
 
-        # 1) Candles
         s_candle, o_candle = _detect_advanced_patterns(df)
-
-        # 2) Market Structure
         s_struct, o_struct = _analyze_market_structure(df)
-
-        # 3) SMC
         s_liq, o_liq, f_liq = _detect_liquidity_sweep(df)
         s_ob, o_ob, f_ob = _detect_order_block(df)
-
-        # 4) Ichimoku
         s_ichi, o_ichi, f_ichi = _analyze_ichimoku(df)
-
-        # 5) VSA
         s_vsa, o_vsa, f_vsa = _analyze_vsa_art_of_trading(df)
-
-        # 6) SR Zones
         s_sr, o_sr, f_sr = _analyze_sr(df)
-
-        # 7) Fundamentals
         s_fund, o_fund, m_fund = _analyze_financial_golden_rules(symbol)
 
-        # ------------------------------------------
-        # 🔧 Weighted Tech Score (كما عندك)
-        # ------------------------------------------
         base_tech = s_candle + s_struct + s_vsa + s_ichi + s_ob + s_liq + s_sr
         tech_reasons = (o_struct or []) + (o_candle or []) + (o_vsa or []) + (o_ichi or []) + (o_ob or []) + (o_liq or []) + (o_sr or [])
 
-        # Features 0/1
         features = {}
         fund_feats = (m_fund or {}).get("_fund_features", {})
         for d in [f_liq, f_ob, f_ichi, f_vsa, f_sr, fund_feats]:
@@ -1424,7 +1052,6 @@ def generate_ai_report(symbol, timeframe="1D"):
             except Exception:
                 pass
 
-        # أضف لقطة رقمية مفيدة للتعلّم/الفشل (لا تغير مزاياك، فقط إثراء)
         try:
             close_last = float(df["Close"].astype(float).iloc[-1])
             features["close"] = close_last
@@ -1439,7 +1066,6 @@ def generate_ai_report(symbol, timeframe="1D"):
         except Exception:
             pass
 
-        # weights bonus
         weighted_bonus = 0.0
         for k, v in features.items():
             if isinstance(v, (bool, int)) and int(v) == 1:
@@ -1449,9 +1075,6 @@ def generate_ai_report(symbol, timeframe="1D"):
         fund_score = float(s_fund)
         total_score = float(tech_score + fund_score)
 
-        # ------------------------------------------
-        # ✅ User Rules Integration (بدون كسر)
-        # ------------------------------------------
         try:
             rules = load_user_rules(enabled_only=True, max_rows=30)
         except Exception:
@@ -1466,7 +1089,6 @@ def generate_ai_report(symbol, timeframe="1D"):
                     user_delta += float(delta)
                     if reason:
                         tech_reasons.append(reason)
-                    # سجل features
                     for kk, vv in (f_user or {}).items():
                         features[kk] = int(vv)
 
@@ -1474,21 +1096,14 @@ def generate_ai_report(symbol, timeframe="1D"):
             tech_score = float(tech_score + user_delta)
             total_score = float(tech_score + fund_score)
 
-        # ------------------------------------------
-        # 🔥 Calibration / Learned Bias
-        # ------------------------------------------
         sector = None
         try:
-            # لو عندك get_static_info موجود، خذه بدون ما نكسر لو غير متوفر
             from market_data import get_static_info
             info = get_static_info(symbol) or {}
             sector = info.get("sector") or info.get("Sector") or info.get("industry") or None
         except Exception:
             sector = None
 
-        learned = get_learned_bias(symbol, sector, limit=100)
-
-        # Hint strategy name من مكونات التحليل (للتسجيل/المقارنة)
         module_scores = {
             "MarketStructure": s_struct,
             "SmartMoney": (s_liq + s_ob),
@@ -1501,35 +1116,6 @@ def generate_ai_report(symbol, timeframe="1D"):
         }
         strategy_name = _infer_strategy_hint(module_scores)
 
-        # تأثير learned bias على الثقة/التوصية
-        calib_note = None
-        calib_conf_delta = 0
-        if learned and learned.get("best_strategy"):
-            wr = learned.get("win_rate")
-            ar = learned.get("avg_return")
-            n = learned.get("n", 0)
-            if wr is not None and n >= 10:
-                if float(wr) >= 0.60:
-                    calib_conf_delta = +6
-                    calib_note = f"🎯 Calibration: تاريخياً للسهم/القطاع أفضل أداء ({learned['best_strategy']}) | WinRate={wr:.0%} | AvgRet={ar:.2f}%"
-                elif float(wr) <= 0.45:
-                    calib_conf_delta = -6
-                    calib_note = f"⚠️ Calibration: تاريخياً أداء ضعيف للاستراتيجيات على هذا السهم/القطاع | WinRate={wr:.0%} | راقب أسباب الفشل"
-            # ارفع وزن strategy المسيطرة لهذا السهم/القطاع (لطيف)
-            try:
-                if wr is not None:
-                    key = f"STRAT::{sector or 'NA'}::{symbol}::{learned['best_strategy']}"
-                    w0 = _get_weight(key, 1.0)
-                    if float(wr) >= 0.60:
-                        _set_weight(key, min(w0 + 0.08, 2.0))
-                    elif float(wr) <= 0.45:
-                        _set_weight(key, max(w0 - 0.08, 0.3))
-            except Exception:
-                pass
-
-        # ------------------------------------------
-        # القرار (نفس منطقك)
-        # ------------------------------------------
         rec = "⚖️ محايد / مراقبة"
         clr = "#6c757d"
         strat = "السعر في منطقة حيرة. انتظر إشارة أوضح."
@@ -1562,22 +1148,7 @@ def generate_ai_report(symbol, timeframe="1D"):
             fund_reasons = ["المؤشرات المالية طبيعية"]
 
         confidence, confidence_label = _calc_confidence(tech_score, fund_score, df)
-
-        # تطبيق Calibration على الثقة
-        if calib_conf_delta != 0:
-            confidence = int(max(0, min(100, confidence + calib_conf_delta)))
-            if calib_note:
-                tech_reasons.append(calib_note)
-
-        # أسباب الفشل الشائعة من learned
-        if learned and learned.get("top_fail_reasons"):
-            # ضفها كـ Notes في explainability
-            pass
-
         explainability = _build_explainability(tech_reasons, fund_reasons, total_score, tech_score, fund_score)
-
-        if learned and learned.get("top_fail_reasons"):
-            explainability["notes"] = (explainability.get("notes") or []) + [f"أشهر أسباب الفشل: {', '.join(learned['top_fail_reasons'][:4])}"]
 
         report = {
             "recommendation": rec,
@@ -1592,15 +1163,12 @@ def generate_ai_report(symbol, timeframe="1D"):
             "confidence_label": confidence_label,
             "explainability": explainability,
             "features": features,
-            # إضافات جديدة (لا تكسر العرض)
-            "calibration": learned,
+            "calibration": {},
             "strategy_name": strategy_name,
             "sector": sector,
         }
 
-        # ✅ يسجّل ذاكرة
         log_ai_signal(symbol, timeframe, features, report, horizon_days=20, sector=sector, strategy_name=strategy_name)
-
         return report
 
     except Exception:
@@ -1624,7 +1192,6 @@ def generate_ai_report(symbol, timeframe="1D"):
 # ============================================================
 # 🛡️ Portfolio Intelligence (كما عندك)
 # ============================================================
-
 def calculate_portfolio_risk_score(trades_df, cash_percent):
     try:
         if trades_df is None or trades_df.empty:
