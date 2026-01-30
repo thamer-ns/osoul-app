@@ -94,72 +94,6 @@ except Exception:
         return []
 
 
-# ========================================================
-# Helpers
-# ========================================================
-def _normalize_symbol(sym: str) -> str:
-    sym = (sym or "").strip().upper()
-    if sym.isdigit():
-        return f"{sym}.SR"
-    sym = sym.replace(" ", "").replace("-", "")
-    if sym.endswith("SR") and ".SR" not in sym:
-        sym = sym.replace("SR", ".SR")
-    return sym
-
-
-def _select_strategy_ui(key_prefix: str = "lab"):
-    """
-    يدعم list_strategies سواء رجعت:
-    - ["Trend","Sniper"]
-    - [("Trend","ترند"), ("Sniper","قناص")]
-    - [{"key":"Trend","name":"ترند"}] (إذا جاء شكل غريب نحاول نطبع نص)
-    ويرجع دائمًا قيمة strategy كنص (string) لتفادي خطأ tuple.title()
-    """
-    raw = list_strategies() or ["Trend", "Sniper"]
-
-    # tuples/lists: (key, name)
-    if raw and isinstance(raw[0], (tuple, list)):
-        strat_map = {}
-        for item in raw:
-            if not item:
-                continue
-            k = str(item[0])
-            label = str(item[1]) if len(item) > 1 else k
-            strat_map[label] = k
-
-        if not strat_map:
-            return "Trend"
-
-        label = st.selectbox(
-            "اختر الاستراتيجية",
-            list(strat_map.keys()),
-            index=0,
-            key=f"{key_prefix}_strat_label",
-        )
-        return strat_map[label]
-
-    # dicts: {"key": "...", "name": "..."}
-    if raw and isinstance(raw[0], dict):
-        strat_map = {}
-        for d in raw:
-            k = str(d.get("key") or d.get("id") or d.get("value") or "")
-            label = str(d.get("name") or d.get("label") or k)
-            if k:
-                strat_map[label] = k
-        if strat_map:
-            label = st.selectbox(
-                "اختر الاستراتيجية",
-                list(strat_map.keys()),
-                index=0,
-                key=f"{key_prefix}_strat_label",
-            )
-            return strat_map[label]
-        return "Trend"
-
-    # default: list of strings
-    raw_str = [str(x) for x in raw] if raw else ["Trend", "Sniper"]
-    return st.selectbox("اختر الاستراتيجية", raw_str, index=0, key=f"{key_prefix}_strat")
-
 
 # ========================================================
 # 1) Navigation
@@ -581,8 +515,7 @@ def view_sukuk_portfolio(fin):
         st.markdown("---")
 
         if not op.empty:
-            if "company_name" not in op.columns:
-                op["company_name"] = op.get("symbol", "")
+            if "company_name" not in op.columns: op["company_name"] = op.get("symbol", "")
             op["company_name"] = op["company_name"].fillna(op.get("symbol", ""))
 
             if "date" in op.columns:
@@ -1055,6 +988,8 @@ def view_analysis(fin):
         st.markdown(f"### {n} ({sym})")
         tabs = st.tabs(["🤖 المستشار", "💰 مالي", "📈 فني", "🏛️ كلاسيكي", "📝 أطروحة"])
 
+        # -------------------- المستشار --------------------
+         # -------------------- المستشار --------------------
         with tabs[0]:
             rep = generate_ai_report(sym)
 
@@ -1064,6 +999,7 @@ def view_analysis(fin):
                 st.stop()
 
             col = rep.get("color", "#666")
+
 
             st.markdown(
                 f"<div style='padding:15px;border:2px solid {col};border-radius:10px;text-align:center;'>"
@@ -1099,6 +1035,9 @@ def view_analysis(fin):
 
             st.markdown("---")
 
+            # =====================================================
+            # ✅ استراتيجياتي الخاصة (User Rules) — مدموجة صح هنا
+            # =====================================================
             st.subheader("🧠 استراتيجياتي الخاصة")
             st.caption("اكتب قواعدك بصيغة بسيطة مثل: (تقاطع الماكد صعوداً + اختراق خط الصفر) أو (RSI فوق 70)")
 
@@ -1121,6 +1060,7 @@ def view_analysis(fin):
             with col2:
                 st.caption("ملاحظة: الذكاء سيطبق القواعد تلقائياً عند توليد التقرير.")
 
+            # عرض آخر القواعد (لتأكيد الحفظ)
             with st.expander("📌 عرض آخر الاستراتيجيات المحفوظة"):
                 rules = load_user_rules(enabled_only=True, max_rows=10) or []
                 if rules:
@@ -1131,11 +1071,12 @@ def view_analysis(fin):
 
             st.markdown("---")
 
+            # ✅ زر Backtest (مُحصّن + يسجل symbol/sector)
             if run_backtest:
                 if st.button("🧪 تشغيل Backtest على هذا السهم", key=f"bt_{sym}"):
                     try:
                         data = get_chart_history(sym, "2y")
-                        _, sec2 = get_company_details(sym)
+                        nm2, sec2 = get_company_details(sym)
 
                         rec_txt = str(rep.get("recommendation", "")).lower()
                         trend_txt = str(rep.get("trend", "")).strip()
@@ -1176,20 +1117,22 @@ def view_analysis(fin):
                 for x in rep.get("fund_reasons", []):
                     st.write(f"- {x}")
 
+        # -------------------- مالي --------------------
         with tabs[1]:
             render_financial_dashboard_ui(sym)
 
+        # -------------------- فني --------------------
         with tabs[2]:
             render_technical_chart(sym)
 
+        # -------------------- كلاسيكي --------------------
         with tabs[3]:
             render_classical_analysis(sym)
 
+        # -------------------- أطروحة --------------------
         with tabs[4]:
             th = get_thesis(sym)
-            txt = th["thesis_text"] if (isinstance(th, dict) and "thesis_text" in th) else (
-                th.thesis_text if th is not None and hasattr(th, "thesis_text") else ""
-            )
+            txt = th["thesis_text"] if (isinstance(th, dict) and "thesis_text" in th) else (th.thesis_text if th is not None and hasattr(th, "thesis_text") else "")
             with st.form(f"th_{sym}"):
                 nt = st.text_area("نص الأطروحة", value=txt)
                 if st.form_submit_button("حفظ"):
@@ -1210,17 +1153,48 @@ def view_backtester_ui(fin):
         st.info("✅ الحل: تأكد أنك استبدلت backtester.py بالنسخة الجديدة التي فيها STRATEGY_CATALOG و list_strategies.")
         return
 
+    def _normalize_symbol(sym: str) -> str:
+    sym = (sym or "").strip().upper()
+    if sym.isdigit():
+        return f"{sym}.SR"
+    sym = sym.replace(" ", "").replace("-", "")
+    if sym.endswith("SR") and ".SR" not in sym:
+        sym = sym.replace("SR", ".SR")
+    return sym
+
+
+def _normalize_symbol(sym: str) -> str:
+    sym = (sym or "").strip().upper()
+    if sym.isdigit():
+        return f"{sym}.SR"
+    sym = sym.replace(" ", "").replace("-", "")
+    if sym.endswith("SR") and ".SR" not in sym:
+        sym = sym.replace("SR", ".SR")
+    return sym
+
+
+def view_backtester_ui(fin):
+    st.header("🧪 المختبر")
+
+    if not run_backtest:
+        st.warning("Backtester غير متوفر حالياً.")
+        if bt_import_error:
+            st.code(bt_import_error)
+        st.info("✅ الحل: تأكد أنك استبدلت backtester.py بالنسخة الجديدة التي فيها STRATEGY_CATALOG و list_strategies.")
+        return
+
     s = st.text_input("رمز السهم", "1120", key="lab_symbol")
     cap = st.number_input("رأس المال", min_value=1000.0, value=100000.0, step=1000.0, key="lab_cap")
 
-    strat = _select_strategy_ui(key_prefix="lab")
+    strat_list = list_strategies() or ["Trend", "Sniper"]
+    strat = st.selectbox("اختر الاستراتيجية", strat_list, index=0, key="lab_strat")
 
     period = st.selectbox("الفترة التاريخية", ["6mo", "1y", "2y", "5y", "10y", "max"], index=3, key="lab_period")
 
     if st.button("بدء", key="bt_run"):
         try:
             s_norm = _normalize_symbol(s)
-            st.caption(f"🔎 الرمز: {s_norm} | الفترة: {period} | الاستراتيجية: {strat}")
+            st.caption(f"🔎 الرمز: {s_norm} | الفترة: {period}")
 
             data = get_chart_history(s_norm, period)
 
@@ -1232,11 +1206,6 @@ def view_backtester_ui(fin):
                 data = pd.DataFrame(data)
 
             st.caption(f"📦 rows={len(data)} cols={len(data.columns)}")
-            try:
-                st.caption(f"🗓️ من: {data.index.min()}  إلى: {data.index.max()}")
-            except Exception:
-                pass
-
             st.dataframe(data.tail(5), use_container_width=True)
 
             if len(data) < 120:
@@ -1247,10 +1216,9 @@ def view_backtester_ui(fin):
                 st.write("الأعمدة:", list(data.columns))
                 return
 
-            _, sec = get_company_details(s_norm)
+            nm, sec = get_company_details(s_norm)
 
-            # ✅ strat هنا مضمون string وليس tuple
-            res = run_backtest(data, str(strat), cap, symbol=s_norm, sector=sec)
+            res = run_backtest(data, strat, cap, symbol=s_norm, sector=sec)
 
             if res:
                 st.success(f"✅ اكتمل الاختبار ({res.get('strategy_name_ar', strat)})")
@@ -1342,6 +1310,8 @@ def view_settings():
         d, n = create_smart_backup()
         if d:
             st.download_button("تحميل", d, n)
+
+
 
 
 # ========================================================
