@@ -415,7 +415,7 @@ def view_portfolio(fin, key):
                         st.info("لا توجد صفقات لاختيارها")
 
             with c_a2:
-                with st.expander("✏️ تعديل صفقة (تصحيح خطأ)"):
+                  with st.expander("✏️ تعديل صفقة (تصحيح خطأ)"):
                     if "id" in op.columns and len(op["id"].tolist()) > 0:
                         e_id = st.selectbox("اختر الصفقة", op["id"].tolist(), key=f"edit_{key}")
                         if e_id:
@@ -989,14 +989,17 @@ def view_analysis(fin):
         tabs = st.tabs(["🤖 المستشار", "💰 مالي", "📈 فني", "🏛️ كلاسيكي", "📝 أطروحة"])
 
         # -------------------- المستشار --------------------
+         # -------------------- المستشار --------------------
         with tabs[0]:
-rep = generate_ai_report(sym)
+            rep = generate_ai_report(sym)
 
-if rep.get("__error__") or rep.get("__trace__"):
-    st.error("فشل تشغيل المستشار (AI Engine).")
-    st.code(rep.get("__trace__", ""))
-    st.stop()
+            if rep.get("__error__") or rep.get("__trace__"):
+                st.error("فشل تشغيل المستشار (AI Engine).")
+                st.code(rep.get("__trace__", ""))
+                st.stop()
+
             col = rep.get("color", "#666")
+
 
             st.markdown(
                 f"<div style='padding:15px;border:2px solid {col};border-radius:10px;text-align:center;'>"
