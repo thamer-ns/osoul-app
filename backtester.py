@@ -90,18 +90,18 @@ def run_backtest(df, strategy, capital=100000):
 
         # شراء
         if sig == 1 and shares == 0:
-            invest = cash / (1 + COMMISSION)
+            invest = cash / (1 + COMMISSION_RATE)
             shares_to_buy = int(invest / p)
 
             if shares_to_buy > 0:
-                cost = shares_to_buy * p * (1 + COMMISSION)
+                cost = shares_to_buy * p * (1 + COMMISSION_RATE)
                 cash -= cost
                 shares = shares_to_buy
                 log.append({'Date': d, 'Type': 'Buy', 'Price': p, 'Qty': shares, 'Cash': cash, 'Value': cost})
 
         # بيع
         elif sig == -1 and shares > 0:
-            revenue = shares * p * (1 - COMMISSION)
+            revenue = shares * p * (1 - COMMISSION_RATE)
             cash += revenue
             log.append({'Date': d, 'Type': 'Sell', 'Price': p, 'Qty': shares, 'Cash': cash, 'Value': revenue})
             shares = 0
