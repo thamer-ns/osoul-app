@@ -29,13 +29,11 @@ def _safe_number(val, default=None):
     if val is None:
         return default
     try:
-        # pandas/numpy
         if hasattr(pd, "isna") and pd.isna(val):
             return default
     except Exception:
         pass
 
-    # لو رقم جاهز
     try:
         if isinstance(val, (int, float)) and not _is_nan(val):
             if isinstance(val, float) and (math.isinf(val)):
@@ -48,11 +46,9 @@ def _safe_number(val, default=None):
     if not s:
         return default
 
-    # أقواس سالب
     if s.startswith("(") and s.endswith(")"):
         s = "-" + s[1:-1]
 
-    # إزالة العملات/الفواصل/النسب
     s = s.replace(",", "")
     s = s.replace("SAR", "").replace("ر.س", "").replace("ريال", "")
     s = s.replace("%", "").strip()
@@ -107,8 +103,96 @@ def _safe_text(val) -> str:
 
 def _short_date(val) -> str:
     s = _safe_text(val)
-    # قص أول 10 أحرف إذا كان تاريخ ISO
     return s[:10] if len(s) >= 10 else s
+
+
+# ============================================================
+# 🌍 Streamlit UI Arabic Helpers (Fix English placeholders)
+# ============================================================
+
+def inject_streamlit_ar_i18n(enable: bool = True):
+    """
+    ✅ Best-effort DOM translation لبعض عبارات Streamlit الافتراضية:
+    Choose an option / Search / No options...
+    - لا يحذف شيء
+    - يشتغل مرة واحدة فقط
+    - قد يحتاج تحديث لو Streamlit غيّر DOM (نادر)
+    """
+    if not enable:
+        return
+
+    key = "_ar_i18n_injected"
+    if st.session_state.get(key):
+        return
+    st.session_state[key] = True
+
+    st.components.v1.html(
+        """
+        <script>
+        (function(){
+          const map = new Map([
+            ["Choose an option", "اختر خيارًا"],
+            ["Search", "بحث"],
+            ["No options to select.", "لا توجد خيارات"],
+            ["No options to select", "لا توجد خيارات"],
+            ["Type to search", "اكتب للبحث"],
+            ["Select an option", "اختر خيارًا"],
+            ["Clear value", "مسح"],
+          ]);
+
+          function replaceText(node){
+            if(!node) return;
+            const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT, null, false);
+            let n;
+            while(n = walker.nextNode()){
+              const t = (n.nodeValue || "").trim();
+              if(map.has(t)){
+                n.nodeValue = n.nodeValue.replace(t, map.get(t));
+              }
+            }
+          }
+
+          function run(){
+            replaceText(document.body);
+          }
+
+          // run now + observe changes
+          run();
+          const obs = new MutationObserver(()=>run());
+          obs.observe(document.body, {subtree:true, childList:true, characterData:true});
+        })();
+        </script>
+        """,
+        height=0,
+    )
+
+
+def ar_selectbox(label, options, *, placeholder="اختر...", **kwargs):
+    """
+    Wrapper لـ st.selectbox مع placeholder عربي (إذا مدعوم في إصدار Streamlit).
+    إذا placeholder غير مدعوم، ما يوقف التطبيق.
+    """
+    try:
+        return st.selectbox(label, options, placeholder=placeholder, **kwargs)
+    except TypeError:
+        # إصدارات قديمة ما تدعم placeholder
+        return st.selectbox(label, options, **kwargs)
+
+def ar_multiselect(label, options, *, placeholder="ابحث أو اختر...", **kwargs):
+    """
+    Wrapper لـ st.multiselect مع placeholder عربي (إذا مدعوم).
+    """
+    try:
+        return st.multiselect(label, options, placeholder=placeholder, **kwargs)
+    except TypeError:
+        return st.multiselect(label, options, **kwargs)
+
+def ar_expander(label, *, expanded=False, icon=None):
+    """
+    Wrapper لـ st.expander (بس للتوحيد + إمكانية إضافة أيقونة في العنوان)
+    """
+    lab = f"{icon} {label}" if icon else label
+    return st.expander(lab, expanded=expanded)
 
 
 # ============================================================
@@ -219,7 +303,7 @@ def inject_component_styles():
 
 def render_kpi(label, value, color_class="neutral", icon="📊"):
     """
-    نفس الدالة السابقة — تحسينات: أمان أكثر + قيمة تُعرض كما هي (مع escaping عند النص).
+    نفس الدالة السابقة — تحسينات: أمان أكثر + هروب نصوص.
     """
     val_color = "#1E293B"
     if color_class == "success":
@@ -230,8 +314,7 @@ def render_kpi(label, value, color_class="neutral", icon="📊"):
         val_color = "#2563EB"
 
     safe_label = html.escape(_safe_text(label))
-    # لا نهرب value لو كان رقم منسّق أنت، لكن لو نص نأمنه
-    v = value
+
     if isinstance(value, str):
         v = html.escape(value)
     else:
@@ -292,6 +375,7 @@ def render_custom_table(df, columns_config):
     1) القديم: (col_key, label, col_type)
     2) الجديد: (col_key, label, col_type, format_func)
        format_func(val, row) -> (display_str, css_class)
+
     col_type المدعومة:
       - money / percent / colorful / badge / date
       - text / number / bool / auto / link
@@ -300,16 +384,10 @@ def render_custom_table(df, columns_config):
         st.info("📭 لا توجد بيانات متاحة")
         return
 
-    # بداية الجدول
     html_out = '<div style="overflow-x:auto;"><table class="finance-table"><thead><tr>'
 
-    # الرؤوس
     for cfg in columns_config:
-        # دعم config القديم/الجديد
-        try:
-            _, label, _ = cfg[0], cfg[1], cfg[2]
-        except Exception:
-            label = ""
+        label = cfg[1] if len(cfg) > 1 else ""
         html_out += f'<th>{html.escape(_safe_text(label))}</th>'
     html_out += "</tr></thead><tbody>"
 
@@ -317,60 +395,59 @@ def render_custom_table(df, columns_config):
         html_out += "<tr>"
 
         for cfg in columns_config:
-            # unpack
             col_key = cfg[0]
-            label = cfg[1] if len(cfg) > 1 else col_key
             col_type = cfg[2] if len(cfg) > 2 else "auto"
             format_func = cfg[3] if len(cfg) > 3 else None
 
             val = row.get(col_key, "")
 
-            # custom formatter أولاً
+            # custom formatter
             if callable(format_func):
                 try:
                     disp, cls = format_func(val, row)
-                    disp = html.escape(_safe_text(disp)) if not (isinstance(disp, str) and disp.strip().startswith("<")) else disp
-                    cls = _safe_text(cls) if cls else ""
-                    html_out += f'<td><span class="{html.escape(cls)}">{disp}</span></td>'
+                    # لو formatter رجّع HTML جاهز (مثل badge/link) لا نهربه
+                    if isinstance(disp, str) and disp.strip().startswith("<"):
+                        html_out += f'<td><span class="{html.escape(_safe_text(cls))}">{disp}</span></td>'
+                    else:
+                        html_out += f'<td><span class="{html.escape(_safe_text(cls))}">{html.escape(_safe_text(disp))}</span></td>'
                     continue
                 except Exception:
-                    # لو فشل formatter نكمل للمعالجة العادية
                     pass
 
             display = _safe_text(val)
             cls = ""
             td_cls = ""
 
-            if col_type in ("money",):
+            if col_type == "money":
                 x = _safe_number(val, default=None)
                 display = _fmt_money(x) if x is not None else "-"
                 cls = "txt-blue" if (x is not None and x > 0) else ""
                 td_cls = "td-num"
 
-            elif col_type in ("percent",):
+            elif col_type == "percent":
                 x = _safe_number(val, default=None)
                 display = _fmt_percent(x) if x is not None else "-"
                 cls = "txt-green" if (x is not None and x >= 0) else "txt-red"
                 td_cls = "td-num"
 
-            elif col_type in ("colorful",):
+            elif col_type == "colorful":
                 x = _safe_number(val, default=None)
                 display = _fmt_money(x) if x is not None else "-"
                 cls = "txt-green" if (x is not None and x >= 0) else "txt-red"
                 td_cls = "td-num"
 
-            elif col_type in ("number",):
+            elif col_type == "number":
                 x = _safe_number(val, default=None)
                 display = f"{x:,.2f}" if x is not None else "-"
                 td_cls = "td-num"
 
-            elif col_type in ("bool",):
+            elif col_type == "bool":
                 s = str(val).strip().lower()
                 truthy = s in ("1", "true", "yes", "y", "نعم", "صح") or val is True
                 display = "✅" if truthy else "—"
                 cls = "txt-green" if truthy else "txt-muted"
 
-            elif col_type in ("badge",):
+            elif col_type == "badge":
                 s = str(val).lower()
                 is_op = s.startswith("open") or s.startswith("مفتوح")
                 badge_cls = "badge-open" if is_op else "badge-closed"
@@ -379,12 +456,11 @@ def render_custom_table(df, columns_config):
                 html_out += f"<td>{display}</td>"
                 continue
 
-            elif col_type in ("date",):
+            elif col_type == "date":
                 display = _short_date(val)
                 cls = "txt-muted"
 
-            elif col_type in ("link",):
-                # يتوقع val يكون URL أو (text,url)
+            elif col_type == "link":
                 url = None
                 text = None
                 if isinstance(val, (tuple, list)) and len(val) >= 2:
@@ -400,26 +476,27 @@ def render_custom_table(df, columns_config):
                     continue
                 display = html.escape(text)
 
-            elif col_type in ("text",):
-                display = html.escape(_safe_text(val))
+            elif col_type == "text":
+                display = _safe_text(val)
 
-            elif col_type in ("auto",):
-                # إذا رقم -> رقم، إذا تاريخ -> قص، وإلا نص
+            elif col_type == "auto":
                 x = _safe_number(val, default=None)
                 if x is not None:
                     display = f"{x:,.2f}"
                     td_cls = "td-num"
                 else:
-                    display = html.escape(_short_date(val))
+                    display = _short_date(val)
 
             else:
-                display = html.escape(_safe_text(val))
+                display = _safe_text(val)
 
-            # Sanitization Final Step (لو ما كان HTML جاهز)
-            if not (isinstance(display, str) and display.strip().startswith("<")):
-                display = html.escape(_safe_text(display))
+            # Escape exactly once unless it's an HTML snippet
+            if isinstance(display, str) and display.strip().startswith("<"):
+                escaped_display = display
+            else:
+                escaped_display = html.escape(_safe_text(display))
 
-            html_out += f'<td class="{html.escape(td_cls)}"><span class="{html.escape(cls)}">{display}</span></td>'
+            html_out += f'<td class="{html.escape(td_cls)}"><span class="{html.escape(cls)}">{escaped_display}</span></td>'
 
         html_out += "</tr>"
 
