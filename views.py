@@ -1169,13 +1169,15 @@ def view_backtester_ui(fin):
 
     strat_list = list_strategies() or ["Trend", "Sniper"]
     strat = st.selectbox("اختر الاستراتيجية", strat_list, index=0, key="lab_strat")
+    period = st.selectbox("الفترة التاريخية", ["6mo", "1y", "2y", "5y", "10y", "max"], index=2, key="bt_period")
 
     if st.button("بدء", key="bt_run"):
         try:
             s_norm = _normalize_symbol(s)
             st.caption(f"🔎 الرمز المستخدم للاختبار: {s_norm}")
 
-            data = get_chart_history(s_norm, "2y")
+            data = get_chart_history(s_norm, period)
+
 
             # ✅ تشخيص: هل البيانات رجعت؟
             if data is None:
