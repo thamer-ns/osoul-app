@@ -415,7 +415,7 @@ def view_portfolio(fin, key):
                         st.info("لا توجد صفقات لاختيارها")
 
             with c_a2:
-                with st.expander("✏️ تعديل صفقة (تصحيح خطأ)"):
+                  with st.expander("✏️ تعديل صفقة (تصحيح خطأ)"):
                     if "id" in op.columns and len(op["id"].tolist()) > 0:
                         e_id = st.selectbox("اختر الصفقة", op["id"].tolist(), key=f"edit_{key}")
                         if e_id:
@@ -1154,62 +1154,59 @@ def view_backtester_ui(fin):
         return
 
     def _normalize_symbol(sym: str) -> str:
-    sym = (sym or "").strip().upper()
-    if sym.isdigit():
-        return f"{sym}.SR"
-    sym = sym.replace(" ", "").replace("-", "")
-    if sym.endswith("SR") and ".SR" not in sym:
-        sym = sym.replace("SR", ".SR")
-    return sym
-
-
-def view_backtester_ui(fin):
-    st.header("🧪 المختبر")
-
-    if not run_backtest:
-        st.warning("Backtester غير متوفر حالياً.")
-        if bt_import_error:
-            st.code(bt_import_error)
-        st.info("✅ الحل: تأكد أنك استبدلت backtester.py بالنسخة الجديدة التي فيها STRATEGY_CATALOG و list_strategies.")
-        return
+        sym = (sym or "").strip().upper()
+        # لو المستخدم كتب رقم بدون لاحقة السوق
+        if sym.isdigit():
+            return f"{sym}.SR"
+        # لو كتب 1120SR أو 1120-SR أو 1120 SR
+        sym = sym.replace(" ", "").replace("-", "")
+        if sym.endswith("SR") and ".SR" not in sym:
+            sym = sym.replace("SR", ".SR")
+        return sym
 
     s = st.text_input("رمز السهم", "1120", key="lab_symbol")
     cap = st.number_input("رأس المال", min_value=1000.0, value=100000.0, step=1000.0, key="lab_cap")
 
     strat_list = list_strategies() or ["Trend", "Sniper"]
     strat = st.selectbox("اختر الاستراتيجية", strat_list, index=0, key="lab_strat")
-
-    period = st.selectbox("الفترة التاريخية", ["6mo", "1y", "2y", "5y", "10y", "max"], index=3, key="lab_period")
+    period = st.selectbox("الفترة التاريخية", ["6mo", "1y", "2y", "5y", "10y", "max"], index=2, key="bt_period")
 
     if st.button("بدء", key="bt_run"):
         try:
             s_norm = _normalize_symbol(s)
-            st.caption(f"🔎 الرمز: {s_norm} | الفترة: {period}")
+            st.caption(f"🔎 الرمز المستخدم للاختبار: {s_norm}")
 
             data = get_chart_history(s_norm, period)
 
-            if data is None or (isinstance(data, pd.DataFrame) and data.empty):
-                st.error("❌ لم يتم جلب بيانات (DataFrame فارغ)")
-                return
 
+            # ✅ تشخيص: هل البيانات رجعت؟
+            if data is None:
+                st.error("❌ get_chart_history رجّعت None")
+                st.stop()
+
+            # إذا data مو DataFrame حاول تحويله
             if not isinstance(data, pd.DataFrame):
-                data = pd.DataFrame(data)
+                try:
+                    data = pd.DataFrame(data)
+                except Exception:
+                    st.error("❌ البيانات ليست DataFrame ولا يمكن تحويلها")
+                    st.write(data)
+                    st.stop()
 
-            st.caption(f"📦 rows={len(data)} cols={len(data.columns)}")
-            try:
-                st.caption(f"🗓️ من: {data.index.min()}  إلى: {data.index.max()}")
-            except Exception:
-                pass
+            st.caption(f"📦 شكل البيانات: rows={len(data)} cols={len(data.columns)}")
 
-            st.dataframe(data.tail(5), use_container_width=True)
+            with st.expander("عرض آخر 5 صفوف من البيانات"):
+                st.dataframe(data.tail(5), use_container_width=True)
 
-            if len(data) < 120:
-                st.warning("⚠️ أقل من 120 شمعة — غالبًا لن تظهر إشارات مؤشرات (جرّب 5y أو max).")
+            # ✅ أعمدة مطلوبة غالبًا لأي باك تست
+            if len(data) < 80:
+                st.warning("⚠️ البيانات قليلة جدًا للاختبار (جرّب 5y أو تأكد من المصدر).")
 
-            if "Close" not in data.columns and "close" not in data.columns:
-                st.error("❌ لا يوجد عمود Close في البيانات")
-                st.write("الأعمدة:", list(data.columns))
-                return
+            needed_any = ["Close", "close"]
+            if not any(col in data.columns for col in needed_any):
+                st.error("❌ لا يوجد عمود سعر إغلاق (Close/close) — لذلك الاستراتيجية لن تعمل.")
+                st.write("الأعمدة المتاحة:", list(data.columns))
+                st.stop()
 
             nm, sec = get_company_details(s_norm)
 
@@ -1224,11 +1221,10 @@ def view_backtester_ui(fin):
                     st.dataframe(res.get("trades_log", pd.DataFrame()), use_container_width=True)
             else:
                 st.warning("⚠️ لم يرجع الاختبار نتيجة.")
-                st.info("إذا rows كبيرة، فالغالب أن الاستراتيجية لم تعطِ أي إشارات خلال الفترة.")
+                st.info("إذا البيانات سليمة، فالغالب أن الاستراتيجية لم تعطِ أي إشارات على الفترة المختارة.")
 
         except Exception as e:
             st.error(f"Backtest Error: {e}")
-
 
 def render_pulse_dashboard():
     st.header("نبض السوق")
