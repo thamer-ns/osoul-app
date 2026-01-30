@@ -1,54 +1,38 @@
-import re
 import psycopg2
 from psycopg2 import pool
-from psycopg2 import sql
 import pandas as pd
 import streamlit as st
 import bcrypt
 from contextlib import contextmanager
+import re
 
-# =========================
-# 0) قراءة الرابط بأمان
-# =========================
-def _get_db_url() -> str:
-    try:
-        url = st.secrets.get("DATABASE_URL") or st.secrets["postgres"]["url"]
-        return (url or "").strip()
-    except Exception:
-        return ""
+# 1. إعداد الاتصال
+try:
+    DB_URL = st.secrets.get("DATABASE_URL") or st.secrets["postgres"]["url"]
+except:
+    DB_URL = ""
 
-DB_URL = _get_db_url()
-
-# أسماء الجداول المسموح بها (حماية + ثبات)
-ALLOWED_TABLES = {
-    "Users",
-    "Trades",
-    "Deposits",
-    "Withdrawals",
-    "ReturnsGrants",
-    "Watchlist",
-    "InvestmentThesis",
-    "FinancialStatements",
+# Whitelist للجداول المسموح قراءتها (أمان)
+_ALLOWED_TABLES = {
+    "users", "trades", "deposits", "withdrawals", "returnsgrants",
+    "watchlist", "investmentthesis", "financialstatements"
 }
+
+def _safe_ident(name: str) -> str:
+    """حماية بسيطة لمنع SQL injection في أسماء الجداول/الأعمدة."""
+    name = (name or "").strip()
+    if not re.match(r"^[A-Za-z0-9_]+$", name):
+        return ""
+    return name
 
 @st.cache_resource
 def get_connection_pool():
-    """
-    إنشاء Pool مرة واحدة لكل سيرفر/سيشن (حسب Streamlit).
-    """
     if not DB_URL:
         return None
     try:
-        return psycopg2.pool.SimpleConnectionPool(
-            1,
-            20,
-            dsn=DB_URL,
-            sslmode="require",
-            connect_timeout=5,
-        )
+        return psycopg2.pool.SimpleConnectionPool(1, 20, dsn=DB_URL, sslmode='require')
     except Exception as e:
-        # لا تعرض تفاصيل حساسة للمستخدم من داخل طبقة DB
-        print(f"[DB] Pool Error: {e}")
+        st.error(f"DB Error: {e}")
         return None
 
 @contextmanager
@@ -58,60 +42,67 @@ def get_db():
         yield None
         return
 
-    conn = None
+    conn = pool_obj.getconn()
     try:
-        conn = pool_obj.getconn()
         yield conn
     except Exception as e:
-        # لا تبلع الاستثناء بصمت
-        print(f"[DB] Connection Error: {e}")
-        raise
+        print(f"DB Connection Error: {e}")
+        yield None
     finally:
         if conn:
+            pool_obj.putconn(conn)
+
+# 2. تنفيذ الأوامر
+def execute_query(query, params=()):
+    with get_db() as conn:
+        if conn:
             try:
-                pool_obj.putconn(conn)
+                with conn.cursor() as cur:
+                    fixed_query = query.replace('?', '%s')
+                    cur.execute(fixed_query, params)
+                    conn.commit()
+                    return True
             except Exception as e:
-                print(f"[DB] putconn Error: {e}")
+                try:
+                    conn.rollback()
+                except:
+                    pass
+                print(f"Query Error: {e}")
+                return False
+    return False
 
-def execute_query(query: str, params=()) -> bool:
+def fetch_table(table_name):
     """
-    تنفيذ INSERT/UPDATE/DELETE بشكل آمن.
+    قراءة الجدول بشكل متوافق:
+    - يجرب quoted "Name"
+    - ثم يجرب lowercase name
+    مع حماية ضد إدخال أسماء غير آمنة.
     """
     with get_db() as conn:
-        if not conn:
-            return False
-        try:
-            with conn.cursor() as cur:
-                fixed_query = query.replace("?", "%s")
-                cur.execute(fixed_query, params)
-            conn.commit()
-            return True
-        except Exception as e:
+        if conn:
+            t = _safe_ident(table_name)
+            if not t:
+                return pd.DataFrame()
+
+            # 1) حاول quoted (قد يكون موجود لو تم إنشاؤه بعلامات اقتباس)
             try:
-                conn.rollback()
-            except Exception:
+                return pd.read_sql(f'SELECT * FROM "{t}"', conn)
+            except:
                 pass
-            print(f"[DB] Query Error: {e}\nQuery={query}\nParams={params}")
-            return False
 
-def fetch_table(table_name: str) -> pd.DataFrame:
-    """
-    قراءة جدول كامل مع حماية اسم الجدول.
-    """
-    if table_name not in ALLOWED_TABLES:
-        print(f"[DB] Blocked table access: {table_name}")
-        return pd.DataFrame()
+            # 2) حاول lowercase (الوضع الطبيعي في Postgres)
+            low = t.lower()
+            if low not in _ALLOWED_TABLES:
+                return pd.DataFrame()
 
-    with get_db() as conn:
-        if not conn:
-            return pd.DataFrame()
-        try:
-            q = sql.SQL("SELECT * FROM {}").format(sql.Identifier(table_name))
-            return pd.read_sql(q, conn)
-        except Exception as e:
-            print(f"[DB] Read Error ({table_name}): {e}")
-            return pd.DataFrame()
+            try:
+                return pd.read_sql(f"SELECT * FROM {low}", conn)
+            except:
+                return pd.DataFrame()
 
+    return pd.DataFrame()
+
+# 3. تحديث هيكلية البيانات (Migration)
 def migrate_financial_schema():
     columns_to_add = [
         ("total_assets", "DOUBLE PRECISION"),
@@ -122,36 +113,26 @@ def migrate_financial_schema():
         ("current_liabilities", "DOUBLE PRECISION"),
         ("long_term_debt", "DOUBLE PRECISION"),
         ("source", "VARCHAR(20)"),
-        ("period_type", "VARCHAR(20)"),
+        ("period_type", "VARCHAR(20)")
     ]
 
     with get_db() as conn:
-        if not conn:
-            return
-        try:
+        if conn:
             with conn.cursor() as cur:
                 for col_name, col_type in columns_to_add:
-                    cur.execute(
-                        sql.SQL('ALTER TABLE "FinancialStatements" ADD COLUMN IF NOT EXISTS {} {}')
-                        .format(sql.Identifier(col_name), sql.SQL(col_type))
-                    )
+                    # جرّب على جدول quoted أولاً
+                    try:
+                        cur.execute(f'ALTER TABLE "FinancialStatements" ADD COLUMN IF NOT EXISTS {col_name} {col_type}')
+                    except:
+                        conn.rollback()
+                        # جرّب على lowercase
+                        try:
+                            cur.execute(f'ALTER TABLE financialstatements ADD COLUMN IF NOT EXISTS {col_name} {col_type}')
+                        except:
+                            conn.rollback()
             conn.commit()
-        except Exception as e:
-            try:
-                conn.rollback()
-            except Exception:
-                pass
-            print(f"[DB] Migration Error: {e}")
 
 def init_db():
-    """
-    تهيئة الجداول. تُستدعى من app.py مرة واحدة.
-    """
-    if not DB_URL:
-        # إذا تبي fallback SQLite هنا نضيفه لاحقًا، حالياً هذا Postgres-only
-        print("[DB] No DB_URL found. Skipping init_db.")
-        return
-
     tables = [
         "CREATE TABLE IF NOT EXISTS Users (username VARCHAR(50) PRIMARY KEY, password TEXT, email TEXT)",
         """CREATE TABLE IF NOT EXISTS Trades (
@@ -171,48 +152,43 @@ def init_db():
             period_type VARCHAR(20) DEFAULT 'Annual',
             source VARCHAR(20) DEFAULT 'Auto',
             PRIMARY KEY(symbol, date, period_type)
-        )""",
+        )"""
     ]
 
     with get_db() as conn:
-        if not conn:
-            raise RuntimeError("DB connection not available")
-        try:
+        if conn:
             with conn.cursor() as cur:
                 for t in tables:
                     cur.execute(t)
             conn.commit()
-        except Exception as e:
-            try:
-                conn.rollback()
-            except Exception:
-                pass
-            print(f"[DB] init_db failed: {e}")
-            raise
 
     migrate_financial_schema()
 
-# =========================
-# Auth
-# =========================
+# 4. المصادقة
 def db_create_user(u, p):
     try:
-        h = bcrypt.hashpw(p.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+        h = bcrypt.hashpw(p.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
         return execute_query("INSERT INTO Users (username, password) VALUES (%s, %s)", (u, h))
     except Exception as e:
-        print(f"[DB] Create User Error: {e}")
+        print(f"Create User Error: {e}")
         return False
 
 def db_verify_user(u, p):
     with get_db() as conn:
-        if not conn:
-            return False
-        try:
-            with conn.cursor() as cur:
-                cur.execute("SELECT password FROM Users WHERE username = %s", (u,))
-                res = cur.fetchone()
-                if res and res[0]:
-                    return bcrypt.checkpw(p.encode("utf-8"), res[0].encode("utf-8"))
-        except Exception as e:
-            print(f"[DB] Verify User Error: {e}")
-        return False
+        if conn:
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT password FROM Users WHERE username = %s", (u,))
+                    res = cur.fetchone()
+                    if res and res[0]:
+                        return bcrypt.checkpw(p.encode('utf-8'), res[0].encode('utf-8'))
+            except Exception as e:
+                print(f"Verify User Error: {e}")
+    return False
+
+# تشغيل التهيئة
+if DB_URL:
+    try:
+        init_db()
+    except Exception as e:
+        print(f"Init DB Failed: {e}")
