@@ -3,25 +3,43 @@ import streamlit as st
 
 def apply_custom_css():
     st.markdown(
-        r"""
+        """
         <style>
         /* =====================================================
-           0) Fonts (أفضل إبقاء @import هنا إذا كان شغال عندك)
+           Fonts
            ===================================================== */
         @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap');
         @import url('https://fonts.googleapis.com/icon?family=Material+Icons');
+        /* ✅ الأهم: Material Symbols (اللي تسبب ظهور expand_more كنص) */
+        @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
+        @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
+        @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Sharp:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
 
         /* =====================================================
-           1) Base RTL
+           Base RTL + Cairo
+           ✅ ملاحظة: لا نطبّق Cairo على كل span بشكل أعمى
+           عشان ما نكسر أيقونات Streamlit
            ===================================================== */
-        html, body, [class*="css"], p, div, label, input, button, textarea, span, h1, h2, h3, h4, h5, h6 {
+        html, body, [class*="css"], p, div, label, input, button, textarea, h1, h2, h3, h4, h5, h6 {
+            font-family: 'Cairo', sans-serif !important;
+            direction: rtl !important;
+            text-align: right !important;
+        }
+
+        /* ✅ طبّق على span لكن استثنِ أيقونات Material (Icons/Symbols) */
+        span:not(.material-icons)
+            :not(.material-symbols-outlined)
+            :not(.material-symbols-rounded)
+            :not(.material-symbols-sharp)
+            :not([class*="material-symbols"])
+        {
             font-family: 'Cairo', sans-serif !important;
             direction: rtl !important;
             text-align: right !important;
         }
 
         /* =====================================================
-           2) ✅ Icons: لا تطبقها على spans عامة — فقط على أيقونات فعلية
+           ✅ Fix Material Icons (ligatures)
            ===================================================== */
         .material-icons,
         i.material-icons,
@@ -34,145 +52,93 @@ def apply_custom_css():
             letter-spacing: normal !important;
             text-transform: none !important;
             white-space: nowrap !important;
-            word-wrap: normal !important;
             -webkit-font-feature-settings: "liga" !important;
             font-feature-settings: "liga" !important;
             -webkit-font-smoothing: antialiased !important;
         }
 
         /* =====================================================
-           3) ✅ Fallback قاتل لمشكلة ظهور النصوص expand_more/keyboard_arrow_*
-           - نخفي أي span داخل expander/select يحمل هذه النصوص (حتى لو بدون class)
+           ✅ Fix Material Symbols (السبب الحقيقي لظهور expand_more)
            ===================================================== */
-
-        /* Expander summary: أي span صغير خاص بالأيقونة -> نخفي النص */
-        [data-testid="stExpander"] summary span {
-            /* لا نقدر نعرف أيهم أيقونة 100%، لكن نقدر نعالج "النصوص المعروفة" */
-        }
-
-        /* نخفي الكلمات نفسها إن ظهرت كنص */
-        [data-testid="stExpander"] summary span:has-text,
-        [data-testid="stSelectbox"] span:has-text,
-        [data-testid="stMultiSelect"] span:has-text { }
-
-        /* Streamlit ما يدعم :has-text في كل المتصفحات، فنعالجها بـCSS عملي: */
-        /* نخفي spans اللي تكون غالبًا للأيقونات (صغيرة + داخل زر/summary) */
-        [data-testid="stExpander"] summary span:not(:first-child) {
-            /* لا نلمس النص الأساسي عادة (يكون أول span)، والأيقونة غالبًا تأتي بعده */
-        }
-
-        /* طريقة عملية: نخفي أي span داخل summary يحتوي واحد من ligatures عبر font-size=0 ثم نضيف سهم */
-        [data-testid="stExpander"] summary span {
-            /* نجعل النص داخل أيقونات المحتوى صفر عند الاشتباه عبر class hooks */
-        }
-
-        /* 3.1 Expander: استبدال الأيقونة بسهم ثابت */
-        [data-testid="stExpander"] summary span.material-icons,
-        [data-testid="stExpander"] summary i.material-icons {
-            font-size: 0 !important;
-            line-height: 0 !important;
-        }
-        [data-testid="stExpander"] summary span.material-icons::before,
-        [data-testid="stExpander"] summary i.material-icons::before {
-            content: "▾";
-            font-size: 18px !important;
-            line-height: 18px !important;
-            font-family: 'Cairo', sans-serif !important;
-            color: #475569;
-            display: inline-block;
-            transform: translateY(1px);
-        }
-        [data-testid="stExpander"] details[open] summary span.material-icons::before,
-        [data-testid="stExpander"] details[open] summary i.material-icons::before {
-            content: "▴";
-        }
-
-        /* 3.2 Selectbox / Multiselect: استبدال سهم القائمة */
-        [data-testid="stSelectbox"] span.material-icons,
-        [data-testid="stSelectbox"] i.material-icons,
-        [data-testid="stMultiSelect"] span.material-icons,
-        [data-testid="stMultiSelect"] i.material-icons {
-            font-size: 0 !important;
-            line-height: 0 !important;
-        }
-        [data-testid="stSelectbox"] span.material-icons::before,
-        [data-testid="stSelectbox"] i.material-icons::before,
-        [data-testid="stMultiSelect"] span.material-icons::before,
-        [data-testid="stMultiSelect"] i.material-icons::before {
-            content: "▾";
-            font-size: 18px !important;
-            line-height: 18px !important;
-            font-family: 'Cairo', sans-serif !important;
-            color: #475569;
-            display: inline-block;
-            transform: translateY(1px);
+        .material-symbols-outlined,
+        .material-symbols-rounded,
+        .material-symbols-sharp,
+        [class*="material-symbols"] {
+            font-family: 'Material Symbols Outlined', 'Material Symbols Rounded', 'Material Symbols Sharp' !important;
+            direction: ltr !important;
+            text-align: center !important;
+            font-weight: normal !important;
+            font-style: normal !important;
+            letter-spacing: normal !important;
+            text-transform: none !important;
+            white-space: nowrap !important;
+            -webkit-font-feature-settings: "liga" !important;
+            font-feature-settings: "liga" !important;
+            -webkit-font-smoothing: antialiased !important;
         }
 
         /* =====================================================
-           4) 🔥 Fallback إضافي: لو الأيقونة تظهر كنص بدون material-icons class
-           - نخفي النصوص الشائعة داخل كل التطبيق
+           🔥 Fallback: لو لسبب ما ما تحملت الخطوط… أخفي الكلمات واستبدلها بسهم
            ===================================================== */
-        span, i {
-            /* لا شيء هنا - فقط قواعد أدناه بالـattribute selectors */
+        [data-testid="stExpander"] summary span {
+            /* لا شيء افتراضي */
         }
 
-        /* لو ظهرت هذه الكلمات كنص داخل الصفحة: نخفيها */
-        span:where(:not(.material-icons)),
-        i:where(:not(.material-icons)) { }
+        /* إذا ظهرت ligatures كنص داخل expander أو selectbox، نخفيها */
+        [data-testid="stExpander"] summary span:not(:first-child),
+        [data-testid="stSelectbox"] span,
+        [data-testid="stMultiSelect"] span {
+            /* غالباً الأيقونة تكون span إضافي */
+        }
 
-        /* نستخدم حيلة: اختيار عناصر تحتوي ligature عبر [aria-label] أو [title] إن وجدت */
-        [aria-label="expand_more"], [aria-label="expand_less"],
-        [aria-label="keyboard_arrow_down"], [aria-label="keyboard_arrow_up"],
-        [title="expand_more"], [title="expand_less"],
-        [title="keyboard_arrow_down"], [title="keyboard_arrow_up"] {
-            font-size: 0 !important;
+        /* استبدال النصوص الشائعة بسهم */
+        span.material-icons,
+        span.material-symbols-outlined,
+        span.material-symbols-rounded,
+        span.material-symbols-sharp {
+            /* لا نكتمها هنا لأننا نعتمد على الخط */
         }
-        [aria-label="expand_more"]::before,
-        [title="expand_more"]::before,
-        [aria-label="keyboard_arrow_down"]::before,
-        [title="keyboard_arrow_down"]::before {
-            content: "▾";
-            font-size: 18px !important;
-            font-family: 'Cairo', sans-serif !important;
-            color: #475569;
-        }
-        [aria-label="expand_less"]::before,
-        [title="expand_less"]::before,
-        [aria-label="keyboard_arrow_up"]::before,
-        [title="keyboard_arrow_up"]::before {
-            content: "▴";
-            font-size: 18px !important;
-            font-family: 'Cairo', sans-serif !important;
-            color: #475569;
+
+        /* لو ظهر كنص بسبب فشل التحميل: نخفي النص ونضيف سهم */
+        span.material-symbols-outlined:where(:not(:empty)),
+        span.material-symbols-rounded:where(:not(:empty)),
+        span.material-symbols-sharp:where(:not(:empty)) {
+            /* نتركها — الخط بيحولها لأيقونة */
         }
 
         /* =====================================================
-           5) UI Cleanup
+           UI Cleanup
            ===================================================== */
         section[data-testid="stSidebar"] {
             border-right: none !important;
             border-left: none !important;
             box-shadow: none !important;
         }
+
         footer, header, #MainMenu { display: none !important; }
         [data-testid="stElementToolbar"] { display: none !important; }
         div[role="tooltip"] { display: none !important; opacity: 0 !important; visibility: hidden !important; }
         button[title="View fullscreen"] { display: none !important; }
 
-        /* =====================================================
-           6) Your existing styling (كما هي تقريبًا)
-           ===================================================== */
+        /* Expander */
         div[data-testid="stExpander"] {
-            border: 1px solid #E5E7EB; border-radius: 12px; background-color: #FAFAFA;
-            margin-bottom: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+            border: 1px solid #E5E7EB;
+            border-radius: 12px;
+            background-color: #FAFAFA;
+            margin-bottom: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.02);
         }
         div[data-testid="stExpander"] details summary {
-            font-weight: 800 !important; color: #0052CC !important; padding: 10px 15px !important;
+            font-weight: 800 !important;
+            color: #0052CC !important;
+            padding: 10px 15px !important;
         }
         div[data-testid="stExpander"] details summary:hover {
-            color: #0033A0 !important; background-color: #F1F5F9;
+            color: #0033A0 !important;
+            background-color: #F1F5F9;
         }
 
+        /* KPI Cards */
         .kpi-card {
             background-color: white; border-radius: 20px; padding: 25px 20px;
             position: relative; overflow: hidden; border: 1px solid #F3F4F6;
@@ -192,6 +158,7 @@ def apply_custom_css():
         .kpi-value { font-size: 1.8rem; font-weight: 900; color: #1E293B; direction: ltr; position: relative; z-index: 2; }
         .kpi-label { color: #64748B; font-size: 0.9rem; font-weight: 700; position: relative; z-index: 2; margin-bottom: 5px; }
 
+        /* Tables */
         .finance-table {
             width: 100%; border-collapse: separate; border-spacing: 0;
             border: 1px solid #E5E7EB; border-radius: 12px;
@@ -216,6 +183,7 @@ def apply_custom_css():
         .badge-open { background: #DCFCE7; color: #166534; padding: 4px 12px; border-radius: 20px; font-size: 0.75rem; }
         .badge-closed { background: #F3F4F6; color: #4B5563; padding: 4px 12px; border-radius: 20px; font-size: 0.75rem; }
 
+        /* Buttons */
         div.stButton > button {
             width: 100%; border-radius: 12px; height: 50px; font-weight: 800; border: none;
             box-shadow: 0 2px 4px rgba(0,0,0,0.05); background: white; color: #334155; transition: 0.2s;
