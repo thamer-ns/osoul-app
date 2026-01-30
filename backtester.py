@@ -1,4 +1,3 @@
-# backtester.py
 import json
 import uuid
 import pandas as pd
@@ -41,7 +40,14 @@ STRATEGY_CATALOG = {
 
 
 def list_strategies():
-    return list(STRATEGY_CATALOG.keys())
+    """
+    أفضل للواجهة: يرجع tuples (key, label_ar)
+    و views.py عندك يدعم tuples.
+    """
+    out = []
+    for k, v in STRATEGY_CATALOG.items():
+        out.append((k, v.get("name_ar", k)))
+    return out
 
 
 # ============================================================
@@ -241,8 +247,8 @@ def run_backtest(
     run_id = str(uuid.uuid4())
     created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    for i, (idx, row) in enumerate(df.iterrows()):
-        p_open = float(row["Open"]) if row.get("Open") and row["Open"] > 0 else float(row["Close"])
+    for _, (idx, row) in enumerate(df.iterrows()):
+        p_open = float(row["Open"]) if (row.get("Open") is not None and float(row["Open"]) > 0) else float(row["Close"])
         sig = float(row.get("Trade_Signal", 0))
         ts = _safe_ts(idx)
 
@@ -281,11 +287,10 @@ def run_backtest(
         port_val = cash + shares * float(row["Close"])
         equity_rows.append({"ts": ts, "close_price": float(row["Close"]), "portfolio_value": float(port_val)})
 
-        # تحديث آخر عملية بالـ portfolio_value (لتوثيق الحالة وقت التنفيذ)
+        # تحديث آخر عملية بالـ portfolio_value
         if log_rows and log_rows[-1]["ts"] == ts and log_rows[-1]["portfolio_value"] is None:
             log_rows[-1]["portfolio_value"] = float(port_val)
 
-    # إرجاع النتائج
     final_val = float(equity_rows[-1]["portfolio_value"]) if equity_rows else float(capital)
     ret_pct = ((final_val - float(capital)) / float(capital)) * 100
 
@@ -303,7 +308,6 @@ def run_backtest(
         "df": df.assign(Portfolio_Value=[x["portfolio_value"] for x in equity_rows]),
     }
 
-    # ✅ DB Logging (Run + Trades + Equity) + ربط آخر AI decision
     _persist_run_to_db(
         run_id=run_id,
         created_at=created_at,
@@ -383,7 +387,6 @@ def _persist_run_to_db(
             )
         )
     except Exception:
-        # إذا صار تعارض run_id أو مشكلة، لا نكسر التطبيق
         pass
 
     # 2) trades
@@ -412,9 +415,9 @@ def _persist_run_to_db(
         except Exception:
             pass
 
-    # 3) equity curve (downsample لتقليل حجم DB)
+    # 3) equity curve (downsample)
     try:
-        step = max(len(equity) // 500, 1)  # نخزن بحد أقصى ~500 نقطة
+        step = max(len(equity) // 500, 1)
     except Exception:
         step = 1
 
@@ -437,7 +440,6 @@ def _persist_run_to_db(
         except Exception:
             pass
 
-    # 4) ربط آخر قرار AI لنفس السهم (إذا موجود) وتسجيل Outcome
     _link_latest_ai_decision_to_run(symbol=symbol, sector=sector, run_id=run_id, outcome_return_pct=float(ret_pct))
 
 
@@ -447,8 +449,6 @@ def _link_latest_ai_decision_to_run(symbol: str, sector: str, run_id: str, outco
 
     try:
         ensure_lab_tables()
-
-        # نحاول نجيب آخر قرار AI لهذا السهم وغير مربوط بعد
         dec = fetch_table("ai_decisions")
         if dec is None or dec.empty:
             return
@@ -459,7 +459,6 @@ def _link_latest_ai_decision_to_run(symbol: str, sector: str, run_id: str, outco
         if sub.empty:
             return
 
-        # أحدث قرار حسب created_at
         if "created_at" in sub.columns:
             sub = sub.sort_values("created_at", ascending=False)
 
@@ -478,9 +477,6 @@ def _link_latest_ai_decision_to_run(symbol: str, sector: str, run_id: str, outco
         pass
 
 
-# ============================================================
-# 📚 Helpers for AI / UI (اختياري)
-# ============================================================
 def get_lab_runs(symbol: str = None, limit: int = 50) -> pd.DataFrame:
     if not fetch_table:
         return pd.DataFrame()
