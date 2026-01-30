@@ -1,5 +1,6 @@
 import re
 import time
+import json
 import requests
 from bs4 import BeautifulSoup
 
@@ -19,6 +20,29 @@ HEADERS = {
     )
 }
 
+# Session ثابت (أخف + أسرع)
+_SESSION = requests.Session()
+_SESSION.headers.update(HEADERS)
+
+
+def _http_get(url: str, timeout: int = 5, retries: int = 1, sleep: float = 0.2):
+    """
+    GET آمن: retry بسيط + timeout.
+    يرجع response أو None.
+    """
+    if not url:
+        return None
+    for i in range(retries + 1):
+        try:
+            r = _SESSION.get(url, timeout=timeout)
+            if r.status_code == 200 and r.text:
+                return r
+        except Exception:
+            pass
+        if i < retries:
+            time.sleep(sleep)
+    return None
+
 
 # ============================================================
 # 🔤 Symbol Normalization
@@ -28,13 +52,10 @@ def get_ticker_symbol(symbol: str) -> str:
     s = str(symbol or "").strip().upper()
     if not s:
         return ""
-    # TASI
     if s in ["TASI", ".TASI", "^TASI", "^TASI.SR"]:
         return "^TASI.SR"
-    # digits -> Saudi
     if s.isdigit():
         return f"{s}.SR"
-    # if no suffix and not index
     if not s.endswith(".SR") and not s.startswith("^"):
         return f"{s}.SR"
     return s
@@ -42,29 +63,21 @@ def get_ticker_symbol(symbol: str) -> str:
 
 def _symbol_variants(symbol: str) -> list[str]:
     """
-    يرجّع قائمة مفاتيح محتملة لنفس الرمز لتجنب عدم التطابق بين أجزاء النظام.
-    مثال: "2270" -> ["2270", "2270.SR"]
-    مثال: "2270.SR" -> ["2270.SR", "2270"]
+    مفاتيح محتملة لنفس الرمز لتجنب mismatch بين أجزاء النظام.
     """
     raw = str(symbol or "").strip().upper()
     if not raw:
         return []
 
     norm = get_ticker_symbol(raw)
+    variants = [raw, norm]
 
-    variants = []
-    variants.append(raw)
-    variants.append(norm)
-
-    # remove .SR variant
     if norm.endswith(".SR"):
         variants.append(norm.replace(".SR", ""))
     if raw.endswith(".SR"):
         variants.append(raw.replace(".SR", ""))
 
-    # unique while keeping order
-    out = []
-    seen = set()
+    out, seen = [], set()
     for x in variants:
         if x and x not in seen:
             out.append(x)
@@ -76,10 +89,22 @@ def _safe_float(val) -> float:
     try:
         if val is None:
             return 0.0
-        # بعض القيم تجي np types
         return float(val)
     except Exception:
         return 0.0
+
+
+def _is_reasonable_price(x: float) -> bool:
+    """
+    فلتر معقولية: يمنع التقاط أرقام عشوائية من scraping.
+    (تقدر توسع النطاق حسب احتياجك)
+    """
+    try:
+        x = float(x)
+        # سعر سهم/مؤشر منطقي
+        return 0.01 < x < 20000
+    except Exception:
+        return False
 
 
 # ============================================================
@@ -91,15 +116,19 @@ def _normalize_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
     - MultiIndex columns من yfinance
     - tuple/list column names
     - توحيد أسماء الأعمدة إلى: Open/High/Low/Close/Adj Close/Volume
+    - تحويلها لأرقام وتصفية NaN
     """
     if df is None or df.empty:
-        return df
+        return pd.DataFrame()
 
     df = df.copy()
 
-    # MultiIndex -> خذ أول مستوى
+    # MultiIndex -> first level
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
+
+    # stringify
+    df.columns = [str(c[0] if isinstance(c, (tuple, list)) and len(c) else c) for c in df.columns]
 
     canonical = {
         "open": "Open",
@@ -113,83 +142,150 @@ def _normalize_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
 
     rename_map = {}
     for col in df.columns:
-        base = col[0] if isinstance(col, (tuple, list)) and len(col) else col
-        s = str(base).strip()
-        key = s.lower()
-        rename_map[col] = canonical.get(key, s.title())
+        key = str(col).strip().lower()
+        # لا تستخدم title() هنا — نثبت الأسماء
+        rename_map[col] = canonical.get(key, col)
 
     df.rename(columns=rename_map, inplace=True)
 
-    # ضمان وجود الأعمدة الأساسية (لو ناقص Open مثلاً)
+    # fallback: Close من Adj Close
+    if "Close" not in df.columns and "Adj Close" in df.columns:
+        df["Close"] = df["Adj Close"]
+
+    # fallback: Open من Close
     if "Open" not in df.columns and "Close" in df.columns:
         df["Open"] = df["Close"]
+
+    # ensure numeric
+    for c in ["Open", "High", "Low", "Close", "Volume"]:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    # drop invalid
+    needed = ["Open", "High", "Low", "Close"]
+    if not all(c in df.columns for c in needed):
+        return pd.DataFrame()
+
+    df = df.dropna(subset=needed)
+
+    # sort index
+    try:
+        if isinstance(df.index, pd.DatetimeIndex):
+            df = df.sort_index()
+    except Exception:
+        pass
 
     return df
 
 
 # ============================================================
-# 📈 Google Finance (for analysis snapshot - NOT used for price update batch)
+# 📈 Google Finance (analysis snapshot only)
 # ============================================================
 def fetch_google_finance_snapshot(symbol: str) -> dict:
     """
-    مصدر مساعد للتحليل (وليس لتحديث الأسعار حسب طلبك).
-    يجلب السعر فقط بشكل خفيف من Google Finance.
+    مصدر مساعد للتحليل (ليس لتحديث الأسعار حسب طلبك).
     """
     sym = str(symbol or "").strip().upper()
     if not sym:
         return {}
 
-    # Google غالباً يحتاج TADAWUL: 2270:TADAWUL
     ticker = sym.replace(".SR", "").replace("^", "")
     url = f"https://www.google.com/finance/quote/{ticker}:TADAWUL"
 
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=4)
-        if r.status_code != 200:
-            return {}
+    r = _http_get(url, timeout=5, retries=1)
+    if not r:
+        return {}
 
+    try:
         soup = BeautifulSoup(r.text, "html.parser")
         price_div = soup.find("div", {"class": "YMlKec fxKbKc"})
-        price = _safe_float(
-            (price_div.text or "")
-            .replace(",", "")
-            .replace("SAR", "")
-            .strip()
-        ) if price_div else 0.0
+        price = 0.0
+        if price_div and price_div.text:
+            txt = price_div.text.replace(",", "").replace("SAR", "").strip()
+            price = _safe_float(txt)
 
-        return {"source": "google_finance", "price": price, "url": url}
+        if _is_reasonable_price(price):
+            return {"source": "google_finance", "price": price, "url": url}
+        return {"source": "google_finance", "price": 0.0, "url": url}
     except Exception:
         return {}
 
 
 # ============================================================
-# 📊 TradingView / Investing (analysis helpers - best effort, may fail safely)
+# 📊 TradingView / Investing (analysis helpers - safe placeholders)
 # ============================================================
 def fetch_tradingview_snapshot(symbol: str) -> dict:
     """
-    Helper للتحليل فقط.
-    TradingView غالباً يحتاج endpoints خاصة وقد تتغير؛ هذه دالة best-effort.
+    Helper للتحليل فقط — افتراضيًا مغلق لتجنب scraping غير مستقر.
     """
-    # نتركها كـ placeholder آمن بدون scraping عميق لتفادي الأعطال
-    # تقدر لاحقاً تربطها بـ paid/official APIs إذا رغبت.
-    return {"source": "tradingview", "ok": False, "note": "Not enabled by default"}
+    return {"source": "tradingview", "ok": False, "note": "Disabled by default (stability-first)."}
 
 
 def fetch_investing_snapshot(symbol: str) -> dict:
     """
-    Helper للتحليل فقط.
-    Investing.com يتغير كثير؛ هنا placeholder آمن.
+    Helper للتحليل فقط — افتراضيًا مغلق لتجنب scraping غير مستقر.
     """
-    return {"source": "investing", "ok": False, "note": "Not enabled by default"}
+    return {"source": "investing", "ok": False, "note": "Disabled by default (stability-first)."}
 
 
 # ============================================================
 # 🟦 Argaam (أرقام) - PRICE FALLBACK for updates (as requested)
 # ============================================================
+def _extract_argaam_price_from_html(html: str) -> float:
+    """
+    محاولة دقيقة لاستخراج السعر من HTML:
+    - meta tags
+    - json snippets
+    - final fallback محدود + تحقق معقولية
+    """
+    if not html:
+        return 0.0
+
+    soup = BeautifulSoup(html, "html.parser")
+
+    # 1) Meta price candidates (أفضل من regex العام)
+    meta_selectors = [
+        ('meta', {"property": "product:price:amount"}),
+        ('meta', {"property": "og:price:amount"}),
+        ('meta', {"itemprop": "price"}),
+    ]
+    for tag, attrs in meta_selectors:
+        m = soup.find(tag, attrs=attrs)
+        if m and m.get("content"):
+            p = _safe_float(m.get("content"))
+            if _is_reasonable_price(p):
+                return p
+
+    # 2) JSON-like patterns داخل الصفحة
+    text = html
+    json_patterns = [
+        r'"lastPrice"\s*:\s*([0-9]+(?:\.[0-9]+)?)',
+        r'"price"\s*:\s*([0-9]+(?:\.[0-9]+)?)',
+        r'"Close"\s*:\s*([0-9]+(?:\.[0-9]+)?)',
+    ]
+    for pat in json_patterns:
+        m = re.search(pat, text, flags=re.IGNORECASE)
+        if m:
+            p = _safe_float(m.group(1))
+            if _is_reasonable_price(p):
+                return p
+
+    # 3) DOM-based heuristic (أقل دقة، لكن أفضل من أي رقم)
+    # نبحث عن SAR/ريال قريب من رقم
+    raw_text = soup.get_text(" ", strip=True)
+    m = re.search(r'(\d+(?:\.\d+)?)\s*(?:SAR|ريال)', raw_text, flags=re.IGNORECASE)
+    if m:
+        p = _safe_float(m.group(1))
+        if _is_reasonable_price(p):
+            return p
+
+    return 0.0
+
+
 def fetch_price_from_argaam(symbol: str) -> float:
     """
     ✅ مصدر احتياطي لتحديث الأسعار: أرقام (Argaam)
-    ملاحظة: صفحات أرقام قد تتغير. هذه best-effort scraping.
+    ملاحظة: scraping قد يتغير — هنا أفضل محاولة + فلتر معقولية.
     """
     s = str(symbol or "").strip().upper()
     if not s:
@@ -197,10 +293,8 @@ def fetch_price_from_argaam(symbol: str) -> float:
 
     code = s.replace(".SR", "").replace("^", "")
     if not code.isdigit():
-        # Argaam عادة أسهل مع أرقام الشركات
         return 0.0
 
-    # محاولات روابط محتملة (قد تختلف حسب اللغة/المسار)
     url_candidates = [
         f"https://www.argaam.com/en/company/stock/overview/{code}",
         f"https://www.argaam.com/ar/company/stock/overview/{code}",
@@ -208,35 +302,15 @@ def fetch_price_from_argaam(symbol: str) -> float:
         f"https://www.argaam.com/ar/company/stock/quote/{code}",
     ]
 
-    price = 0.0
     for url in url_candidates:
-        try:
-            r = requests.get(url, headers=HEADERS, timeout=4)
-            if r.status_code != 200:
-                continue
-
-            html = r.text
-
-            # محاولة regex: أي رقم قريب من "SAR" أو "ريال"
-            m = re.search(r'(\d+(?:\.\d+)?)\s*(?:SAR|ريال)', html, flags=re.IGNORECASE)
-            if m:
-                price = _safe_float(m.group(1))
-                if price > 0:
-                    return price
-
-            # محاولة parsing عامة: ابحث عن أرقام أسعار معقولة
-            soup = BeautifulSoup(html, "html.parser")
-            txt = soup.get_text(" ", strip=True)
-            m2 = re.search(r'\b(\d{1,4}(?:\.\d{1,4})?)\b', txt)
-            if m2:
-                guess = _safe_float(m2.group(1))
-                if 0 < guess < 10000:
-                    price = guess
-                    # لا نرجع مباشرة إلا إذا ما عندنا أفضل
-        except Exception:
+        r = _http_get(url, timeout=6, retries=1)
+        if not r:
             continue
+        p = _extract_argaam_price_from_html(r.text)
+        if _is_reasonable_price(p):
+            return float(p)
 
-    return _safe_float(price)
+    return 0.0
 
 
 # ============================================================
@@ -254,32 +328,38 @@ def fetch_price_from_yahoo(symbol: str) -> dict:
         t = yf.Ticker(sym)
         fi = getattr(t, "fast_info", None)
 
+        last_price = 0.0
+        prev_close = 0.0
+        year_high = 0.0
+        year_low = 0.0
+
         if fi:
             last_price = _safe_float(getattr(fi, "last_price", None))
             prev_close = _safe_float(getattr(fi, "previous_close", None))
             year_high = _safe_float(getattr(fi, "year_high", None))
             year_low = _safe_float(getattr(fi, "year_low", None))
 
-            # fallback لو prev_close صفر
-            if last_price > 0 and prev_close <= 0:
-                try:
-                    h = t.history(period="5d", interval="1d")
-                    h = _normalize_ohlcv_columns(h)
-                    if not h.empty and "Close" in h.columns and len(h) >= 2:
+        # fallback لو fast_info رجّع صفر
+        if last_price <= 0 or prev_close <= 0:
+            try:
+                h = t.history(period="10d", interval="1d")
+                h = _normalize_ohlcv_columns(h)
+                if not h.empty and "Close" in h.columns:
+                    if last_price <= 0:
+                        last_price = _safe_float(h["Close"].iloc[-1])
+                    if prev_close <= 0 and len(h) >= 2:
                         prev_close = _safe_float(h["Close"].iloc[-2])
-                except Exception:
-                    pass
+            except Exception:
+                pass
 
-            return {
-                "price": last_price,
-                "prev_close": prev_close,
-                "year_high": year_high,
-                "year_low": year_low,
-            }
+        return {
+            "price": float(last_price) if _is_reasonable_price(last_price) else 0.0,
+            "prev_close": float(prev_close) if _is_reasonable_price(prev_close) else 0.0,
+            "year_high": float(year_high) if _is_reasonable_price(year_high) else 0.0,
+            "year_low": float(year_low) if _is_reasonable_price(year_low) else 0.0,
+        }
     except Exception:
-        pass
-
-    return {"price": 0.0, "prev_close": 0.0, "year_high": 0.0, "year_low": 0.0}
+        return {"price": 0.0, "prev_close": 0.0, "year_high": 0.0, "year_low": 0.0}
 
 
 # ============================================================
@@ -293,7 +373,7 @@ def get_tasi_data():
         fi = tick.fast_info
         curr = _safe_float(getattr(fi, "last_price", None))
         prev = _safe_float(getattr(fi, "previous_close", None))
-        if curr > 0 and prev > 0:
+        if _is_reasonable_price(curr) and _is_reasonable_price(prev) and prev > 0:
             chg = ((curr - prev) / prev) * 100.0
             return curr, round(_safe_float(chg), 2)
     except Exception:
@@ -301,17 +381,18 @@ def get_tasi_data():
 
     # fallback (للداشبورد/التحليل فقط)
     snap = fetch_google_finance_snapshot(".TASI")
-    return _safe_float(snap.get("price", 0.0)), 0.0
+    p = _safe_float(snap.get("price", 0.0))
+    return (p if _is_reasonable_price(p) else 0.0), 0.0
 
 
 # ============================================================
-# 📉 Chart History (Yahoo primary)  -- FIXED
+# 📉 Chart History (Yahoo primary)  -- STABLE
 # ============================================================
 @st.cache_data(ttl=900, show_spinner=False)
 def get_chart_history(symbol: str, period: str = "2y", interval: str = "1d"):
     """
     يستخدمه charts.py و AI Engine.
-    ✅ تم إصلاح مشكلة MultiIndex/tuple في الأعمدة.
+    ✅ مطبع الأعمدة ويمنع مشاكل MultiIndex/tuple/non-string.
     """
     sym = get_ticker_symbol(symbol)
     if not sym:
@@ -324,7 +405,7 @@ def get_chart_history(symbol: str, period: str = "2y", interval: str = "1d"):
             interval=interval,
             auto_adjust=False,
             progress=False,
-            threads=False,  # يقلل مشاكل MultiIndex أحياناً
+            threads=False,  # يقلل مشاكل الأعمدة أحياناً
         )
     except Exception:
         return pd.DataFrame()
@@ -333,21 +414,16 @@ def get_chart_history(symbol: str, period: str = "2y", interval: str = "1d"):
         return pd.DataFrame()
 
     df = _normalize_ohlcv_columns(df)
-
-    # تأكد من الترتيب
-    if isinstance(df.index, pd.DatetimeIndex):
-        df = df.sort_index()
-
     return df
 
 
 # ============================================================
-# 💹 Batch Prices (Updates) = Yahoo + Argaam ONLY (as requested)
+# 💹 Batch Prices (Updates) = Yahoo + Argaam ONLY
 # ============================================================
 @st.cache_data(ttl=120, show_spinner=False)
 def fetch_batch_data(symbols_list: list):
     """
-    ✅ تحديث الأسعار للمحفظة/الصفحات:
+    ✅ تحديث الأسعار للمحفظة/القوائم:
     - مصدر أساسي: Yahoo (yfinance)
     - مصدر احتياطي: Argaam (أرقام) فقط
     """
@@ -355,14 +431,14 @@ def fetch_batch_data(symbols_list: list):
     if not symbols_list:
         return results
 
-    # نجهز mapping: كل رمز مدخل -> Yahoo normalized
     input_symbols = [str(s).strip().upper() for s in symbols_list if str(s).strip()]
     norm_map = {s: get_ticker_symbol(s) for s in input_symbols}
 
-    # 1) Yahoo batch
     clean_syms = sorted(list(set([v for v in norm_map.values() if v])))
+
     yahoo_data_by_norm = {}
 
+    # Yahoo batch
     try:
         if len(clean_syms) == 1:
             sym = clean_syms[0]
@@ -381,11 +457,11 @@ def fetch_batch_data(symbols_list: list):
                 except Exception:
                     yahoo_data_by_norm[sym] = {"price": 0.0, "prev_close": 0.0, "year_high": 0.0, "year_low": 0.0}
     except Exception:
-        # fallback: لو فشل batch تماماً، نحاول فردي
+        # fallback فردي
         for sym in clean_syms:
             yahoo_data_by_norm[sym] = fetch_price_from_yahoo(sym)
 
-    # 2) Build results keyed by ORIGINAL INPUT SYMBOL (مهم لتوافق views.py)
+    # Build results keyed by ORIGINAL INPUT SYMBOL
     for raw_sym in input_symbols:
         norm = norm_map.get(raw_sym) or get_ticker_symbol(raw_sym)
         d = yahoo_data_by_norm.get(norm, {"price": 0.0, "prev_close": 0.0, "year_high": 0.0, "year_low": 0.0})
@@ -395,23 +471,31 @@ def fetch_batch_data(symbols_list: list):
         year_high = _safe_float(d.get("year_high", 0.0))
         year_low = _safe_float(d.get("year_low", 0.0))
 
-        # 3) Argaam fallback ONLY (حسب طلبك)
+        # sanity
+        if not _is_reasonable_price(price):
+            price = 0.0
+        if not _is_reasonable_price(prev_close):
+            prev_close = 0.0
+
+        # Argaam fallback ONLY
+        source = "yahoo" if price > 0 else "none"
         if price <= 0:
             p2 = fetch_price_from_argaam(raw_sym)
-            if p2 > 0:
-                price = p2
+            if _is_reasonable_price(p2):
+                price = float(p2)
                 if prev_close <= 0:
-                    prev_close = p2  # fallback بسيط
+                    prev_close = float(p2)
+                source = "argaam"
 
         results[raw_sym] = {
             "price": price,
             "prev_close": prev_close,
-            "year_high": year_high,
-            "year_low": year_low,
-            "source": "yahoo" if _safe_float(d.get("price", 0.0)) > 0 else ("argaam" if price > 0 else "none"),
+            "year_high": year_high if _is_reasonable_price(year_high) else 0.0,
+            "year_low": year_low if _is_reasonable_price(year_low) else 0.0,
+            "source": source,
         }
 
-        # كذلك نخزن نفس البيانات تحت مفاتيح بديلة لتفادي أي mismatch
+        # Store under variants too (prevents mismatches)
         for v in _symbol_variants(raw_sym):
             results.setdefault(v, results[raw_sym])
 
@@ -419,22 +503,30 @@ def fetch_batch_data(symbols_list: list):
 
 
 # ============================================================
-# 🧾 Static Info (Fix: return dict for AI Engine)
+# 🧾 Static Info (Stable dict for AI Engine)
 # ============================================================
 def get_static_info(symbol: str) -> dict:
     """
-    ✅ مهم للـ AI Engine: يرجع dict فيه sector/name
+    ✅ يرجع dict (symbol/name/sector) بدون كسر لو data_source غير متوفر.
     """
     sym = get_ticker_symbol(symbol) or str(symbol or "").strip().upper()
     name = sym
     sector = None
+
     try:
         from data_source import get_company_details
-        nm, sec = get_company_details(symbol)
-        if nm:
-            name = nm
-        if sec:
-            sector = sec
+        # يدعم: (name, sector) أو dict
+        info = get_company_details(symbol)
+
+        if isinstance(info, dict):
+            name = info.get("name") or info.get("Name") or name
+            sector = info.get("sector") or info.get("Sector") or sector
+        else:
+            nm, sec = info
+            if nm:
+                name = nm
+            if sec:
+                sector = sec
     except Exception:
         pass
 
@@ -447,34 +539,21 @@ def get_static_info(symbol: str) -> dict:
 
 
 # ============================================================
-# 🔎 Analysis Data Sources Registry (اختياري)
+# 🔎 Analysis Data Sources Registry (Optional)
 # ============================================================
 def get_analysis_sources(symbol: str) -> dict:
     """
-    حسب طلبك: مصادر التحليل/الذكاء تكون من:
+    حسب طلبك: مصادر التحليل/الذكاء:
     Yahoo / Google Finance / TradingView / Argaam / Investing
-    هذه دالة مرجعية/تجميع (لا تكسر النظام إذا بعض المصادر فشل).
+    (بدون ما يعتمد عليها تحديث الأسعار)
     """
     sym = get_ticker_symbol(symbol)
     out = {"symbol": sym, "sources": {}}
 
-    # Yahoo snapshot
-    out["sources"]["yahoo"] = {
-        "price_pack": fetch_price_from_yahoo(sym),
-        "ok": True,
-    }
-
-    # Google Finance snapshot (تحليل فقط)
+    out["sources"]["yahoo"] = {"price_pack": fetch_price_from_yahoo(sym), "ok": True}
     out["sources"]["google_finance"] = fetch_google_finance_snapshot(sym)
-
-    # TradingView / Investing placeholders (تفعيل لاحق إذا رغبت)
     out["sources"]["tradingview"] = fetch_tradingview_snapshot(sym)
     out["sources"]["investing"] = fetch_investing_snapshot(sym)
-
-    # Argaam snapshot (تحليل/احتياط)
-    out["sources"]["argaam"] = {
-        "price": fetch_price_from_argaam(sym),
-        "ok": True,
-    }
+    out["sources"]["argaam"] = {"price": fetch_price_from_argaam(sym), "ok": True}
 
     return out
