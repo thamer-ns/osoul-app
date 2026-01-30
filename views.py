@@ -1,3 +1,4 @@
+# views.py
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -28,12 +29,14 @@ except Exception:
     def render_technical_chart(symbol):
         st.warning("⚠️ ملف charts.py مفقود أو به خطأ.")
 
-# 2) Backtester + Catalog
+# 2) Backtester (مع إظهار سبب الفشل داخل الواجهة)
+bt_import_error = None
 try:
-    from backtester import run_backtest, STRATEGY_CATALOG
-except Exception:
+    from backtester import run_backtest, list_strategies
+except Exception as e:
     run_backtest = None
-    STRATEGY_CATALOG = {}
+    list_strategies = lambda: []
+    bt_import_error = repr(e)
 
 # 3) Financial Analysis
 try:
@@ -48,7 +51,9 @@ except Exception:
     def save_thesis(s, t, tg, r): pass
     def get_stored_financials_df(s, p): return pd.DataFrame()
     def get_advanced_fundamental_ratios(s): return {}
-    class FinancialParser: pass
+    class FinancialParser:
+        def process_file_or_text(self, uploaded_file=None, text_input=None):
+            return [], None, "FinancialParser غير متوفر"
     def save_financial_record(*args, **kwargs): return False
     def sync_auto_yahoo(s): return False, "Module Missing"
     def get_fundamental_ratios(s): return {}
@@ -297,6 +302,7 @@ def view_portfolio(fin, key):
         st.markdown("---")
 
         if not op.empty:
+            # تأكد من الأعمدة المهمة
             for col in ["company_name", "sector", "gain_pct", "weight"]:
                 if col not in op.columns:
                     op[col] = ""
@@ -308,6 +314,7 @@ def view_portfolio(fin, key):
             c_sort, _ = st.columns([1, 3])
             sort_by = c_sort.selectbox(f"فرز {ts} حسب:", sort_opts, key=f"s_op_{key}")
 
+            # بيانات مباشرة
             try:
                 live_data = fetch_batch_data(op["symbol"].astype(str).unique().tolist()) if "symbol" in op.columns else {}
             except Exception:
@@ -324,6 +331,7 @@ def view_portfolio(fin, key):
             )
             op["status_ar"] = "مفتوحة"
 
+            # الفرز
             if "الربح" in sort_by and "gain" in op.columns:
                 op = op.sort_values("gain", ascending=False)
             elif "القيمة" in sort_by and "market_value" in op.columns:
@@ -748,7 +756,6 @@ def view_cash_log():
 
 # ========================================================
 # 6) Financial UI
-# (كما هو عندك بدون تغيير — مختصر هنا لأنه طويل عندك)
 # ========================================================
 def render_data_import_ui_content(symbol):
     st.info("يدعم النظام: ملفات PDF من تداول، ملفات Excel/CSV، أو النسخ واللصق المباشر.")
@@ -857,6 +864,7 @@ def render_financial_dashboard_ui(symbol):
         with t3:
             st.markdown("##### تسجيل البيانات المالية يدوياً")
             st.caption("أدخل البيانات اللازمة للتحليل المالي.")
+
             with st.form(f"manual_fin_entry_{symbol}"):
                 col_meta1, col_meta2 = st.columns(2)
                 f_date = col_meta1.date_input("تاريخ القوائم", date.today(), key=f"fin_date_{symbol}")
@@ -936,6 +944,7 @@ def view_analysis(fin):
                 st.info(res.get("insight", ""))
         st.markdown("---")
 
+    # watchlist
     try:
         wl = fetch_table("watchlist")
     except Exception:
@@ -960,6 +969,7 @@ def view_analysis(fin):
         st.markdown(f"### {n} ({sym})")
         tabs = st.tabs(["🤖 المستشار", "💰 مالي", "📈 فني", "🏛️ كلاسيكي", "📝 أطروحة"])
 
+        # -------------------- المستشار --------------------
         with tabs[0]:
             rep = generate_ai_report(sym)
             col = rep.get("color", "#666")
@@ -972,11 +982,13 @@ def view_analysis(fin):
                 unsafe_allow_html=True
             )
 
+            # ✅ AI Confidence
             conf = int(rep.get("confidence", 0) or 0)
             conf_label = rep.get("confidence_label", "منخفضة")
             st.write(f"### 🎯 الثقة: {conf}% ({conf_label})")
             st.progress(min(max(conf, 0), 100))
 
+            # ✅ Explainability
             ex = rep.get("explainability", {}) or {}
             pos = ex.get("positives", []) or []
             neg = ex.get("negatives", []) or []
@@ -998,55 +1010,44 @@ def view_analysis(fin):
 
             st.markdown("---")
 
-            # ✅ Backtest ذكي: يختار استراتيجية مناسبة من Catalog
+            # ✅ زر Backtest (مُحصّن + يسجل symbol/sector)
             if run_backtest:
                 if st.button("🧪 تشغيل Backtest على هذا السهم", key=f"bt_{sym}"):
                     try:
                         data = get_chart_history(sym, "2y")
+                        nm2, sec2 = get_company_details(sym)
 
                         rec_txt = str(rep.get("recommendation", "")).lower()
                         trend_txt = str(rep.get("trend", "")).strip()
 
-                        # اختيار “أقرب” استراتيجية
-                        strategy = "Trend"
-                        if ("⚡" in rec_txt) or ("مضاربة" in rec_txt):
-                            strategy = "Divergence_Engulf" if "Divergence_Engulf" in STRATEGY_CATALOG else "Sniper"
-                        elif ("💎" in rec_txt) or ("strong buy" in rec_txt) or ("شراء" in rec_txt):
-                            # لو موجود SMC استخدمه
-                            if "SMC_SH_BMS_RTO" in STRATEGY_CATALOG:
-                                strategy = "SMC_SH_BMS_RTO"
-                            elif "MarketStructure_Breakout" in STRATEGY_CATALOG:
-                                strategy = "MarketStructure_Breakout"
-                            else:
-                                strategy = "Trend"
+                        # افتراضي: Trend/Sniper (تقدر لاحقاً تربطه بالكاتالوج)
+                        if ("strong buy" in rec_txt) or ("شراء" in rec_txt):
+                            strategy = "Trend"
+                        elif ("مضاربة" in rec_txt) or ("⚡" in rec_txt):
+                            strategy = "Sniper"
                         else:
-                            strategy = "Trend" if trend_txt == "صاعد" else ("Sniper" if "Sniper" in STRATEGY_CATALOG else "Trend")
+                            strategy = "Trend" if trend_txt == "صاعد" else "Sniper"
 
-                        resbt = run_backtest(data, strategy, 100000)
+                        resbt = run_backtest(data, strategy, 100000, symbol=sym, sector=sec2)
 
                         if resbt:
-                            meta = resbt.get("strategy_meta", {}) or {}
-                            st.success(f"✅ اكتمل الاختبار (Strategy: {resbt.get('strategy','-')})")
-                            st.caption(f"{meta.get('title','')} | {meta.get('category','')} | مخاطرة: {meta.get('risk_hint','-')}")
-                            st.metric("العائد", f"{resbt.get('return_pct', 0):.1f}%")
+                            st.success(f"✅ اكتمل الاختبار (Strategy: {resbt.get('strategy_name_ar', strategy)})")
+                            st.metric("العائد", f"{resbt.get('return_pct', 0):.2f}%")
                             if "df" in resbt and isinstance(resbt["df"], pd.DataFrame) and "Portfolio_Value" in resbt["df"]:
                                 st.line_chart(resbt["df"]["Portfolio_Value"])
-
-                            # تحميل سجل النتائج إن توفر
-                            p = resbt.get("lab_results_path")
-                            if p:
-                                try:
-                                    with open(p, "rb") as f:
-                                        st.download_button("⬇️ تحميل سجل نتائج المختبر (CSV)", f, file_name="lab_backtest_results.csv")
-                                except Exception:
-                                    pass
+                            with st.expander("سجل الصفقات"):
+                                st.dataframe(resbt.get("trades_log", pd.DataFrame()), use_container_width=True)
                         else:
                             st.warning("⚠️ لم يرجع الاختبار نتيجة (قد تكون البيانات غير كافية).")
+
                     except Exception as e:
                         st.error(f"Backtest Error: {e}")
             else:
                 st.caption("Backtester غير متوفر حالياً.")
+                if bt_import_error:
+                    st.code(bt_import_error)
 
+            # ✅ الأسباب القديمة (فني/مالي)
             cA, cB = st.columns(2)
             with cA:
                 st.write("فني:")
@@ -1057,15 +1058,19 @@ def view_analysis(fin):
                 for x in rep.get("fund_reasons", []):
                     st.write(f"- {x}")
 
+        # -------------------- مالي --------------------
         with tabs[1]:
             render_financial_dashboard_ui(sym)
 
+        # -------------------- فني --------------------
         with tabs[2]:
             render_technical_chart(sym)
 
+        # -------------------- كلاسيكي --------------------
         with tabs[3]:
             render_classical_analysis(sym)
 
+        # -------------------- أطروحة --------------------
         with tabs[4]:
             th = get_thesis(sym)
             txt = th["thesis_text"] if (isinstance(th, dict) and "thesis_text" in th) else (th.thesis_text if th is not None and hasattr(th, "thesis_text") else "")
@@ -1083,83 +1088,37 @@ def view_backtester_ui(fin):
     st.header("🧪 المختبر")
 
     if not run_backtest:
-        st.warning("المختبر غير متوفر")
+        st.warning("Backtester غير متوفر حالياً.")
+        if bt_import_error:
+            st.code(bt_import_error)
+        st.info("✅ الحل: تأكد أنك استبدلت backtester.py بالنسخة الجديدة التي فيها STRATEGY_CATALOG و list_strategies.")
         return
 
-    # --- قائمة الاستراتيجيات من Catalog ---
-    if not STRATEGY_CATALOG:
-        st.info("لا يوجد كتالوج استراتيجيات (تأكد من backtester.py).")
+    s = st.text_input("رمز السهم", "1120", key="lab_symbol")
+    cap = st.number_input("رأس المال", min_value=1000.0, value=100000.0, step=1000.0, key="lab_cap")
 
-    st.markdown("### 📚 كتالوج الاستراتيجيات (منهج الكتب)")
-    cat_rows = []
-    for k, v in (STRATEGY_CATALOG or {}).items():
-        cat_rows.append({
-            "key": k,
-            "name": v.get("title", k),
-            "category": v.get("category", ""),
-            "risk": v.get("risk_hint", ""),
-            "desc": v.get("desc", ""),
-        })
-    cat_df = pd.DataFrame(cat_rows)
+    # استراتيجيات من الكاتالوج (لو موجودة)
+    strat_list = list_strategies() or ["Trend", "Sniper"]
+    strat = st.selectbox("اختر الاستراتيجية", strat_list, index=0, key="lab_strat")
 
-    with st.expander("عرض جميع الاستراتيجيات"):
-        if not cat_df.empty:
-            st.dataframe(cat_df[["name", "category", "risk", "desc"]], use_container_width=True)
-        else:
-            st.info("فارغ")
-
-    st.markdown("---")
-
-    c1, c2, c3 = st.columns([1, 1, 2])
-    sym = c1.text_input("رمز السهم", "1120", key="lab_symbol")
-    period = c2.selectbox("الفترة", ["6mo", "1y", "2y", "5y"], index=2, key="lab_period")
-    capital = c3.number_input("رأس المال", min_value=1000.0, value=100000.0, step=1000.0, key="lab_capital")
-
-    # اختيار استراتيجية
-    strategy_keys = list((STRATEGY_CATALOG or {}).keys())
-    if "Trend" in strategy_keys:
-        default_idx = strategy_keys.index("Trend")
-    else:
-        default_idx = 0 if strategy_keys else 0
-
-    strat = st.selectbox(
-        "اختر الاستراتيجية",
-        strategy_keys if strategy_keys else ["Trend"],
-        index=default_idx,
-        key="lab_strategy"
-    )
-
-    meta = STRATEGY_CATALOG.get(strat, {}) if STRATEGY_CATALOG else {}
-    st.caption(f"**الوصف:** {meta.get('desc','-')}  | **التصنيف:** {meta.get('category','-')} | **مستوى المخاطرة:** {meta.get('risk_hint','-')}")
-
-    if st.button("🚀 تشغيل Backtest", key="lab_run"):
+    if st.button("بدء", key="bt_run"):
         try:
-            data = get_chart_history(sym, period)
-            res = run_backtest(data, strat, capital)
-            if res:
-                st.success("تم الانتهاء ✅")
-                st.metric("العائد", f"{res.get('return_pct', 0):.2f}%")
-                st.metric("القيمة النهائية", safe_fmt(res.get("final_value", 0)))
+            data = get_chart_history(s, "2y")
+            nm, sec = get_company_details(s)
 
+            res = run_backtest(data, strat, cap, symbol=s, sector=sec)
+            if res:
+                st.success(f"✅ اكتمل الاختبار ({res.get('strategy_name_ar', strat)})")
+                st.metric("العائد", f"{res.get('return_pct', 0):.2f}%")
                 if "df" in res and isinstance(res["df"], pd.DataFrame) and "Portfolio_Value" in res["df"]:
                     st.line_chart(res["df"]["Portfolio_Value"])
 
-                tl = res.get("trades_log")
-                if isinstance(tl, pd.DataFrame) and not tl.empty:
-                    with st.expander("📜 سجل الصفقات"):
-                        st.dataframe(tl, use_container_width=True)
-
-                p = res.get("lab_results_path")
-                if p:
-                    try:
-                        with open(p, "rb") as f:
-                            st.download_button("⬇️ تحميل سجل نتائج المختبر (CSV)", f, file_name="lab_backtest_results.csv")
-                    except Exception:
-                        pass
+                with st.expander("سجل الصفقات"):
+                    st.dataframe(res.get("trades_log", pd.DataFrame()), use_container_width=True)
             else:
-                st.warning("لا توجد نتيجة (بيانات غير كافية أو استراتيجية غير متاحة).")
+                st.warning("⚠️ لم يرجع الاختبار نتيجة (قد تكون البيانات غير كافية أو الاستراتيجية لا تنطبق).")
         except Exception as e:
-            st.error(f"خطأ المختبر: {e}")
+            st.error(f"Backtest Error: {e}")
 
 
 def render_pulse_dashboard():
