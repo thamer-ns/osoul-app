@@ -1167,7 +1167,15 @@ def view_backtester_ui(fin):
     cap = st.number_input("رأس المال", min_value=1000.0, value=100000.0, step=1000.0, key="lab_cap")
 
     strat_list = list_strategies() or ["Trend", "Sniper"]
-    strat = st.selectbox("اختر الاستراتيجية", strat_list, index=0, key="lab_strat")
+
+# لو رجعت tuples مثل (key, name) نخلي العرض اسم والاستعمال key
+if strat_list and isinstance(strat_list[0], (tuple, list)) and len(strat_list[0]) >= 1:
+    strat_map = {str(x[1]) if len(x) > 1 else str(x[0]): str(x[0]) for x in strat_list}
+    strat_label = st.selectbox("اختر الاستراتيجية", list(strat_map.keys()), index=0, key="lab_strat")
+    strat = strat_map[strat_label]   # ✅ هنا يصير نص مثل "Trend"
+else:
+    strat = st.selectbox("اختر الاستراتيجية", [str(x) for x in strat_list], index=0, key="lab_strat")
+
 
     period = st.selectbox("الفترة التاريخية", ["6mo", "1y", "2y", "5y", "10y", "max"], index=3, key="lab_period")
 
