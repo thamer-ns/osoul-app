@@ -28,11 +28,19 @@ except Exception:
     def render_technical_chart(symbol):
         st.warning("⚠️ ملف charts.py مفقود أو به خطأ.")
 
-# 2) Backtester
+# 2) Backtester + Strategy Catalog
 try:
-    from backtester import run_backtest
+    from backtester import (
+        run_backtest,
+        STRATEGY_CATALOG,
+        list_strategies_df,
+        seed_lab_strategies,
+    )
 except Exception:
     run_backtest = None
+    STRATEGY_CATALOG = []
+    def list_strategies_df(): return pd.DataFrame()
+    def seed_lab_strategies(): return {"ok": False, "reason": "Module Missing"}
 
 # 3) Financial Analysis
 try:
@@ -59,19 +67,21 @@ except Exception:
     def render_classical_analysis(s):
         st.warning("⚠️ ملف classical_analysis.py مفقود أو به خطأ.")
 
-# 5) AI Engine
+# 5) AI Engine (التحديثات الجديدة + التعلم)
 try:
     from ai_engine import (
         generate_ai_report,
         calculate_portfolio_risk_score,
         run_stress_test,
         generate_rebalancing_suggestions,
+        learn_from_history,
     )
 except Exception:
-    def generate_ai_report(s): return {}
+    def generate_ai_report(s, timeframe="1D"): return {}
     def calculate_portfolio_risk_score(df, c): return 50
     def run_stress_test(v, df): return {"scenarios": [], "insight": ""}
     def generate_rebalancing_suggestions(df, c): return []
+    def learn_from_history(*args, **kwargs): return {"ok": False, "reason": "AI Engine Missing"}
 
 
 # ========================================================
@@ -296,7 +306,6 @@ def view_portfolio(fin, key):
         st.markdown("---")
 
         if not op.empty:
-            # تأكد من الأعمدة المهمة
             for col in ["company_name", "sector", "gain_pct", "weight"]:
                 if col not in op.columns:
                     op[col] = ""
@@ -308,7 +317,6 @@ def view_portfolio(fin, key):
             c_sort, _ = st.columns([1, 3])
             sort_by = c_sort.selectbox(f"فرز {ts} حسب:", sort_opts, key=f"s_op_{key}")
 
-            # بيانات مباشرة
             try:
                 live_data = fetch_batch_data(op["symbol"].astype(str).unique().tolist()) if "symbol" in op.columns else {}
             except Exception:
@@ -325,7 +333,6 @@ def view_portfolio(fin, key):
             )
             op["status_ar"] = "مفتوحة"
 
-            # الفرز
             if "الربح" in sort_by and "gain" in op.columns:
                 op = op.sort_values("gain", ascending=False)
             elif "القيمة" in sort_by and "market_value" in op.columns:
@@ -660,23 +667,6 @@ def view_cash_log():
 
         if not dep.empty:
             render_custom_table(dep.sort_values("date", ascending=False) if "date" in dep.columns else dep, cols_base)
-            st.markdown("---")
-            with st.expander("✏️ تعديل سجل إيداع سابق"):
-                if "id" in dep.columns:
-                    dep_map = {f"{row.get('date','-')} - {row.get('amount','-')} ({row.get('note','')})": row["id"] for _, row in dep.iterrows()}
-                    sel_dep = st.selectbox("اختر العملية للتعديل:", list(dep_map.keys()), key="edit_dep_sel")
-                    if sel_dep:
-                        tid = dep_map[sel_dep]
-                        curr = dep[dep["id"] == tid].iloc[0]
-                        with st.form(f"edit_dep_form_{tid}"):
-                            na = st.number_input("المبلغ الصحيح", value=float(curr.get("amount", 0)), key=f"dep_fix_amt_{tid}")
-                            nd = st.date_input("التاريخ الصحيح", pd.to_datetime(curr.get("date", date.today())), key=f"dep_fix_date_{tid}")
-                            nn = st.text_input("ملاحظة", value=str(curr.get("note", "") or ""), key=f"dep_fix_note_{tid}")
-                            if st.form_submit_button("حفظ التعديلات"):
-                                execute_query("UPDATE deposits SET amount=%s, date=%s, note=%s WHERE id=%s", (na, str(nd), nn, tid))
-                                st.success("تم التعديل بنجاح")
-                                st.cache_data.clear()
-                                st.rerun()
 
     with t2:
         with st.expander("➖ تسجيل سحب جديد"):
@@ -693,23 +683,6 @@ def view_cash_log():
 
         if not wit.empty:
             render_custom_table(wit.sort_values("date", ascending=False) if "date" in wit.columns else wit, cols_base)
-            st.markdown("---")
-            with st.expander("✏️ تعديل سجل سحب سابق"):
-                if "id" in wit.columns:
-                    wit_map = {f"{row.get('date','-')} - {row.get('amount','-')} ({row.get('note','')})": row["id"] for _, row in wit.iterrows()}
-                    sel_wit = st.selectbox("اختر العملية للتعديل:", list(wit_map.keys()), key="edit_wit_sel")
-                    if sel_wit:
-                        tid = wit_map[sel_wit]
-                        curr = wit[wit["id"] == tid].iloc[0]
-                        with st.form(f"edit_wit_form_{tid}"):
-                            na = st.number_input("المبلغ الصحيح", value=float(curr.get("amount", 0)), key=f"wit_fix_amt_{tid}")
-                            nd = st.date_input("التاريخ الصحيح", pd.to_datetime(curr.get("date", date.today())), key=f"wit_fix_date_{tid}")
-                            nn = st.text_input("ملاحظة", value=str(curr.get("note", "") or ""), key=f"wit_fix_note_{tid}")
-                            if st.form_submit_button("حفظ التعديلات"):
-                                execute_query("UPDATE withdrawals SET amount=%s, date=%s, note=%s WHERE id=%s", (na, str(nd), nn, tid))
-                                st.success("تم التعديل بنجاح")
-                                st.cache_data.clear()
-                                st.rerun()
 
     with t3:
         with st.expander("💵 تسجيل عائد/توزيع"):
@@ -729,27 +702,10 @@ def view_cash_log():
                 ret.sort_values("date", ascending=False) if "date" in ret.columns else ret,
                 [("date", "التاريخ", "date"), ("symbol", "السهم", "text"), ("amount", "المبلغ", "money")]
             )
-            st.markdown("---")
-            with st.expander("✏️ تعديل سجل عائد سابق"):
-                if "id" in ret.columns:
-                    ret_map = {f"{row.get('date','-')} - {row.get('symbol','-')} - {row.get('amount','-')}": row["id"] for _, row in ret.iterrows()}
-                    sel_ret = st.selectbox("اختر العملية للتعديل:", list(ret_map.keys()), key="edit_ret_sel")
-                    if sel_ret:
-                        tid = ret_map[sel_ret]
-                        curr = ret[ret["id"] == tid].iloc[0]
-                        with st.form(f"edit_ret_form_{tid}"):
-                            ns = st.text_input("رمز السهم", value=str(curr.get("symbol", "")), key=f"ret_fix_sym_{tid}")
-                            na = st.number_input("المبلغ الصحيح", value=float(curr.get("amount", 0)), key=f"ret_fix_amt_{tid}")
-                            nd = st.date_input("التاريخ الصحيح", pd.to_datetime(curr.get("date", date.today())), key=f"ret_fix_date_{tid}")
-                            if st.form_submit_button("حفظ التعديلات"):
-                                execute_query("UPDATE returnsgrants SET symbol=%s, amount=%s, date=%s WHERE id=%s", (ns, na, str(nd), tid))
-                                st.success("تم التعديل بنجاح")
-                                st.cache_data.clear()
-                                st.rerun()
 
 
 # ========================================================
-# 6) Financial UI
+# 6) Financial UI (كما هو عندك)
 # ========================================================
 def render_data_import_ui_content(symbol):
     st.info("يدعم النظام: ملفات PDF من تداول، ملفات Excel/CSV، أو النسخ واللصق المباشر.")
@@ -1002,32 +958,46 @@ def view_analysis(fin):
                 for x in notes:
                     st.write(f"- {x}")
 
+            with st.expander("🧠 إشارات الذكاء (Features)"):
+                st.json(rep.get("features", {}) or {})
+
             st.markdown("---")
 
-            # ✅ زر Backtest (داخل tabs[0] ← هذا اللي كان يسبب IndentationError عندك)
+            # ✅ تعلّم بسيط من التاريخ (إن كان DB موجود)
+            with st.expander("🧪 تحسين الأوزان من التاريخ"):
+                if st.button("تشغيل التعلم (Online Tuning)", key=f"learn_{sym}"):
+                    st.json(learn_from_history())
+
+            st.markdown("---")
+
+            # ✅ زر Backtest داخل tabs[0] (بدون مشاكل indentation)
             if run_backtest:
                 if st.button("🧪 تشغيل Backtest على هذا السهم", key=f"bt_{sym}"):
                     try:
                         data = get_chart_history(sym, "2y")
 
-                        # ✅ اختيار استراتيجية موجودة فعلاً (Trend / Sniper فقط)
-                        rec_txt = str(rep.get("recommendation", "")).lower()
-                        trend_txt = str(rep.get("trend", "")).strip()
+                        feats = rep.get("features", {}) or {}
 
-                        if ("strong buy" in rec_txt) or ("شراء" in rec_txt):
-                            strategy = "Trend"
-                        elif ("مضاربة" in rec_txt) or ("⚡" in rec_txt):
-                            strategy = "Sniper"
+                        # اختيار استراتيجية ذكية من الـ Features
+                        if int(feats.get("ichi_bull", 0)) == 1:
+                            strategy_key = "ICHIMOKU_TREND"
+                        elif int(feats.get("liq_sweep_low", 0)) == 1:
+                            strategy_key = "SMC_LIQSWEEP_REV"
+                        elif int(feats.get("bull_ob_retest", 0)) == 1:
+                            strategy_key = "SMC_ORDERBLOCK"
                         else:
-                            strategy = "Trend" if trend_txt == "صاعد" else "Sniper"
+                            # fallback
+                            strategy_key = "TREND" if str(rep.get("trend", "")).strip() == "صاعد" else "SNIPER"
 
-                        resbt = run_backtest(data, strategy, 100000)
+                        resbt = run_backtest(data, strategy_key, 100000)
 
                         if resbt:
-                            st.success(f"✅ اكتمل الاختبار (Strategy: {strategy})")
+                            st.success(f"✅ اكتمل الاختبار (Strategy: {resbt.get('strategy_key', strategy_key)})")
                             st.metric("العائد", f"{resbt.get('return_pct', 0):.1f}%")
                             if "df" in resbt and isinstance(resbt["df"], pd.DataFrame) and "Portfolio_Value" in resbt["df"]:
                                 st.line_chart(resbt["df"]["Portfolio_Value"])
+                            with st.expander("سجل الصفقات"):
+                                st.dataframe(resbt.get("trades_log", pd.DataFrame()), use_container_width=True)
                         else:
                             st.warning("⚠️ لم يرجع الاختبار نتيجة (قد تكون البيانات غير كافية).")
                     except Exception as e:
@@ -1074,18 +1044,78 @@ def view_analysis(fin):
 # ========================================================
 def view_backtester_ui(fin):
     st.header("🧪 المختبر")
-    if run_backtest:
-        s = st.text_input("رمز السهم", "1120", key="lab_symbol")
-        if st.button("بدء", key="bt_run"):
-            res = run_backtest(get_chart_history(s, "2y"), "Trend", 100000)
+
+    # ✅ تسجيل الاستراتيجيات داخل DB (اختياري)
+    with st.expander("📚 سجل الاستراتيجيات (من الكتب/المختبر)"):
+        df_str = list_strategies_df()
+        if not df_str.empty:
+            st.dataframe(df_str, use_container_width=True)
+        if st.button("💾 تسجيل/تحديث الاستراتيجيات في قاعدة البيانات", key="seed_lab"):
+            st.json(seed_lab_strategies())
+
+    if not run_backtest:
+        st.warning("المختبر غير متوفر")
+        return
+
+    # ✅ تشغيل اختبار
+    s = st.text_input("رمز السهم", "1120", key="lab_symbol")
+    horizon = st.selectbox("مدة البيانات", ["1y", "2y", "5y"], index=1, key="lab_period")
+
+    # اختيار استراتيجية
+    opts = [f"{x['name']}  —  ({x['key']})" for x in STRATEGY_CATALOG] if STRATEGY_CATALOG else ["Trend  —  (TREND)", "Sniper  —  (SNIPER)"]
+    sel = st.selectbox("اختر الاستراتيجية", opts, key="lab_strategy")
+
+    # استخراج key
+    if "(" in sel and ")" in sel:
+        strategy_key = sel.split("(")[-1].split(")")[0].strip()
+    else:
+        strategy_key = "TREND"
+
+    # إعدادات متقدمة
+    with st.expander("⚙️ إعدادات إدارة المخاطر (اختياري)"):
+        use_sl = st.checkbox("تفعيل وقف ATR", value=True, key="lab_use_sl")
+        sl_atr = st.number_input("SL ATR", min_value=0.5, max_value=10.0, value=2.0, step=0.1, key="lab_sl_atr")
+        use_tp = st.checkbox("تفعيل هدف ATR", value=False, key="lab_use_tp")
+        tp_atr = st.number_input("TP ATR", min_value=0.5, max_value=20.0, value=3.0, step=0.1, key="lab_tp_atr")
+        max_hold = st.number_input("أقصى مدة صفقة (شموع) 0=تعطيل", min_value=0, value=0, step=5, key="lab_maxhold")
+
+    cap = st.number_input("رأس المال", min_value=1000.0, value=100000.0, step=1000.0, key="lab_cap")
+
+    # وصف الاستراتيجية
+    with st.expander("🧾 وصف الاستراتيجية"):
+        desc = "-"
+        for x in STRATEGY_CATALOG:
+            if x["key"] == strategy_key:
+                desc = x.get("desc", "-")
+                break
+        st.write(desc)
+
+    if st.button("🚀 بدء الاختبار", key="bt_run"):
+        try:
+            data = get_chart_history(s, horizon)
+            params = {
+                "use_atr_sl": bool(use_sl),
+                "sl_atr": float(sl_atr),
+                "use_atr_tp": bool(use_tp),
+                "tp_atr": float(tp_atr),
+                "max_hold_bars": int(max_hold),
+            }
+            res = run_backtest(data, strategy_key, float(cap), params=params)
+
             if res:
+                st.success(f"✅ تم الاختبار (Strategy: {res.get('strategy_key', strategy_key)})")
                 st.metric("العائد", f"{res.get('return_pct', 0):.1f}%")
+                st.metric("القيمة النهائية", safe_fmt(res.get("final_value", 0)))
+
                 if "df" in res and isinstance(res["df"], pd.DataFrame) and "Portfolio_Value" in res["df"]:
                     st.line_chart(res["df"]["Portfolio_Value"])
+
+                with st.expander("📒 سجل الصفقات"):
+                    st.dataframe(res.get("trades_log", pd.DataFrame()), use_container_width=True)
             else:
                 st.warning("لا توجد نتيجة")
-    else:
-        st.warning("المختبر غير متوفر")
+        except Exception as e:
+            st.error(f"Backtest Error: {e}")
 
 
 def render_pulse_dashboard():
