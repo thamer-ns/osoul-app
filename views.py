@@ -926,25 +926,43 @@ def view_analysis(fin):
 
             st.markdown("---")
 
-            # ✅ زر Backtest مربوط مباشرة
-            if run_backtest:
-                if st.button("🧪 تشغيل Backtest على هذا السهم", key=f"bt_{sym}"):
-                    try:
-                        data = get_chart_history(sym, "2y")
-                        rec_txt = rep.get("recommendation", "") or ""
-                        strategy = "Trend" if ("شراء" in rec_txt or "Strong Buy" in rec_txt) else "Sniper"
-                        res_bt = run_backtest(data, strategy, 100000)
-                        if res_bt:
-                            st.success("✅ اكتمل الاختبار")
-                            st.metric("العائد", f"{res_bt.get('return_pct', 0):.1f}%")
-                            if "df" in res_bt and "Portfolio_Value" in res_bt["df"]:
-                                st.line_chart(res_bt["df"]["Portfolio_Value"])
-                        else:
-                            st.warning("لم يرجع الاختبار نتيجة.")
-                    except Exception as e:
-                        st.error(f"Backtest Error: {e}")
+            # ✅ زر Backtest (مربوط مع توصية AI بدون MeanReversion)
+if run_backtest:
+    if st.button("🧪 تشغيل Backtest على هذا السهم"):
+        try:
+            data = get_chart_history(sym, "2y")
+
+            # ✅ اختيار استراتيجية موجودة فعلاً في backtester.py (Trend أو Sniper فقط)
+            rec_txt = str(rep.get("recommendation", "")).lower()
+            trend_txt = str(rep.get("trend", "")).strip()
+
+            # إذا كانت توصية شراء قوية
+            if ("strong buy" in rec_txt) or ("شراء" in rec_txt):
+                strategy = "Trend"
+            # إذا كانت توصية مضاربة أو تحذير
+            elif ("مضاربة" in rec_txt) or ("⚡" in rec_txt):
+                strategy = "Sniper"
+            # fallback حسب الترند
             else:
-                st.caption("Backtester غير متوفر حالياً.")
+                strategy = "Trend" if trend_txt == "صاعد" else "Sniper"
+
+            res = run_backtest(data, strategy, 100000)
+
+            if res:
+                st.success(f"✅ اكتمل الاختبار (Strategy: {strategy})")
+                st.metric("العائد", f"{res.get('return_pct', 0):.1f}%")
+
+                # عرض منحنى المحفظة إذا موجود
+                if "df" in res and "Portfolio_Value" in res["df"]:
+                    st.line_chart(res["df"]["Portfolio_Value"])
+            else:
+                st.warning("⚠️ لم يرجع الاختبار نتيجة (قد تكون البيانات غير كافية).")
+
+        except Exception as e:
+            st.error(f"Backtest Error: {e}")
+else:
+    st.caption("Backtester غير متوفر حالياً.")
+
 
             # ✅ الأسباب القديمة (فني/مالي)
             cA, cB = st.columns(2)
