@@ -1163,6 +1163,71 @@ def view_backtester_ui(fin):
         try:
             data = get_chart_history(s, "2y")
             nm, sec = get_company_details(s)
+ def _normalize_symbol(sym: str) -> str:
+    sym = (sym or "").strip().upper()
+    # لو المستخدم كتب رقم بدون لاحقة السوق
+    if sym.isdigit():
+        return f"{sym}.SR"
+    # لو كتب 1120SR أو 1120-SR أو 1120 SR
+    sym = sym.replace(" ", "").replace("-", "")
+    if sym.endswith("SR") and ".SR" not in sym:
+        sym = sym.replace("SR", ".SR")
+    return sym
+
+# ...
+
+if st.button("بدء", key="bt_run"):
+    try:
+        s_norm = _normalize_symbol(s)
+        st.caption(f"🔎 الرمز المستخدم للاختبار: {s_norm}")
+
+        data = get_chart_history(s_norm, "2y")
+
+        # ✅ تشخيص: هل البيانات رجعت؟
+        if data is None:
+            st.error("❌ get_chart_history رجّعت None")
+            st.stop()
+
+        # إذا data مو DataFrame حاول تحويله
+        if not isinstance(data, pd.DataFrame):
+            try:
+                data = pd.DataFrame(data)
+            except Exception:
+                st.error("❌ البيانات ليست DataFrame ولا يمكن تحويلها")
+                st.write(data)
+                st.stop()
+
+        st.caption(f"📦 شكل البيانات: rows={len(data)} cols={len(data.columns)}")
+        st.write("آخر 5 صفوف من البيانات:")
+        st note  = st.dataframe(data.tail(5), use_container_width=True)
+
+        # ✅ أعمدة مطلوبة غالبًا لأي باك تست
+        needed_any = ["Close", "close"]
+        if len(data) < 80:
+            st.warning("⚠️ البيانات قليلة جدًا للاختبار (جرّب 5y أو تأكد من المصدر).")
+
+        if not any(col in data.columns for col in needed_any):
+            st.error("❌ لا يوجد عمود سعر إغلاق (Close/close) في البيانات — لذلك الاستراتيجية لن تعمل.")
+            st.write("الأعمدة المتاحة:", list(data.columns))
+            st.stop()
+
+        nm, sec = get_company_details(s_norm)
+
+        res = run_backtest(data, strat, cap, symbol=s_norm, sector=sec)
+
+        if res:
+            st.success(f"✅ اكتمل الاختبار ({res.get('strategy_name_ar', strat)})")
+            st.metric("العائد", f"{res.get('return_pct', 0):.2f}%")
+            if "df" in res and isinstance(res["df"], pd.DataFrame) and "Portfolio_Value" in res["df"]:
+                st.line_chart(res["df"]["Portfolio_Value"])
+            with st.expander("سجل الصفقات"):
+                st.dataframe(res.get("trades_log", pd.DataFrame()), use_container_width=True)
+        else:
+            st.warning("⚠️ لم يرجع الاختبار نتيجة.")
+            st.info("إذا البيانات سليمة، فالغالب أن الاستراتيجية لم تعطِ أي إشارات على الفترة المختارة.")
+
+    except Exception as e:
+        st.error(f"Backtest Error: {e}")
 
             res = run_backtest(data, strat, cap, symbol=s, sector=sec)
             if res:
