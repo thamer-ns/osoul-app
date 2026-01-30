@@ -12,19 +12,6 @@ try:
 except:
     DB_URL = ""
 
-# Whitelist للجداول المسموح قراءتها (أمان)
-_ALLOWED_TABLES = {
-    "users", "trades", "deposits", "withdrawals", "returnsgrants",
-    "watchlist", "investmentthesis", "financialstatements"
-}
-
-def _safe_ident(name: str) -> str:
-    """حماية بسيطة لمنع SQL injection في أسماء الجداول/الأعمدة."""
-    name = (name or "").strip()
-    if not re.match(r"^[A-Za-z0-9_]+$", name):
-        return ""
-    return name
-
 @st.cache_resource
 def get_connection_pool():
     if not DB_URL:
@@ -52,54 +39,70 @@ def get_db():
         if conn:
             pool_obj.putconn(conn)
 
+# =========================================================
+# ✅ NEW: SQL Table Name Normalizer (Case-Safe for Postgres)
+# =========================================================
+KNOWN_TABLES = [
+    "Users",
+    "Trades",
+    "Deposits",
+    "Withdrawals",
+    "ReturnsGrants",
+    "Watchlist",
+    "InvestmentThesis",
+    "FinancialStatements",
+]
+
+def normalize_sql_tables(query: str) -> str:
+    """
+    يحول أسماء الجداول المعروفة إلى lowercase إذا كانت غير مقتبسة "Quoted".
+    هذا يمنع إنشاء/الوصول لجدول ثاني بسبب اختلاف الحالة (Trades vs trades).
+    لا يلمس أي اسم بين " " حتى لا يكسر استعلاماتك الحالية.
+    """
+    if not query:
+        return query
+
+    fixed = query
+    for t in KNOWN_TABLES:
+        # استبدال الكلمة فقط إذا لم تكن داخل double quotes
+        # (?<!")\bTrades\b(?!")
+        fixed = re.sub(rf'(?<!")\b{re.escape(t)}\b(?!")', t.lower(), fixed)
+
+    return fixed
+
 # 2. تنفيذ الأوامر
 def execute_query(query, params=()):
     with get_db() as conn:
         if conn:
             try:
                 with conn.cursor() as cur:
-                    fixed_query = query.replace('?', '%s')
+                    # ✅ normalize table names safely
+                    fixed_query = normalize_sql_tables(query)
+
+                    # ✅ دعم الاستعلامات التي تستخدم ? بدل %s
+                    fixed_query = fixed_query.replace('?', '%s')
+
                     cur.execute(fixed_query, params)
                     conn.commit()
                     return True
             except Exception as e:
-                try:
-                    conn.rollback()
-                except:
-                    pass
+                conn.rollback()
                 print(f"Query Error: {e}")
                 return False
     return False
 
 def fetch_table(table_name):
-    """
-    قراءة الجدول بشكل متوافق:
-    - يجرب quoted "Name"
-    - ثم يجرب lowercase name
-    مع حماية ضد إدخال أسماء غير آمنة.
-    """
     with get_db() as conn:
         if conn:
-            t = _safe_ident(table_name)
-            if not t:
-                return pd.DataFrame()
-
-            # 1) حاول quoted (قد يكون موجود لو تم إنشاؤه بعلامات اقتباس)
             try:
-                return pd.read_sql(f'SELECT * FROM "{t}"', conn)
+                # إذا كان جدولك مكتوب "Quotes" فهو حساس للحروف
+                return pd.read_sql(f'SELECT * FROM "{table_name}"', conn)
             except:
-                pass
-
-            # 2) حاول lowercase (الوضع الطبيعي في Postgres)
-            low = t.lower()
-            if low not in _ALLOWED_TABLES:
-                return pd.DataFrame()
-
-            try:
-                return pd.read_sql(f"SELECT * FROM {low}", conn)
-            except:
-                return pd.DataFrame()
-
+                try:
+                    # fallback lowercase
+                    return pd.read_sql(f'SELECT * FROM {table_name.lower()}', conn)
+                except:
+                    pass
     return pd.DataFrame()
 
 # 3. تحديث هيكلية البيانات (Migration)
@@ -120,33 +123,27 @@ def migrate_financial_schema():
         if conn:
             with conn.cursor() as cur:
                 for col_name, col_type in columns_to_add:
-                    # جرّب على جدول quoted أولاً
                     try:
                         cur.execute(f'ALTER TABLE "FinancialStatements" ADD COLUMN IF NOT EXISTS {col_name} {col_type}')
                     except:
                         conn.rollback()
-                        # جرّب على lowercase
-                        try:
-                            cur.execute(f'ALTER TABLE financialstatements ADD COLUMN IF NOT EXISTS {col_name} {col_type}')
-                        except:
-                            conn.rollback()
             conn.commit()
 
 def init_db():
     tables = [
-        "CREATE TABLE IF NOT EXISTS Users (username VARCHAR(50) PRIMARY KEY, password TEXT, email TEXT)",
-        """CREATE TABLE IF NOT EXISTS Trades (
+        "CREATE TABLE IF NOT EXISTS users (username VARCHAR(50) PRIMARY KEY, password TEXT, email TEXT)",
+        """CREATE TABLE IF NOT EXISTS trades (
             id SERIAL PRIMARY KEY, symbol VARCHAR(20), company_name TEXT, sector TEXT,
             asset_type VARCHAR(20), date DATE, quantity DOUBLE PRECISION, entry_price DOUBLE PRECISION,
             exit_price DOUBLE PRECISION DEFAULT 0, current_price DOUBLE PRECISION DEFAULT 0,
             strategy VARCHAR(20), status VARCHAR(10) DEFAULT 'Open', exit_date DATE, notes TEXT
         )""",
-        "CREATE TABLE IF NOT EXISTS Deposits (id SERIAL PRIMARY KEY, date DATE, amount DOUBLE PRECISION, note TEXT)",
-        "CREATE TABLE IF NOT EXISTS Withdrawals (id SERIAL PRIMARY KEY, date DATE, amount DOUBLE PRECISION, note TEXT)",
-        "CREATE TABLE IF NOT EXISTS ReturnsGrants (id SERIAL PRIMARY KEY, date DATE, symbol VARCHAR(20), company_name TEXT, amount DOUBLE PRECISION, note TEXT)",
-        "CREATE TABLE IF NOT EXISTS Watchlist (symbol VARCHAR(20) PRIMARY KEY, target_price DOUBLE PRECISION, note TEXT)",
-        "CREATE TABLE IF NOT EXISTS InvestmentThesis (symbol VARCHAR(20) PRIMARY KEY, thesis_text TEXT, target_price DOUBLE PRECISION, recommendation VARCHAR(20), last_updated DATE)",
-        """CREATE TABLE IF NOT EXISTS FinancialStatements (
+        "CREATE TABLE IF NOT EXISTS deposits (id SERIAL PRIMARY KEY, date DATE, amount DOUBLE PRECISION, note TEXT)",
+        "CREATE TABLE IF NOT EXISTS withdrawals (id SERIAL PRIMARY KEY, date DATE, amount DOUBLE PRECISION, note TEXT)",
+        "CREATE TABLE IF NOT EXISTS returnsgrants (id SERIAL PRIMARY KEY, date DATE, symbol VARCHAR(20), company_name TEXT, amount DOUBLE PRECISION, note TEXT)",
+        "CREATE TABLE IF NOT EXISTS watchlist (symbol VARCHAR(20) PRIMARY KEY, target_price DOUBLE PRECISION, note TEXT)",
+        "CREATE TABLE IF NOT EXISTS investmentthesis (symbol VARCHAR(20) PRIMARY KEY, thesis_text TEXT, target_price DOUBLE PRECISION, recommendation VARCHAR(20), last_updated DATE)",
+        """CREATE TABLE IF NOT EXISTS financialstatements (
             symbol VARCHAR(20), date DATE,
             revenue DOUBLE PRECISION, net_income DOUBLE PRECISION,
             period_type VARCHAR(20) DEFAULT 'Annual',
@@ -186,9 +183,4 @@ def db_verify_user(u, p):
                 print(f"Verify User Error: {e}")
     return False
 
-# تشغيل التهيئة
-if DB_URL:
-    try:
-        init_db()
-    except Exception as e:
-        print(f"Init DB Failed: {e}")
+# ✅ IMPORTANT: لا تشغل init_db هنا (سيتم تشغيلها من app.py فقط)
