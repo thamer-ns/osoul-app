@@ -63,8 +63,7 @@ def get_tasi_data():
     return price, 0.0
 
 @st.cache_data(ttl=3600, show_spinner=False)
-import yfinance as yf
-import pandas as pd
+
 
 def get_chart_history(symbol: str, period: str = "2y", interval: str = "1d"):
     sym = (symbol or "").strip().upper()
