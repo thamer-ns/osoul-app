@@ -1240,8 +1240,7 @@ def view_settings():
         if d:
             st.download_button("تحميل", d, n)
 
-st.write(fetch_table("lab_runs").head(2))
-st.write(fetch_table("lab_equity").head(2))
+
 
 
 # ========================================================
