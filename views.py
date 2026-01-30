@@ -64,35 +64,28 @@ except Exception:
     def render_classical_analysis(s):
         st.warning("⚠️ ملف classical_analysis.py مفقود أو به خطأ.")
 
-# 5) AI Engine (تشخيص كامل بدل الصمت)
-import traceback
-ai_import_error = None
-
+# 5) AI Engine
 try:
     from ai_engine import (
         generate_ai_report,
         calculate_portfolio_risk_score,
         run_stress_test,
         generate_rebalancing_suggestions,
+        # ✅ جديد: استراتيجيات المستخدم
         save_user_rule,
         load_user_rules,
     )
 except Exception:
-    ai_import_error = traceback.format_exc()
-
-    def generate_ai_report(symbol, timeframe="1D"):
-        return {"__error__": "AI Engine import failed", "__trace__": ai_import_error}
-
+    def generate_ai_report(s): return {}
     def calculate_portfolio_risk_score(df, c): return 50
     def run_stress_test(v, df): return {"scenarios": [], "insight": ""}
     def generate_rebalancing_suggestions(df, c): return []
 
+    # ✅ Fail-safe
     def save_user_rule(rule_text: str, title: str = None, enabled: int = 1):
-        return {"ok": False, "reason": "AI Engine missing", "trace": ai_import_error}
-
+        return {"ok": False, "reason": "AI Engine missing"}
     def load_user_rules(enabled_only=True, max_rows=50):
         return []
-
 
 
 # ========================================================
@@ -415,7 +408,7 @@ def view_portfolio(fin, key):
                         st.info("لا توجد صفقات لاختيارها")
 
             with c_a2:
-                  with st.expander("✏️ تعديل صفقة (تصحيح خطأ)"):
+                with st.expander("✏️ تعديل صفقة (تصحيح خطأ)"):
                     if "id" in op.columns and len(op["id"].tolist()) > 0:
                         e_id = st.selectbox("اختر الصفقة", op["id"].tolist(), key=f"edit_{key}")
                         if e_id:
@@ -989,17 +982,9 @@ def view_analysis(fin):
         tabs = st.tabs(["🤖 المستشار", "💰 مالي", "📈 فني", "🏛️ كلاسيكي", "📝 أطروحة"])
 
         # -------------------- المستشار --------------------
-         # -------------------- المستشار --------------------
         with tabs[0]:
             rep = generate_ai_report(sym)
-
-            if rep.get("__error__") or rep.get("__trace__"):
-                st.error("فشل تشغيل المستشار (AI Engine).")
-                st.code(rep.get("__trace__", ""))
-                st.stop()
-
             col = rep.get("color", "#666")
-
 
             st.markdown(
                 f"<div style='padding:15px;border:2px solid {col};border-radius:10px;text-align:center;'>"
@@ -1255,8 +1240,8 @@ def view_settings():
         if d:
             st.download_button("تحميل", d, n)
 
-
-
+st.write(fetch_table("ai_decisions").head(2))
+st.write(fetch_table("lab_trades").head(2))
 
 # ========================================================
 # 9) Router
