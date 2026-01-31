@@ -1,4 +1,9 @@
 # data_source.py
+from typing import Union, Dict, List
+
+# ============================================================
+# 🗂️ قاعدة بيانات تداول (الأسهم والقطاعات)
+# ============================================================
 TADAWUL_DB = {
     '1010': {'name': 'بنك الرياض', 'sector': 'البنوك'},
     '1020': {'name': 'بنك الجزيرة', 'sector': 'البنوك'},
@@ -353,8 +358,52 @@ TADAWUL_DB = {
     '9642': {'name': 'تايم', 'sector': 'الإعلام والترفيه (موازي)'},
 }
 
-def get_company_details(symbol):
-    clean_sym = str(symbol).replace('.SR', '').replace('.0', '').strip()
-    data = TADAWUL_DB.get(clean_sym)
-    if data: return data['name'], data['sector']
-    return symbol, "غير معروف"
+# ============================================================
+# 🛠️ أدوات مساعدة (Helpers)
+# ============================================================
+
+def get_company_details(symbol: Union[str, int]) -> Dict[str, str]:
+    """
+    البحث عن تفاصيل الشركة.
+    ✅ يقبل رمز نصي أو رقمي.
+    ✅ يعالج صيغ مثل '1010.0' أو '1010.SR'.
+    ✅ يرجع Dictionary بدلاً من tuple لتوافق أفضل.
+    """
+    if not symbol:
+         return {"name": str(symbol), "sector": "غير معروف"}
+
+    # 1. تحويل وتنظيف الرمز
+    s = str(symbol).strip().upper()
+
+    # معالجة الكسور الناتجة عن Excel (مثلاً 1010.0 تصبح 1010)
+    if "." in s and s.replace(".", "").isdigit():
+        try:
+             s = str(int(float(s)))
+        except:
+             pass 
+
+    # إزالة اللواحق
+    s = s.replace('.SR', '').replace('SAR', '').strip()
+
+    # 2. البحث
+    data = TADAWUL_DB.get(s)
+    if data:
+        # إرجاع نسخة لتجنب تعديل الأصل بالخطأ
+        return data.copy()
+
+    return {'name': s, 'sector': 'غير معروف'}
+
+
+def get_all_tickers() -> List[str]:
+    """
+    يرجع قائمة بجميع رموز الشركات (للواجهة والقوائم المنسدلة).
+    """
+    return sorted(list(TADAWUL_DB.keys()))
+
+
+def get_companies_by_sector(sector_name: str) -> Dict[str, str]:
+    """
+    يرجع جميع الشركات في قطاع معين.
+    Example: get_companies_by_sector('البنوك')
+    """
+    return {k: v['name'] for k, v in TADAWUL_DB.items() if v['sector'] == sector_name}
