@@ -1,61 +1,62 @@
-#config.py
+# config.py
+import streamlit as st
 from pathlib import Path
 
 # ==========================================
-# 1. هوية التطبيق (App Identity)
+# 1. هوية التطبيق
 # ==========================================
 APP_NAME = "أصولي"
 APP_ICON = "🏛️"
 VERSION = "1.0.0"
 
 # ==========================================
-# 2. إعدادات الملفات والمجلدات (Paths)
+# 2. المسارات (Paths)
 # ==========================================
-# استخدام Path يجعل الكود يعمل بامتياز سواء على Windows أو Linux/Mac
 BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
 BACKUP_DIR = BASE_DIR / "backups"
 
-# التأكد من وجود المجلدات (إنشاءها تلقائياً إذا لم تكن موجودة)
+# إنشاء المجلدات للنسخ الاحتياطي والملفات المؤقتة
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
-DB_NAME = "osoli_data.db"
-DB_PATH = DATA_DIR / DB_NAME
+# ==========================================
+# 3. إعدادات قاعدة البيانات (Database Config)
+# ==========================================
+# محاولة جلب الرابط من الـ Secrets، وإذا لم يوجد نتركه فارغاً ليتم التعامل معه في database.py
+try:
+    # ندعم التسميتين الشائعتين
+    DB_CONNECTION_URL = st.secrets.get("DATABASE_URL") or st.secrets["postgres"]["url"]
+except (FileNotFoundError, KeyError):
+    DB_CONNECTION_URL = None  # سيتم التعامل مع الخطأ في database.py
 
 # ==========================================
-# 3. الثوابت المالية (Financial Constants)
+# 4. الثوابت المالية
 # ==========================================
-# عمولة التداول (السوق السعودي مثلاً 0.00155 شامل الضريبة)
-COMMISSION_RATE = 0.00155 
+COMMISSION_RATE = 0.00155  # عمولة التداول (شامل الضريبة)
 VAT_RATE = 0.15
 
 # ==========================================
-# 4. ألوان الواجهة (UI Theme)
+# 5. المظهر (UI Theme)
 # ==========================================
 DEFAULT_COLORS = {
-    'primary': '#0052CC',      # اللون الرئيسي (أزرق)
-    'page_bg': '#F4F6F8',      # خلفية الصفحة (رمادي فاتح جداً)
-    'card_bg': '#FFFFFF',      # خلفية البطاقات
-    'main_text': '#172B4D',    # النص الرئيسي
-    'sub_text': '#6B778C',     # النص الفرعي
-    'success': '#006644',      # نجاح/ربح
-    'danger': '#DE350B',       # خطأ/خسارة
-    'warning': '#FF991F',      # تنبيه
-    'border': '#DFE1E6'        # الحدود
+    'primary': '#0052CC',
+    'page_bg': '#F4F6F8',
+    'card_bg': '#FFFFFF',
+    'main_text': '#172B4D',
+    'sub_text': '#6B778C',
+    'success': '#006644',
+    'danger': '#DE350B',
+    'warning': '#FF991F',
+    'border': '#DFE1E6'
 }
 
-# ==========================================
-# 5. ألوان الرسوم البيانية (Chart Theme)
-# ==========================================
-# توحيد الألوان المستخدمة في Plotly لضمان التناسق
 CHART_COLORS = {
-    'candle_up': '#26a69a',    # شمعة صاعدة (أخضر تداول)
-    'candle_down': '#ef5350',  # شمعة هابطة (أحمر تداول)
-    'sma_50': '#FF9800',       # متوسط 50 (برتقالي)
-    'sma_200': '#2962FF',      # متوسط 200 (أزرق)
-    'support': '#00C853',      # خط دعم
-    'resistance': '#D50000',   # خط مقاومة
-    'golden_ratio': '#FFD700', # النسبة الذهبية
-    'grid': '#E1E4E8'          # الشبكة الخلفية
+    'candle_up': '#26a69a',
+    'candle_down': '#ef5350',
+    'sma_50': '#FF9800',
+    'sma_200': '#2962FF',
+    'support': '#00C853',
+    'resistance': '#D50000',
+    'grid': '#E1E4E8'
 }
