@@ -1,8 +1,5 @@
-# app.py
 import streamlit as st
 from config import APP_NAME, APP_ICON
-from security import login_system
-from views import router
 from database import init_db
 from styles import apply_custom_css
 
@@ -23,31 +20,27 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# DB Init (مرة واحدة)
-if "db_initialized" not in st.session_state:
-    st.session_state["db_initialized"] = False
-if "db_init_lock" not in st.session_state:
-    st.session_state["db_init_lock"] = False
+# ✅ DB Init (مرة واحدة لكل سيرفر) — أقوى من session_state lock
+@st.cache_resource
+def _init_db_once():
+    init_db()
+    return True
 
-if not st.session_state["db_initialized"] and not st.session_state["db_init_lock"]:
-    st.session_state["db_init_lock"] = True
-    try:
-        init_db()
-        st.session_state["db_initialized"] = True
-    except Exception as e:
-        st.session_state["db_initialized"] = False
-        st.error("DB Error: فشل تهيئة قاعدة البيانات. تأكد من DATABASE_URL في secrets.")
-        st.exception(e)
-        st.stop()
-    finally:
-        st.session_state["db_init_lock"] = False
+try:
+    _init_db_once()
+except Exception as e:
+    st.error("DB Error: فشل تهيئة قاعدة البيانات. تأكد من DATABASE_URL في secrets.")
+    st.exception(e)
+    st.stop()
 
 # ✅ حقن ستايلات components أولاً
 if inject_component_styles:
     try:
         inject_component_styles()
-    except Exception:
-        pass
+    except Exception as e:
+        # لا نوقف التطبيق، لكن لا نخفي الخطأ بالكامل
+        st.warning("تنبيه: حصل خطأ أثناء تحميل ستايلات components.")
+        st.exception(e)
 
 # ✅ ثم حقن styles.py أخيراً (عشان يغطي أي CSS ثاني)
 apply_custom_css()
@@ -56,6 +49,10 @@ if "page" not in st.session_state:
     st.session_state["page"] = "home"
 
 try:
+    # (اختياري) Lazy import لتقليل أخطاء الاستيراد المبكر
+    from security import login_system
+    from views import router
+
     if login_system():
         router()
 except Exception as e:
