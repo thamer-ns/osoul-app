@@ -9,6 +9,12 @@ import numpy as np
 from datetime import datetime
 
 # ============================================================
+# AI Engine Meta (Fix ImportError + Provide UI Meta)
+# ============================================================
+AI_ENGINE_VERSION = "2026.02.01"
+AI_ENGINE_NAME = "Osoli AI Engine"
+
+# ============================================================
 # Helpers
 # ============================================================
 
@@ -1284,7 +1290,7 @@ def _build_explainability(tech_reasons, fund_reasons, total_score, tech_score, f
     if tech_score > 3 and fund_score < 0:
         notes.append("تعارض: الفني قوي لكن المالي ضعيف — الأفضل مضاربة بإدارة مخاطر.")
     if fund_score > 3 and tech_score < 0:
-        notes.append("تعارض: المالي قوي لكن السعر ضعيف — مناسب لاستثمار قيمة بصبر.")
+        notes.append("تعارض: المالي قوي والسعر ضعيف — مناسب لاستثمار قيمة بصبر.")
 
     exp = {"positives": positives[:10], "negatives": negatives[:10], "notes": notes[:10]}
     exp["top_evidence"] = exp["positives"][:3]
@@ -1463,6 +1469,13 @@ def generate_ai_report(symbol, timeframe="1D"):
         direction = "buy" if total_score >= 0 else "sell"
         risk_plan = _risk_plan_from_atr_sr(df, ind, direction=direction)
 
+        # ✅ Engine meta for UI / debug (Base Interval الصحيح)
+        try:
+            last_idx = df.index[-1]
+            last_bar = str(last_idx)
+        except Exception:
+            last_bar = None
+
         report = {
             "recommendation": rec,
             "color": clr,
@@ -1480,6 +1493,16 @@ def generate_ai_report(symbol, timeframe="1D"):
             "strategy_name": strategy_name,
             "sector": sector,
             "risk_plan": risk_plan,
+
+            # ✅ Added
+            "engine_meta": {
+                "engine": AI_ENGINE_NAME,
+                "version": AI_ENGINE_VERSION,
+                "timeframe": str(timeframe),
+                "period_used": str(period),
+                "rows": int(len(df)),
+                "last_bar": last_bar,
+            },
         }
 
         report["risk_gates"] = _risk_gates(report)
@@ -1521,6 +1544,14 @@ def generate_ai_report(symbol, timeframe="1D"):
             "risk_plan": {},
             "risk_gates": {"pass": False, "reasons": ["AI Engine Error"]},
             "scenarios": [],
+            "engine_meta": {
+                "engine": AI_ENGINE_NAME,
+                "version": AI_ENGINE_VERSION,
+                "timeframe": str(timeframe),
+                "period_used": None,
+                "rows": 0,
+                "last_bar": None,
+            },
         }
 
 
