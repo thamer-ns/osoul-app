@@ -8,6 +8,7 @@ from contextlib import contextmanager
 import re
 import config  # تم ربط الملف بـ config
 
+
 # =========================================================
 # 1) إعداد الاتصال (Connection Setup)
 # =========================================================
@@ -17,20 +18,32 @@ def get_connection_pool():
     """
     Connection pool (cached) for Streamlit using PostgreSQL.
     """
-    if not config.DB_CONNECTION_URL:
+    if not getattr(config, "DB_CONNECTION_URL", None):
         st.error("⚠️ لم يتم العثور على رابط قاعدة البيانات في secrets.toml")
         return None
+
     try:
         # إنشاء مسبح اتصالات بحد أدنى 1 وحد أقصى 20
+        # ملاحظة: sslmode يمرر إلى psycopg2.connect عبر kwargs (صحيح)
         return psycopg2.pool.SimpleConnectionPool(
-            minconn=1, 
-            maxconn=20, 
-            dsn=config.DB_CONNECTION_URL, 
-            sslmode="require"
+            minconn=1,
+            maxconn=20,
+            dsn=config.DB_CONNECTION_URL,
+            sslmode="require",
         )
     except Exception as e:
         st.error(f"DB Error: {e}")
         return None
+
+
+def _conn_is_healthy(conn) -> bool:
+    """
+    بعض البيئات تقفل الاتصال القديم داخل Pool.
+    """
+    try:
+        return conn is not None and getattr(conn, "closed", 1) == 0
+    except Exception:
+        return False
 
 
 @contextmanager
@@ -43,19 +56,35 @@ def get_db():
         yield None
         return
 
-    conn = pool_obj.getconn()
+    conn = None
     try:
+        conn = pool_obj.getconn()
+
+        # ✅ إصلاح: لو الاتصال قديم/مقفول — اغلقه وخذ غيره
+        if not _conn_is_healthy(conn):
+            try:
+                pool_obj.putconn(conn, close=True)
+            except Exception:
+                pass
+            conn = pool_obj.getconn()
+
         yield conn
+
     except Exception as e:
+        # rollback آمن
         try:
-            conn.rollback()
+            if conn and _conn_is_healthy(conn):
+                conn.rollback()
         except Exception:
             pass
         print(f"DB Connection/Block Error: {e}")
         raise
+
     finally:
+        # ارجاع الاتصال للمسبح
         try:
-            pool_obj.putconn(conn)
+            if pool_obj and conn:
+                pool_obj.putconn(conn)
         except Exception:
             pass
 
@@ -92,7 +121,6 @@ def normalize_sql_tables(query: str) -> str:
         return query
     fixed = query
     for t in KNOWN_TABLES:
-        # Regex لاستبدال الكلمات الكاملة فقط وغير المحاطة باقتباس
         fixed = re.sub(rf'(?<!")\b{re.escape(t)}\b(?!")', str(t).lower(), fixed)
     return fixed
 
@@ -106,18 +134,43 @@ def _fix_placeholders(query: str) -> str:
     return query.replace("?", "%s")
 
 
+def _quote_ident(name: str) -> str:
+    """
+    quoting identifiers safely: "name"
+    """
+    return '"' + str(name).replace('"', '""') + '"'
+
+
+def _is_safe_identifier(name: str) -> bool:
+    """
+    يسمح فقط بأسماء جداول/أعمدة آمنة (حروف/أرقام/underscore) لتجنب أي حقن.
+    """
+    if name is None:
+        return False
+    s = str(name).strip()
+    # يسمح بحالة وجود نقاط؟ عادة لا نحتاج schema.table داخل public
+    return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", s))
+
+
 # =========================================================
 # 3) التنفيذ والجلب (Execute / Fetch)
 # =========================================================
 def execute_query(query, params=()):
+    """
+    Execute SQL with safe normalization and placeholder fix.
+    Returns True/False.
+    """
+    if not query:
+        return False
+
     with get_db() as conn:
         if not conn:
             return False
         try:
             with conn.cursor() as cur:
-                fixed_query = normalize_sql_tables(query)
+                fixed_query = normalize_sql_tables(str(query))
                 fixed_query = _fix_placeholders(fixed_query)
-                cur.execute(fixed_query, params)
+                cur.execute(fixed_query, params or ())
                 conn.commit()
             return True
         except Exception as e:
@@ -131,27 +184,47 @@ def execute_query(query, params=()):
 
 def fetch_table(table_name):
     """
-    يحاول جلب الجدول بجميع الصيغ المحتملة للاسم.
+    ✅ جلب جدول بشكل آمن.
+    - يمنع إدخال أسماء غير آمنة
+    - يجرب: quoted -> lowercase -> normalized
     """
+    if table_name is None:
+        return pd.DataFrame()
+
+    name_raw = str(table_name).strip().replace('"', "")
+    if not name_raw:
+        return pd.DataFrame()
+
     with get_db() as conn:
         if not conn:
             return pd.DataFrame()
 
+        # 0) تحقق من سلامة اسم الجدول (لتجنب SQL injection عبر identifier)
+        # لو اسم الجدول عندك يحتوي أحرف غريبة — عطّني الاسم ونعدّل القاعدة.
+        if not _is_safe_identifier(name_raw):
+            # حاول على الأقل بالـ normalize لو كان من KNOWN_TABLES (Users/Trades...)
+            maybe = normalize_sql_tables(name_raw).strip().replace('"', "")
+            if not _is_safe_identifier(maybe):
+                return pd.DataFrame()
+            name_raw = maybe
+
         # 1) Quoted exactly as passed
         try:
-            return pd.read_sql(f'SELECT * FROM "{table_name}"', conn)
+            return pd.read_sql(f"SELECT * FROM {_quote_ident(name_raw)}", conn)
         except Exception:
             pass
 
-        # 2) Lowercase
+        # 2) Lowercase (common in Postgres)
         try:
-            return pd.read_sql(f"SELECT * FROM {str(table_name).lower()}", conn)
+            return pd.read_sql(f"SELECT * FROM {name_raw.lower()}", conn)
         except Exception:
             pass
 
         # 3) Normalize from list
         try:
-            t = normalize_sql_tables(str(table_name)).strip().replace('"', "")
+            t = normalize_sql_tables(name_raw).strip().replace('"', "")
+            if not _is_safe_identifier(t):
+                return pd.DataFrame()
             return pd.read_sql(f"SELECT * FROM {t}", conn)
         except Exception:
             return pd.DataFrame()
@@ -177,7 +250,6 @@ def migrate_financial_schema():
     ]
 
     for col_name, col_type in columns_to_add:
-        # استخدام execute_query يضمن استخدام normalize_sql_tables وبالتالي التعامل مع lowercase
         execute_query(
             f"ALTER TABLE financialstatements ADD COLUMN IF NOT EXISTS {col_name} {col_type}",
             (),
@@ -226,7 +298,6 @@ def init_db():
 def db_create_user(u, p):
     try:
         h = bcrypt.hashpw(p.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-        # normalize_sql_tables سيحوّل Users -> users
         return execute_query("INSERT INTO Users (username, password) VALUES (%s, %s)", (u, h))
     except Exception as e:
         print(f"Create User Error: {e}")
@@ -242,7 +313,6 @@ def db_verify_user(u, p):
             return False
         try:
             with conn.cursor() as cur:
-                # نستخدم users مباشرة لتفادي أي لبس
                 cur.execute("SELECT password FROM users WHERE username = %s", (u,))
                 res = cur.fetchone()
                 if res and res[0]:
@@ -270,9 +340,7 @@ def db_healthcheck():
         info["connected"] = True
         try:
             with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT current_database(), current_user, inet_server_addr()::text, inet_server_port();"
-                )
+                cur.execute("SELECT current_database(), current_user, inet_server_addr()::text, inet_server_port();")
                 res = cur.fetchone()
                 if res:
                     dbname, user, host, port = res
@@ -381,10 +449,6 @@ def _get_primary_key_cols(conn, table_name: str) -> list:
         return []
 
 
-def _quote_ident(name: str) -> str:
-    return '"' + str(name).replace('"', '""') + '"'
-
-
 def _set_sequence_to_max_id(conn, table_lower: str, id_col: str = "id"):
     try:
         with conn.cursor() as cur:
@@ -457,13 +521,10 @@ def migrate_fix_case_duplicate_tables(drop_old: bool = False) -> dict:
                     if pk_cols and all(pk in common for pk in pk_cols):
                         pk_csv = ", ".join([_quote_ident(c) for c in pk_cols])
 
-                        # جداول نحدثها عند التعارض
                         if dst_low in ("watchlist", "investmentthesis", "financialstatements"):
                             set_cols = [c for c in common if c not in pk_cols]
                             if set_cols:
-                                set_sql = ", ".join(
-                                    [f"{_quote_ident(c)} = EXCLUDED.{_quote_ident(c)}" for c in set_cols]
-                                )
+                                set_sql = ", ".join([f"{_quote_ident(c)} = EXCLUDED.{_quote_ident(c)}" for c in set_cols])
                                 sql = f"""
                                     INSERT INTO {dst_low} ({cols_csv})
                                     SELECT {cols_csv} FROM {src_table_sql}
@@ -482,7 +543,6 @@ def migrate_fix_case_duplicate_tables(drop_old: bool = False) -> dict:
                                 ON CONFLICT ({pk_csv}) DO NOTHING;
                             """
                     else:
-                        # بدون PK واضح: نسخ مباشر
                         sql = f"""
                             INSERT INTO {dst_low} ({cols_csv})
                             SELECT {cols_csv} FROM {src_table_sql};
@@ -500,11 +560,9 @@ def migrate_fix_case_duplicate_tables(drop_old: bool = False) -> dict:
                         report["errors"].append(f"Merge failed for {src_cap}->{dst_low}: {e}")
                         continue
 
-                    # sequence fix
                     if dst_low in serial_id_tables:
                         _set_sequence_to_max_id(conn, dst_low, "id")
 
-                    # drop old
                     if drop_old:
                         try:
                             cur.execute(f"DROP TABLE IF EXISTS {src_table_sql} CASCADE;")
