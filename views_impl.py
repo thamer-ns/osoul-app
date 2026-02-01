@@ -2416,8 +2416,3 @@ def router():
     else:
         st.session_state.page = "home"
         st.rerun()
-# ========================================================
-# ✅ Phase 1: Router moved to ui/router.py (Re-export)
-# ========================================================
-from ui.router import router as router
-from ui.router import render_navbar as render_navbar
