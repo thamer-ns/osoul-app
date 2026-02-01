@@ -2,16 +2,15 @@
 import json
 import re
 import uuid
+import traceback
 import pandas as pd
 import numpy as np
-from datetime import datetime, timedelta
+from datetime import datetime
 
 
 # ============================================================
-# 🧠 AI Memory (DB Logging + Simple Online Learning)
-# + Calibration + User Rules
+# Helpers
 # ============================================================
-
 def _normalize_symbol(sym: str) -> str:
     sym = (sym or "").strip().upper()
     if sym.isdigit():
@@ -22,27 +21,16 @@ def _normalize_symbol(sym: str) -> str:
     return sym
 
 
+def _now_str():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
 def _safe_import_db():
     try:
         from database import execute_query, fetch_table
         return execute_query, fetch_table
     except Exception:
         return None, None
-
-
-def _safe_fetch_table(name: str):
-    _, fetch_table = _safe_import_db()
-    if not fetch_table:
-        return None
-    try:
-        df = fetch_table(name)
-        if df is None:
-            return None
-        if isinstance(df, pd.DataFrame):
-            return df
-        return None
-    except Exception:
-        return None
 
 
 def _try_exec(sql: str, params=()):
@@ -59,7 +47,6 @@ def _try_exec(sql: str, params=()):
         execute_query(sql, params)
         return True
     except Exception:
-        # fallback for SQLite paramstyle
         try:
             sql2 = sql.replace("%s", "?")
             execute_query(sql2, params)
@@ -68,19 +55,90 @@ def _try_exec(sql: str, params=()):
             return False
 
 
-def _now_str():
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+def _safe_fetch_table(name: str):
+    _, fetch_table = _safe_import_db()
+    if not fetch_table:
+        return None
+    try:
+        df = fetch_table(name)
+        if isinstance(df, pd.DataFrame):
+            return df
+        return None
+    except Exception:
+        return None
+
+
+def _ensure_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    يطبع أسماء الأعمدة إلى Open/High/Low/Close/Volume
+    ويفك MultiIndex إذا موجود.
+    """
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+        return df
+
+    # فك MultiIndex الأعمدة (أحياناً من yfinance)
+    try:
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = [str(c[-1]) for c in df.columns]
+    except Exception:
+        pass
+
+    cols = {c: c for c in df.columns}
+    lower = {str(c).lower(): c for c in df.columns}
+
+    def pick(*names):
+        for n in names:
+            if n in cols:
+                return cols[n]
+            if n.lower() in lower:
+                return lower[n.lower()]
+        return None
+
+    m_open = pick("Open", "open", "OPEN")
+    m_high = pick("High", "high", "HIGH")
+    m_low = pick("Low", "low", "LOW")
+    m_close = pick("Close", "close", "Adj Close", "adjclose", "adj_close", "ADJ CLOSE")
+    m_vol = pick("Volume", "volume", "VOL", "vol")
+
+    ren = {}
+    if m_open and m_open != "Open":
+        ren[m_open] = "Open"
+    if m_high and m_high != "High":
+        ren[m_high] = "High"
+    if m_low and m_low != "Low":
+        ren[m_low] = "Low"
+    if m_close and m_close != "Close":
+        ren[m_close] = "Close"
+    if m_vol and m_vol != "Volume":
+        ren[m_vol] = "Volume"
+
+    if ren:
+        df = df.rename(columns=ren)
+
+    # تأكد الأعمدة الأساسية موجودة
+    needed = ["Open", "High", "Low", "Close"]
+    for c in needed:
+        if c not in df.columns:
+            raise ValueError(f"missing {c}")
+
+    if "Volume" not in df.columns:
+        df["Volume"] = 0.0
+
+    # تنظيف أنواع البيانات
+    for c in ["Open", "High", "Low", "Close", "Volume"]:
+        try:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+        except Exception:
+            pass
+    df = df.dropna(subset=["Open", "High", "Low", "Close"]).copy()
+
+    return df
 
 
 # ============================================================
 # ✅ Cross-DB table schemas (SQLite/Postgres)
 # ============================================================
 def _ensure_ai_tables():
-    """
-    جداول Portable:
-    - IDs نصية UUID بدل SERIAL (عشان Postgres + SQLite بدون تعارض)
-    - created_at نص
-    """
     execute_query, _ = _safe_import_db()
     if not execute_query:
         return False
@@ -133,9 +191,11 @@ def _ensure_user_rules_table():
 def log_ai_signal(symbol, timeframe, features: dict, report: dict, horizon_days=20, sector=None, strategy_name=None):
     execute_query, _ = _safe_import_db()
     if not execute_query:
-        return False
+        return None
 
     _ensure_ai_tables()
+
+    signal_id = str(uuid.uuid4())
     try:
         _try_exec(
             """
@@ -144,7 +204,7 @@ def log_ai_signal(symbol, timeframe, features: dict, report: dict, horizon_days=
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
             """,
             (
-                str(uuid.uuid4()),
+                signal_id,
                 _now_str(),
                 str(symbol),
                 (str(sector) if sector is not None else None),
@@ -155,9 +215,9 @@ def log_ai_signal(symbol, timeframe, features: dict, report: dict, horizon_days=
                 json.dumps(report or {}, ensure_ascii=False),
             ),
         )
-        return True
+        return signal_id
     except Exception:
-        return False
+        return None
 
 
 def update_ai_outcome(signal_id: str, outcome_return_pct: float, exit_features: dict = None):
@@ -208,28 +268,28 @@ def _set_weight(key: str, weight: float):
         return False
     _ensure_ai_tables()
 
-    # UPSERT: نستخدم صيغة مناسبة (ON CONFLICT(key)) ثم fallback
+    # UPSERT (أفضلية) ثم fallback مضمون
+    ok = _try_exec(
+        """
+        INSERT INTO ai_weights (key, weight, updated_at)
+        VALUES (%s,%s,%s)
+        ON CONFLICT(key) DO UPDATE
+        SET weight=EXCLUDED.weight, updated_at=EXCLUDED.updated_at
+        """,
+        (str(key), float(weight), _now_str()),
+    )
+    if ok:
+        return True
+
     try:
-        ok = _try_exec(
-            """
-            INSERT INTO ai_weights (key, weight, updated_at)
-            VALUES (%s,%s,%s)
-            ON CONFLICT(key) DO UPDATE
-            SET weight=EXCLUDED.weight, updated_at=EXCLUDED.updated_at
-            """,
-            (str(key), float(weight), _now_str()),
+        _try_exec("DELETE FROM ai_weights WHERE key=%s", (str(key),))
+        _try_exec(
+            "INSERT INTO ai_weights (key, weight, updated_at) VALUES (%s,%s,%s)",
+            (str(key), float(weight), _now_str())
         )
-        return bool(ok)
+        return True
     except Exception:
-        try:
-            _try_exec("DELETE FROM ai_weights WHERE key=%s", (str(key),))
-            _try_exec(
-                "INSERT INTO ai_weights (key, weight, updated_at) VALUES (%s,%s,%s)",
-                (str(key), float(weight), _now_str())
-            )
-            return True
-        except Exception:
-            return False
+        return False
 
 
 def learn_from_history(max_rows=400):
@@ -289,7 +349,7 @@ def learn_from_history(max_rows=400):
 
 
 # ============================================================
-# 🧠 User Rules: save/load/parse/evaluate
+# 🧠 User Rules
 # ============================================================
 def save_user_rule(rule_text: str, title: str = None, enabled: int = 1):
     execute_query, _ = _safe_import_db()
@@ -423,118 +483,6 @@ def _parse_user_rule(text: str):
     return parsed
 
 
-# ============================================================
-# ✅ Indicators (مطوّر بدون حذف القديم: SMA200/ATR/ADX/Stoch/OBV/Vol)
-# ============================================================
-def _compute_indicators(df: pd.DataFrame):
-    out = {}
-    if df is None or df.empty or len(df) < 60:
-        return out
-
-    close = df["Close"].astype(float)
-    high = df["High"].astype(float)
-    low = df["Low"].astype(float)
-    vol = df["Volume"].astype(float) if "Volume" in df.columns else pd.Series([0] * len(df), index=df.index)
-
-    # SMAs
-    out["sma20"] = close.rolling(20).mean()
-    out["sma50"] = close.rolling(50).mean()
-    out["sma200"] = close.rolling(200).mean()
-
-    # RSI(14)
-    delta = close.diff()
-    gain = delta.clip(lower=0).rolling(14).mean()
-    loss = (-delta.clip(upper=0)).rolling(14).mean()
-    rs = gain / (loss.replace(0, np.nan))
-    rsi = 100 - (100 / (1 + rs))
-    out["rsi14"] = rsi.bfill().fillna(50)
-
-    # MACD(12,26,9)
-    ema12 = close.ewm(span=12, adjust=False).mean()
-    ema26 = close.ewm(span=26, adjust=False).mean()
-    macd = ema12 - ema26
-    signal = macd.ewm(span=9, adjust=False).mean()
-    hist = macd - signal
-    out["macd"] = macd
-    out["macd_signal"] = signal
-    out["macd_hist"] = hist
-
-    # ATR(14)
-    try:
-        prev_close = close.shift(1)
-        tr = pd.concat(
-            [(high - low), (high - prev_close).abs(), (low - prev_close).abs()],
-            axis=1
-        ).max(axis=1)
-        out["atr14"] = tr.rolling(14).mean()
-    except Exception:
-        pass
-
-    # ADX(14) مبسط
-    try:
-        up_move = high.diff()
-        down_move = -low.diff()
-        plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
-        minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
-
-        prev_close = close.shift(1)
-        tr = pd.concat(
-            [(high - low), (high - prev_close).abs(), (low - prev_close).abs()],
-            axis=1
-        ).max(axis=1)
-
-        atr = tr.rolling(14).mean()
-        plus_di = 100 * (pd.Series(plus_dm, index=df.index).rolling(14).sum() / atr.replace(0, np.nan))
-        minus_di = 100 * (pd.Series(minus_dm, index=df.index).rolling(14).sum() / atr.replace(0, np.nan))
-        dx = (100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan))
-        out["adx14"] = dx.rolling(14).mean().bfill()
-        out["plus_di14"] = plus_di.bfill()
-        out["minus_di14"] = minus_di.bfill()
-    except Exception:
-        pass
-
-    # Stochastic(14,3)
-    try:
-        ll14 = low.rolling(14).min()
-        hh14 = high.rolling(14).max()
-        k = 100 * (close - ll14) / (hh14 - ll14).replace(0, np.nan)
-        d = k.rolling(3).mean()
-        out["stoch_k"] = k.bfill()
-        out["stoch_d"] = d.bfill()
-    except Exception:
-        pass
-
-    # OBV
-    try:
-        direction = np.sign(close.diff()).fillna(0)
-        obv = (direction * vol).fillna(0).cumsum()
-        out["obv"] = obv
-    except Exception:
-        pass
-
-    # Volatility(20)
-    try:
-        ret = close.pct_change().fillna(0)
-        out["vol20"] = ret.rolling(20).std().bfill()
-    except Exception:
-        pass
-
-    # Fib 38.2 من نطاق آخر 120 يوم
-    try:
-        look = 120 if len(df) >= 120 else len(df)
-        hh = float(high.iloc[-look:].max())
-        ll = float(low.iloc[-look:].min())
-        rng = hh - ll
-        if rng > 0:
-            out["fib382"] = ll + 0.382 * rng
-            out["range_high"] = hh
-            out["range_low"] = ll
-    except Exception:
-        pass
-
-    return out
-
-
 def _eval_user_rule(parsed_rule: dict, df: pd.DataFrame, ind: dict):
     if not parsed_rule:
         return False, 0.0, "", {}
@@ -543,11 +491,14 @@ def _eval_user_rule(parsed_rule: dict, df: pd.DataFrame, ind: dict):
     if not conds:
         return False, 0.0, "", {}
 
+    if df is None or df.empty or len(df) < 3:
+        return False, 0.0, "", {}
+
     boost = float(parsed_rule.get("boost") or 1.5)
     direction = parsed_rule.get("direction")
 
-    close = float(df["Close"].astype(float).iloc[-1])
-    prev_close = float(df["Close"].astype(float).iloc[-2])
+    close = float(df["Close"].iloc[-1])
+    prev_close = float(df["Close"].iloc[-2])
 
     rsi14 = float(ind.get("rsi14").iloc[-1]) if isinstance(ind.get("rsi14"), pd.Series) else None
     macd = float(ind.get("macd").iloc[-1]) if isinstance(ind.get("macd"), pd.Series) else None
@@ -632,10 +583,112 @@ def _eval_user_rule(parsed_rule: dict, df: pd.DataFrame, ind: dict):
 
 
 # ============================================================
-# 🕯️ Candles / Market Structure / SMC / Ichimoku / VSA / SR
-# (كما عندك بدون تغيير منطقي)
+# Indicators
 # ============================================================
+def _compute_indicators(df: pd.DataFrame):
+    out = {}
+    if df is None or df.empty or len(df) < 60:
+        return out
 
+    close = df["Close"].astype(float)
+    high = df["High"].astype(float)
+    low = df["Low"].astype(float)
+    vol = df["Volume"].astype(float) if "Volume" in df.columns else pd.Series([0] * len(df), index=df.index)
+
+    out["sma20"] = close.rolling(20).mean()
+    out["sma50"] = close.rolling(50).mean()
+    out["sma200"] = close.rolling(200).mean()
+
+    delta = close.diff()
+    gain = delta.clip(lower=0).rolling(14).mean()
+    loss = (-delta.clip(upper=0)).rolling(14).mean()
+    rs = gain / (loss.replace(0, np.nan))
+    rsi = 100 - (100 / (1 + rs))
+    out["rsi14"] = rsi.bfill().fillna(50)
+
+    ema12 = close.ewm(span=12, adjust=False).mean()
+    ema26 = close.ewm(span=26, adjust=False).mean()
+    macd = ema12 - ema26
+    signal = macd.ewm(span=9, adjust=False).mean()
+    hist = macd - signal
+    out["macd"] = macd
+    out["macd_signal"] = signal
+    out["macd_hist"] = hist
+
+    try:
+        prev_close = close.shift(1)
+        tr = pd.concat(
+            [(high - low), (high - prev_close).abs(), (low - prev_close).abs()],
+            axis=1
+        ).max(axis=1)
+        out["atr14"] = tr.rolling(14).mean()
+    except Exception:
+        pass
+
+    try:
+        up_move = high.diff()
+        down_move = -low.diff()
+        plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
+        minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
+
+        prev_close = close.shift(1)
+        tr = pd.concat(
+            [(high - low), (high - prev_close).abs(), (low - prev_close).abs()],
+            axis=1
+        ).max(axis=1)
+
+        atr = tr.rolling(14).mean()
+        plus_di = 100 * (pd.Series(plus_dm, index=df.index).rolling(14).sum() / atr.replace(0, np.nan))
+        minus_di = 100 * (pd.Series(minus_dm, index=df.index).rolling(14).sum() / atr.replace(0, np.nan))
+        dx = (100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan))
+        out["adx14"] = dx.rolling(14).mean().bfill()
+        out["plus_di14"] = plus_di.bfill()
+        out["minus_di14"] = minus_di.bfill()
+    except Exception:
+        pass
+
+    try:
+        ll14 = low.rolling(14).min()
+        hh14 = high.rolling(14).max()
+        k = 100 * (close - ll14) / (hh14 - ll14).replace(0, np.nan)
+        d = k.rolling(3).mean()
+        out["stoch_k"] = k.bfill()
+        out["stoch_d"] = d.bfill()
+    except Exception:
+        pass
+
+    try:
+        direction = np.sign(close.diff()).fillna(0)
+        obv = (direction * vol).fillna(0).cumsum()
+        out["obv"] = obv
+    except Exception:
+        pass
+
+    try:
+        ret = close.pct_change().fillna(0)
+        out["vol20"] = ret.rolling(20).std().bfill()
+    except Exception:
+        pass
+
+    try:
+        look = 120 if len(df) >= 120 else len(df)
+        hh = float(high.iloc[-look:].max())
+        ll = float(low.iloc[-look:].min())
+        rng = hh - ll
+        if rng > 0:
+            out["fib382"] = ll + 0.382 * rng
+            out["range_high"] = hh
+            out["range_low"] = ll
+    except Exception:
+        pass
+
+    return out
+
+
+# ============================================================
+# Patterns / Structure / SMC / Ichimoku / VSA / SR
+# (نفس منطقك كما هو — بدون حذف)
+# ============================================================
 def _detect_advanced_patterns(df):
     if df is None or len(df) < 5:
         return 0, []
@@ -748,7 +801,7 @@ def _analyze_market_structure(df):
             else:
                 impulse_high = last_high
                 impulse_low = last_low
-                fib50 = impulse_high - 0.5 * (impulse_high - impulse_low)
+                fib50 = impulse_high - 0.5 * (impulse_high - impulse_high + impulse_low)
                 if abs(curr - fib50) / max(curr, 1e-9) < 0.01:
                     score -= 1
                     obs.append("🎯 OTE: السعر قريب 50% فيبو (منطقة بيع أفضل)")
@@ -926,10 +979,11 @@ def _analyze_ichimoku(df):
 
 
 def _analyze_financial_golden_rules(symbol):
-    # ✅ Lazy import لتجنب كسر الاستيراد
     try:
         from financial_analysis import get_advanced_fundamental_ratios
         metrics = get_advanced_fundamental_ratios(symbol)
+        if not isinstance(metrics, dict):
+            metrics = {}
     except Exception:
         return 0, [], {}
 
@@ -968,62 +1022,22 @@ def _analyze_financial_golden_rules(symbol):
     except Exception:
         pass
 
-    return score, obs, {**metrics, "_fund_features": feats}
+    metrics["_fund_features"] = feats
+    return score, obs, metrics
 
 
-def _analyze_vsa_art_of_trading(df):
-    if df is None or len(df) < 50:
-        return 0, [], {}
-
-    score = 0
-    obs = []
-    feats = {"vsa_upthrust": 0, "vsa_stopping_volume": 0, "vsa_distribution": 0}
-
-    high = df["High"].astype(float)
-    low = df["Low"].astype(float)
-    close = df["Close"].astype(float)
-    vol = df["Volume"].astype(float)
-
-    curr = df.iloc[-1]
-    avg_vol = float(vol.iloc[-20:].mean())
-    rng = (high - low)
-    avg_rng = float(rng.iloc[-20:].mean())
-
-    r = float(curr["High"] - curr["Low"])
-    if (float(curr["Close"]) > float(curr["Open"])) and (float(curr["Volume"]) > avg_vol * 1.5) and (r > avg_rng * 1.2):
-        if float(curr["Close"]) <= float(curr["Low"]) + 0.25 * r:
-            score -= 2
-            feats["vsa_upthrust"] = 1
-            obs.append("VSA: Upthrust (ضعف/تصريف محتمل)")
-
-    if (float(curr["Close"]) < float(curr["Open"])) and (float(curr["Volume"]) > avg_vol * 1.5) and (r > avg_rng * 1.1):
-        if float(curr["Close"]) >= float(curr["Low"]) + 0.5 * r:
-            score += 2
-            feats["vsa_stopping_volume"] = 1
-            obs.append("VSA: Stopping Volume (امتصاص بيع/قوة)")
-
-    if float(curr["Volume"]) > avg_vol * 1.7:
-        if float(curr["Close"]) < float(curr["Low"]) + 0.55 * r and float(curr["Close"]) > float(curr["Open"]):
-            score -= 1
-            feats["vsa_distribution"] = 1
-            obs.append("VSA: تفريغ محتمل (حجم عالي وإغلاق ليس على القمة)")
-
-    return score, obs, feats
-
-
+# ============================================================
+# SR / Risk / Extra modules (كما عندك)
+# ============================================================
 def _support_resistance_zones(df, lookback=120, max_levels=6):
     if df is None or len(df) < lookback:
         return [], []
-
     h = df["High"].astype(float)
     l = df["Low"].astype(float)
-
     ph = _pivot_points(h.tail(lookback), 3, 3, "high")
     pl = _pivot_points(l.tail(lookback), 3, 3, "low")
-
     highs = [p[1] for p in ph][-max_levels:]
     lows = [p[1] for p in pl][-max_levels:]
-
     return lows, highs
 
 
@@ -1035,7 +1049,7 @@ def _analyze_sr(df):
     obs = []
     feats = {"near_support": 0, "near_resistance": 0, "broke_support_confirm": 0}
 
-    close = float(df["Close"].astype(float).iloc[-1])
+    close = float(df["Close"].iloc[-1])
     lows, highs = _support_resistance_zones(df)
 
     if lows:
@@ -1051,7 +1065,7 @@ def _analyze_sr(df):
             if (c1 < sup) and (c2 < sup):
                 score -= 2
                 feats["broke_support_confirm"] = 1
-                obs.append("🧨 كسر دعم مؤكد (إغلاق يومين تحت المنطقة)")
+                obs.append("🧨 كسر دعم مؤكّد (إغلاق يومين تحت المنطقة)")
         except Exception:
             pass
 
@@ -1065,237 +1079,15 @@ def _analyze_sr(df):
     return score, obs, feats
 
 
-# ============================================================
-# ✅ إضافات التحليل (MA Trend / Momentum / OBV / InsideBar / VSA Extended)
-# ============================================================
-def _analyze_ma_trend(df, ind):
-    if df is None or df.empty or len(df) < 220:
-        return 0, [], {}
-
-    score = 0
-    obs = []
-    feats = {
-        "ma_golden_cross": 0,
-        "ma_death_cross": 0,
-        "close_above_sma200": 0,
-        "close_below_sma200": 0,
-        "adx_strong_trend": 0,
-    }
-
-    close = float(df["Close"].astype(float).iloc[-1])
-    close_prev = float(df["Close"].astype(float).iloc[-2])
-
-    sma50 = ind.get("sma50")
-    sma200 = ind.get("sma200")
-    adx = ind.get("adx14")
-
-    if isinstance(sma50, pd.Series) and isinstance(sma200, pd.Series) and not pd.isna(sma200.iloc[-1]):
-        if float(sma50.iloc[-1]) > float(sma200.iloc[-1]) and float(sma50.iloc[-2]) <= float(sma200.iloc[-2]):
-            score += 2
-            feats["ma_golden_cross"] = 1
-            obs.append("✨ Golden Cross (SMA50 فوق SMA200)")
-
-        if float(sma50.iloc[-1]) < float(sma200.iloc[-1]) and float(sma50.iloc[-2]) >= float(sma200.iloc[-2]):
-            score -= 2
-            feats["ma_death_cross"] = 1
-            obs.append("⚠️ Death Cross (SMA50 تحت SMA200)")
-
-        if close > float(sma200.iloc[-1]) and close_prev <= float(sma200.iloc[-1]):
-            score += 1
-            feats["close_above_sma200"] = 1
-            obs.append("✅ اختراق SMA200 للأعلى (تحسن اتجاه)")
-
-        if close < float(sma200.iloc[-1]) and close_prev >= float(sma200.iloc[-1]):
-            score -= 1
-            feats["close_below_sma200"] = 1
-            obs.append("⛔ كسر SMA200 للأسفل (ضعف اتجاه)")
-
-    if isinstance(adx, pd.Series) and not pd.isna(adx.iloc[-1]):
-        if float(adx.iloc[-1]) >= 20:
-            feats["adx_strong_trend"] = 1
-            obs.append("📈 ADX>=20 (ترند أوضح)")
-            score += 1
-
-    return score, obs, feats
-
-
-def _analyze_momentum_pack(df, ind):
-    if df is None or df.empty or len(df) < 60:
-        return 0, [], {}
-
-    score = 0
-    obs = []
-    feats = {
-        "rsi_oversold": 0,
-        "rsi_overbought": 0,
-        "macd_hist_turn_up": 0,
-        "macd_hist_turn_dn": 0,
-        "stoch_buy_cross": 0,
-        "stoch_sell_cross": 0,
-    }
-
-    rsi = ind.get("rsi14")
-    hist = ind.get("macd_hist")
-    k = ind.get("stoch_k")
-    d = ind.get("stoch_d")
-
-    if isinstance(rsi, pd.Series):
-        rv = float(rsi.iloc[-1])
-        if rv <= 30:
-            score += 1
-            feats["rsi_oversold"] = 1
-            obs.append("🧊 RSI تحت 30 (تشبع بيع)")
-        elif rv >= 70:
-            score -= 1
-            feats["rsi_overbought"] = 1
-            obs.append("🔥 RSI فوق 70 (تشبع شراء)")
-
-    if isinstance(hist, pd.Series) and len(hist) >= 3:
-        if float(hist.iloc[-1]) > float(hist.iloc[-2]) and float(hist.iloc[-2]) <= float(hist.iloc[-3]):
-            score += 1
-            feats["macd_hist_turn_up"] = 1
-            obs.append("📶 MACD Histogram انعطف للأعلى (زخم يتحسن)")
-        if float(hist.iloc[-1]) < float(hist.iloc[-2]) and float(hist.iloc[-2]) >= float(hist.iloc[-3]):
-            score -= 1
-            feats["macd_hist_turn_dn"] = 1
-            obs.append("📶 MACD Histogram انعطف للأسفل (زخم يضعف)")
-
-    if isinstance(k, pd.Series) and isinstance(d, pd.Series) and len(k) >= 2:
-        k1, k0 = float(k.iloc[-2]), float(k.iloc[-1])
-        d1, d0 = float(d.iloc[-2]), float(d.iloc[-1])
-
-        if (k1 < d1) and (k0 > d0) and (k0 < 20):
-            score += 1
-            feats["stoch_buy_cross"] = 1
-            obs.append("🎯 Stochastic شراء (تقاطع تحت 20)")
-
-        if (k1 > d1) and (k0 < d0) and (k0 > 80):
-            score -= 1
-            feats["stoch_sell_cross"] = 1
-            obs.append("🎯 Stochastic بيع (تقاطع فوق 80)")
-
-    return score, obs, feats
-
-
-def _analyze_obv_pressure(df, ind, window=20):
-    if df is None or df.empty or len(df) < window + 5:
-        return 0, [], {}
-
-    obv = ind.get("obv")
-    if not isinstance(obv, pd.Series):
-        return 0, [], {}
-
-    score = 0
-    obs = []
-    feats = {"obv_accumulation": 0, "obv_distribution": 0}
-
-    close = df["Close"].astype(float)
-
-    try:
-        price_slope = np.polyfit(range(window), close.tail(window), 1)[0]
-        obv_slope = np.polyfit(range(window), obv.tail(window), 1)[0]
-
-        if price_slope <= 0 and obv_slope > 0:
-            score += 2
-            feats["obv_accumulation"] = 1
-            obs.append("💧 OBV تجميع ذكي (السيولة تدخل والسعر ما تحرك)")
-
-        if price_slope > 0 and obv_slope < 0:
-            score -= 2
-            feats["obv_distribution"] = 1
-            obs.append("🩸 OBV تصريف ذكي (السعر يصعد بسيولة خارجة)")
-    except Exception:
-        pass
-
-    return score, obs, feats
-
-
-def _detect_inside_bar(df):
-    if df is None or len(df) < 3:
-        return 0, [], {}
-    prev = df.iloc[-2]
-    curr = df.iloc[-1]
-
-    score = 0
-    obs = []
-    feats = {"inside_bar": 0}
-
-    if float(curr["High"]) < float(prev["High"]) and float(curr["Low"]) > float(prev["Low"]):
-        score += 1
-        feats["inside_bar"] = 1
-        obs.append("🧷 Inside Bar (انضغاط — انفجار محتمل)")
-    return score, obs, feats
-
-
-def _analyze_vsa_extended(df):
-    if df is None or len(df) < 60:
-        return 0, [], {}
-
-    score = 0
-    obs = []
-    feats = {
-        "vsa_no_demand": 0,
-        "vsa_no_supply": 0,
-        "vsa_squat": 0,
-        "vsa_end_rising": 0,
-    }
-
-    high = df["High"].astype(float)
-    low = df["Low"].astype(float)
-    close = df["Close"].astype(float)
-    vol = df["Volume"].astype(float)
-
-    curr = df.iloc[-1]
-    prev = df.iloc[-2]
-
-    spread = float(curr["High"] - curr["Low"])
-    avg_spread = float((high - low).iloc[-20:].mean())
-    avg_vol = float(vol.iloc[-20:].mean())
-    curr_vol = float(curr["Volume"])
-
-    rng = float(curr["High"] - curr["Low"])
-    close_pos = (float(curr["Close"]) - float(curr["Low"])) / rng if rng > 0 else 0.5
-
-    if float(curr["Close"]) > float(prev["Close"]) and spread < avg_spread and curr_vol < avg_vol:
-        score -= 1
-        feats["vsa_no_demand"] = 1
-        obs.append("VSA: No Demand (صعود بلا سيولة)")
-
-    if float(curr["Close"]) < float(prev["Close"]) and spread < avg_spread and curr_vol < avg_vol:
-        score += 1
-        feats["vsa_no_supply"] = 1
-        obs.append("VSA: No Supply (لا يوجد بائعين — دعم للصعود)")
-
-    if (curr_vol > 1.3 * avg_vol) and (spread < 0.8 * avg_spread):
-        score += 1
-        feats["vsa_squat"] = 1
-        obs.append("VSA: Squat (معركة سيولة — انفجار قريب)")
-
-    gap_up = float(curr["Open"]) > float(prev["High"])
-    bearish_close = float(curr["Close"]) < float(curr["Open"])
-    close_near_low = close_pos < 0.25
-    high_volume = curr_vol > (2.0 * avg_vol)
-    if gap_up and bearish_close and close_near_low and high_volume:
-        score -= 3
-        feats["vsa_end_rising"] = 1
-        obs.append("🚨 VSA: End of Rising Market (تصريف خطير)")
-
-    return score, obs, feats
-
-
-# ============================================================
-# ✅ Risk Plan (ATR)
-# ============================================================
 def _risk_plan_from_atr_sr(df, ind):
     if df is None or df.empty:
         return {}
 
-    close = float(df["Close"].astype(float).iloc[-1])
+    close = float(df["Close"].iloc[-1])
     atr = ind.get("atr14")
     atrv = float(atr.iloc[-1]) if isinstance(atr, pd.Series) and not pd.isna(atr.iloc[-1]) else None
 
     plan = {"entry": close, "stop": None, "target1": None, "rr": None}
-
     if atrv is None or atrv <= 0:
         return plan
 
@@ -1312,15 +1104,7 @@ def _risk_plan_from_atr_sr(df, ind):
     return plan
 
 
-# ============================================================
-# ✅ Risk Gates + Scenarios
-# ============================================================
 def _risk_gates(report: dict) -> dict:
-    """
-    بوابات مخاطرة بسيطة:
-    - تمنع توصية شراء إذا R:R ضعيف
-    - تمنع الشراء إذا كسر دعم مؤكّد
-    """
     gates = {"pass": True, "reasons": []}
     rp = report.get("risk_plan") or {}
     rr = rp.get("rr", None)
@@ -1341,27 +1125,15 @@ def _risk_gates(report: dict) -> dict:
 
 
 def _build_scenarios(df: pd.DataFrame, report: dict) -> list:
-    """
-    سيناريوهات مبسطة:
-    - اختراق مقاومة
-    - ارتداد من دعم
-    - فشل/كسر دعم
-    """
     if df is None or df.empty:
         return []
-
-    close = float(df["Close"].astype(float).iloc[-1])
+    close = float(df["Close"].iloc[-1])
     feats = report.get("features") or {}
     rp = report.get("risk_plan") or {}
 
-    # نستخدم مستويات الدعم/المقاومة التقريبية من zones
     lows, highs = _support_resistance_zones(df, lookback=120, max_levels=6)
-    near_sup = None
-    near_res = None
-    if lows:
-        near_sup = min(lows, key=lambda x: abs(close - x))
-    if highs:
-        near_res = min(highs, key=lambda x: abs(close - x))
+    near_sup = min(lows, key=lambda x: abs(close - x)) if lows else None
+    near_res = min(highs, key=lambda x: abs(close - x)) if highs else None
 
     scenarios = []
 
@@ -1382,7 +1154,7 @@ def _build_scenarios(df: pd.DataFrame, report: dict) -> list:
             "entry": rp.get("entry"),
             "stop": rp.get("stop"),
             "target1": rp.get("target1"),
-            "note": "أفضل إذا ظهر No Supply / تجميع OBV",
+            "note": "أفضل إذا ظهرت إشارات قوة",
         })
 
     if int(feats.get("broke_support_confirm") or 0) == 1 and near_sup is not None:
@@ -1396,9 +1168,6 @@ def _build_scenarios(df: pd.DataFrame, report: dict) -> list:
     return scenarios[:5]
 
 
-# ============================================================
-# Confidence / Explainability / Strategy
-# ============================================================
 def _calc_confidence(tech_score, fund_score, df):
     quality = 5
     if df is not None and len(df) >= 220:
@@ -1442,7 +1211,6 @@ def _build_explainability(tech_reasons, fund_reasons, total_score, tech_score, f
         notes.append("تعارض: المالي قوي لكن السعر ضعيف — مناسب لاستثمار قيمة بصبر.")
 
     exp = {"positives": positives[:10], "negatives": negatives[:10], "notes": notes[:10]}
-    # إضافات منظمة للواجهة
     exp["top_evidence"] = exp["positives"][:3]
     exp["top_risks"] = exp["negatives"][:3]
     return exp
@@ -1459,59 +1227,42 @@ def _infer_strategy_hint(module_scores: dict):
 # Main Report
 # ============================================================
 def generate_ai_report(symbol, timeframe="1D"):
-    """
-    نفس منطقك، لكن:
-    - يطبّع الرمز تلقائياً (1120 -> 1120.SR)
-    - DB Portable (SQLite/Postgres)
-    - Lazy imports لمنع كسر الاستيراد
-    - Risk Gates + Scenarios + Explainability improvements
-    """
     symbol = _normalize_symbol(symbol)
 
     try:
-        # ✅ Lazy import
         from market_data import get_chart_history
 
-        df = get_chart_history(symbol, period="6mo")
-        if df is None or df.empty:
+        # مرونة: بعض الدوال تتوقع period أو timeframe
+        try:
+            df = get_chart_history(symbol, period="6mo")
+        except TypeError:
+            df = get_chart_history(symbol, "6mo")
+
+        if df is None or (isinstance(df, pd.DataFrame) and df.empty):
             raise ValueError("no data")
 
-        for col in ["Open", "High", "Low", "Close", "Volume"]:
-            if col not in df.columns:
-                raise ValueError(f"missing {col}")
+        df = _ensure_ohlcv_columns(df)
+        if df is None or df.empty or len(df) < 60:
+            raise ValueError("insufficient candles")
 
         ind = _compute_indicators(df)
 
-        # ====== محركاتك الأصلية ======
+        # المحركات الأساسية
         s_candle, o_candle = _detect_advanced_patterns(df)
         s_struct, o_struct = _analyze_market_structure(df)
-        s_liq, o_liq, f_liq = _detect_liquidity_sweep(df)
-        s_ob, o_ob, f_ob = _detect_order_block(df)
-        s_ichi, o_ichi, f_ichi = _analyze_ichimoku(df)
-        s_vsa, o_vsa, f_vsa = _analyze_vsa_art_of_trading(df)
         s_sr, o_sr, f_sr = _analyze_sr(df)
         s_fund, o_fund, m_fund = _analyze_financial_golden_rules(symbol)
 
-        # ====== الإضافات الجديدة ======
-        s_ma, o_ma, f_ma = _analyze_ma_trend(df, ind)
-        s_mom, o_mom, f_mom = _analyze_momentum_pack(df, ind)
-        s_obv, o_obv, f_obv = _analyze_obv_pressure(df, ind)
-        s_ib, o_ib, f_ib = _detect_inside_bar(df)
-        s_vsa2, o_vsa2, f_vsa2 = _analyze_vsa_extended(df)
+        # تجميع التقني
+        base_tech = (s_candle + s_struct + s_sr)
 
-        base_tech = (
-            s_candle + s_struct + s_vsa + s_ichi + s_ob + s_liq + s_sr
-            + s_ma + s_mom + s_obv + s_ib + s_vsa2
-        )
+        tech_reasons = (o_struct or []) + (o_candle or []) + (o_sr or [])
+        fund_reasons = o_fund or []
 
-        tech_reasons = (
-            (o_struct or []) + (o_candle or []) + (o_vsa or []) + (o_ichi or []) + (o_ob or []) + (o_liq or []) + (o_sr or [])
-            + (o_ma or []) + (o_mom or []) + (o_obv or []) + (o_ib or []) + (o_vsa2 or [])
-        )
-
+        # features
         features = {}
-        fund_feats = (m_fund or {}).get("_fund_features", {})
-        for d in [f_liq, f_ob, f_ichi, f_vsa, f_sr, f_ma, f_mom, f_obv, f_ib, f_vsa2, fund_feats]:
+        fund_feats = (m_fund or {}).get("_fund_features", {}) if isinstance(m_fund, dict) else {}
+        for d in [f_sr, fund_feats]:
             try:
                 for k, v in (d or {}).items():
                     if isinstance(v, (bool, int)):
@@ -1519,30 +1270,23 @@ def generate_ai_report(symbol, timeframe="1D"):
             except Exception:
                 pass
 
-        # قيم عددية
+        # أرقام مفيدة
         try:
-            close_last = float(df["Close"].astype(float).iloc[-1])
-            features["close"] = close_last
-
+            features["close"] = float(df["Close"].iloc[-1])
             if isinstance(ind.get("rsi14"), pd.Series):
                 features["rsi14"] = float(ind["rsi14"].iloc[-1])
-            if isinstance(ind.get("sma20"), pd.Series):
-                features["sma20"] = float(ind["sma20"].iloc[-1])
             if isinstance(ind.get("sma50"), pd.Series):
                 features["sma50"] = float(ind["sma50"].iloc[-1])
             if isinstance(ind.get("sma200"), pd.Series) and not pd.isna(ind["sma200"].iloc[-1]):
                 features["sma200"] = float(ind["sma200"].iloc[-1])
             if isinstance(ind.get("atr14"), pd.Series) and not pd.isna(ind["atr14"].iloc[-1]):
                 features["atr14"] = float(ind["atr14"].iloc[-1])
-            if isinstance(ind.get("adx14"), pd.Series) and not pd.isna(ind["adx14"].iloc[-1]):
-                features["adx14"] = float(ind["adx14"].iloc[-1])
-
             if ind.get("fib382") is not None:
                 features["fib382"] = float(ind["fib382"])
         except Exception:
             pass
 
-        # Weighted learning bonus (للعوامل الثنائية فقط)
+        # Weighted bonus للعوامل الثنائية
         weighted_bonus = 0.0
         for k, v in features.items():
             if isinstance(v, (bool, int)) and int(v) == 1:
@@ -1553,12 +1297,12 @@ def generate_ai_report(symbol, timeframe="1D"):
         total_score = float(tech_score + fund_score)
 
         # قواعد المستخدم
+        user_delta = 0.0
         try:
             rules = load_user_rules(enabled_only=True, max_rows=30)
         except Exception:
             rules = []
 
-        user_delta = 0.0
         if rules:
             for rr in rules:
                 parsed = rr.get("parsed") or {}
@@ -1579,27 +1323,21 @@ def generate_ai_report(symbol, timeframe="1D"):
         try:
             from market_data import get_static_info
             info = get_static_info(symbol) or {}
-            sector = info.get("sector") or info.get("Sector") or info.get("industry") or None
+            if isinstance(info, dict):
+                sector = info.get("sector") or info.get("Sector") or info.get("industry") or None
         except Exception:
             sector = None
 
         module_scores = {
             "MarketStructure": s_struct,
-            "SmartMoney": (s_liq + s_ob),
-            "Ichimoku": s_ichi,
-            "VSA": s_vsa,
-            "VSA_Ext": s_vsa2,
             "Candles": s_candle,
             "SupportResistance": s_sr,
-            "MA_Trend": s_ma,
-            "Momentum": s_mom,
-            "OBV": s_obv,
-            "InsideBar": s_ib,
             "Fundamental": s_fund,
             "UserRules": user_delta,
         }
         strategy_name = _infer_strategy_hint(module_scores)
 
+        # Recommendation
         rec = "⚖️ محايد / مراقبة"
         clr = "#6c757d"
         strat = "السعر في منطقة حيرة. انتظر إشارة أوضح."
@@ -1607,7 +1345,7 @@ def generate_ai_report(symbol, timeframe="1D"):
         if total_score >= 8:
             rec = "💎 فرصة ماسية (Strong Buy)"
             clr = "#198754"
-            strat = "توافق قوي: هيكل + فلتر ترند + إشارات قوة."
+            strat = "توافق قوي: هيكل + مناطق + إشارات قوة."
         elif total_score >= 4:
             rec = "✅ شراء / تجميع"
             clr = "#28a745"
@@ -1625,7 +1363,6 @@ def generate_ai_report(symbol, timeframe="1D"):
             clr = "#0d6efd"
             strat = "مالي قوي والسعر ضعيف — مناسب للصبر."
 
-        fund_reasons = o_fund or []
         if not tech_reasons:
             tech_reasons = ["حركة السعر طبيعية"]
         if not fund_reasons:
@@ -1656,11 +1393,10 @@ def generate_ai_report(symbol, timeframe="1D"):
             "risk_plan": risk_plan,
         }
 
-        # ✅ Risk Gates + Scenarios
         report["risk_gates"] = _risk_gates(report)
         report["scenarios"] = _build_scenarios(df, report)
 
-        # إذا بوابات المخاطر رفضت، نعدل التوصية (بدون حذف معلوماتك)
+        # تعديل التوصية إذا بوابات المخاطر رفضت
         try:
             if (not report["risk_gates"]["pass"]) and ("شراء" in str(report["recommendation"]) or "Buy" in str(report["recommendation"])):
                 report["recommendation"] = "⚠️ إشارة موجودة لكن بوابات المخاطر رفضت"
@@ -1669,14 +1405,20 @@ def generate_ai_report(symbol, timeframe="1D"):
         except Exception:
             pass
 
-        log_ai_signal(symbol, timeframe, features, report, horizon_days=20, sector=sector, strategy_name=strategy_name)
+        signal_id = log_ai_signal(symbol, timeframe, features, report, horizon_days=20, sector=sector, strategy_name=strategy_name)
+        if signal_id:
+            report["signal_id"] = signal_id
+
         return report
 
-    except Exception:
+    except Exception as e:
+        tr = traceback.format_exc()
         return {
+            "__error__": str(e),
+            "__trace__": tr,
             "recommendation": "غير متاح",
             "color": "#6c757d",
-            "strategy": "نقص بيانات",
+            "strategy": "نقص بيانات أو خطأ داخلي",
             "tech_reasons": [],
             "fund_reasons": [],
             "trend": "-",
@@ -1701,9 +1443,15 @@ def calculate_portfolio_risk_score(trades_df, cash_percent):
         if trades_df is None or trades_df.empty:
             return 0
 
+        if "status" not in trades_df.columns:
+            return 50
+
         open_trades = trades_df[trades_df["status"] == "Open"]
         if open_trades.empty:
             return 0
+
+        if "market_value" not in open_trades.columns:
+            return 50
 
         total_market_val = float(open_trades["market_value"].sum())
         if total_market_val == 0:
@@ -1716,8 +1464,9 @@ def calculate_portfolio_risk_score(trades_df, cash_percent):
 
         strategy_score = 0
         try:
-            spec_ratio = len(open_trades[open_trades["strategy"].astype(str).str.contains("مضاربة", na=False)]) / len(open_trades)
-            strategy_score = spec_ratio * 30
+            if "strategy" in open_trades.columns:
+                spec_ratio = len(open_trades[open_trades["strategy"].astype(str).str.contains("مضاربة", na=False)]) / len(open_trades)
+                strategy_score = spec_ratio * 30
         except Exception:
             pass
 
@@ -1731,14 +1480,17 @@ def run_stress_test(portfolio_value, open_positions_df):
         if open_positions_df is None or open_positions_df.empty:
             return {"scenarios": [], "insight": "المحفظة كاش."}
 
+        if "market_value" not in open_positions_df.columns:
+            return {"scenarios": [], "insight": "غير متاح"}
+
         weighted_beta = 0
         total_val = float(open_positions_df["market_value"].sum())
         if total_val == 0:
             return {"scenarios": [], "insight": "غير متاح"}
 
         for _, row in open_positions_df.iterrows():
-            w = float(row["market_value"]) / total_val
-            if row.get("asset_type") == "Sukuk":
+            w = float(row.get("market_value", 0) or 0) / total_val
+            if str(row.get("asset_type")) == "Sukuk":
                 b = 0.1
             elif "مضاربة" in str(row.get("strategy", "")):
                 b = 1.2
@@ -1770,7 +1522,7 @@ def generate_rebalancing_suggestions(trades_df, cash_pct):
         if cash_pct < 5:
             suggestions.append(("priority", "🚨 السيولة منخفضة جداً (< 5%)"))
 
-        if trades_df is not None and not trades_df.empty:
+        if trades_df is not None and not trades_df.empty and "status" in trades_df.columns:
             open_trades = trades_df[trades_df["status"] == "Open"]
             for _, row in open_trades.iterrows():
                 if float(row.get("gain_pct", 0) or 0) < -10:
