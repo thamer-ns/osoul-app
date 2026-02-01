@@ -1,9 +1,10 @@
-#financial_analysis.py
+# financial_analysis.py
 import io
 import re
 import json
 import time
 from datetime import datetime
+from typing import Dict, List, Any, Tuple, Optional
 
 import numpy as np
 import pandas as pd
@@ -73,9 +74,7 @@ def _safe_date_str(d) -> str:
         if hasattr(d, "strftime"):
             return d.strftime("%Y-%m-%d")
         s = str(d).strip()
-        # لو جاء مثل 2024-12-31 00:00:00
         s = s.split(" ")[0]
-        # لو جاء مثل 2024-12-31T...
         s = s.split("T")[0]
         return s
     except Exception:
@@ -94,10 +93,24 @@ def _looks_like_date_token(s: str) -> bool:
     s = str(s or "").strip()
     return bool(re.search(r"\b(20\d{2})\b", s) or re.search(r"\d{4}-\d{2}-\d{2}", s))
 
+
+def _fetch_html(url: str, timeout: int = 7) -> str:
+    if not requests:
+        return ""
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=timeout)
+        if r.status_code != 200:
+            return ""
+        return r.text or ""
+    except Exception:
+        return ""
+
+
 # ==============================================================
 # ✅ Yahoo QuoteSummary JSON (Most stable for statements)
 # ==============================================================
 _YF_SESSION = None
+
 
 def _yf_session():
     global _YF_SESSION
@@ -105,12 +118,14 @@ def _yf_session():
         if not requests:
             return None
         s = requests.Session()
-        s.headers.update({
-            "User-Agent": HEADERS["User-Agent"],
-            "Accept-Language": "en-US,en;q=0.9,ar;q=0.8",
-            "Accept": "application/json,text/plain,*/*",
-            "Connection": "keep-alive",
-        })
+        s.headers.update(
+            {
+                "User-Agent": HEADERS["User-Agent"],
+                "Accept-Language": "en-US,en;q=0.9,ar;q=0.8",
+                "Accept": "application/json,text/plain,*/*",
+                "Connection": "keep-alive",
+            }
+        )
         _YF_SESSION = s
     return _YF_SESSION
 
@@ -170,7 +185,7 @@ def _yf_date_str(v) -> str:
         return datetime.now().strftime("%Y-%m-%d")
 
 
-def _yahoo_quote_summary(symbol: str, modules: list[str]) -> dict:
+def _yahoo_quote_summary(symbol: str, modules: List[str]) -> dict:
     """
     Primary stable endpoint:
     https://query2.finance.yahoo.com/v10/finance/quoteSummary/{symbol}?modules=...
@@ -196,11 +211,9 @@ def _extract_stmt_list(root: dict, key: str) -> list:
         if not rs:
             return []
         obj = rs[0].get(key, {}) or {}
-        # most of them store in obj["incomeStatementHistory"] or ["balanceSheetStatements"] etc
         for possible in ("incomeStatementHistory", "balanceSheetStatements", "cashflowStatements"):
             if possible in obj and isinstance(obj[possible], list):
                 return obj[possible]
-        # fallback: first list in obj
         for _, v in obj.items():
             if isinstance(v, list) and v and isinstance(v[0], dict):
                 return v
@@ -209,7 +222,7 @@ def _extract_stmt_list(root: dict, key: str) -> list:
     return []
 
 
-def _normalize_yahoo_statements(symbol: str, frequency: str = "Annual") -> list[dict]:
+def _normalize_yahoo_statements(symbol: str, frequency: str = "Annual") -> List[Dict[str, Any]]:
     """
     frequency: "Annual" or "Quarterly"
     returns list of records:
@@ -220,9 +233,12 @@ def _normalize_yahoo_statements(symbol: str, frequency: str = "Annual") -> list[
         freq = "Annual"
 
     modules = [
-        "incomeStatementHistory", "incomeStatementHistoryQuarterly",
-        "balanceSheetHistory", "balanceSheetHistoryQuarterly",
-        "cashflowStatementHistory", "cashflowStatementHistoryQuarterly",
+        "incomeStatementHistory",
+        "incomeStatementHistoryQuarterly",
+        "balanceSheetHistory",
+        "balanceSheetHistoryQuarterly",
+        "cashflowStatementHistory",
+        "cashflowStatementHistoryQuarterly",
     ]
     root = _yahoo_quote_summary(symbol, modules)
     if not root:
@@ -236,8 +252,7 @@ def _normalize_yahoo_statements(symbol: str, frequency: str = "Annual") -> list[
     bs_list = _extract_stmt_list(root, bs_key)
     cf_list = _extract_stmt_list(root, cf_key)
 
-    # map by date
-    by_date = {}
+    by_date: Dict[str, Dict[str, Any]] = {}
 
     def upsert(rec: dict, kind: str):
         if not isinstance(rec, dict):
@@ -264,7 +279,7 @@ def _normalize_yahoo_statements(symbol: str, frequency: str = "Annual") -> list[
                 return _yf_raw(dct.get(k), default=default)
         return float(default)
 
-    out = []
+    out: List[Dict[str, Any]] = []
     for d in sorted(by_date.keys(), reverse=True):
         isr = by_date[d].get("is", {}) or {}
         bsr = by_date[d].get("bs", {}) or {}
@@ -272,31 +287,40 @@ def _normalize_yahoo_statements(symbol: str, frequency: str = "Annual") -> list[
 
         data = {
             "revenue": g(isr, "totalRevenue", "revenue", "totalOperatingRevenue", default=0.0),
-            "net_income": g(isr, "netIncome", "netIncomeCommonStockholders", "netIncomeApplicableToCommonShares", default=0.0),
-
+            "net_income": g(
+                isr,
+                "netIncome",
+                "netIncomeCommonStockholders",
+                "netIncomeApplicableToCommonShares",
+                default=0.0,
+            ),
             "total_assets": g(bsr, "totalAssets", default=0.0),
-
-            # liabilities keys differ by dataset
-            "total_liabilities": g(bsr, "totalLiab", "totalLiabilitiesNetMinorityInterest", "totalLiabilities", default=0.0),
-
-            # equity keys differ
+            "total_liabilities": g(
+                bsr,
+                "totalLiab",
+                "totalLiabilitiesNetMinorityInterest",
+                "totalLiabilities",
+                default=0.0,
+            ),
             "total_equity": g(
                 bsr,
                 "totalStockholderEquity",
                 "totalEquityGrossMinorityInterest",
                 "totalEquity",
-                default=0.0
+                default=0.0,
             ),
-
             "operating_cash_flow": g(cfr, "totalCashFromOperatingActivities", "operatingCashflow", default=0.0),
-
             "current_assets": g(bsr, "totalCurrentAssets", "currentAssets", default=0.0),
             "current_liabilities": g(bsr, "totalCurrentLiabilities", "currentLiabilities", default=0.0),
-
-            "long_term_debt": g(bsr, "longTermDebt", "longTermDebtNoncurrent", "longTermDebtAndCapitalLeaseObligation", default=0.0),
+            "long_term_debt": g(
+                bsr,
+                "longTermDebt",
+                "longTermDebtNoncurrent",
+                "longTermDebtAndCapitalLeaseObligation",
+                default=0.0,
+            ),
         }
 
-        # drop empty record
         if sum(abs(_safe_float(v)) for v in data.values()) == 0:
             continue
 
@@ -305,7 +329,7 @@ def _normalize_yahoo_statements(symbol: str, frequency: str = "Annual") -> list[
     return out
 
 
-def fetch_financial_statements_yahoo_json(symbol: str, period_type: str = "Annual") -> list[dict]:
+def fetch_financial_statements_yahoo_json(symbol: str, period_type: str = "Annual") -> List[Dict[str, Any]]:
     """
     Returns list of {"date":..., "data":...}
     period_type: Annual / Quarterly
@@ -314,6 +338,8 @@ def fetch_financial_statements_yahoo_json(symbol: str, period_type: str = "Annua
         return _normalize_yahoo_statements(symbol, frequency=period_type)
     except Exception:
         return []
+
+
 # ==============================================================
 # 🧠 1) FinancialParser
 # ==============================================================
@@ -325,63 +351,69 @@ class FinancialParser:
     """
 
     def __init__(self):
-        # ✅ نماذج regex أوسع
         self.mapping = {
             "revenue": [
-                r"إجمالي\s*الإيرادات", r"\bالمبيعات\b", r"\bsales\b",
-                r"\btotal\s+revenue\b", r"\brevenues?\b", r"\brevenue\b",
+                r"إجمالي\s*الإيرادات",
+                r"\bالمبيعات\b",
+                r"\bsales\b",
+                r"\btotal\s+revenue\b",
+                r"\brevenues?\b",
+                r"\brevenue\b",
             ],
             "net_income": [
-                r"صافي\s*(الدخل|الربح)", r"\bnet\s+income\b", r"\bnet\s+profit\b",
-                r"الربح\s*\(الخسارة\)\s*للفترة", r"صافي\s*الدخل\s*العائد",
+                r"صافي\s*(الدخل|الربح)",
+                r"\bnet\s+income\b",
+                r"\bnet\s+profit\b",
+                r"الربح\s*\(الخسارة\)\s*للفترة",
+                r"صافي\s*الدخل\s*العائد",
             ],
             "total_assets": [
-                r"إجمالي\s*(الموجودات|الأصول)", r"\btotal\s+assets\b", r"\bassets\b",
+                r"إجمالي\s*(الموجودات|الأصول)",
+                r"\btotal\s+assets\b",
+                r"\bassets\b",
             ],
             "total_liabilities": [
-                r"إجمالي\s*(المطلوبات|الالتزامات)", r"\btotal\s+liabilities\b", r"\bliabilities\b",
+                r"إجمالي\s*(المطلوبات|الالتزامات)",
+                r"\btotal\s+liabilities\b",
+                r"\bliabilities\b",
             ],
             "total_equity": [
-                r"إجمالي\s*حقوق\s*الملكية", r"حقوق\s*(المساهمين|الملّاك)",
-                r"\btotal\s+equity\b", r"\bshareholders?\s+equity\b",
+                r"إجمالي\s*حقوق\s*الملكية",
+                r"حقوق\s*(المساهمين|الملّاك)",
+                r"\btotal\s+equity\b",
+                r"\bshareholders?\s+equity\b",
             ],
             "operating_cash_flow": [
                 r"صافي\s*التدفقات\s*النقدية\s*من\s*.*التشغيلية",
-                r"\boperating\s+cash\s+flow\b", r"\bcash\s+from\s+operating\b",
-                r"التدفقات\s*النقدية\s*التشغيلية", r"نقد\s*من\s*العمليات",
+                r"\boperating\s+cash\s+flow\b",
+                r"\bcash\s+from\s+operating\b",
+                r"التدفقات\s*النقدية\s*التشغيلية",
+                r"نقد\s*من\s*العمليات",
             ],
             "current_assets": [
-                r"(إجمالي\s*)?الموجودات\s*المتداولة", r"\bcurrent\s+assets\b",
+                r"(إجمالي\s*)?الموجودات\s*المتداولة",
+                r"\bcurrent\s+assets\b",
             ],
             "current_liabilities": [
-                r"(إجمالي\s*)?المطلوبات\s*المتداولة", r"\bcurrent\s+liabilities\b",
+                r"(إجمالي\s*)?المطلوبات\s*المتداولة",
+                r"\bcurrent\s+liabilities\b",
             ],
             "long_term_debt": [
-                r"قروض\s*طويلة\s*الأجل", r"\blong\s+term\s+debt\b",
-                r"مطلوبات\s*غير\s*متداولة", r"\bnon[-\s]?current\s+liabilities\b",
+                r"قروض\s*طويلة\s*الأجل",
+                r"\blong\s+term\s+debt\b",
+                r"مطلوبات\s*غير\s*متداولة",
+                r"\bnon[-\s]?current\s+liabilities\b",
             ],
         }
 
-        # compiled patterns (أسرع)
-        self._compiled = {
-            k: [re.compile(p, flags=re.IGNORECASE) for p in pats]
-            for k, pats in self.mapping.items()
-        }
+        self._compiled = {k: [re.compile(p, flags=re.IGNORECASE) for p in pats] for k, pats in self.mapping.items()}
 
     def _clean_number(self, val_str):
-        """
-        تنظيف أرقام مثل:
-        - 1.5B / 2.1M / 900K
-        - (500) => -500
-        - 1,000
-        - ١٬٠٠٠ (لو جاء عربي — نحاول)
-        """
         if pd.isna(val_str):
             return 0.0
 
         s = str(val_str).strip().upper()
 
-        # أرقام عربية -> إنجليزية (مبدئي)
         arabic_digits = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
         s = s.translate(arabic_digits)
 
@@ -393,10 +425,8 @@ class FinancialParser:
         elif s.endswith("K") or "ألف" in s:
             multiplier = 1_000
 
-        # إزالة الرموز غير الرقمية (مع السماح بالنقطة والسالب والأقواس)
         s = re.sub(r"[^\d\.\-\(\)]", "", s)
 
-        # الأقواس تعني سالب
         if "(" in s and ")" in s:
             s = s.replace("(", "-").replace(")", "")
 
@@ -406,24 +436,19 @@ class FinancialParser:
             return 0.0
 
     def _extract_symbol(self, text):
-        """
-        محاولة اكتشاف رمز شركة سعودي (4 أرقام) مع فلترة السنوات.
-        """
         txt = str(text or "")
         matches = re.findall(r"\b([1-9]\d{3})\b", txt)
         for m in matches:
-            if not m.startswith("20"):  # استبعاد 2020/2021...
+            if not m.startswith("20"):
                 return f"{m}.SR"
         return None
 
     def _detect_format_and_parse(self, text):
         lines = (text or "").split("\n")
 
-        # تداول style
         if any(re.search(r"\[\d{6}\]", line) for line in lines):
             return self._parse_tadawul_style(lines)
 
-        # table style
         return self._parse_table_style(lines)
 
     def _parse_tadawul_style(self, lines):
@@ -431,7 +456,6 @@ class FinancialParser:
         dates = []
         symbol = None
 
-        # 1) symbol + dates
         for line in lines:
             if not symbol:
                 symbol = self._extract_symbol(line)
@@ -441,7 +465,6 @@ class FinancialParser:
                 dates = sorted(list(set(dm)), reverse=True)[:4]
 
         if not dates:
-            # years only
             for line in lines:
                 years = re.findall(r"\b(20\d{2})\b", line)
                 years = [y for y in years if _is_year_like(y)]
@@ -452,7 +475,6 @@ class FinancialParser:
         if not dates:
             dates = [datetime.now().strftime("%Y-12-31")]
 
-        # 2) extract numbers per line
         for line in lines:
             line = (line or "").strip()
             if not line:
@@ -460,18 +482,15 @@ class FinancialParser:
 
             for key, patterns in self._compiled.items():
                 if any(p.search(line) for p in patterns):
-                    # أرقام محتملة في السطر
                     nums = re.findall(r"(\(?-?[\d,]{2,}(?:\.\d+)?\)?)", line)
                     if not nums:
                         continue
 
                     clean_nums = [self._clean_number(n) for n in nums]
 
-                    # map numbers to dates (أقرب 1..N)
                     for i, d in enumerate(dates):
                         if i < len(clean_nums):
                             extracted_data.setdefault(d, {})
-                            # نختار الأكبر مطلقاً لتفادي القيم الفارغة
                             prev = extracted_data[d].get(key, 0.0)
                             if abs(clean_nums[i]) > abs(prev):
                                 extracted_data[d][key] = clean_nums[i]
@@ -481,28 +500,20 @@ class FinancialParser:
         return results, symbol
 
     def _parse_table_style(self, lines):
-        """
-        يدعم جدول نصي ملصوق من المتصفح/Excel:
-        - يبحث عن صف يحتوي سنوات/تواريخ
-        - ثم يبحث عن البنود المالية ويربطها بالأعمدة
-        """
         try:
             raw = "\n".join([str(x) for x in lines if str(x).strip()])
             if not raw.strip():
                 return [], None
 
-            # نحول whitespace/Tab إلى فواصل
             clean_text = "\n".join([re.sub(r" {2,}|\t", ",", ln) for ln in raw.split("\n")])
             df = pd.read_csv(io.StringIO(clean_text), header=None, on_bad_lines="skip")
 
-            # 1) find date row
             date_row_idx = -1
-            dates = []  # [(col_idx, date_str)]
+            dates = []
             for idx, row in df.iterrows():
                 row_vals = [str(x) for x in row.values if str(x).strip() != "nan"]
                 row_str = " ".join(row_vals)
 
-                # years in row?
                 years = re.findall(r"\b(20\d{2})\b", row_str)
                 years = [y for y in years if _is_year_like(y)]
                 if len(set(years)) >= 2:
@@ -514,7 +525,6 @@ class FinancialParser:
                             dates.append((col_idx, f"{m.group(1)}-12-31"))
                     break
 
-                # explicit dates
                 if re.search(r"\d{4}-\d{2}-\d{2}", row_str):
                     date_row_idx = idx
                     for col_idx, val in enumerate(row.values):
@@ -527,9 +537,8 @@ class FinancialParser:
             if date_row_idx == -1 or not dates:
                 return [], self._extract_symbol("\n".join(lines[:10]))
 
-            results_map = {}  # {date: {key: val}}
+            results_map = {}
 
-            # 2) scan rows after date row
             for idx, row in df.iterrows():
                 if idx <= date_row_idx:
                     continue
@@ -607,14 +616,18 @@ def save_financial_record(symbol, date_str, data, period_type="Annual", source="
         source = str(source or "Manual").strip()[:30]
 
         keys = [
-            "revenue", "net_income",
-            "total_assets", "total_liabilities", "total_equity",
+            "revenue",
+            "net_income",
+            "total_assets",
+            "total_liabilities",
+            "total_equity",
             "operating_cash_flow",
-            "current_assets", "current_liabilities",
+            "current_assets",
+            "current_liabilities",
             "long_term_debt",
         ]
 
-        vals = {k: _safe_float(data.get(k, 0)) for k in keys}
+        vals = {k: _safe_float((data or {}).get(k, 0)) for k in keys}
 
         if sum(abs(v) for v in vals.values()) == 0:
             return False
@@ -643,10 +656,18 @@ def save_financial_record(symbol, date_str, data, period_type="Annual", source="
         ok = execute_query(
             query,
             (
-                symbol, date_str, period_type, source,
-                vals["revenue"], vals["net_income"],
-                vals["total_assets"], vals["total_liabilities"], vals["total_equity"],
-                vals["operating_cash_flow"], vals["current_assets"], vals["current_liabilities"],
+                symbol,
+                date_str,
+                period_type,
+                source,
+                vals["revenue"],
+                vals["net_income"],
+                vals["total_assets"],
+                vals["total_liabilities"],
+                vals["total_equity"],
+                vals["operating_cash_flow"],
+                vals["current_assets"],
+                vals["current_liabilities"],
                 vals["long_term_debt"],
             ),
         )
@@ -680,70 +701,92 @@ def get_stored_financials_df(symbol, period_type="Annual"):
     except Exception:
         return pd.DataFrame()
 
+
 # ==============================================================
-# ✅ Unified Financial Statements (DB cache + Yahoo JSON + fallback)
+# 🌍 3) External Sources (best-effort, safe)
 # ==============================================================
-@st.cache_data(ttl=60 * 60 * 6, show_spinner=False)  # 6 hours, light UI cache only
-def get_financial_statements(symbol: str, period_type: str = "Annual", refresh: bool = False) -> pd.DataFrame:
+
+def fetch_financials_from_google_finance(symbol: str) -> dict:
     """
-    يرجع DataFrame موحّد من جدول financialstatements.
-    - لو refresh=False: يرجع المخزن إن وجد (حتى لو قديم) + يحاول تحديثه في نفس الاستدعاء
-    - لو Yahoo JSON فشل: يرجع المخزن مباشرة
+    Best-effort parsing from Google Finance text -> FinancialParser.
+    قد تتغير الصفحة لذلك نعتبره احتياطي فقط.
     """
-    sym = get_ticker_symbol(symbol)
-    ptype = str(period_type or "Annual").strip().title()
-    if ptype not in ("Annual", "Quarterly"):
-        ptype = "Annual"
+    try:
+        sym = get_ticker_symbol(symbol).replace(".SR", "")
+        if not sym.isdigit():
+            return {}
 
-    # 1) read stored first (so UI never breaks)
-    stored = get_stored_financials_df(sym, ptype)
+        url = f"https://www.google.com/finance/quote/{sym}:TADAWUL"
+        html = _fetch_html(url, timeout=7)
+        if not html:
+            return {}
 
-    # if not refresh and we already have data, just return it (fast & stable)
-    if (not refresh) and (stored is not None) and (not stored.empty):
-        return stored
+        soup = BeautifulSoup(html, "html.parser") if BeautifulSoup else None
+        txt = soup.get_text("\n", strip=True) if soup else ""
+        if not txt.strip():
+            return {}
 
-    # 2) try Yahoo JSON (best)
-    records = fetch_financial_statements_yahoo_json(sym, ptype)
+        parser = FinancialParser()
+        results, _ = parser._detect_format_and_parse(txt)
+        if not results:
+            return {}
 
-    # 3) fallback: try parser-based sources if Yahoo empty
-    if not records:
-        # Argaam / Google Finance best-effort (may fail silently)
+        results = sorted(results, key=lambda x: x.get("date", ""), reverse=True)
+        rec = results[0]
+        data = rec.get("data", {}) or {}
+        data["date"] = rec.get("date")
+        data["_source_url"] = url
+        return data
+    except Exception:
+        return {}
+
+
+def fetch_financials_from_argaam(symbol: str) -> dict:
+    """
+    Best-effort parsing from Argaam text -> FinancialParser.
+    قد تتغير الصفحة لذلك نعتبره احتياطي فقط.
+    """
+    s = get_ticker_symbol(symbol).replace(".SR", "")
+    if not s.isdigit():
+        return {}
+
+    urls = [
+        f"https://www.argaam.com/en/company/financials/{s}",
+        f"https://www.argaam.com/ar/company/financials/{s}",
+        f"https://www.argaam.com/en/company/stock/overview/{s}",
+        f"https://www.argaam.com/ar/company/stock/overview/{s}",
+    ]
+
+    for url in urls:
         try:
-            if ptype == "Annual":
-                d = fetch_financials_from_argaam(sym) or {}
-                if d:
-                    records = [{"date": d.get("date") or datetime.now().strftime("%Y-12-31"), "data": d}]
-        except Exception:
-            pass
+            html = _fetch_html(url, timeout=8)
+            if not html:
+                continue
+            soup = BeautifulSoup(html, "html.parser") if BeautifulSoup else None
+            txt = soup.get_text("\n", strip=True) if soup else ""
+            if not txt.strip():
+                continue
 
-        if not records:
-            try:
-                if ptype == "Annual":
-                    d2 = fetch_financials_from_google_finance(sym) or {}
-                    if d2:
-                        records = [{"date": d2.get("date") or datetime.now().strftime("%Y-12-31"), "data": d2}]
-            except Exception:
-                pass
+            parser = FinancialParser()
+            results, _ = parser._detect_format_and_parse(txt)
+            if not results:
+                continue
 
-    # 4) save whatever we got
-    if records:
-        for rec in records:
-            d = rec.get("date")
+            results = sorted(results, key=lambda x: x.get("date", ""), reverse=True)
+            rec = results[0]
             data = rec.get("data", {}) or {}
-            save_financial_record(sym, d, data, period_type=ptype, source="YahooJSON" if "revenue" in data else "External")
+            data["date"] = rec.get("date")
+            data["_source_url"] = url
+            return data
+        except Exception:
+            continue
 
-        # return fresh from DB
-        return get_stored_financials_df(sym, ptype)
+    return {}
 
-    # 5) nothing fetched -> return stored (if any), else empty
-    return stored if stored is not None else pd.DataFrame()
-# ==============================================================
-# 🌍 3) External Sources (Analysis / Financial Statements)
-# ==============================================================
 
 def fetch_financials_from_yahoo(symbol: str) -> dict:
     """
-    ✅ الآن: يجلب من Yahoo JSON (quoteSummary) بدل yfinance.financials
+    ✅ يجلب من Yahoo JSON (quoteSummary) بدل yfinance.financials
     يرجع أحدث سجل Annual.
     """
     sym = get_ticker_symbol(symbol)
@@ -758,15 +801,100 @@ def fetch_financials_from_yahoo(symbol: str) -> dict:
         return data
     except Exception:
         return {}
-# نأخذ أحدث سجل
-            results = sorted(results, key=lambda x: x.get("date", ""), reverse=True)
-            rec = results[0]
-            data = rec.get("data", {}) or {}
-            data["date"] = rec.get("date")
-            data["_source_url"] = url
-            return data
 
-    return {}
+
+# ==============================================================
+# ✅ Unified Financial Statements (DB cache + Yahoo JSON + fallback)
+# ==============================================================
+@st.cache_data(ttl=60 * 60 * 6, show_spinner=False)  # 6 hours
+def get_financial_statements(symbol: str, period_type: str = "Annual", refresh: bool = False) -> pd.DataFrame:
+    """
+    يرجع DataFrame موحّد من جدول financialstatements.
+    - لو refresh=False: يرجع المخزن إن وجد (سريع)
+    - لو refresh=True أو لا يوجد مخزن: يحاول Yahoo JSON ثم بدائل
+    """
+    sym = get_ticker_symbol(symbol)
+    ptype = str(period_type or "Annual").strip().title()
+    if ptype not in ("Annual", "Quarterly"):
+        ptype = "Annual"
+
+    stored = get_stored_financials_df(sym, ptype)
+
+    if (not refresh) and (stored is not None) and (not stored.empty):
+        return stored
+
+    records = fetch_financial_statements_yahoo_json(sym, ptype)
+
+    if not records and ptype == "Annual":
+        try:
+            d = fetch_financials_from_argaam(sym) or {}
+            if d:
+                records = [{"date": d.get("date") or datetime.now().strftime("%Y-12-31"), "data": d}]
+        except Exception:
+            pass
+
+    if not records and ptype == "Annual":
+        try:
+            d2 = fetch_financials_from_google_finance(sym) or {}
+            if d2:
+                records = [{"date": d2.get("date") or datetime.now().strftime("%Y-12-31"), "data": d2}]
+        except Exception:
+            pass
+
+    if records:
+        for rec in records:
+            d = rec.get("date")
+            data = rec.get("data", {}) or {}
+            save_financial_record(
+                sym,
+                d,
+                data,
+                period_type=ptype,
+                source="YahooJSON" if isinstance(data, dict) and "revenue" in data else "External",
+            )
+        return get_stored_financials_df(sym, ptype)
+
+    return stored if stored is not None else pd.DataFrame()
+
+
+# ==============================================================
+# 🧩 Fallback Sync (بديل آمن لـ sync_auto_multi_sources)
+# ==============================================================
+def sync_auto_multi_sources(symbol: str, prefer: str = "yahoo") -> Tuple[bool, str]:
+    """
+    بديل آمن إذا فشل Yahoo:
+    - يحاول Argaam ثم Google Finance (إن توفر requests/bs4)
+    - يحفظ سجل Annual واحد على الأقل
+    """
+    symbol = get_ticker_symbol(symbol)
+    saved = 0
+    notes: List[str] = []
+
+    try:
+        d = fetch_financials_from_argaam(symbol) or {}
+        if isinstance(d, dict) and d:
+            dt = d.get("date") or datetime.now().strftime("%Y-12-31")
+            if save_financial_record(symbol, dt, d, "Annual", "Argaam"):
+                saved += 1
+                notes.append("تمت المحاولة من أرقام")
+    except Exception as e:
+        notes.append(f"أرقام فشل: {e}")
+
+    if saved == 0:
+        try:
+            d2 = fetch_financials_from_google_finance(symbol) or {}
+            if isinstance(d2, dict) and d2:
+                dt = d2.get("date") or datetime.now().strftime("%Y-12-31")
+                if save_financial_record(symbol, dt, d2, "Annual", "GoogleFinance"):
+                    saved += 1
+                    notes.append("تمت المحاولة من Google Finance")
+        except Exception as e:
+            notes.append(f"Google Finance فشل: {e}")
+
+    if saved > 0:
+        return True, f"تم حفظ {saved} سجل من بدائل Yahoo. " + " | ".join(notes)
+    return False, "لم تنجح البدائل. " + " | ".join(notes)
+
 
 # ==============================================================
 # ⚡ 4) Yahoo Sync (used by views.py)
@@ -774,10 +902,8 @@ def fetch_financials_from_yahoo(symbol: str) -> dict:
 def sync_auto_yahoo(symbol):
     """
     ✅ نفس اسم الدالة لتوافق views.py
-    تحسين:
-    - معالجة اختلاف المفاتيح في Yahoo
-    - حفظ Annual + Quarterly (آخر 6 تواريخ)
-    - إذا فشل Yahoo بالكامل: نجرب multi-source (أرقام/قوقل) كاحتياط
+    - يحفظ Annual + Quarterly (آخر 6 تواريخ) من yfinance
+    - إذا فشل: يستخدم sync_auto_multi_sources
     """
     symbol = get_ticker_symbol(symbol)
     try:
@@ -812,15 +938,11 @@ def sync_auto_yahoo(symbol):
             for d in dates:
                 d_str = _safe_date_str(d)
 
-                # مفاتيح Yahoo قد تختلف حسب الشركة
                 data = {
                     "revenue": g(fin, "Total Revenue", d) or g(fin, "Operating Revenue", d),
                     "net_income": g(fin, "Net Income", d),
                     "total_assets": g(bs, "Total Assets", d),
-                    "total_liabilities": (
-                        g(bs, "Total Liabilities Net Minority Interest", d)
-                        or g(bs, "Total Liabilities", d)
-                    ),
+                    "total_liabilities": (g(bs, "Total Liabilities Net Minority Interest", d) or g(bs, "Total Liabilities", d)),
                     "total_equity": (
                         g(bs, "Total Equity Gross Minority Interest", d)
                         or g(bs, "Total Stockholder Equity", d)
@@ -860,9 +982,6 @@ def sync_auto_yahoo(symbol):
 # 📐 5) Fundamental Ratios (Piotroski + Graham + Advanced Pack)
 # ==============================================================
 def _fetch_yahoo_info(symbol: str) -> dict:
-    """
-    Fail-safe لقراءة info من Yahoo.
-    """
     try:
         t = yf.Ticker(symbol)
         info = getattr(t, "info", {}) or {}
@@ -874,10 +993,6 @@ def _fetch_yahoo_info(symbol: str) -> dict:
 
 
 def _compute_dupont(curr_row: pd.Series) -> dict:
-    """
-    DuPont:
-      ROE = (NetIncome/Revenue) * (Revenue/Assets) * (Assets/Equity)
-    """
     out = {
         "DuPont_Profit_Margin": 0.0,
         "DuPont_Asset_Turnover": 0.0,
@@ -916,7 +1031,7 @@ def _compute_liquidity_leverage(curr_row: pd.Series, prev_row: pd.Series = None)
         "Working_Capital": 0.0,
         "Debt_to_Equity": 0.0,
         "Liabilities_to_Assets": 0.0,
-        "LT_Debt_Trend": 0.0,  # سالب يعني تحسن (انخفاض دين)
+        "LT_Debt_Trend": 0.0,
     }
     try:
         ca = _safe_float(curr_row.get("current_assets", 0))
@@ -946,11 +1061,6 @@ def _compute_liquidity_leverage(curr_row: pd.Series, prev_row: pd.Series = None)
 
 
 def _compute_earnings_quality(curr_row: pd.Series) -> dict:
-    """
-    Earnings Quality:
-      - OCF vs NetIncome
-      - Accruals ≈ (NI - OCF) / Assets
-    """
     out = {
         "OCF_to_NetIncome": 0.0,
         "Accruals_to_Assets": 0.0,
@@ -971,17 +1081,9 @@ def _compute_earnings_quality(curr_row: pd.Series) -> dict:
 
 
 def _compute_altman_z_best_effort(symbol: str, curr_row: pd.Series, yahoo_info: dict) -> dict:
-    """
-    Altman Z (Best-effort):
-    Z = 1.2*(WC/TA) + 1.4*(RE/TA) + 3.3*(EBIT/TA) + 0.6*(MVE/TL) + 1.0*(S/TA)
-
-    ملاحظة: RE و EBIT عادة غير متوفرين من جدولك، لذلك:
-    - إذا لم نجد RE/EBIT من Yahoo، نضعهم 0 (ويظهر هذا في Opinions لاحقاً)
-    - MVE = marketCap من Yahoo
-    """
     out = {
         "Altman_Z": 0.0,
-        "Altman_Z_Quality": "partial",  # partial/full
+        "Altman_Z_Quality": "partial",
     }
     try:
         ta = _safe_float(curr_row.get("total_assets", 0))
@@ -995,21 +1097,15 @@ def _compute_altman_z_best_effort(symbol: str, curr_row: pd.Series, yahoo_info: 
         tl = _safe_float(curr_row.get("total_liabilities", 0))
         sales = _safe_float(curr_row.get("revenue", 0))
 
-        # best-effort for EBIT & Retained Earnings
         ebit = 0.0
         retained = 0.0
 
-        # بعض الأحيان Yahoo يعطي ebitda فقط؛ نستخدمه كتقريب خفيف (مع خصم مبسط) أو نتركه 0
         ebitda = _safe_float(yahoo_info.get("ebitda"))
         if ebitda > 0:
-            # تقريب محافظ: EBIT ~ 0.7 EBITDA (بدون ادعاء دقة)
             ebit = 0.7 * ebitda
-
-        # retained earnings غير متاح غالباً -> يبقى 0
 
         mve = _safe_float(yahoo_info.get("marketCap"))
 
-        # coefficients
         z = 0.0
         z += 1.2 * _safe_div(wc, ta, 0.0)
         z += 1.4 * _safe_div(retained, ta, 0.0)
@@ -1025,16 +1121,10 @@ def _compute_altman_z_best_effort(symbol: str, curr_row: pd.Series, yahoo_info: 
 
 
 def _compute_sgr(roe: float, yahoo_info: dict) -> dict:
-    """
-    Sustainable Growth Rate:
-      SGR = ROE * retention
-      retention = 1 - payoutRatio
-    """
     out = {"SGR": 0.0, "Payout_Ratio": 0.0, "Retention_Ratio": 0.0, "SGR_Estimated": 0}
     try:
         payout = _safe_float(yahoo_info.get("payoutRatio"))
         if payout <= 0 or payout >= 1:
-            # إذا غير متوفر/غير منطقي: نستخدم افتراض تحفظي 0.3 payout
             payout = 0.30
             out["SGR_Estimated"] = 1
 
@@ -1072,15 +1162,9 @@ def _compute_valuation_pack(yahoo_info: dict) -> dict:
     return out
 
 
-def _score_fundamentals(metrics: dict) -> tuple[int, str, list]:
-    """
-    يرجع:
-      - score 0..10
-      - rating "قوي/جيد/متوسط/ضعيف"
-      - opinions[] (نصوص عربية)
-    """
+def _score_fundamentals(metrics: dict) -> Tuple[int, str, List[str]]:
     score = 0
-    opinions = []
+    opinions: List[str] = []
 
     try:
         piot = int(metrics.get("Piotroski_Score", 0) or 0)
@@ -1095,7 +1179,6 @@ def _score_fundamentals(metrics: dict) -> tuple[int, str, list]:
         pe = _safe_float(metrics.get("PE_Trailing", 0))
         peg = _safe_float(metrics.get("PEG", 0))
 
-        # Piotroski
         if piot >= 7:
             score += 3
             opinions.append("💎 Piotroski مرتفع (جودة مالية قوية)")
@@ -1103,7 +1186,6 @@ def _score_fundamentals(metrics: dict) -> tuple[int, str, list]:
             score -= 2
             opinions.append("⚠️ Piotroski منخفض (مخاطر مالية)")
 
-        # Profitability
         if roe >= 0.12:
             score += 2
             opinions.append("✅ ROE قوي (>= 12%)")
@@ -1114,7 +1196,6 @@ def _score_fundamentals(metrics: dict) -> tuple[int, str, list]:
         if roa >= 0.05:
             score += 1
 
-        # Liquidity
         if cr >= 1.2:
             score += 1
             opinions.append("✅ السيولة جيدة (Current Ratio مناسب)")
@@ -1122,14 +1203,12 @@ def _score_fundamentals(metrics: dict) -> tuple[int, str, list]:
             score -= 1
             opinions.append("⚠️ السيولة ضعيفة (Current Ratio منخفض)")
 
-        # Leverage
         if lta > 0.75:
             score -= 1
             opinions.append("⚠️ التزامات مرتفعة مقارنة بالأصول")
         elif 0 < lta <= 0.55:
             score += 1
 
-        # Earnings quality
         if ocf_ni >= 1.0:
             score += 1
             opinions.append("✅ جودة أرباح جيدة (OCF ≥ Net Income)")
@@ -1137,7 +1216,6 @@ def _score_fundamentals(metrics: dict) -> tuple[int, str, list]:
             score -= 1
             opinions.append("⚠️ جودة أرباح أقل (OCF أقل من صافي الربح)")
 
-        # Altman Z
         if altz > 0:
             if altz >= 3.0:
                 score += 2
@@ -1148,7 +1226,6 @@ def _score_fundamentals(metrics: dict) -> tuple[int, str, list]:
             if altq != "full":
                 opinions.append("ℹ️ Altman Z محسوب بشكل جزئي حسب المتوفر")
 
-        # Valuation light
         if peg > 0 and peg <= 1.2:
             score += 1
             opinions.append("✅ PEG جيد (تقييم معقول مقابل النمو)")
@@ -1164,7 +1241,6 @@ def _score_fundamentals(metrics: dict) -> tuple[int, str, list]:
     except Exception:
         pass
 
-    # clamp + rating
     score = int(max(0, min(10, score)))
 
     if score >= 8:
@@ -1180,14 +1256,6 @@ def _score_fundamentals(metrics: dict) -> tuple[int, str, list]:
 
 
 def get_advanced_fundamental_ratios(symbol):
-    """
-    مخرجات متوافقة مع views.py:
-    - Piotroski_Score
-    - Fair_Value_Graham
-    - Financial_Health / Rating / Opinions
-    + إضافات متقدمة:
-      DuPont / AltmanZ / SGR / Liquidity / EarningsQuality / Valuation
-    """
     metrics = {
         "Fair_Value_Graham": 0.0,
         "Piotroski_Score": 0,
@@ -1195,32 +1263,25 @@ def get_advanced_fundamental_ratios(symbol):
         "Score": 0,
         "Rating": "N/A",
         "Opinions": "",
-
-        # Advanced pack defaults
         "ROE": 0.0,
         "ROA": 0.0,
         "DuPont_Profit_Margin": 0.0,
         "DuPont_Asset_Turnover": 0.0,
         "DuPont_Equity_Multiplier": 0.0,
-
         "Current_Ratio": 0.0,
         "Working_Capital": 0.0,
         "Debt_to_Equity": 0.0,
         "Liabilities_to_Assets": 0.0,
         "LT_Debt_Trend": 0.0,
-
         "OCF_to_NetIncome": 0.0,
         "Accruals_to_Assets": 0.0,
         "OCF_Margin": 0.0,
-
         "Altman_Z": 0.0,
         "Altman_Z_Quality": "partial",
-
         "SGR": 0.0,
         "Payout_Ratio": 0.0,
         "Retention_Ratio": 0.0,
         "SGR_Estimated": 0,
-
         "PE_Trailing": 0.0,
         "PE_Forward": 0.0,
         "PEG": 0.0,
@@ -1242,15 +1303,10 @@ def get_advanced_fundamental_ratios(symbol):
     curr = df.iloc[0]
     prev = df.iloc[1] if len(df) > 1 else curr
 
-    # Yahoo info (valuation + marketcap + payout)
     info = _fetch_yahoo_info(symbol)
 
     try:
-        # ======================================================
-        # ✅ Piotroski (محسن لكن بنفس روحك)
-        # ======================================================
         score = 0
-        opinions = []
 
         net_income_c = _safe_float(curr.get("net_income", 0))
         ocf_c = _safe_float(curr.get("operating_cash_flow", 0))
@@ -1259,7 +1315,6 @@ def get_advanced_fundamental_ratios(symbol):
         net_income_p = _safe_float(prev.get("net_income", 0))
         assets_p = _safe_float(prev.get("total_assets", 1)) or 1.0
 
-        # 1) profitability
         if net_income_c > 0:
             score += 1
         if ocf_c > 0:
@@ -1273,7 +1328,6 @@ def get_advanced_fundamental_ratios(symbol):
         if ocf_c > net_income_c:
             score += 1
 
-        # 2) leverage/liquidity
         ltd_c = _safe_float(curr.get("long_term_debt", 0))
         ltd_p = _safe_float(prev.get("long_term_debt", 0))
         if ltd_c < ltd_p:
@@ -1289,20 +1343,15 @@ def get_advanced_fundamental_ratios(symbol):
         if cr_c > cr_p:
             score += 1
 
-        # 3) optional equity growth
         eq_c = _safe_float(curr.get("total_equity", 0))
         eq_p = _safe_float(prev.get("total_equity", 0))
         if eq_c > eq_p and eq_c > 0:
             score += 1
 
-        # 0..9
         piotroski = int(min(max(score + 2, 0), 9))
         metrics["Piotroski_Score"] = piotroski
-        metrics["Score"] = piotroski  # legacy
+        metrics["Score"] = piotroski
 
-        # ======================================================
-        # ✅ DuPont + Efficiency + Liquidity + Earnings Quality
-        # ======================================================
         dup = _compute_dupont(curr)
         liq = _compute_liquidity_leverage(curr, prev)
         eqy = _compute_earnings_quality(curr)
@@ -1311,14 +1360,8 @@ def get_advanced_fundamental_ratios(symbol):
         metrics.update(liq)
         metrics.update(eqy)
 
-        # ======================================================
-        # ✅ Valuation/PEG pack
-        # ======================================================
         metrics.update(_compute_valuation_pack(info))
 
-        # ======================================================
-        # ✅ Graham Value (كما عندك)
-        # ======================================================
         try:
             eps = _safe_float(info.get("trailingEps"))
             bvps = _safe_float(info.get("bookValue"))
@@ -1327,24 +1370,11 @@ def get_advanced_fundamental_ratios(symbol):
         except Exception:
             pass
 
-        # ======================================================
-        # ✅ Altman Z (best-effort)
-        # ======================================================
-        alt = _compute_altman_z_best_effort(symbol, curr, info)
-        metrics.update(alt)
-
-        # ======================================================
-        # ✅ SGR
-        # ======================================================
+        metrics.update(_compute_altman_z_best_effort(symbol, curr, info))
         metrics.update(_compute_sgr(metrics.get("ROE", 0.0), info))
 
-        # ======================================================
-        # ✅ Rating + Financial_Health + Opinions
-        # ======================================================
-        # استخدم محرك تقييم شامل
         fscore10, rating, adv_ops = _score_fundamentals(metrics)
 
-        # Financial_Health legacy
         if metrics["Piotroski_Score"] >= 7:
             metrics["Financial_Health"] = "جيد"
         elif metrics["Piotroski_Score"] <= 3:
@@ -1352,23 +1382,17 @@ def get_advanced_fundamental_ratios(symbol):
         else:
             metrics["Financial_Health"] = "متوسط"
 
-        # دمج الآراء (محافظة على كلمات يبحث عنها ai_engine: "قوي/جيد/سالب")
         if ocf_c < 0:
             adv_ops.append("⚠️ التدفق النقدي التشغيلي سالب")
 
-        # إذا SGR مبني على افتراض
         if int(metrics.get("SGR_Estimated", 0)) == 1:
             adv_ops.append("ℹ️ SGR محسوب بافتراض payoutRatio (تقديري)")
 
-        # Valuation notes
         if _safe_float(metrics.get("PE_Trailing", 0)) == 0 and _safe_float(metrics.get("PEG", 0)) == 0:
             adv_ops.append("ℹ️ بيانات التقييم (PE/PEG) غير متوفرة من Yahoo")
 
-        # Rating
         metrics["Rating"] = rating
         metrics["Score"] = int(max(fscore10, int(metrics.get("Piotroski_Score", 0) or 0)))
-
-        # Opinions string
         metrics["Opinions"] = " | ".join([str(x) for x in adv_ops if str(x).strip()])[:1200]
 
     except Exception:
@@ -1399,9 +1423,6 @@ def get_thesis(symbol):
 
 
 def save_thesis(symbol, thesis_text, target_price, recommendation):
-    """
-    ✅ إصلاح الجدول: investmentthesis lowercase بدون quotes
-    """
     symbol = get_ticker_symbol(symbol)
     thesis_text = str(thesis_text or "")
     recommendation = str(recommendation or "Hold")[:20]
@@ -1431,10 +1452,6 @@ def save_thesis(symbol, thesis_text, target_price, recommendation):
 # 🖥️ (Optional) Standalone UI (not required by views.py)
 # ==============================================================
 def render_financial_dashboard_ui(symbol):
-    """
-    هذه صفحة مستقلة لو احتجتها.
-    لكن برنامجك الحالي يستخدم UI داخل views.py، فهذه فقط للتوافق.
-    """
     tab_dashboard, tab_data_mgmt = st.tabs(["📊 لوحة التحليل المالي", "⚙️ استيراد البيانات"])
 
     with tab_dashboard:
@@ -1453,7 +1470,10 @@ def render_financial_dashboard_ui(symbol):
             metrics = get_advanced_fundamental_ratios(symbol)
             c1, c2, c3 = st.columns(3)
             c1.metric("F-Score", f"{metrics['Piotroski_Score']}/9", metrics["Financial_Health"])
-            c2.metric("Graham Value", f"{metrics.get('Fair_Value_Graham', 0):,.2f}" if metrics.get("Fair_Value_Graham") else "N/A")
+            c2.metric(
+                "Graham Value",
+                f"{metrics.get('Fair_Value_Graham', 0):,.2f}" if metrics.get("Fair_Value_Graham") else "N/A",
+            )
             c3.write(metrics.get("Opinions", ""))
 
             try:
