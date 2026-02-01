@@ -8,34 +8,91 @@ from market_data import get_chart_history
 
 
 # ============================================================
-# ✅ Data Normalizer (Fix Yahoo MultiIndex / lowercase / non-string cols)
+# ✅ Utils: Symbol + Datetime Index
 # ============================================================
-def _normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
+def _normalize_symbol(sym: str) -> str:
+    s = (sym or "").strip().upper()
+    if not s:
+        return ""
+    if s.isdigit():
+        return f"{s}.SR"
+    s = s.replace(" ", "").replace("-", "")
+    if s.endswith("SR") and ".SR" not in s and not s.startswith("^"):
+        s = s.replace("SR", ".SR")
+    return s
+
+
+def _ensure_datetime_index(df: pd.DataFrame) -> pd.DataFrame:
     """
-    يضمن وجود أعمدة OHLCV بأسماء:
-    Open, High, Low, Close, Volume
-    ويتعامل مع:
-    - أعمدة lowercase (open/close...)
-    - MultiIndex من yfinance
-    - أعمدة غير نصية (تسبب title() error سابقاً)
+    يضمن أن محور X تاريخ/وقت حقيقي:
+    - لو فيه عمود date/Date/time... يحوله لإندكس
+    - لو الإندكس غير DatetimeIndex يحاول تحويله
+    - يحذف NaT والتكرارات ويرتب
     """
     if df is None or df.empty:
         return pd.DataFrame()
 
-    df = df.copy()
+    d = df.copy()
+
+    # لو يوجد عمود تاريخ
+    for c in ["date", "Date", "datetime", "Datetime", "time", "Time", "timestamp", "Timestamp"]:
+        if c in d.columns:
+            d[c] = pd.to_datetime(d[c], errors="coerce")
+            d = d.dropna(subset=[c])
+            d = d.sort_values(c)
+            d = d.set_index(c)
+            break
+
+    # لو الإندكس نفسه تاريخ
+    if not isinstance(d.index, pd.DatetimeIndex):
+        try:
+            d.index = pd.to_datetime(d.index, errors="coerce")
+        except Exception:
+            pass
+
+    # تنظيف
+    d = d[~pd.isna(d.index)]
+    d = d[~d.index.duplicated(keep="last")]
+    try:
+        d = d.sort_index()
+    except Exception:
+        pass
+
+    return d
+
+
+# ============================================================
+# ✅ Data Normalizer (Fix Yahoo MultiIndex / lowercase / non-string cols)
+# ============================================================
+def _normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    يضمن وجود أعمدة OHLC بأسماء:
+    Open, High, Low, Close
+    وVolume اختياري (لا نفشل إذا غير موجود)
+    ويتعامل مع:
+    - أعمدة lowercase (open/close...)
+    - MultiIndex من yfinance
+    - أعمدة غير نصية
+    """
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    d = df.copy()
 
     # Fix MultiIndex columns (sometimes from yfinance)
-    if isinstance(df.columns, pd.MultiIndex):
-        # Often looks like ('Open', '2270.SR') etc
-        df.columns = [c[0] if isinstance(c, tuple) and len(c) > 0 else str(c) for c in df.columns]
+    if isinstance(d.columns, pd.MultiIndex):
+        d.columns = [
+            c[0] if isinstance(c, tuple) and len(c) > 0 else str(c)
+            for c in d.columns
+        ]
 
     # Make all columns strings safely
-    df.columns = [str(c) for c in df.columns]
+    d.columns = [str(c) for c in d.columns]
 
     def pick(name: str):
-        target = name.lower().replace("_", "").replace("-", "").strip()
-        for cand in df.columns:
-            key = str(cand).lower().replace("_", "").replace("-", "").strip()
+        target = name.lower().replace("_", "").replace("-", "").replace(" ", "").strip()
+        for cand in d.columns:
+            key = str(cand).lower().replace("_", "").replace("-", "").replace(" ", "").strip()
             if key == target:
                 return cand
         return None
@@ -48,27 +105,29 @@ def _normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
 
     # If "Adj Close" exists but no Close, fallback
     if c is None:
-        adj = pick("adj close") or pick("adjclose")
+        adj = pick("adjclose") or pick("adj close")
         if adj is not None:
             c = adj
 
-    # If open missing, fallback close
+    # If open missing, fallback close (أحياناً لبعض الداتا)
     if o is None and c is not None:
-        df["Open"] = df[c]
+        d["Open"] = d[c]
         o = "Open"
 
-    needed = [o, h, l, c, v]
+    # Require OHLC only
+    needed = [o, h, l, c]
     if any(x is None for x in needed):
         return pd.DataFrame()
 
-    out = df.rename(columns={o: "Open", h: "High", l: "Low", c: "Close", v: "Volume"})
-    for col in ["Open", "High", "Low", "Close", "Volume"]:
-        out[col] = pd.to_numeric(out[col], errors="coerce")
+    rename_map = {o: "Open", h: "High", l: "Low", c: "Close"}
+    if v is not None:
+        rename_map[v] = "Volume"
 
-    try:
-        out = out.sort_index()
-    except Exception:
-        pass
+    out = d.rename(columns=rename_map)
+
+    for col in ["Open", "High", "Low", "Close", "Volume"]:
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce")
 
     out = out.dropna(subset=["Open", "High", "Low", "Close"])
     return out
@@ -79,8 +138,7 @@ def _normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
 # ============================================================
 def _norm_interval(interval: str) -> str:
     itv = str(interval or "").strip().lower()
-    # عربي -> yfinance
-    if itv in ["ساعة", "1h", "hour", "1hour"]:
+    if itv in ["ساعة", "1h", "hour", "1hour", "60m"]:
         return "60m"
     if itv in ["يوم", "daily", "day", "1d"]:
         return "1d"
@@ -92,23 +150,37 @@ def _norm_interval(interval: str) -> str:
 
 
 def _plot_tail_bars(interval: str) -> int:
-    """
-    كم شمعة نعرض في الشارت لتكون القراءة واضحة
-    """
     itv = _norm_interval(interval)
     if itv in ["60m", "30m", "15m", "5m", "1m", "2m", "90m"]:
-        return 420
+        return 520
     if itv == "1d":
-        return 320
+        return 420
     if itv == "1wk":
-        return 260
+        return 320
     if itv == "1mo":
-        return 140
-    return 320
+        return 180
+    return 420
+
+
+def _default_period_for_interval(itv: str) -> str:
+    """
+    إذا period = None:
+    - للفواصل الصغيرة: 6mo أو 1y
+    - اليومي: 2y
+    - الأسبوعي/الشهري: 5y أو max
+    """
+    itv = _norm_interval(itv)
+    if itv in ["60m", "30m", "15m", "5m"]:
+        return "6mo"
+    if itv == "1d":
+        return "2y"
+    if itv in ["1wk", "1mo"]:
+        return "5y"
+    return "2y"
 
 
 # ============================================================
-# --- دالة مساعدة لحساب ورسم الدعم والمقاومة ---
+# --- Support / Resistance ---
 # ============================================================
 def add_support_resistance(fig, df, sensitivity=3, max_levels=12):
     """
@@ -137,15 +209,14 @@ def add_support_resistance(fig, df, sensitivity=3, max_levels=12):
             if not any(abs(level - x[1]) <= max(level, 1e-9) * 0.01 for x in levels):
                 levels.append((df.index[i], level, "Resistance"))
 
-    # قلل العدد لأفضل مستويات (الأقرب للسعر الحالي)
     last_close = float(df["Close"].iloc[-1])
     levels = sorted(levels, key=lambda x: abs(x[1] - last_close))[:max_levels]
 
-    for date, level, type_ in levels:
+    for dt, level, type_ in levels:
         color = "#00C853" if type_ == "Support" else "#D50000"
         fig.add_shape(
             type="line",
-            x0=date, y0=level, x1=df.index[-1], y1=level,
+            x0=dt, y0=level, x1=df.index[-1], y1=level,
             line=dict(color=color, width=1, dash="dash"),
             xref="x", yref="y",
             row=1, col=1
@@ -153,44 +224,82 @@ def add_support_resistance(fig, df, sensitivity=3, max_levels=12):
 
 
 # ============================================================
-# --- الدالة الرئيسية ---
+# ✅ Safe fetch wrapper (handles signature differences)
+# ============================================================
+def _fetch_history(symbol: str, period: str, interval: str):
+    """
+    يحاول استدعاء get_chart_history بعدة توقيعات لتفادي اختلاف النسخ.
+    """
+    # الأكثر شيوعاً في مشروعك (period/interval)
+    try:
+        return get_chart_history(symbol, period=period, interval=interval)
+    except TypeError:
+        pass
+    except Exception:
+        pass
+
+    # بعض النسخ: (symbol, period, interval)
+    try:
+        return get_chart_history(symbol, period, interval)
+    except TypeError:
+        pass
+    except Exception:
+        pass
+
+    # بعض النسخ: (symbol, period)
+    try:
+        return get_chart_history(symbol, period)
+    except TypeError:
+        pass
+    except Exception:
+        pass
+
+    # fallback أخير
+    try:
+        return get_chart_history(symbol)
+    except Exception:
+        return pd.DataFrame()
+
+
+# ============================================================
+# --- Main ---
 # ============================================================
 def render_technical_chart(symbol, period=None, interval="1d"):
     """
-    ✅ محدث:
-    - period افتراضي None (يعتمد على market_data لاختيار الأفضل)
-    - interval يحدد الفاصل (ساعة/يوم/أسبوع/شهر)
-    - التقرير يتدرج حسب عدد الشموع المتاحة
+    شارت احترافي داخل Streamlit:
+    - Candlestick + SMA + Bollinger
+    - RSI + MACD
+    - Zoom/Scroll + Pan + RangeSlider + RangeSelector
+    - أدوات رسم (line/rect/circle) + eraser
     """
+
     itv = _norm_interval(interval)
+    sym = _normalize_symbol(symbol)
+    if not sym:
+        st.warning("الرجاء إدخال رمز صحيح.")
+        return
 
-    # 1) جلب البيانات (market_data يختار 5y للفواصل الكبيرة تلقائيًا)
-    try:
-        raw = get_chart_history(symbol, period=period, interval=itv, years=5)
-    except TypeError:
-        # لو لم يتم تحديث market_data عندك لأي سبب
-        raw = get_chart_history(symbol, period or "5y", itv)
+    if period is None or str(period).strip() == "":
+        period = _default_period_for_interval(itv)
 
+    raw = _fetch_history(sym, period=period, interval=itv)
+
+    # normalize + ensure datetime axis
     df = _normalize_ohlcv(raw)
+    df = _ensure_datetime_index(df)
 
-    # حد أدنى عام للتقرير (RSI/MACD يحتاج تقريبًا 26-30)
     if df is None or df.empty or len(df) < 30:
         st.warning("البيانات التاريخية غير كافية أو غير صالحة لهذا الفاصل الزمني.")
         return
 
     n = len(df)
 
-    # 2) الحسابات الفنية (تدرج حسب توفر البيانات)
+    # ========================================================
+    # Indicators
+    # ========================================================
     # SMA
-    if n >= 50:
-        df["SMA_50"] = df["Close"].rolling(window=50).mean()
-    else:
-        df["SMA_50"] = np.nan
-
-    if n >= 200:
-        df["SMA_200"] = df["Close"].rolling(window=200).mean()
-    else:
-        df["SMA_200"] = np.nan
+    df["SMA_50"] = df["Close"].rolling(window=50).mean() if n >= 50 else np.nan
+    df["SMA_200"] = df["Close"].rolling(window=200).mean() if n >= 200 else np.nan
 
     # Bollinger Bands (20)
     if n >= 20:
@@ -204,7 +313,7 @@ def render_technical_chart(symbol, period=None, interval="1d"):
         df["BB_Lower"] = np.nan
         df["BB_Width"] = np.nan
 
-    # RSI (14)
+    # RSI (14) - EWM
     delta = df["Close"].diff()
     gain = delta.where(delta > 0, 0).ewm(alpha=1 / 14, adjust=False).mean()
     loss = (-delta.where(delta < 0, 0)).ewm(alpha=1 / 14, adjust=False).mean()
@@ -218,40 +327,43 @@ def render_technical_chart(symbol, period=None, interval="1d"):
     df["Signal_Line"] = df["MACD"].ewm(span=9, adjust=False).mean()
     df["MACD_Hist"] = df["MACD"] - df["Signal_Line"]
 
-    # ملاحظات حسب الفاصل
+    # Notes
     notes = []
     if n < 50:
         notes.append("لا توجد شموع كافية لحساب SMA50 بدقة.")
     if n < 200:
         notes.append("لا توجد شموع كافية لحساب SMA200 (الاتجاه الطويل) لهذا الفاصل.")
     if n < 60 and itv == "1mo":
-        notes.append("الفاصل الشهري عادة يعطي شموع أقل — التقرير يعتمد أكثر على RSI/MACD والمستويات.")
-
+        notes.append("الفاصل الشهري غالبًا يعطي شموع أقل — نعتمد أكثر على RSI/MACD والمستويات.")
     for msg in notes:
         st.info(f"ملاحظة: {msg}")
 
-    # 3) تجهيز الرسم (آخر N شمعة حسب الفاصل)
+    # ========================================================
+    # Plot Window
+    # ========================================================
     tail_n = _plot_tail_bars(itv)
     plot_df = df.tail(tail_n).copy()
 
     fig = make_subplots(
         rows=3, cols=1, shared_xaxes=True, vertical_spacing=0.03,
-        row_heights=[0.6, 0.2, 0.2],
-        subplot_titles=(f"السعر: {symbol} ({itv})", "RSI", "MACD")
+        row_heights=[0.62, 0.18, 0.20],
+        subplot_titles=(f"السعر: {sym} ({itv})", "RSI", "MACD")
     )
 
-    # شموع
+    # Candles
     fig.add_trace(
         go.Candlestick(
             x=plot_df.index,
-            open=plot_df["Open"], high=plot_df["High"],
-            low=plot_df["Low"], close=plot_df["Close"],
+            open=plot_df["Open"],
+            high=plot_df["High"],
+            low=plot_df["Low"],
+            close=plot_df["Close"],
             name="السعر"
         ),
         row=1, col=1
     )
 
-    # متوسطات (إذا متاحة)
+    # SMA lines
     if "SMA_50" in plot_df.columns and not plot_df["SMA_50"].isna().all():
         fig.add_trace(
             go.Scatter(x=plot_df.index, y=plot_df["SMA_50"], line=dict(color="orange", width=1.5), name="SMA 50"),
@@ -263,10 +375,11 @@ def render_technical_chart(symbol, period=None, interval="1d"):
             row=1, col=1
         )
 
-    # Bollinger (إذا متاحة)
+    # Bollinger
     if "BB_Upper" in plot_df.columns and not plot_df["BB_Upper"].isna().all():
         fig.add_trace(
-            go.Scatter(x=plot_df.index, y=plot_df["BB_Upper"], line=dict(color="gray", width=1, dash="dot"), showlegend=False),
+            go.Scatter(x=plot_df.index, y=plot_df["BB_Upper"], line=dict(color="gray", width=1, dash="dot"),
+                       name="BB Upper", showlegend=False),
             row=1, col=1
         )
         fig.add_trace(
@@ -274,7 +387,7 @@ def render_technical_chart(symbol, period=None, interval="1d"):
                 x=plot_df.index, y=plot_df["BB_Lower"],
                 line=dict(color="gray", width=1, dash="dot"),
                 fill="tonexty", fillcolor="rgba(0,0,255,0.05)",
-                showlegend=False
+                name="BB Lower", showlegend=False
             ),
             row=1, col=1
         )
@@ -293,26 +406,59 @@ def render_technical_chart(symbol, period=None, interval="1d"):
     fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df["MACD"], line=dict(color="blue"), name="MACD"), row=3, col=1)
     fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df["Signal_Line"], line=dict(color="orange"), name="Signal"), row=3, col=1)
 
+    # ========================================================
+    # ✅ Professional interaction (TradingView-like)
+    # ========================================================
+    rangeselector_buttons = [
+        dict(count=7, label="7D", step="day", stepmode="backward"),
+        dict(count=1, label="1M", step="month", stepmode="backward"),
+        dict(count=3, label="3M", step="month", stepmode="backward"),
+        dict(count=6, label="6M", step="month", stepmode="backward"),
+        dict(count=1, label="1Y", step="year", stepmode="backward"),
+        dict(step="all", label="All"),
+    ]
+
     fig.update_layout(
-        height=820,
-        xaxis_rangeslider_visible=False,
+        height=860,
         hovermode="x unified",
-        margin=dict(t=30, b=10, l=10, r=10),
+        dragmode="pan",
+        margin=dict(t=40, b=10, l=10, r=10),
+        xaxis=dict(
+            type="date",
+            rangeselector=dict(buttons=rangeselector_buttons),
+            rangeslider=dict(visible=True, thickness=0.08),
+        ),
+        template="plotly_white",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
+
+    # تحسين قراءة المؤشر (Spikes مثل الكروس هير)
+    fig.update_xaxes(showspikes=True, spikemode="across", spikesnap="cursor", showgrid=True, gridwidth=0.5)
+    fig.update_yaxes(showspikes=True, spikemode="across", spikesnap="cursor", showgrid=True, gridwidth=0.5)
+
+    # إخفاء ticklabels في الأعلى للاحترافية
     fig.update_xaxes(showticklabels=False, row=1, col=1)
     fig.update_xaxes(showticklabels=False, row=2, col=1)
 
     # دعم/مقاومة
-    sr_key = f"sr_{symbol}_{itv}"
+    sr_key = f"sr_{sym}_{itv}"
     if st.checkbox("🎯 إظهار مستويات الدعم والمقاومة (Auto S&R)", value=False, key=sr_key):
         add_support_resistance(fig, plot_df, sensitivity=3)
 
-    st.plotly_chart(fig, use_container_width=True)
+    config = {
+        "displayModeBar": True,
+        "scrollZoom": True,
+        "displaylogo": False,
+        "modeBarButtonsToAdd": ["drawline", "drawrect", "drawcircle", "eraseshape"],
+    }
 
-    # 4) التقرير الفني
+    st.plotly_chart(fig, use_container_width=True, config=config)
+
+    # ========================================================
+    # ✅ التقرير الفني
+    # ========================================================
     st.markdown("### 📋 التقرير الفني الذكي")
 
-    # قيم أخيرة
     last_close = float(df["Close"].iloc[-1])
     last_sma50 = float(df["SMA_50"].iloc[-1]) if ("SMA_50" in df.columns and not pd.isna(df["SMA_50"].iloc[-1])) else np.nan
     last_sma200 = float(df["SMA_200"].iloc[-1]) if ("SMA_200" in df.columns and not pd.isna(df["SMA_200"].iloc[-1])) else np.nan
@@ -320,7 +466,6 @@ def render_technical_chart(symbol, period=None, interval="1d"):
     last_macd = float(df["MACD"].iloc[-1])
     last_signal = float(df["Signal_Line"].iloc[-1])
 
-    # منطق (الاتجاه الطويل يعتمد على SMA200 فقط إذا متاح)
     is_bull_market = (not np.isnan(last_sma200)) and (last_close > last_sma200)
     is_golden_cross = (not np.isnan(last_sma50)) and (not np.isnan(last_sma200)) and (last_sma50 > last_sma200)
 
@@ -330,7 +475,6 @@ def render_technical_chart(symbol, period=None, interval="1d"):
     elif last_rsi < 30:
         rsi_status = "oversold"
 
-    # 1) Trend
     st.markdown("##### 1️⃣ حالة الاتجاه (Trend):")
     col_t1, col_t2 = st.columns(2)
 
@@ -350,7 +494,6 @@ def render_technical_chart(symbol, period=None, interval="1d"):
         else:
             st.warning("**الترتيب سلبي:** SMA50 تحت SMA200 → ضغط هابط محتمل.")
 
-    # 2) Momentum
     st.markdown("##### 2️⃣ الزخم والمؤشرات (Momentum):")
     col_m1, col_m2 = st.columns(2)
 
@@ -370,13 +513,12 @@ def render_technical_chart(symbol, period=None, interval="1d"):
         else:
             st.error("🔴 سلبي: MACD تحت Signal → ضعف في الزخم.")
 
-    # 3) Verdict
     st.markdown("---")
     st.markdown("##### 💡 الخلاصة الفنية:")
 
     score = 0.0
 
-    # Trend (لو SMA200 متاح)
+    # Trend
     if not np.isnan(last_sma200) and is_bull_market:
         score += 1.0
     if not np.isnan(last_sma50) and not np.isnan(last_sma200) and is_golden_cross:
@@ -391,9 +533,8 @@ def render_technical_chart(symbol, period=None, interval="1d"):
     elif last_rsi < 30:
         score += 1.0
 
-    # تعديل بسيط بحسب الفاصل الشهري (لأن SMA200 غالباً غير متاح)
     if itv == "1mo" and np.isnan(last_sma200):
-        score += 0.25  # لا نعاقبه كثيراً بسبب نقص البيانات
+        score += 0.25
 
     if score >= 3.5:
         st.success("### ✅ النظرة العامة: إيجابية قوية (Strong Buy Area)")
