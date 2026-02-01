@@ -37,4 +37,3 @@ def clean_symbols_list(values) -> list:
     except Exception:
         pass
     return list(sorted(set(out)))
-
