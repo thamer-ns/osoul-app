@@ -17,6 +17,7 @@ from components import (
     safe_fmt,
     inject_component_styles,
     inject_streamlit_ar_i18n,
+    render_osoli_report,  # ✅ NEW: بطاقات أصولي
 )
 from analytics import (
     calculate_portfolio_metrics,
@@ -125,7 +126,7 @@ def _ensure_ui_once():
         return
     st.session_state["_ui_injected_once"] = True
     try:
-        inject_component_styles()
+        inject_component_styles()  # ✅ يحتوي أيضاً fallback css لبطاقات osoli
     except Exception:
         pass
     try:
@@ -1865,13 +1866,14 @@ def view_analysis(fin):
             ai_tf_label = top1.selectbox("الفاصل الزمني", list(tf_map.keys()), index=0, key=f"ai_tf_{symk}")
             ai_tf = tf_map[ai_tf_label]
 
+            # ✅ NEW: إضافة وضع عرض "بطاقات (Osoli)"
             view_mode = top2.radio(
                 "طريقة العرض",
-                ["مبسط", "تفصيلي", "مطور (مع JSON)"],
+                ["مبسط", "تفصيلي", "بطاقات (Osoli)", "مطور (مع JSON)"],
                 horizontal=True,
                 key=f"ai_view_{symk}"
             )
-            top3.caption("مبسط = مختصر، تفصيلي = كامل، مطور = مع JSON")
+            top3.caption("مبسط=مختصر | تفصيلي=كامل | بطاقات=واجهة أصولي | مطور=مع JSON")
             if top4.button("🔄 تحديث", key=f"ai_refresh_{symk}"):
                 cache = st.session_state.get("_ai_rep_cache", {})
                 for k in list(cache.keys()):
@@ -1899,6 +1901,13 @@ def view_analysis(fin):
                     _render_ai_report_readable(rep, show_debug=False, compact=True)
                 elif view_mode == "تفصيلي":
                     _render_ai_report_readable(rep, show_debug=False, compact=False)
+                elif view_mode == "بطاقات (Osoli)":
+                    # ✅ واجهة بطاقات جديدة (تستفيد من inject_component_styles)
+                    try:
+                        render_osoli_report(rep, title=f"🤖 تقرير المستشار | {ai_tf_label}")
+                    except Exception:
+                        # fallback لو صار شيء غير متوقع
+                        _render_ai_report_readable(rep, show_debug=False, compact=False)
                 else:
                     _render_ai_report_readable(rep, show_debug=True, compact=False)
 
