@@ -1,4 +1,4 @@
-# views.py ✅ النسخة الكاملة بعد التعديلات
+# views.py ✅ النسخة الكاملة بعد التعديلات (منظّفة من الأحرف غير القابلة للطباعة)
 # (توحيد شكل جداول المختبر + التحليل المالي مع جدول الاستثمار)
 # + ✅ استخدام get_financial_statements (DB + Yahoo + fallback) بدل الاعتماد فقط على المخزن
 
@@ -65,9 +65,11 @@ except Exception:
     def get_stored_financials_df(s, p): return pd.DataFrame()
     def get_advanced_fundamental_ratios(s): return {}
     def get_financial_statements(s, p="Annual", refresh=False): return pd.DataFrame()  # ✅ NEW fallback
+
     class FinancialParser:
         def process_file_or_text(self, uploaded_file=None, text_input=None):
             return [], None, "FinancialParser غير متوفر"
+
     def save_financial_record(*args, **kwargs): return False
     def sync_auto_yahoo(s): return False, "Module Missing"
     def get_fundamental_ratios(s): return {}
@@ -1335,7 +1337,6 @@ def view_analysis(fin):
                             if "df" in resbt and isinstance(resbt["df"], pd.DataFrame) and "Portfolio_Value" in resbt["df"]:
                                 st.line_chart(resbt["df"]["Portfolio_Value"])
 
-                            # ✅ بدل st.dataframe: نفس تصميم جدول الاستثمار
                             with st.expander("سجل الصفقات"):
                                 tlog = resbt.get("trades_log", pd.DataFrame())
                                 _render_table_like_trades(
@@ -1432,7 +1433,6 @@ def view_backtester_ui(fin):
             except Exception:
                 pass
 
-            # ✅ بدل st.dataframe: نفس تصميم جدول الاستثمار + تثبيت التاريخ كعمود
             preview = data.tail(20).copy()
             try:
                 preview = preview.reset_index()
@@ -1441,7 +1441,6 @@ def view_backtester_ui(fin):
             except Exception:
                 pass
 
-            # حاول نعرض OHLCV لو موجودة
             cols = []
             if "date" in preview.columns: cols.append(("date", "التاريخ", "date"))
             for k, lab in [("Open","الافتتاح"), ("High","الأعلى"), ("Low","الأدنى"), ("Close","الإغلاق"), ("Volume","الحجم")]:
@@ -1468,7 +1467,6 @@ def view_backtester_ui(fin):
                 if "df" in res and isinstance(res["df"], pd.DataFrame) and "Portfolio_Value" in res["df"]:
                     st.line_chart(res["df"]["Portfolio_Value"])
 
-                # ✅ بدل st.dataframe: نفس تصميم جدول الاستثمار
                 with st.expander("سجل الصفقات"):
                     tlog = res.get("trades_log", pd.DataFrame())
                     _render_table_like_trades(
@@ -1616,4 +1614,3 @@ def router():
     else:
         st.session_state.page = "home"
         st.rerun()
-```0
