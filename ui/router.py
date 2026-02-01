@@ -3,12 +3,13 @@ import streamlit as st
 from analytics import calculate_portfolio_metrics, update_prices
 from components import inject_component_styles, inject_streamlit_ar_i18n
 
-# ✅ Dashboard moved
+# ✅ Pages
 from ui.pages.dashboard import view_dashboard
+from ui.pages.portfolio import view_portfolio
 
 # ✅ باقي الصفحات حالياً من views_impl (مرحلة انتقالية)
 from views_impl import (
-    view_portfolio, view_sukuk_portfolio, view_analysis,
+    view_sukuk_portfolio, view_analysis,
     view_cash_log, view_backtester_ui, render_pulse_dashboard,
     view_add_trade, view_tools, view_settings
 )
