@@ -3,9 +3,15 @@ import streamlit as st
 from analytics import calculate_portfolio_metrics, update_prices
 from components import inject_component_styles, inject_streamlit_ar_i18n
 
+# ✅ نستورد الصفحات من views_impl لتجنب circular import مع views.py (الخفيف)
+from views_impl import (
+    view_dashboard, view_portfolio, view_sukuk_portfolio, view_analysis,
+    view_cash_log, view_backtester_ui, render_pulse_dashboard,
+    view_add_trade, view_tools, view_settings
+)
+
 
 def _ensure_ui_once():
-    """Inject CSS + Arabic i18n once (safe)."""
     if st.session_state.get("_ui_injected_once"):
         return
     st.session_state["_ui_injected_once"] = True
@@ -79,13 +85,6 @@ def router():
     pg = st.session_state.page
 
     fin = calculate_portfolio_metrics()
-
-    # ✅ Import داخلي لتفادي Circular Import (views يستورد router)
-    from views import (
-        view_dashboard, view_portfolio, view_sukuk_portfolio, view_analysis,
-        view_cash_log, view_backtester_ui, render_pulse_dashboard,
-        view_add_trade, view_tools, view_settings
-    )
 
     if pg == "home":
         view_dashboard(fin)
