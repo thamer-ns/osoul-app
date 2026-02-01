@@ -207,6 +207,54 @@ def _normalize_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ============================================================
+# ⏱️ Interval Helpers (Smart defaults + Yahoo limits friendly)
+# ============================================================
+# ملاحظة: Yahoo/yfinance يقيد intraday غالباً:
+# - 1m ~ 7 أيام
+# - باقي intraday (مثل 60m) غالباً <= 60 يوم
+_INTRADAY_LIMITS = {
+    "1m": "7d",
+    "2m": "60d",
+    "5m": "60d",
+    "15m": "60d",
+    "30m": "60d",
+    "60m": "60d",   # ساعة
+    "90m": "60d",
+}
+
+def _normalize_interval(interval: str) -> str:
+    itv = str(interval or "").strip().lower()
+    # دعم عربي + مرادفات
+    if itv in ["1h", "1hour", "hour", "ساعة"]:
+        return "60m"
+    if itv in ["day", "daily", "يوم", "1d"]:
+        return "1d"
+    if itv in ["week", "weekly", "اسبوع", "أسبوع", "1w", "1wk", "1wk"]:
+        return "1wk"
+    if itv in ["month", "monthly", "شهر", "1mo"]:
+        return "1mo"
+    # إن جاء "1wk" أو "1w" نوحده لـ 1wk
+    if itv in ["1w"]:
+        return "1wk"
+    return itv or "1d"
+
+
+def _default_period_for_interval(interval: str, years: int = 5) -> str:
+    itv = _normalize_interval(interval)
+
+    # intraday
+    if itv in _INTRADAY_LIMITS:
+        return _INTRADAY_LIMITS[itv]
+
+    # daily/weekly/monthly -> 5 سنوات افتراضياً
+    if years and years >= 5:
+        return "5y"
+    if years and years >= 2:
+        return "2y"
+    return "1y"
+
+
+# ============================================================
 # 📈 Google Finance (Snapshot)
 # ============================================================
 def fetch_google_finance_snapshot(symbol: str) -> dict:
@@ -404,39 +452,68 @@ def get_tasi_data():
 # 📉 Chart History (للرسم البياني والذكاء الاصطناعي)
 # ============================================================
 @st.cache_data(ttl=900, show_spinner=False)
-def get_chart_history(symbol: str, period: str = "2y", interval: str = "1d"):
+def get_chart_history(symbol: str, period: str = None, interval: str = "1d", years: int = 5):
+    """
+    ✅ نسخة ذكية:
+    - لو period مو محدد: يختار تلقائياً حسب interval
+    - يحاول يجيب 5 سنوات للفواصل الكبيرة (1d/1wk/1mo)
+    - للفواصل intraday (ساعة/دقائق): يلتزم بالحدود المتاحة (عادة 60d)
+    - عند فشل التحميل: يسوي fallbacks تلقائيًا
+    """
     sym = get_ticker_symbol(symbol)
     if not sym:
         return pd.DataFrame()
 
-    try:
-        df = yf.download(
-            sym,
-            period=period,
-            interval=interval,
-            auto_adjust=False,
-            progress=False,
-            threads=False,
-        )
-    except Exception:
-        return pd.DataFrame()
+    itv = _normalize_interval(interval)
+    prd = (period or "").strip().lower() if period else ""
 
-    return _normalize_ohlcv_columns(df)
+    # اختر period تلقائيًا إذا ما انرسل
+    if not prd:
+        prd = _default_period_for_interval(itv, years=years)
+
+    # قائمة محاولات fallback حسب نوع الفاصل
+    if itv in _INTRADAY_LIMITS:
+        tries = [prd]
+        # تأكيدات احتياطية
+        lim = _INTRADAY_LIMITS.get(itv, "60d")
+        if prd != lim:
+            tries.append(lim)
+        tries += ["60d", "30d", "14d", "7d"]
+    else:
+        tries = [prd, "5y", "2y", "1y", "6mo", "3mo", "max"]
+
+    for p in tries:
+        try:
+            df = yf.download(
+                sym,
+                period=p,
+                interval=itv,
+                auto_adjust=False,
+                progress=False,
+                threads=False,
+            )
+            df = _normalize_ohlcv_columns(df)
+            if df is not None and not df.empty:
+                return df
+        except Exception:
+            pass
+
+    return pd.DataFrame()
 
 
 # ============================================================
 # ✅ TASI History (مخصص للمقارنة)
 # ============================================================
 @st.cache_data(ttl=900, show_spinner=False)
-def get_tasi_history(period: str = "2y", interval: str = "1d") -> pd.DataFrame:
-    """تاريخ المؤشر العام بنفس صيغة get_chart_history"""
-    return get_chart_history("^TASI.SR", period=period, interval=interval)
+def get_tasi_history(period: str = None, interval: str = "1d") -> pd.DataFrame:
+    """تاريخ المؤشر العام بنفس صيغة get_chart_history (افتراضياً 5 سنوات)"""
+    return get_chart_history("^TASI.SR", period=period, interval=interval, years=5)
 
 
 # ============================================================
 # ✅ Comparative Strength vs TASI (Relative Strength)
 # ============================================================
-def get_relative_strength_vs_tasi(symbol: str, period: str = "2y", interval: str = "1d") -> dict:
+def get_relative_strength_vs_tasi(symbol: str, period: str = None, interval: str = "1d") -> dict:
     """
     يحسب قوة السهم مقابل تاسي:
     - RS line = Close(stock) / Close(TASI)
@@ -444,7 +521,9 @@ def get_relative_strength_vs_tasi(symbol: str, period: str = "2y", interval: str
     يرجع dict جاهز للاستخدام في ai_engine / views
     """
     sym = get_ticker_symbol(symbol)
-    stock = get_chart_history(sym, period=period, interval=interval)
+
+    # افتراضياً نشتغل على 5 سنوات للفواصل الكبيرة
+    stock = get_chart_history(sym, period=period, interval=interval, years=5)
     tasi = get_tasi_history(period=period, interval=interval)
 
     if stock is None or stock.empty or "Close" not in stock.columns:
@@ -500,7 +579,6 @@ def get_relative_strength_vs_tasi(symbol: str, period: str = "2y", interval: str
         "outperf_6m": out_6m,
         "outperf_1y": out_1y,
         "label": label,
-        # إذا احتجت الرسم لاحقاً في views
         "rs_series": df["rs"].tail(260).to_dict(),  # آخر سنة تقريباً
         "asof": str(df.index[-1].date()),
     }
@@ -635,7 +713,7 @@ def get_analysis_sources(symbol: str) -> dict:
     p_argaam = fetch_price_from_argaam(sym)
     out["sources"]["argaam"] = {"price": p_argaam, "ok": _is_reasonable_price(p_argaam)}
 
-    # ✅ إضافة: Comparative Strength vs TASI
-    out["sources"]["vs_tasi"] = get_relative_strength_vs_tasi(sym)
+    # ✅ إضافة: Comparative Strength vs TASI (افتراضياً 5 سنوات)
+    out["sources"]["vs_tasi"] = get_relative_strength_vs_tasi(sym, period=None, interval="1d")
 
     return out
