@@ -1,3 +1,4 @@
+# backtester.py
 import json
 import uuid
 import pandas as pd
@@ -39,15 +40,58 @@ STRATEGY_CATALOG = {
 }
 
 
-def list_strategies():
+# ============================================================
+# ✅ Portable SQL Exec (Postgres/SQLite)
+# ============================================================
+def _try_exec(sql: str, params=()):
     """
-    أفضل للواجهة: يرجع tuples (key, label_ar)
-    و views.py عندك يدعم tuples.
+    Portable execute:
+    - Postgres style placeholders: %s
+    - SQLite style placeholders: ?
+    نحاول أولاً كما هو، وإذا فشل نجرب استبدال %s بـ ?
     """
-    out = []
-    for k, v in STRATEGY_CATALOG.items():
-        out.append((k, v.get("name_ar", k)))
-    return out
+    if not execute_query:
+        return False
+    try:
+        execute_query(sql, params)
+        return True
+    except Exception:
+        try:
+            sql2 = sql.replace("%s", "?")
+            execute_query(sql2, params)
+            return True
+        except Exception:
+            return False
+
+
+# ============================================================
+# 🧾 Strategies Helpers (آمنة للواجهة)
+# ============================================================
+def list_strategies(mode: str = "keys"):
+    """
+    mode:
+      - "keys": يرجع قائمة مفاتيح الاستراتيجيات (أفضل للـ selectbox)
+      - "tuples": يرجع (key, label_ar) لو تبغاه
+      - "dict": يرجع dict key->label_ar
+    """
+    if mode == "dict":
+        return {k: (v.get("name_ar", k)) for k, v in STRATEGY_CATALOG.items()}
+
+    if mode == "tuples":
+        return [(k, v.get("name_ar", k)) for k, v in STRATEGY_CATALOG.items()]
+
+    # default keys
+    return list(STRATEGY_CATALOG.keys())
+
+
+def get_strategy_label(strategy_key: str) -> str:
+    v = STRATEGY_CATALOG.get(str(strategy_key), {})
+    return v.get("name_ar", str(strategy_key))
+
+
+def get_strategy_notes(strategy_key: str) -> str:
+    v = STRATEGY_CATALOG.get(str(strategy_key), {})
+    return v.get("notes", "")
 
 
 # ============================================================
@@ -57,7 +101,6 @@ def ensure_lab_tables():
     if not execute_query:
         return False
 
-    # صيغة عامة غالباً تنجح على Postgres/SQLite
     ddl = [
         """
         CREATE TABLE IF NOT EXISTS lab_runs (
@@ -125,11 +168,83 @@ def ensure_lab_tables():
 
     ok = True
     for q in ddl:
-        try:
-            execute_query(q, ())
-        except Exception:
+        if not _try_exec(q, ()):
             ok = False
     return ok
+
+
+# ============================================================
+# 🧽 Data Normalization (OHLCV)
+# ============================================================
+def _ensure_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    - يفك MultiIndex إن وجد
+    - يوحّد أسماء الأعمدة إلى Open/High/Low/Close/Volume
+    """
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+        return df
+
+    # فك MultiIndex الأعمدة (أحياناً من yfinance)
+    try:
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = [str(c[-1]) for c in df.columns]
+    except Exception:
+        pass
+
+    lower = {str(c).lower(): c for c in df.columns}
+
+    def pick(*names):
+        for n in names:
+            if n in df.columns:
+                return n
+            if n.lower() in lower:
+                return lower[n.lower()]
+        return None
+
+    m_open = pick("Open", "open")
+    m_high = pick("High", "high")
+    m_low = pick("Low", "low")
+    m_close = pick("Close", "close", "Adj Close", "adj close", "adj_close", "adjclose")
+    m_vol = pick("Volume", "volume", "vol")
+
+    ren = {}
+    if m_open and m_open != "Open":
+        ren[m_open] = "Open"
+    if m_high and m_high != "High":
+        ren[m_high] = "High"
+    if m_low and m_low != "Low":
+        ren[m_low] = "Low"
+    if m_close and m_close != "Close":
+        ren[m_close] = "Close"
+    if m_vol and m_vol != "Volume":
+        ren[m_vol] = "Volume"
+
+    if ren:
+        df = df.rename(columns=ren)
+
+    # إن ما فيه Open، نستخدم Close كحل احتياطي
+    if "Open" not in df.columns and "Close" in df.columns:
+        df["Open"] = df["Close"]
+
+    # Volume اختياري
+    if "Volume" not in df.columns:
+        df["Volume"] = 0.0
+
+    # تحويل أنواع البيانات وتنظيف
+    for c in ["Open", "High", "Low", "Close", "Volume"]:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    df = df.dropna(subset=["Open", "High", "Low", "Close"]).copy()
+
+    # ترتيب المؤشر
+    try:
+        if isinstance(df.index, pd.DatetimeIndex):
+            df = df.sort_index()
+    except Exception:
+        pass
+
+    return df
 
 
 # ============================================================
@@ -138,8 +253,11 @@ def ensure_lab_tables():
 def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
 
-    if isinstance(df.index, pd.DatetimeIndex):
-        df = df.sort_index()
+    try:
+        if isinstance(df.index, pd.DatetimeIndex):
+            df = df.sort_index()
+    except Exception:
+        pass
 
     for c in ["Open", "High", "Low", "Close", "Volume"]:
         if c not in df.columns:
@@ -173,7 +291,6 @@ def _safe_ts(idx) -> str:
 
 
 def _features_snapshot(row) -> dict:
-    """نسجل مؤشرات لحظة التنفيذ (مرجع للتعلم لاحقاً)."""
     out = {}
     for k in ["RSI", "SMA_20", "SMA_50", "Close", "Open", "High", "Low", "Volume"]:
         try:
@@ -195,20 +312,25 @@ def run_backtest(
     sector: str = None,
     timeframe: str = "1D",
     notes: str = "",
-) -> dict | None:
+):
+    """
+    يرجع dict (نتائج) أو None إذا البيانات غير كافية
+    """
+    if df is None or not isinstance(df, pd.DataFrame) or len(df) < 60:
+        return None
 
-    if df is None or len(df) < 60:
+    # تطبيع الأعمدة
+    try:
+        df = _ensure_ohlcv_columns(df)
+    except Exception:
+        return None
+
+    if df is None or df.empty or len(df) < 60:
         return None
 
     required_cols = {"Open", "Close", "High", "Low", "Volume"}
-    missing = [c for c in required_cols if c not in df.columns]
-    if missing:
-        if "Open" in missing and "Close" in df.columns:
-            df = df.copy()
-            df["Open"] = df["Close"]
-            missing.remove("Open")
-        if missing:
-            return None
+    if any(c not in df.columns for c in required_cols):
+        return None
 
     strategy = str(strategy or "").strip()
     if strategy not in STRATEGY_CATALOG:
@@ -243,24 +365,26 @@ def run_backtest(
 
     COMM = float(COMMISSION_RATE or 0.0)
 
-    # run_id ثابت مرجعي
     run_id = str(uuid.uuid4())
     created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    for _, (idx, row) in enumerate(df.iterrows()):
-        p_open = float(row["Open"]) if (row.get("Open") is not None and float(row["Open"]) > 0) else float(row["Close"])
-        sig = float(row.get("Trade_Signal", 0))
+    for idx, row in df.iterrows():
+        try:
+            p_open = float(row["Open"]) if pd.notna(row.get("Open")) and float(row["Open"]) > 0 else float(row["Close"])
+        except Exception:
+            p_open = float(row["Close"])
+
+        sig = float(row.get("Trade_Signal", 0) or 0)
         ts = _safe_ts(idx)
 
         # تنفيذ
         if sig == 1 and shares == 0:
-            invest = cash / (1 + COMM)
-            qty = int(invest / p_open)
+            invest = cash / (1 + COMM) if (1 + COMM) > 0 else cash
+            qty = int(invest / p_open) if p_open > 0 else 0
             if qty > 0:
                 cost = qty * p_open * (1 + COMM)
                 cash -= cost
                 shares = qty
-
                 log_rows.append({
                     "ts": ts, "side": "Buy", "price": p_open, "qty": qty,
                     "cash": cash, "value": cost,
@@ -272,7 +396,6 @@ def run_backtest(
         elif sig == -1 and shares > 0:
             revenue = shares * p_open * (1 - COMM)
             cash += revenue
-
             log_rows.append({
                 "ts": ts, "side": "Sell", "price": p_open, "qty": shares,
                 "cash": cash, "value": revenue,
@@ -280,32 +403,37 @@ def run_backtest(
                 "portfolio_value": None,
                 "features": _features_snapshot(row)
             })
-
             shares = 0
 
         # Mark-to-market على Close
         port_val = cash + shares * float(row["Close"])
         equity_rows.append({"ts": ts, "close_price": float(row["Close"]), "portfolio_value": float(port_val)})
 
-        # تحديث آخر عملية بالـ portfolio_value
         if log_rows and log_rows[-1]["ts"] == ts and log_rows[-1]["portfolio_value"] is None:
             log_rows[-1]["portfolio_value"] = float(port_val)
 
     final_val = float(equity_rows[-1]["portfolio_value"]) if equity_rows else float(capital)
     ret_pct = ((final_val - float(capital)) / float(capital)) * 100
 
+    # تجهيز DataFrames للواجهة
+    trades_df = pd.DataFrame([{
+        "Date": x["ts"], "Type": x["side"], "Price": x["price"], "Qty": x["qty"],
+        "Cash": x["cash"], "Value": x["value"]
+    } for x in log_rows])
+
+    pv_series = [x["portfolio_value"] for x in equity_rows]
+    out_df = df.copy()
+    out_df["Portfolio_Value"] = pv_series[:len(out_df)]
+
     result = {
         "run_id": run_id,
         "created_at": created_at,
         "strategy_key": strategy,
-        "strategy_name_ar": STRATEGY_CATALOG[strategy]["name_ar"],
+        "strategy_name_ar": get_strategy_label(strategy),
         "return_pct": float(ret_pct),
         "final_value": float(final_val),
-        "trades_log": pd.DataFrame([{
-            "Date": x["ts"], "Type": x["side"], "Price": x["price"], "Qty": x["qty"],
-            "Cash": x["cash"], "Value": x["value"]
-        } for x in log_rows]),
-        "df": df.assign(Portfolio_Value=[x["portfolio_value"] for x in equity_rows]),
+        "trades_log": trades_df,
+        "df": out_df,
     }
 
     _persist_run_to_db(
@@ -357,63 +485,57 @@ def _persist_run_to_db(
     end_date = _safe_ts(df.index.max()) if isinstance(df.index, pd.DatetimeIndex) else (str(df.index.max()) if len(df) else "")
 
     params = {
-        "commission": commission,
+        "commission": float(commission),
         "capital": float(capital),
         "timeframe": timeframe,
         "strategy_key": strategy,
     }
 
     # 1) run header
-    try:
-        execute_query(
-            """
-            INSERT INTO lab_runs
-            (run_id, created_at, symbol, sector, strategy_key, strategy_name_ar, timeframe,
-             capital, commission, bars_count, start_date, end_date, return_pct, final_value, trades_count,
-             params_json, notes)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            """,
-            (
-                run_id, created_at,
-                symbol or "", sector or "",
-                strategy, STRATEGY_CATALOG.get(strategy, {}).get("name_ar", strategy),
-                timeframe,
-                float(capital), float(commission),
-                bars_count, start_date, end_date,
-                float(ret_pct), float(final_val),
-                int(len(trades)),
-                json.dumps(params, ensure_ascii=False),
-                notes or "",
-            )
+    _try_exec(
+        """
+        INSERT INTO lab_runs
+        (run_id, created_at, symbol, sector, strategy_key, strategy_name_ar, timeframe,
+         capital, commission, bars_count, start_date, end_date, return_pct, final_value, trades_count,
+         params_json, notes)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        """,
+        (
+            run_id, created_at,
+            symbol or "", sector or "",
+            strategy, get_strategy_label(strategy),
+            timeframe,
+            float(capital), float(commission),
+            bars_count, start_date, end_date,
+            float(ret_pct), float(final_val),
+            int(len(trades)),
+            json.dumps(params, ensure_ascii=False),
+            notes or "",
         )
-    except Exception:
-        pass
+    )
 
     # 2) trades
     for j, t in enumerate(trades):
         trade_id = f"{run_id}_{j}"
-        try:
-            execute_query(
-                """
-                INSERT INTO lab_trades
-                (trade_id, run_id, ts, side, price, qty, cash, value, close_price, portfolio_value, features_json)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                """,
-                (
-                    trade_id, run_id,
-                    t.get("ts", ""),
-                    t.get("side", ""),
-                    float(t.get("price", 0) or 0),
-                    float(t.get("qty", 0) or 0),
-                    float(t.get("cash", 0) or 0),
-                    float(t.get("value", 0) or 0),
-                    float(t.get("close_price", 0) or 0),
-                    float(t.get("portfolio_value", 0) or 0),
-                    json.dumps(t.get("features", {}) or {}, ensure_ascii=False),
-                )
+        _try_exec(
+            """
+            INSERT INTO lab_trades
+            (trade_id, run_id, ts, side, price, qty, cash, value, close_price, portfolio_value, features_json)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            """,
+            (
+                trade_id, run_id,
+                t.get("ts", ""),
+                t.get("side", ""),
+                float(t.get("price", 0) or 0),
+                float(t.get("qty", 0) or 0),
+                float(t.get("cash", 0) or 0),
+                float(t.get("value", 0) or 0),
+                float(t.get("close_price", 0) or 0),
+                float(t.get("portfolio_value", 0) or 0),
+                json.dumps(t.get("features", {}) or {}, ensure_ascii=False),
             )
-        except Exception:
-            pass
+        )
 
     # 3) equity curve (downsample)
     try:
@@ -424,21 +546,18 @@ def _persist_run_to_db(
     for k in range(0, len(equity), step):
         e = equity[k]
         row_id = f"{run_id}_e_{k}"
-        try:
-            execute_query(
-                """
-                INSERT INTO lab_equity (row_id, run_id, ts, close_price, portfolio_value)
-                VALUES (%s,%s,%s,%s,%s)
-                """,
-                (
-                    row_id, run_id,
-                    e.get("ts", ""),
-                    float(e.get("close_price", 0) or 0),
-                    float(e.get("portfolio_value", 0) or 0),
-                )
+        _try_exec(
+            """
+            INSERT INTO lab_equity (row_id, run_id, ts, close_price, portfolio_value)
+            VALUES (%s,%s,%s,%s,%s)
+            """,
+            (
+                row_id, run_id,
+                e.get("ts", ""),
+                float(e.get("close_price", 0) or 0),
+                float(e.get("portfolio_value", 0) or 0),
             )
-        except Exception:
-            pass
+        )
 
     _link_latest_ai_decision_to_run(symbol=symbol, sector=sector, run_id=run_id, outcome_return_pct=float(ret_pct))
 
@@ -453,7 +572,13 @@ def _link_latest_ai_decision_to_run(symbol: str, sector: str, run_id: str, outco
         if dec is None or dec.empty:
             return
 
+        if "symbol" not in dec.columns:
+            return
+        if "decision_id" not in dec.columns:
+            return
+
         sub = dec[dec["symbol"].astype(str) == str(symbol)]
+
         if "linked_run_id" in sub.columns:
             sub = sub[sub["linked_run_id"].isna() | (sub["linked_run_id"].astype(str) == "")]
         if sub.empty:
@@ -464,7 +589,7 @@ def _link_latest_ai_decision_to_run(symbol: str, sector: str, run_id: str, outco
 
         decision_id = str(sub.iloc[0]["decision_id"])
 
-        execute_query(
+        _try_exec(
             """
             UPDATE ai_decisions
             SET linked_run_id=%s, outcome_return_pct=%s, outcome_notes=%s
@@ -485,10 +610,10 @@ def get_lab_runs(symbol: str = None, limit: int = 50) -> pd.DataFrame:
         df = fetch_table("lab_runs")
         if df is None or df.empty:
             return pd.DataFrame()
-        if symbol:
+        if symbol and "symbol" in df.columns:
             df = df[df["symbol"].astype(str) == str(symbol)]
         if "created_at" in df.columns:
             df = df.sort_values("created_at", ascending=False)
-        return df.head(limit)
+        return df.head(int(limit))
     except Exception:
         return pd.DataFrame()
