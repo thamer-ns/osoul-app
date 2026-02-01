@@ -1,10 +1,19 @@
+# views.py  ✅ النسخة الكاملة بعد التعديلات (توحيد شكل جداول المختبر + التحليل المالي مع جدول الاستثمار)
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 from datetime import date
 
 from config import DEFAULT_COLORS
-from components import render_kpi, render_custom_table, render_ticker_card, safe_fmt
+from components import (
+    render_kpi,
+    render_custom_table,
+    render_ticker_card,
+    safe_fmt,
+    inject_component_styles,
+    inject_streamlit_ar_i18n,
+)
 from analytics import (
     calculate_portfolio_metrics,
     update_prices,
@@ -28,6 +37,7 @@ except Exception:
     def render_technical_chart(symbol):
         st.warning("⚠️ ملف charts.py مفقود أو به خطأ.")
 
+
 # 2) Backtester (مع إظهار سبب الفشل داخل الواجهة)
 bt_import_error = None
 try:
@@ -36,6 +46,7 @@ except Exception as e:
     run_backtest = None
     list_strategies = lambda: []
     bt_import_error = repr(e)
+
 
 # 3) Financial Analysis
 try:
@@ -57,12 +68,14 @@ except Exception:
     def sync_auto_yahoo(s): return False, "Module Missing"
     def get_fundamental_ratios(s): return {}
 
+
 # 4) Classical Analysis
 try:
     from classical_analysis import render_classical_analysis
 except Exception:
     def render_classical_analysis(s):
         st.warning("⚠️ ملف classical_analysis.py مفقود أو به خطأ.")
+
 
 # 5) AI Engine (تشخيص كامل بدل الصمت)
 import traceback
@@ -97,6 +110,22 @@ except Exception:
 # ========================================================
 # Helpers
 # ========================================================
+
+def _ensure_ui_once():
+    """حقن CSS + تعريب placeholders مرة واحدة فقط."""
+    if st.session_state.get("_ui_injected_once"):
+        return
+    st.session_state["_ui_injected_once"] = True
+    try:
+        inject_component_styles()
+    except Exception:
+        pass
+    try:
+        inject_streamlit_ar_i18n(True)
+    except Exception:
+        pass
+
+
 def _normalize_symbol(sym: str) -> str:
     sym = (sym or "").strip().upper()
     if not sym:
@@ -183,8 +212,82 @@ def _clean_symbols_list(values) -> list:
 
 
 # ========================================================
+# ✅ NEW: Table wrapper (نفس تصميم جدول الاستثمار)
+# ========================================================
+
+def _render_table_like_trades(df: pd.DataFrame, cols_spec=None, max_rows: int = 400):
+    """
+    يعرض جدول بنفس تصميم جدول الاستثمار (render_custom_table)
+    - cols_spec: [("col","Label","type"), ...]
+    - لو None: يسوي mapping تلقائي للأعمدة
+    """
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+        st.info("📭 لا توجد بيانات لعرضها")
+        return
+
+    d = df.copy()
+    if max_rows and len(d) > max_rows:
+        d = d.head(max_rows)
+
+    label_map = {
+        # عام
+        "date": "التاريخ",
+        "ts": "التاريخ",
+        "time": "التاريخ",
+        "year": "السنة",
+        "period": "الفترة",
+        "symbol": "الرمز",
+
+        # مالي
+        "revenue": "الإيرادات",
+        "net_income": "صافي الربح",
+        "operating_cash_flow": "التدفق النقدي التشغيلي",
+        "total_assets": "إجمالي الأصول",
+        "total_liabilities": "إجمالي المطلوبات",
+        "current_assets": "الأصول المتداولة",
+        "current_liabilities": "المطلوبات المتداولة",
+        "total_equity": "حقوق الملكية",
+        "long_term_debt": "ديون طويلة",
+
+        # أسعار
+        "open": "الافتتاح",
+        "high": "الأعلى",
+        "low": "الأدنى",
+        "close": "الإغلاق",
+        "volume": "الحجم",
+
+        # Backtest
+        "portfolio_value": "قيمة المحفظة",
+        "return_pct": "العائد %",
+        "final_value": "القيمة النهائية",
+    }
+
+    def _guess_type(col: str) -> str:
+        c = str(col).lower()
+        if c in ("date", "ts") or "date" in c or "time" in c:
+            return "date"
+        if any(k in c for k in ["pct", "percent", "margin", "ratio", "yield", "growth"]):
+            return "percent"
+        if any(k in c for k in ["price", "value", "amount", "revenue", "income", "cash", "assets", "liab", "equity", "debt", "cost", "market"]):
+            return "money"
+        if any(k in c for k in ["qty", "quantity", "volume"]):
+            return "number"
+        return "text"
+
+    if cols_spec is None:
+        cols_spec = []
+        for col in list(d.columns)[:30]:
+            key = str(col)
+            lbl = label_map.get(key.lower(), key)
+            cols_spec.append((key, lbl, _guess_type(key)))
+
+    render_custom_table(d, cols_spec)
+
+
+# ========================================================
 # 1) Navigation
 # ========================================================
+
 def render_navbar():
     buttons = [
         ("🏠 الرئيسية", "home"),
@@ -237,6 +340,7 @@ def render_navbar():
 # ========================================================
 # 2) Dashboard
 # ========================================================
+
 def view_dashboard(fin):
     try:
         tp, tc = get_tasi_data()
@@ -358,6 +462,7 @@ def view_dashboard(fin):
 # ========================================================
 # 3) Portfolio View
 # ========================================================
+
 def view_portfolio(fin, key):
     ts = "مضاربة" if key == "spec" else "استثمار"
     st.header(f"💼 محفظة {ts}")
@@ -577,6 +682,7 @@ def view_portfolio(fin, key):
 # ========================================================
 # 4) Sukuk Portfolio
 # ========================================================
+
 def view_sukuk_portfolio(fin):
     st.header("📜 محفظة الصكوك")
     df = fin.get("all_trades", pd.DataFrame())
@@ -751,6 +857,7 @@ def view_sukuk_portfolio(fin):
 # ========================================================
 # 5) Cash Log
 # ========================================================
+
 def view_cash_log(fin):
     st.header("💰 السيولة والسجلات المالية")
 
@@ -867,7 +974,7 @@ def view_cash_log(fin):
                             if st.form_submit_button("حفظ التعديلات"):
                                 ns = _normalize_symbol(ns_raw)
                                 execute_query("UPDATE returnsgrants SET symbol=%s, amount=%s, date=%s WHERE id=%s", (ns, na, str(nd), tid))
-                                st.success("تم التعديل بنجاح")
+                                st.success("تم التعديل")
                                 st.cache_data.clear()
                                 st.rerun()
 
@@ -875,6 +982,7 @@ def view_cash_log(fin):
 # ========================================================
 # 6) Financial UI
 # ========================================================
+
 def render_data_import_ui_content(symbol):
     st.info("يدعم النظام: ملفات PDF من تداول، ملفات Excel/CSV، أو النسخ واللصق المباشر.")
     parser = FinancialParser()
@@ -913,7 +1021,9 @@ def render_data_import_ui_content(symbol):
             if final_symbol:
                 st.write("### 🧐 مراجعة البيانات المستخرجة:")
                 preview_df = pd.DataFrame([{"Date": r["date"], **r["data"]} for r in results])
-                st.dataframe(preview_df, use_container_width=True)
+
+                # ✅ بدل st.dataframe: نفس تصميم جدول الاستثمار
+                _render_table_like_trades(preview_df, max_rows=200)
 
                 if st.button("💾 تأكيد وحفظ في قاعدة البيانات", key=f"fin_save_{final_symbol}"):
                     count = 0
@@ -959,7 +1069,8 @@ def render_financial_dashboard_ui(symbol):
                 pass
 
             with st.expander("عرض الجدول التفصيلي"):
-                st.dataframe(df, use_container_width=True)
+                # ✅ بدل st.dataframe: نفس تصميم جدول الاستثمار
+                _render_table_like_trades(df, max_rows=600)
 
     with tab_data_mgmt:
         st.markdown("#### مصادر البيانات")
@@ -1035,6 +1146,7 @@ def render_financial_dashboard_ui(symbol):
 # ========================================================
 # 7) Analysis
 # ========================================================
+
 def view_analysis(fin):
     st.header("🔬 التحليل الشامل")
     trades = fin.get("all_trades", pd.DataFrame())
@@ -1049,7 +1161,6 @@ def view_analysis(fin):
             with c_stress:
                 sdf = pd.DataFrame(res["scenarios"])
                 if not sdf.empty and "scenario" in sdf.columns and "impact_pct" in sdf.columns:
-                    # map ثابت للألوان
                     cmap = {}
                     try:
                         for r in res["scenarios"]:
@@ -1104,7 +1215,6 @@ def view_analysis(fin):
         with tabs[0]:
             rep = generate_ai_report(sym)
 
-            # ✅ لا نوقف الصفحة كاملة
             if rep.get("__error__") or rep.get("__trace__"):
                 st.error("فشل تشغيل المستشار (AI Engine).")
                 st.code(rep.get("__trace__", ""))
@@ -1202,8 +1312,22 @@ def view_analysis(fin):
                             st.metric("العائد", f"{resbt.get('return_pct', 0):.2f}%")
                             if "df" in resbt and isinstance(resbt["df"], pd.DataFrame) and "Portfolio_Value" in resbt["df"]:
                                 st.line_chart(resbt["df"]["Portfolio_Value"])
+
+                            # ✅ بدل st.dataframe: نفس تصميم جدول الاستثمار
                             with st.expander("سجل الصفقات"):
-                                st.dataframe(resbt.get("trades_log", pd.DataFrame()), use_container_width=True)
+                                tlog = resbt.get("trades_log", pd.DataFrame())
+                                _render_table_like_trades(
+                                    tlog,
+                                    cols_spec=[
+                                        ("Date", "التاريخ", "date"),
+                                        ("Type", "النوع", "badge"),
+                                        ("Price", "السعر", "money"),
+                                        ("Qty", "الكمية", "money"),
+                                        ("Cash", "الكاش", "money"),
+                                        ("Value", "القيمة", "money"),
+                                    ],
+                                    max_rows=500
+                                )
                         else:
                             st.warning("⚠️ لم يرجع الاختبار نتيجة (قد تكون البيانات غير كافية).")
 
@@ -1248,6 +1372,7 @@ def view_analysis(fin):
 # ========================================================
 # 8) Other Pages
 # ========================================================
+
 def view_backtester_ui(fin):
     st.header("🧪 المختبر")
 
@@ -1285,7 +1410,23 @@ def view_backtester_ui(fin):
             except Exception:
                 pass
 
-            st.dataframe(data.tail(5), use_container_width=True)
+            # ✅ بدل st.dataframe: نفس تصميم جدول الاستثمار + تثبيت التاريخ كعمود
+            preview = data.tail(20).copy()
+            try:
+                preview = preview.reset_index()
+                if "index" in preview.columns:
+                    preview = preview.rename(columns={"index": "date"})
+            except Exception:
+                pass
+
+            # حاول نعرض OHLCV لو موجودة
+            cols = []
+            if "date" in preview.columns: cols.append(("date", "التاريخ", "date"))
+            for k, lab in [("Open","الافتتاح"), ("High","الأعلى"), ("Low","الأدنى"), ("Close","الإغلاق"), ("Volume","الحجم")]:
+                if k in preview.columns:
+                    cols.append((k, lab, "money" if k != "Volume" else "number"))
+
+            _render_table_like_trades(preview, cols_spec=cols if cols else None, max_rows=30)
 
             if len(data) < 120:
                 st.warning("⚠️ أقل من 120 شمعة — غالبًا لن تظهر إشارات (جرّب 5y أو max).")
@@ -1304,8 +1445,22 @@ def view_backtester_ui(fin):
                 st.metric("العائد", f"{res.get('return_pct', 0):.2f}%")
                 if "df" in res and isinstance(res["df"], pd.DataFrame) and "Portfolio_Value" in res["df"]:
                     st.line_chart(res["df"]["Portfolio_Value"])
+
+                # ✅ بدل st.dataframe: نفس تصميم جدول الاستثمار
                 with st.expander("سجل الصفقات"):
-                    st.dataframe(res.get("trades_log", pd.DataFrame()), use_container_width=True)
+                    tlog = res.get("trades_log", pd.DataFrame())
+                    _render_table_like_trades(
+                        tlog,
+                        cols_spec=[
+                            ("Date", "التاريخ", "date"),
+                            ("Type", "النوع", "badge"),
+                            ("Price", "السعر", "money"),
+                            ("Qty", "الكمية", "money"),
+                            ("Cash", "الكاش", "money"),
+                            ("Value", "القيمة", "money"),
+                        ],
+                        max_rows=800
+                    )
             else:
                 st.warning("⚠️ لم يرجع الاختبار نتيجة.")
                 st.info("إذا البيانات كبيرة، فالغالب أن الاستراتيجية لم تعطِ إشارات خلال الفترة.")
@@ -1396,7 +1551,10 @@ def view_settings():
 # ========================================================
 # 9) Router
 # ========================================================
+
 def router():
+    _ensure_ui_once()
+
     if "page" not in st.session_state:
         st.session_state.page = "home"
 
