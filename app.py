@@ -1,7 +1,14 @@
+# app.py
 import streamlit as st
 from config import APP_NAME, APP_ICON
 from database import init_db
 from styles import apply_custom_css
+
+# ✅ (اختياري) إذا ضفت apply_ui_css داخل styles.py
+try:
+    from styles import apply_ui_css
+except Exception:
+    apply_ui_css = None
 
 try:
     from components import inject_component_styles
@@ -20,7 +27,6 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# ✅ DB Init (مرة واحدة لكل سيرفر) — أقوى من session_state lock
 @st.cache_resource
 def _init_db_once():
     init_db()
@@ -33,23 +39,24 @@ except Exception as e:
     st.exception(e)
     st.stop()
 
-# ✅ حقن ستايلات components أولاً
 if inject_component_styles:
     try:
         inject_component_styles()
     except Exception as e:
-        # لا نوقف التطبيق، لكن لا نخفي الخطأ بالكامل
         st.warning("تنبيه: حصل خطأ أثناء تحميل ستايلات components.")
         st.exception(e)
 
-# ✅ ثم حقن styles.py أخيراً (عشان يغطي أي CSS ثاني)
+# ✅ CSS العام
 apply_custom_css()
+
+# ✅ CSS واجهة النتائج (بطاقات/أيقونات) لو موجود
+if apply_ui_css:
+    apply_ui_css()
 
 if "page" not in st.session_state:
     st.session_state["page"] = "home"
 
 try:
-    # (اختياري) Lazy import لتقليل أخطاء الاستيراد المبكر
     from security import login_system
     from views import router
 
