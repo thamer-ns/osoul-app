@@ -1,6 +1,8 @@
 # views.py ✅ النسخة الكاملة بعد التعديلات (منظّفة من الأحرف غير القابلة للطباعة)
 # (توحيد شكل جداول المختبر + التحليل المالي مع جدول الاستثمار)
 # + ✅ استخدام get_financial_statements (DB + Yahoo + fallback) بدل الاعتماد فقط على المخزن
+# + ✅ إضافة فواصل زمنية للمستشار والفني
+# + ✅ تحسين البحث عن السهم لتفادي التعلّق
 
 import streamlit as st
 import pandas as pd
@@ -36,7 +38,7 @@ from security import validate_trade_inputs
 try:
     from charts import render_technical_chart
 except Exception:
-    def render_technical_chart(symbol):
+    def render_technical_chart(symbol, *args, **kwargs):
         st.warning("⚠️ ملف charts.py مفقود أو به خطأ.")
 
 
@@ -132,6 +134,11 @@ def _ensure_ui_once():
         pass
 
 
+def _sym_key(sym: str) -> str:
+    """مفتاح آمن للاستخدام داخل session_state/keys."""
+    return (sym or "").replace(".", "_").replace("-", "_").replace(" ", "_")
+
+
 def _normalize_symbol(sym: str) -> str:
     sym = (sym or "").strip().upper()
     if not sym:
@@ -215,6 +222,22 @@ def _clean_symbols_list(values) -> list:
     except Exception:
         pass
     return list(sorted(set(out)))
+
+
+def _render_technical_chart_flex(symbol: str, period: str = "2y", interval: str = "1d"):
+    """
+    يستدعي render_technical_chart بأمان حتى لو charts.py لا يدعم period/interval.
+    """
+    try:
+        return render_technical_chart(symbol, period=period, interval=interval)
+    except TypeError:
+        try:
+            return render_technical_chart(symbol, period=period)
+        except TypeError:
+            try:
+                return render_technical_chart(symbol, period)
+            except TypeError:
+                return render_technical_chart(symbol)
 
 
 # ========================================================
@@ -529,14 +552,12 @@ def view_portfolio(fin, key):
             c_sort, _ = st.columns([1, 3])
             sort_by = c_sort.selectbox(f"فرز {ts} حسب:", sort_opts, key=f"s_op_{key}")
 
-            # ✅ تنظيف الرموز قبل جلب الأسعار
             symbols = _clean_symbols_list(op["symbol"].astype(str).tolist()) if "symbol" in op.columns else []
             try:
                 live_data = fetch_batch_data(symbols) if symbols else {}
             except Exception:
                 live_data = {}
 
-            # ✅ طبّع عمود symbol داخل الجدول (لمنع mismatch)
             if "symbol" in op.columns:
                 op["symbol"] = op["symbol"].astype(str).apply(_normalize_symbol)
 
@@ -1028,13 +1049,11 @@ def render_data_import_ui_content(symbol):
                 st.write("### 🧐 مراجعة البيانات المستخرجة:")
                 preview_df = pd.DataFrame([{"Date": r["date"], **r["data"]} for r in results])
 
-                # ✅ بدل st.dataframe: نفس تصميم جدول الاستثمار
                 _render_table_like_trades(preview_df, max_rows=200)
 
                 if st.button("💾 تأكيد وحفظ في قاعدة البيانات", key=f"fin_save_{final_symbol}"):
                     count = 0
                     for r in results:
-                        # ✅ FIX: لا تمرر source كموقع رابع (كان يروح period_type بالغلط)
                         if save_financial_record(final_symbol, r["date"], r["data"], period_type="Annual", source="File/Paste"):
                             count += 1
                     st.success(f"تم حفظ {count} سجلات لشركة {final_symbol}.")
@@ -1049,7 +1068,6 @@ def render_financial_dashboard_ui(symbol):
     tab_dashboard, tab_data_mgmt = st.tabs(["📊 لوحة التحليل المالي", "⚙️ إدارة البيانات"])
 
     with tab_dashboard:
-        # ✅ NEW: اجلب السنوي والربعي بطريقة موحّدة (DB + Yahoo + fallback)
         df_annual = get_financial_statements(symbol, "Annual")
         df_quarter = get_financial_statements(symbol, "Quarterly")
 
@@ -1058,7 +1076,7 @@ def render_financial_dashboard_ui(symbol):
             ["Annual", "Quarterly"],
             horizontal=True,
             label_visibility="collapsed",
-            key=f"fin_ptype_{symbol}"
+            key=f"fin_ptype_{_sym_key(symbol)}"
         )
 
         df = df_annual if ptype == "Annual" else df_quarter
@@ -1093,7 +1111,6 @@ def render_financial_dashboard_ui(symbol):
                 pass
 
             with st.expander("عرض الجدول التفصيلي"):
-                # ✅ بدل st.dataframe: نفس تصميم جدول الاستثمار
                 _render_table_like_trades(df, max_rows=600)
 
     with tab_data_mgmt:
@@ -1102,7 +1119,7 @@ def render_financial_dashboard_ui(symbol):
 
         with t1:
             st.caption("جلب البيانات من Yahoo Finance مباشرة")
-            if st.button("بدء المزامنة الآلية", key=f"sync_yahoo_{symbol}"):
+            if st.button("بدء المزامنة الآلية", key=f"sync_yahoo_{_sym_key(symbol)}"):
                 with st.spinner("جاري الاتصال..."):
                     ok, msg = sync_auto_yahoo(symbol)
                     if ok:
@@ -1118,34 +1135,34 @@ def render_financial_dashboard_ui(symbol):
             st.markdown("##### تسجيل البيانات المالية يدوياً")
             st.caption("أدخل البيانات اللازمة للتحليل المالي.")
 
-            with st.form(f"manual_fin_entry_{symbol}"):
+            with st.form(f"manual_fin_entry_{_sym_key(symbol)}"):
                 col_meta1, col_meta2 = st.columns(2)
-                f_date = col_meta1.date_input("تاريخ القوائم", date.today(), key=f"fin_date_{symbol}")
-                f_type = col_meta2.selectbox("الفترة", ["Annual", "Quarterly"], key=f"fin_type_{symbol}")
+                f_date = col_meta1.date_input("تاريخ القوائم", date.today(), key=f"fin_date_{_sym_key(symbol)}")
+                f_type = col_meta2.selectbox("الفترة", ["Annual", "Quarterly"], key=f"fin_type_{_sym_key(symbol)}")
 
                 st.divider()
                 st.markdown("**1. قائمة الدخل (Income Statement)**")
                 c_inc1, c_inc2 = st.columns(2)
-                rev = c_inc1.number_input("إجمالي الإيرادات", min_value=0.0, format="%.2f", key=f"fin_rev_{symbol}")
-                net_inc = c_inc2.number_input("صافي الربح", format="%.2f", key=f"fin_net_{symbol}")
+                rev = c_inc1.number_input("إجمالي الإيرادات", min_value=0.0, format="%.2f", key=f"fin_rev_{_sym_key(symbol)}")
+                net_inc = c_inc2.number_input("صافي الربح", format="%.2f", key=f"fin_net_{_sym_key(symbol)}")
 
                 st.divider()
                 st.markdown("**2. قائمة التدفقات النقدية**")
-                ocf = st.number_input("التدفق النقدي التشغيلي", help="Operating Cash Flow", format="%.2f", key=f"fin_ocf_{symbol}")
+                ocf = st.number_input("التدفق النقدي التشغيلي", help="Operating Cash Flow", format="%.2f", key=f"fin_ocf_{_sym_key(symbol)}")
 
                 st.divider()
                 st.markdown("**3. المركز المالي (Balance Sheet)**")
                 c_bs1, c_bs2 = st.columns(2)
-                tot_assets = c_bs1.number_input("إجمالي الأصول", min_value=0.0, format="%.2f", key=f"fin_assets_{symbol}")
-                tot_liab = c_bs2.number_input("إجمالي المطلوبات", min_value=0.0, format="%.2f", key=f"fin_liab_{symbol}")
+                tot_assets = c_bs1.number_input("إجمالي الأصول", min_value=0.0, format="%.2f", key=f"fin_assets_{_sym_key(symbol)}")
+                tot_liab = c_bs2.number_input("إجمالي المطلوبات", min_value=0.0, format="%.2f", key=f"fin_liab_{_sym_key(symbol)}")
 
                 c_bs3, c_bs4 = st.columns(2)
-                cur_assets = c_bs3.number_input("الأصول المتداولة", min_value=0.0, format="%.2f", key=f"fin_cur_assets_{symbol}")
-                cur_liab = c_bs4.number_input("المطلوبات المتداولة", min_value=0.0, format="%.2f", key=f"fin_cur_liab_{symbol}")
+                cur_assets = c_bs3.number_input("الأصول المتداولة", min_value=0.0, format="%.2f", key=f"fin_cur_assets_{_sym_key(symbol)}")
+                cur_liab = c_bs4.number_input("المطلوبات المتداولة", min_value=0.0, format="%.2f", key=f"fin_cur_liab_{_sym_key(symbol)}")
 
                 c_bs5, c_bs6 = st.columns(2)
-                tot_equity = c_bs5.number_input("إجمالي حقوق الملكية", format="%.2f", key=f"fin_equity_{symbol}")
-                lt_debt = c_bs6.number_input("الديون طويلة الأجل", min_value=0.0, format="%.2f", key=f"fin_ltdebt_{symbol}")
+                tot_equity = c_bs5.number_input("إجمالي حقوق الملكية", format="%.2f", key=f"fin_equity_{_sym_key(symbol)}")
+                lt_debt = c_bs6.number_input("الديون طويلة الأجل", min_value=0.0, format="%.2f", key=f"fin_ltdebt_{_sym_key(symbol)}")
 
                 st.divider()
                 if st.form_submit_button("💾 حفظ البيانات"):
@@ -1215,16 +1232,43 @@ def view_analysis(fin):
     syms = []
     try:
         if not trades.empty and "symbol" in trades.columns:
-            syms = list(set(trades["symbol"].astype(str).unique().tolist() + (wl["symbol"].astype(str).unique().tolist() if "symbol" in wl.columns else [])))
+            syms = list(set(
+                trades["symbol"].astype(str).unique().tolist() +
+                (wl["symbol"].astype(str).unique().tolist() if "symbol" in wl.columns else [])
+            ))
         else:
             syms = wl["symbol"].astype(str).unique().tolist() if "symbol" in wl.columns else []
     except Exception:
         syms = []
 
-    c1, c2 = st.columns([1, 2])
-    ns = c1.text_input("بحث", key="analysis_search")
-    options = [ns] + syms if ns else syms
-    sym = c2.selectbox("اختر السهم", options, key="analysis_symbol") if options else None
+    # ✅ بحث خفيف + زر تحليل (لتفادي التعلّق)
+    all_syms = _clean_symbols_list(syms)
+
+    c1, c2, c3 = st.columns([1.2, 2.2, 1])
+    q = c1.text_input("بحث بالرمز", key="analysis_q", placeholder="مثال: 1120 أو 1120.SR")
+
+    q_plain = (q or "").strip().upper()
+    filtered = all_syms
+    if q_plain:
+        filtered = []
+        for s in all_syms:
+            su = s.upper()
+            if q_plain in su or q_plain in su.replace(".SR", ""):
+                filtered.append(s)
+        filtered = filtered[:80]
+
+    pick_list = filtered if filtered else (all_syms[:80] if all_syms else [])
+    picked = c2.selectbox("اختر السهم", pick_list, key="analysis_pick") if pick_list else None
+
+    if c3.button("تحليل", key="analysis_go", type="primary"):
+        chosen = picked or q_plain
+        st.session_state["analysis_active_symbol"] = _normalize_symbol(chosen)
+
+    if c3.button("مسح", key="analysis_clear"):
+        st.session_state.pop("analysis_active_symbol", None)
+        st.rerun()
+
+    sym = st.session_state.get("analysis_active_symbol")
 
     if sym:
         sym = _normalize_symbol(sym)
@@ -1236,8 +1280,30 @@ def view_analysis(fin):
         st.markdown(f"### {n} ({sym})")
         tabs = st.tabs(["🤖 المستشار", "💰 مالي", "📈 فني", "🏛️ كلاسيكي", "📝 أطروحة"])
 
+        # --------------------------
+        # 🤖 المستشار + فاصل زمني
+        # --------------------------
         with tabs[0]:
-            rep = generate_ai_report(sym)
+            symk = _sym_key(sym)
+
+            tf_map = {
+                "يومي (1D)": "1D",
+                "أسبوعي (1W)": "1W",
+                "شهري (1M)": "1M",
+            }
+            c_tf1, c_tf2 = st.columns([1.2, 2.8])
+            ai_tf_label = c_tf1.selectbox("الفاصل الزمني", list(tf_map.keys()), index=0, key=f"ai_tf_{symk}")
+            ai_tf = tf_map[ai_tf_label]
+            c_tf2.caption("يغيّر منظور المستشار (قصير/متوسط/طويل).")
+
+            # كاش بسيط لتفادي إعادة التوليد بدون داعي
+            cache = st.session_state.setdefault("_ai_rep_cache", {})
+            cache_key = f"{sym}|{ai_tf}"
+            if cache_key in cache:
+                rep = cache[cache_key]
+            else:
+                rep = generate_ai_report(sym, timeframe=ai_tf)
+                cache[cache_key] = rep
 
             if rep.get("__error__") or rep.get("__trace__"):
                 st.error("فشل تشغيل المستشار (AI Engine).")
@@ -1286,13 +1352,13 @@ def view_analysis(fin):
 
             rule_text = st.text_area(
                 "✍️ أدخل الاستراتيجية",
-                key=f"user_rule_text_{sym}",
+                key=f"user_rule_text_{symk}",
                 height=110
             )
 
             col1, col2 = st.columns([1, 2])
             with col1:
-                if st.button("💾 حفظ الاستراتيجية", key=f"save_rule_{sym}", type="primary"):
+                if st.button("💾 حفظ الاستراتيجية", key=f"save_rule_{symk}", type="primary"):
                     res = save_user_rule(rule_text, title="قاعدة من المستخدم", enabled=1)
                     if res.get("ok"):
                         st.success("✅ تم حفظ الاستراتيجية ودمجها مباشرة مع الذكاء")
@@ -1314,7 +1380,7 @@ def view_analysis(fin):
             st.markdown("---")
 
             if run_backtest:
-                if st.button("🧪 تشغيل Backtest على هذا السهم", key=f"bt_{sym}"):
+                if st.button("🧪 تشغيل Backtest على هذا السهم", key=f"bt_{symk}"):
                     try:
                         data = get_chart_history(sym, "2y")
                         _, sec2 = get_company_details(sym)
@@ -1374,8 +1440,34 @@ def view_analysis(fin):
         with tabs[1]:
             render_financial_dashboard_ui(sym)
 
+        # --------------------------
+        # 📈 الفني + Period/Interval
+        # --------------------------
         with tabs[2]:
-            render_technical_chart(sym)
+            symk = _sym_key(sym)
+
+            period_opts = {
+                "6 أشهر": "6mo",
+                "سنة": "1y",
+                "سنتين": "2y",
+                "5 سنوات": "5y",
+                "10 سنوات": "10y",
+                "الحد الأقصى": "max",
+            }
+            interval_opts = {
+                "يومي 1D": "1d",
+                "أسبوعي 1W": "1wk",
+                "شهري 1M": "1mo",
+                "ساعة 1H": "1h",
+                "30 دقيقة": "30m",
+                "15 دقيقة": "15m",
+            }
+
+            c_p, c_i = st.columns(2)
+            p_label = c_p.selectbox("الفترة (Period)", list(period_opts.keys()), index=2, key=f"tech_p_{symk}")
+            i_label = c_i.selectbox("الفاصل (Interval)", list(interval_opts.keys()), index=0, key=f"tech_i_{symk}")
+
+            _render_technical_chart_flex(sym, period=period_opts[p_label], interval=interval_opts[i_label])
 
         with tabs[3]:
             render_classical_analysis(sym)
@@ -1385,7 +1477,7 @@ def view_analysis(fin):
             txt = th["thesis_text"] if (isinstance(th, dict) and "thesis_text" in th) else (
                 th.thesis_text if th is not None and hasattr(th, "thesis_text") else ""
             )
-            with st.form(f"th_{sym}"):
+            with st.form(f"th_{_sym_key(sym)}"):
                 nt = st.text_area("نص الأطروحة", value=txt)
                 if st.form_submit_button("حفظ"):
                     save_thesis(sym, nt, 0, "Hold")
@@ -1410,7 +1502,6 @@ def view_backtester_ui(fin):
     cap = st.number_input("رأس المال", min_value=1000.0, value=100000.0, step=1000.0, key="lab_cap")
 
     strat = _select_strategy_ui(key_prefix="lab")
-
     period = st.selectbox("الفترة التاريخية", ["6mo", "1y", "2y", "5y", "10y", "max"], index=3, key="lab_period")
 
     if st.button("بدء", key="bt_run"):
@@ -1442,8 +1533,9 @@ def view_backtester_ui(fin):
                 pass
 
             cols = []
-            if "date" in preview.columns: cols.append(("date", "التاريخ", "date"))
-            for k, lab in [("Open","الافتتاح"), ("High","الأعلى"), ("Low","الأدنى"), ("Close","الإغلاق"), ("Volume","الحجم")]:
+            if "date" in preview.columns:
+                cols.append(("date", "التاريخ", "date"))
+            for k, lab in [("Open", "الافتتاح"), ("High", "الأعلى"), ("Low", "الأدنى"), ("Close", "الإغلاق"), ("Volume", "الحجم")]:
                 if k in preview.columns:
                     cols.append((k, lab, "money" if k != "Volume" else "number"))
 
@@ -1458,7 +1550,6 @@ def view_backtester_ui(fin):
                 return
 
             _, sec = get_company_details(s_norm)
-
             res = run_backtest(data, str(strat), cap, symbol=s_norm, sector=sec)
 
             if res:
@@ -1581,7 +1672,6 @@ def router():
     render_navbar()
     pg = st.session_state.page
 
-    # ✅ نحسب مرة واحدة فقط
     fin = calculate_portfolio_metrics()
 
     if pg == "home":
