@@ -2,9 +2,10 @@
 # ✅ Facade layer: keep imports stable while real code lives in views_impl + ui.pages
 
 from ui.pages.dashboard import view_dashboard
+from ui.pages.portfolio import view_portfolio
 
 from views_impl import (
-    view_portfolio, view_sukuk_portfolio, view_analysis,
+    view_sukuk_portfolio, view_analysis,
     view_cash_log, view_backtester_ui, render_pulse_dashboard,
     view_add_trade, view_tools, view_settings
 )
