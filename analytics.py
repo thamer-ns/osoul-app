@@ -1,8 +1,8 @@
-# analytics.py
 import pandas as pd
 import numpy as np
 import streamlit as st
 from datetime import datetime, timezone
+from typing import List, Tuple, Optional, Dict, Any
 
 from database import fetch_table, execute_query
 from market_data import fetch_batch_data
@@ -32,10 +32,14 @@ def _to_utc_naive_series(s: pd.Series) -> pd.Series:
     try:
         return dt.dt.tz_convert(None)  # remove tz info (becomes naive)
     except Exception:
-        return pd.to_datetime(dt, errors="coerce")
+        # fallback
+        try:
+            return pd.to_datetime(dt, errors="coerce").dt.tz_localize(None)
+        except Exception:
+            return pd.to_datetime(dt, errors="coerce")
 
 
-def _normalize_dates_df(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
+def _normalize_dates_df(df: pd.DataFrame, cols: List[str]) -> pd.DataFrame:
     if df is None or df.empty:
         return df
     df = df.copy()
@@ -46,10 +50,11 @@ def _normalize_dates_df(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
 
 
 def _today_utc_naive() -> pd.Timestamp:
+    # UTC aware ثم إزالة tz
     return pd.Timestamp(datetime.now(timezone.utc)).tz_convert(None)
 
 
-def _safe_float(x, default=0.0) -> float:
+def _safe_float(x, default: float = 0.0) -> float:
     try:
         if x is None:
             return float(default)
@@ -74,18 +79,24 @@ def _normalize_trade_status(trades: pd.DataFrame) -> pd.DataFrame:
 
     trades = trades.copy()
 
+    # Ensure core columns
     if "status" not in trades.columns:
         trades["status"] = "Open"
     if "exit_date" not in trades.columns:
         trades["exit_date"] = pd.NaT
     if "asset_type" not in trades.columns:
         trades["asset_type"] = "Stock"
+    if "exit_price" not in trades.columns:
+        trades["exit_price"] = 0.0  # ✅ FIX: prevent scalar .fillna crash
 
     status_str = trades["status"].astype(str).str.strip().str.lower()
 
     # closed if:
-    has_exit_price = trades.get("exit_price", 0).fillna(0).astype(float) > 0
+    exit_price_num = pd.to_numeric(trades["exit_price"], errors="coerce").fillna(0.0)
+    has_exit_price = exit_price_num.astype(float) > 0
+
     has_exit_date = trades["exit_date"].notna()
+
     status_says_closed = status_str.isin([
         "close", "closed", "sold", "مغلقة", "مغلق", "تم البيع", "بيع"
     ])
@@ -100,7 +111,7 @@ def _normalize_trade_status(trades: pd.DataFrame) -> pd.DataFrame:
 # ✅ Data quality flags (avoid wrong analytics on zero prices)
 # ============================================================
 
-def _price_quality_flags(price: float, prev_close: float) -> dict:
+def _price_quality_flags(price: float, prev_close: float) -> Dict[str, Any]:
     """
     Flags بسيطة:
     - zero price -> bad
@@ -130,9 +141,9 @@ def _price_quality_flags(price: float, prev_close: float) -> dict:
 # ============================================================
 
 @st.cache_data(ttl=60, show_spinner=False)
-def calculate_portfolio_metrics(include_xirr: bool = True):
+def calculate_portfolio_metrics(include_xirr: bool = True) -> Dict[str, Any]:
     """
-    منطقك الأساسي (محاسبة نقدية):
+    منطق محاسبة نقدية:
     - cash
     - market value
     - realized/unrealized
@@ -140,7 +151,7 @@ def calculate_portfolio_metrics(include_xirr: bool = True):
     ✅ Fix timezone issues
     ✅ Optional XIRR
     """
-    default_res = {
+    default_res: Dict[str, Any] = {
         "cost_open": 0.0,
         "market_val_open": 0.0,
         "cash": 0.0,
@@ -166,10 +177,10 @@ def calculate_portfolio_metrics(include_xirr: bool = True):
         ret = fetch_table("ReturnsGrants")
 
         # 2) Normalize dates (CRITICAL FIX)
-        trades = _normalize_dates_df(trades, ["date", "exit_date", "created_at", "updated_at"])
-        dep = _normalize_dates_df(dep, ["date", "created_at"])
-        wit = _normalize_dates_df(wit, ["date", "created_at"])
-        ret = _normalize_dates_df(ret, ["date", "created_at"])
+        trades = _normalize_dates_df(trades, ["date", "exit_date", "created_at", "updated_at"]) if trades is not None else trades
+        dep = _normalize_dates_df(dep, ["date", "created_at"]) if dep is not None else dep
+        wit = _normalize_dates_df(wit, ["date", "created_at"]) if wit is not None else wit
+        ret = _normalize_dates_df(ret, ["date", "created_at"]) if ret is not None else ret
 
         # 3) Clean numeric
         for df in [dep, wit, ret]:
@@ -183,7 +194,7 @@ def calculate_portfolio_metrics(include_xirr: bool = True):
         # إذا ما فيه صفقات
         if trades is None or trades.empty:
             cash = (total_dep + total_ret) - total_wit
-            out = default_res | {
+            out = {**default_res, **{
                 "total_deposited": total_dep,
                 "total_withdrawn": total_wit,
                 "total_returns": total_ret,
@@ -192,7 +203,7 @@ def calculate_portfolio_metrics(include_xirr: bool = True):
                 "withdrawals": wit if wit is not None else pd.DataFrame(),
                 "returns": ret if ret is not None else pd.DataFrame(),
                 "all_trades": pd.DataFrame(),
-            }
+            }}
             # XIRR على الكاش فقط (النهاية = cash)
             if include_xirr:
                 xirr_val, note = compute_portfolio_xirr(dep, wit, ret, ending_value=float(cash))
@@ -200,12 +211,11 @@ def calculate_portfolio_metrics(include_xirr: bool = True):
                 out["xirr_note"] = note
             return out
 
-        # 4) Ensure cols
+        # 4) Ensure numeric cols
         for c in ["quantity", "entry_price", "exit_price", "current_price"]:
             _clean_num(trades, c, 0.0)
 
         if "symbol" not in trades.columns:
-            # بدون symbol ما نقدر نسوي أي شيء منطقي
             return default_res
 
         trades = _normalize_trade_status(trades)
@@ -216,11 +226,12 @@ def calculate_portfolio_metrics(include_xirr: bool = True):
         # 6) current price rules
         is_closed = trades["status"] == "Close"
 
-        # مغلقة: current_price = exit_price (يمثل آخر تقييم)
+        # مغلقة: current_price = exit_price
         trades.loc[is_closed, "current_price"] = trades.loc[is_closed, "exit_price"]
 
-        # صكوك مفتوحة: السعر الحالي = سعر الدخول
-        is_open_sukuk = (trades["status"] == "Open") & (trades["asset_type"].astype(str).str.strip().str.lower() == "sukuk")
+        # صكوك مفتوحة: current_price = entry_price
+        asset_type = trades["asset_type"].astype(str).str.strip().str.lower() if "asset_type" in trades.columns else "stock"
+        is_open_sukuk = (trades["status"] == "Open") & (asset_type == "sukuk")
         trades.loc[is_open_sukuk, "current_price"] = trades.loc[is_open_sukuk, "entry_price"]
 
         # أي قيم صفر/NaN خذ entry_price
@@ -237,18 +248,18 @@ def calculate_portfolio_metrics(include_xirr: bool = True):
         open_trades = trades[trades["status"] == "Open"].copy()
         closed_trades = trades[trades["status"] == "Close"].copy()
 
-        # 8) Cash equation (منطقك)
+        # 8) Cash equation
         cash_inflow = total_dep + total_ret + float(closed_trades["market_value"].sum())
         cash_outflow = total_wit + float(trades["total_cost"].sum())
         cash_calculated = float(cash_inflow - cash_outflow)
 
-        # 9) Data quality checks (منع تحليلات على أسعار صفر)
+        # 9) Data quality checks
         dq_notes = []
-        if (open_trades.get("current_price", pd.Series(dtype=float)) <= 0).any():
+        if (pd.to_numeric(open_trades.get("current_price", pd.Series(dtype=float)), errors="coerce").fillna(0.0) <= 0).any():
             dq_notes.append("يوجد صفقات مفتوحة بسعر حالي = 0 (راجع تحديث الأسعار)")
         data_quality = {"ok": (len(dq_notes) == 0), "notes": dq_notes}
 
-        out = {
+        out: Dict[str, Any] = {
             "cost_open": float(open_trades["total_cost"].sum()),
             "market_val_open": float(open_trades["market_value"].sum()),
             "unrealized_pl": float(open_trades["gain"].sum()),
@@ -266,7 +277,7 @@ def calculate_portfolio_metrics(include_xirr: bool = True):
             "data_quality": data_quality,
         }
 
-        # 10) XIRR (اختياري، ودقيق لأنه يعتمد فقط على التدفقات الخارجية + قيمة المحفظة الحالية)
+        # 10) XIRR
         if include_xirr:
             ending_value = float(open_trades["market_value"].sum() + cash_calculated)
             xirr_val, note = compute_portfolio_xirr(dep, wit, ret, ending_value=ending_value)
@@ -281,10 +292,10 @@ def calculate_portfolio_metrics(include_xirr: bool = True):
 
 
 # ============================================================
-# ✅ Price Update (Yahoo + Argaam handled in market_data.fetch_batch_data)
+# ✅ Price Update
 # ============================================================
 
-def update_prices():
+def update_prices() -> bool:
     """تحديث الأسعار للأسهم المفتوحة (غير الصكوك)."""
     try:
         df = fetch_table("Trades")
@@ -299,6 +310,7 @@ def update_prices():
             df["status"] = "Open"
 
         status_open = df["status"].astype(str).str.strip().str.lower().isin(["open", "مفتوح"])
+
         if "asset_type" in df.columns:
             not_sukuk = df["asset_type"].astype(str).str.strip().str.lower().ne("sukuk")
         else:
@@ -337,7 +349,7 @@ def update_prices():
 # ✅ Equity curve (light helper)
 # ============================================================
 
-def generate_equity_curve(trades: pd.DataFrame):
+def generate_equity_curve(trades: pd.DataFrame) -> pd.DataFrame:
     """
     منحنى نمو بسيط (تقريبي) بناءً على تواريخ الصفقات.
     NOTE: ليس NAV يومي حقيقي.
@@ -352,20 +364,27 @@ def generate_equity_curve(trades: pd.DataFrame):
     try:
         df["date"] = _to_utc_naive_series(df["date"])
         df = df.sort_values("date")
+
         if "total_cost" not in df.columns:
-            df["total_cost"] = df["quantity"].astype(float) * df["entry_price"].astype(float)
+            q = pd.to_numeric(df.get("quantity", 0), errors="coerce").fillna(0.0)
+            p = pd.to_numeric(df.get("entry_price", 0), errors="coerce").fillna(0.0)
+            df["total_cost"] = q * p
+
         _clean_num(df, "total_cost", 0.0)
         df["cumulative_invested"] = df["total_cost"].cumsum()
         return df
+
     except Exception:
         return pd.DataFrame()
 
 
 # ============================================================
-# ✅ XIRR / IRR (Money-weighted return) – accurate for external cashflows
+# ✅ XIRR / IRR
 # ============================================================
 
-def _build_external_cashflows(dep: pd.DataFrame, wit: pd.DataFrame, ret: pd.DataFrame, ending_value: float):
+def _build_external_cashflows(
+    dep: pd.DataFrame, wit: pd.DataFrame, ret: pd.DataFrame, ending_value: float
+) -> List[Tuple[pd.Timestamp, float]]:
     """
     Cashflows convention:
     - Deposits: negative (you invest money)
@@ -373,9 +392,9 @@ def _build_external_cashflows(dep: pd.DataFrame, wit: pd.DataFrame, ret: pd.Data
     - Returns/Grants: positive (income)
     - Ending value: positive (liquidation value at end date)
     """
-    flows = []
+    flows: List[Tuple[pd.Timestamp, float]] = []
 
-    def add_df(df, sign: float):
+    def add_df(df: pd.DataFrame, sign: float):
         if df is None or df.empty:
             return
         if "amount" not in df.columns:
@@ -383,41 +402,39 @@ def _build_external_cashflows(dep: pd.DataFrame, wit: pd.DataFrame, ret: pd.Data
         date_col = "date" if "date" in df.columns else ("created_at" if "created_at" in df.columns else None)
         if not date_col:
             return
+
         tmp = df[[date_col, "amount"]].copy()
         tmp[date_col] = _to_utc_naive_series(tmp[date_col])
         tmp["amount"] = pd.to_numeric(tmp["amount"], errors="coerce").fillna(0.0)
+
         for _, r in tmp.iterrows():
             dt = r[date_col]
             amt = float(r["amount"]) * sign
-            if pd.isna(dt) or amt == 0:
+            if pd.isna(dt) or abs(amt) < 1e-12:
                 continue
             flows.append((pd.Timestamp(dt), float(amt)))
 
-    # deposits are cash OUT (negative)
-    add_df(dep, sign=-1.0)
-    # withdrawals are cash IN (positive)
-    add_df(wit, sign=+1.0)
-    # returns are cash IN (positive)
-    add_df(ret, sign=+1.0)
+    add_df(dep, sign=-1.0)   # deposits are cash OUT
+    add_df(wit, sign=+1.0)   # withdrawals are cash IN
+    add_df(ret, sign=+1.0)   # returns are cash IN
 
-    # ending value
     end_dt = _today_utc_naive()
     flows.append((end_dt, float(ending_value)))
 
-    # consolidate same-day flows
     if not flows:
         return []
 
-    d = {}
+    # consolidate same-day
+    d: Dict[pd.Timestamp, float] = {}
     for dt, amt in flows:
-        d.setdefault(dt.normalize(), 0.0)
-        d[dt.normalize()] += float(amt)
+        k = dt.normalize()
+        d[k] = d.get(k, 0.0) + float(amt)
 
     out = sorted([(k, v) for k, v in d.items() if abs(v) > 1e-9], key=lambda x: x[0])
     return out
 
 
-def _xnpv(rate: float, cashflows: list[tuple[pd.Timestamp, float]]) -> float:
+def _xnpv(rate: float, cashflows: List[Tuple[pd.Timestamp, float]]) -> float:
     if rate <= -0.999999:
         return np.inf
     t0 = cashflows[0][0]
@@ -428,7 +445,7 @@ def _xnpv(rate: float, cashflows: list[tuple[pd.Timestamp, float]]) -> float:
     return total
 
 
-def _xirr_newton(cashflows: list[tuple[pd.Timestamp, float]], guess: float = 0.1) -> float | None:
+def _xirr_newton(cashflows: List[Tuple[pd.Timestamp, float]], guess: float = 0.1) -> Optional[float]:
     """
     Newton method with safety.
     Returns None if cannot converge.
@@ -436,7 +453,6 @@ def _xirr_newton(cashflows: list[tuple[pd.Timestamp, float]], guess: float = 0.1
     if not cashflows or len(cashflows) < 2:
         return None
 
-    # must have at least one negative and one positive
     amts = [c for _, c in cashflows]
     if not (any(a < 0 for a in amts) and any(a > 0 for a in amts)):
         return None
@@ -445,7 +461,6 @@ def _xirr_newton(cashflows: list[tuple[pd.Timestamp, float]], guess: float = 0.1
     for _ in range(80):
         f = _xnpv(r, cashflows)
 
-        # numerical derivative
         dr = 1e-5
         f1 = _xnpv(r + dr, cashflows)
         dfdx = (f1 - f) / dr
@@ -465,7 +480,7 @@ def _xirr_newton(cashflows: list[tuple[pd.Timestamp, float]], guess: float = 0.1
     return None
 
 
-def _xirr_bisect(cashflows: list[tuple[pd.Timestamp, float]], lo=-0.95, hi=5.0) -> float | None:
+def _xirr_bisect(cashflows: List[Tuple[pd.Timestamp, float]], lo: float = -0.95, hi: float = 5.0) -> Optional[float]:
     """
     Bisection fallback: robust if NPV changes sign.
     """
@@ -479,7 +494,7 @@ def _xirr_bisect(cashflows: list[tuple[pd.Timestamp, float]], lo=-0.95, hi=5.0) 
     if f_hi == 0:
         return float(hi)
     if f_lo * f_hi > 0:
-        return None  # no sign change
+        return None
 
     for _ in range(120):
         mid = (lo + hi) / 2.0
@@ -511,12 +526,10 @@ def compute_portfolio_xirr(dep: pd.DataFrame, wit: pd.DataFrame, ret: pd.DataFra
     if not cashflows or len(cashflows) < 2:
         return None, "no cashflows"
 
-    # Try Newton
     x = _xirr_newton(cashflows, guess=0.12)
     if x is not None and np.isfinite(x):
         return float(x), "newton"
 
-    # Fallback bisection
     x2 = _xirr_bisect(cashflows)
     if x2 is not None and np.isfinite(x2):
         return float(x2), "bisect"
@@ -525,7 +538,7 @@ def compute_portfolio_xirr(dep: pd.DataFrame, wit: pd.DataFrame, ret: pd.DataFra
 
 
 # ============================================================
-# ✅ Backup wrapper (as you had)
+# ✅ Backup wrapper
 # ============================================================
 
 def create_smart_backup():
