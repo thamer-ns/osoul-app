@@ -128,4 +128,3 @@ def view_dashboard(fin):
                 st.info("لا توجد بيانات تاريخية")
     else:
         st.info("👋 مرحباً بك! ابدأ بإضافة صفقات.")
-
