@@ -1,5 +1,6 @@
 # views.py ✅ النسخة الكاملة بعد التعديلات
 # (تحسين عرض المستشار + تنظيم التحليل + تحسين المختبر + تدقيق الواجهات)
+# ✅ FIX: تشخيص المستشار + منع كاش الخطأ + fallback تقرير بسيط + Self-Test
 
 import streamlit as st
 import pandas as pd
@@ -8,6 +9,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import date
 import traceback
+import inspect
+import importlib
 
 from config import DEFAULT_COLORS
 from components import (
@@ -86,24 +89,39 @@ except Exception:
         st.warning("⚠️ ملف classical_analysis.py مفقود أو به خطأ.")
 
 
-# 5) AI Engine (تشخيص كامل بدل الصمت)  ✅ تحديث لدعم مخرجات جديدة
+# ========================================================
+# 5) AI Engine (تشخيص + منع كاش الخطأ + fallback تقرير)
+# ========================================================
+
 ai_import_error = None
+ai_engine_path = None
+ai_engine_module = None
+AI_ENGINE_OK = False
 AI_ENGINE_VERSION = "unknown"
-AI_ENGINE_NAME = "Osoli AI Engine"
 
 try:
-    from ai_engine import (
-        AI_ENGINE_VERSION,
-        AI_ENGINE_NAME,  # ✅ optional في بعض النسخ
-        generate_ai_report,
-        calculate_portfolio_risk_score,
-        run_stress_test,
-        generate_rebalancing_suggestions,
-        save_user_rule,
-        load_user_rules,
-    )
+    import ai_engine as ai_engine_module
+    AI_ENGINE_VERSION = getattr(ai_engine_module, "AI_ENGINE_VERSION", "unknown")
+    ai_engine_path = getattr(ai_engine_module, "__file__", None)
+
+    # نتحقق من الدوال المطلوبة
+    required = ["generate_ai_report", "calculate_portfolio_risk_score", "run_stress_test", "generate_rebalancing_suggestions", "save_user_rule", "load_user_rules"]
+    missing = [fn for fn in required if not hasattr(ai_engine_module, fn)]
+    if missing:
+        raise ImportError(f"ai_engine missing functions: {missing}")
+
+    generate_ai_report = ai_engine_module.generate_ai_report
+    calculate_portfolio_risk_score = ai_engine_module.calculate_portfolio_risk_score
+    run_stress_test = ai_engine_module.run_stress_test
+    generate_rebalancing_suggestions = ai_engine_module.generate_rebalancing_suggestions
+    save_user_rule = ai_engine_module.save_user_rule
+    load_user_rules = ai_engine_module.load_user_rules
+
+    AI_ENGINE_OK = True
+
 except Exception:
     ai_import_error = traceback.format_exc()
+    AI_ENGINE_OK = False
 
     def generate_ai_report(symbol, timeframe="1d"):
         return {"__error__": "AI Engine import failed", "__trace__": ai_import_error}
@@ -117,6 +135,39 @@ except Exception:
 
     def load_user_rules(enabled_only=True, max_rows=50):
         return []
+
+
+def _ai_self_test():
+    """
+    ✅ يعطي تقرير تشخيص واضح للمستشار:
+    - هل ai_engine انستورد؟
+    - مساره
+    - توقيع generate_ai_report
+    - الدوال المتوفرة
+    """
+    info = {
+        "ok": bool(AI_ENGINE_OK),
+        "version": AI_ENGINE_VERSION,
+        "path": ai_engine_path,
+        "import_error": ai_import_error if not AI_ENGINE_OK else "",
+        "functions": {},
+    }
+    try:
+        if AI_ENGINE_OK and ai_engine_module:
+            for fn in ["generate_ai_report", "calculate_portfolio_risk_score", "run_stress_test", "save_user_rule", "load_user_rules"]:
+                obj = getattr(ai_engine_module, fn, None)
+                if obj:
+                    try:
+                        sig = str(inspect.signature(obj))
+                    except Exception:
+                        sig = "?"
+                    info["functions"][fn] = {"exists": True, "signature": sig}
+                else:
+                    info["functions"][fn] = {"exists": False, "signature": ""}
+    except Exception as e:
+        info["ok"] = False
+        info["import_error"] = (info.get("import_error") or "") + f"\nSELF_TEST_ERR: {e}"
+    return info
 
 
 # ========================================================
@@ -308,18 +359,57 @@ def _ai_timeframe_normalize(tf: str) -> str:
     return t_low
 
 
+def _fallback_ai_report(symbol: str, tf: str, reason: str, trace: str = ""):
+    """✅ تقرير بديل إذا تعطل ai_engine حتى لا ينهار التبويب."""
+    return {
+        "recommendation": "تعذر توليد التقرير الآن",
+        "strategy": "Fallback",
+        "color": "#b42318",
+        "score": 0,
+        "confidence": 0,
+        "confidence_label": "منخفضة",
+        "summary_text": f"المستشار غير متاح: {reason}",
+        "entry": {},
+        "risk": {},
+        "levels": {},
+        "targets": [],
+        "top_evidence": [],
+        "top_risks": [],
+        "risk_gates": {"pass": False, "reasons": ["AI Engine غير متاح"]},
+        "scenarios": [],
+        "__error__": reason,
+        "__trace__": trace,
+        "symbol": symbol,
+        "timeframe": tf,
+    }
+
+
 def _generate_ai_report_flex(symbol: str, timeframe: str):
+    """
+    ✅ مهم:
+    - يلتقط أي Exception ويرجعه بشكل مفهوم
+    - يمنع كاش الخطأ (نخلي قرار الكاش في UI)
+    """
     tf = _ai_timeframe_normalize(timeframe)
+
+    if not AI_ENGINE_OK:
+        return _fallback_ai_report(symbol, tf, "Import failed", ai_import_error or "")
+
     try:
-        return generate_ai_report(symbol, timeframe=tf)
-    except TypeError:
+        # نجرب أكثر من توقيع
         try:
-            return generate_ai_report(symbol, timeframe=timeframe)
+            return generate_ai_report(symbol, timeframe=tf)
         except TypeError:
             try:
-                return generate_ai_report(symbol, tf)
+                return generate_ai_report(symbol, timeframe=timeframe)
             except TypeError:
-                return generate_ai_report(symbol)
+                try:
+                    return generate_ai_report(symbol, tf)
+                except TypeError:
+                    return generate_ai_report(symbol)
+
+    except Exception as e:
+        return _fallback_ai_report(symbol, tf, str(e), traceback.format_exc())
 
 
 def _badge(text, tone="neutral"):
@@ -364,31 +454,15 @@ def _render_bullets(title, items, icon="•", limit=8, empty_text="لا يوجد
         st.write(f"{icon} {x}")
 
 
-def _score_from_new_engine(rep: dict) -> int:
-    """إذا ما فيه score صريح: نحسب Score بصري 0..100 من tech_score + fund_score."""
-    try:
-        tech = _to_float(rep.get("tech_score"), 0) or 0
-        fund = _to_float(rep.get("fund_score"), 0) or 0
-        total = tech + fund  # عادة 0..10 تقريباً
-        score = int(max(0, min(100, round(50 + (total * 5)))))
-        return score
-    except Exception:
-        return 0
-
-
 def _extract_ai(rep: dict) -> dict:
     """
     ✅ يوحد مفاتيح المستشار مهما اختلفت بين الإصدارات (قديم/جديد)
     يدعم:
     - recommendation/strategy/color/confidence + explainability
     - score/summary_text/entry/risk/targets/levels/scenarios
-    - tech_score/fund_score + risk_plan + engine_meta + tech_reasons/fund_reasons
     """
     if not isinstance(rep, dict):
         return {"ok": False, "raw": rep, "error": "AI report is not dict"}
-
-    if rep.get("__error__"):
-        return {"ok": False, "raw": rep, "error": rep.get("__error__")}
 
     ex = rep.get("explainability") or {}
     if not isinstance(ex, dict):
@@ -398,12 +472,8 @@ def _extract_ai(rep: dict) -> dict:
     negatives = _safe_list(ex.get("negatives", rep.get("negatives", [])))
     notes = _safe_list(ex.get("notes", rep.get("notes", [])))
 
-    # مصادر جديدة
-    tech_reasons = _safe_list(rep.get("tech_reasons", []))
-    fund_reasons = _safe_list(rep.get("fund_reasons", []))
-
-    top_evidence = _safe_list(rep.get("top_evidence", positives if positives else tech_reasons))
-    top_risks = _safe_list(rep.get("top_risks", negatives if negatives else fund_reasons))
+    top_evidence = _safe_list(rep.get("top_evidence", positives))
+    top_risks = _safe_list(rep.get("top_risks", negatives))
 
     # مخاطر/بوابات
     risk_gates = rep.get("risk_gates", {})
@@ -414,16 +484,8 @@ def _extract_ai(rep: dict) -> dict:
     if not isinstance(scenarios, list):
         scenarios = []
 
-    # Meta
-    engine_meta = rep.get("engine_meta") or {}
-    if not isinstance(engine_meta, dict):
-        engine_meta = {}
-
     # Score + Confidence
     score = rep.get("score", rep.get("osoli_score", None))
-    if score is None and ("tech_score" in rep or "fund_score" in rep):
-        score = _score_from_new_engine(rep)
-
     score = int(_to_float(score, 0) or 0)
     score = max(0, min(100, score))
 
@@ -435,7 +497,7 @@ def _extract_ai(rep: dict) -> dict:
     if not conf_label:
         conf_label = "مرتفعة" if conf >= 70 else "متوسطة" if conf >= 40 else "منخفضة"
 
-    # أجزاء التقرير القديم
+    # أجزاء التقرير الحديث
     summary_text = rep.get("summary_text") or rep.get("summary") or rep.get("reasoning") or ""
     entry = rep.get("entry", {}) if isinstance(rep.get("entry", {}), dict) else {}
     risk = rep.get("risk", {}) if isinstance(rep.get("risk", {}), dict) else {}
@@ -443,25 +505,6 @@ def _extract_ai(rep: dict) -> dict:
     targets = rep.get("targets", [])
     if not isinstance(targets, list):
         targets = []
-
-    # ✅ دعم risk_plan (نسخ ai_engine الحديثة)
-    risk_plan = rep.get("risk_plan") or {}
-    if isinstance(risk_plan, dict) and risk_plan:
-        # لا نكسر القديم: ندمج فقط لو ما كانت موجودة
-        entry.setdefault("entry_zone", risk_plan.get("entry"))
-        risk.setdefault("stop", risk_plan.get("stop"))
-        risk.setdefault("rr", risk_plan.get("rr"))
-        if risk_plan.get("target1") is not None and not targets:
-            targets = [{"name": "Target 1", "price": risk_plan.get("target1"), "note": ""}]
-
-    if not summary_text:
-        # تلخيص بسيط لو النسخة الجديدة ما ترسل summary
-        s = []
-        if tech_reasons:
-            s.append(" | ".join(tech_reasons[:3]))
-        if fund_reasons:
-            s.append(" | ".join(fund_reasons[:2]))
-        summary_text = "\n".join(s).strip()
 
     rec = rep.get("recommendation") or rep.get("action") or "—"
     strat = rep.get("strategy") or rep.get("strategy_name") or rep.get("model") or "—"
@@ -485,7 +528,6 @@ def _extract_ai(rep: dict) -> dict:
         "top_risks": top_risks,
         "risk_gates": risk_gates,
         "scenarios": scenarios,
-        "engine_meta": engine_meta,
         "raw": rep,
     }
 
@@ -622,18 +664,23 @@ def _render_scenarios(scenarios):
 
 
 def _render_ai_report_readable(rep: dict, show_debug=False, compact=False):
+    # ✅ لو التقرير فيه خطأ: اعرضه بوضوح
+    if isinstance(rep, dict) and (rep.get("__error__") or rep.get("__trace__")):
+        st.error("⚠️ المستشار لم يعمل.")
+        st.write(rep.get("__error__", "Unknown AI error"))
+        with st.expander("📌 تفاصيل الخطأ (Trace)"):
+            st.code(rep.get("__trace__", ""), language="text")
+        with st.expander("🧪 تشخيص AI Engine"):
+            st.json(_ai_self_test())
+        return
+
     data = _extract_ai(rep)
     if not data.get("ok"):
         st.warning("⚠️ تقرير المستشار غير صالح.")
-        err = data.get("error")
-        if err:
-            st.error(str(err))
         st.write(data.get("raw"))
         return
 
-    meta = data.get("engine_meta") or {}
-    tf = meta.get("timeframe") or "—"
-    st.caption(f"🧩 {AI_ENGINE_NAME} v{AI_ENGINE_VERSION} • Base Interval: {tf}")
+    st.caption(f"🧩 AI Engine v{AI_ENGINE_VERSION}")
 
     col = data["color"]
     st.markdown(
@@ -656,20 +703,13 @@ def _render_ai_report_readable(rep: dict, show_debug=False, compact=False):
     st.markdown("### 🧠 التقييم والثقة")
     c1, c2, c3 = st.columns([1, 1, 2])
     with c1:
-        _badge(
-            f"Score {data['score']}/100",
-            "success" if data["score"] >= 70 else "warning" if data["score"] >= 40 else "danger"
-        )
+        _badge(f"Score {data['score']}/100", "success" if data["score"] >= 70 else "warning" if data["score"] >= 40 else "danger")
     with c2:
-        conf = int(_to_float(data["confidence"], 0) or 0)
+        conf = data["confidence"]
         label = data["confidence_label"]
-        _badge(
-            f"{label} ({conf}%)",
-            "success" if conf >= 70 else "warning" if conf >= 40 else "danger"
-        )
+        _badge(f"{label} ({conf}%)", "success" if conf >= 70 else "warning" if conf >= 40 else "danger")
     with c3:
-        conf = max(0, min(100, int(_to_float(data["confidence"], 0) or 0)))
-        st.progress(conf)
+        st.progress(data["confidence"])
 
     # Summary
     if data.get("summary_text"):
@@ -678,12 +718,7 @@ def _render_ai_report_readable(rep: dict, show_debug=False, compact=False):
 
     # Entry/Risk/Targets/Levels
     if any([data.get("entry"), data.get("risk"), data.get("levels"), data.get("targets")]):
-        _render_entry_risk_levels(
-            data.get("entry") or {},
-            data.get("risk") or {},
-            data.get("levels") or {},
-            data.get("score") or 0
-        )
+        _render_entry_risk_levels(data.get("entry") or {}, data.get("risk") or {}, data.get("levels") or {}, data.get("score") or 0)
         st.markdown("### 🎯 الأهداف")
         _render_targets(data.get("targets") or [])
 
@@ -1924,7 +1959,7 @@ def view_analysis(fin):
         tabs = st.tabs(["🤖 المستشار", "💰 مالي", "📈 فني", "🏛️ كلاسيكي", "📝 أطروحة"])
 
         # --------------------------
-        # 🤖 المستشار
+        # 🤖 المستشار (✅ FIXED)
         # --------------------------
         with tabs[0]:
             symk = _sym_key(sym)
@@ -1941,7 +1976,16 @@ def view_analysis(fin):
                 key=f"ai_view_{symk}"
             )
             top3.caption("مبسط=مختصر | تفصيلي=كامل | بطاقات=واجهة أصولي | مطور=مع JSON")
-            if top4.button("🔄 تحديث", key=f"ai_refresh_{symk}"):
+
+            # ✅ مؤشر حالة المستشار
+            with top4:
+                if AI_ENGINE_OK:
+                    _badge("AI: OK", "success")
+                else:
+                    _badge("AI: Error", "danger")
+
+            # ✅ زر تحديث يمسح كاش هذا السهم + لا يترك خطأ مخزن
+            if st.button("🔄 تحديث المستشار", key=f"ai_refresh_{symk}"):
                 cache = st.session_state.get("_ai_rep_cache", {})
                 for k in list(cache.keys()):
                     if k.startswith(f"{sym}|"):
@@ -1949,32 +1993,35 @@ def view_analysis(fin):
                 st.session_state["_ai_rep_cache"] = cache
                 st.rerun()
 
+            # ✅ كاش: لا نخزن إذا كان التقرير خطأ
             cache = st.session_state.setdefault("_ai_rep_cache", {})
             cache_key = f"{sym}|{ai_tf}"
 
+            rep = None
             if cache_key in cache:
                 rep = cache[cache_key]
             else:
                 with st.spinner("جاري توليد تقرير المستشار..."):
                     rep = _generate_ai_report_flex(sym, timeframe=ai_tf)
-                cache[cache_key] = rep
 
-            if isinstance(rep, dict) and (rep.get("__error__") or rep.get("__trace__")):
-                st.error("فشل تشغيل المستشار (AI Engine).")
-                st.code(rep.get("__trace__", ""))
-                st.warning("سأكمل عرض بقية التبويبات (مالي/فني/كلاسيكي).")
-            else:
-                if view_mode == "مبسط":
-                    _render_ai_report_readable(rep, show_debug=False, compact=True)
-                elif view_mode == "تفصيلي":
-                    _render_ai_report_readable(rep, show_debug=False, compact=False)
-                elif view_mode == "بطاقات (Osoli)":
-                    try:
-                        render_osoli_report(rep, title=f"🤖 تقرير المستشار | {ai_tf_label}")
-                    except Exception:
-                        _render_ai_report_readable(rep, show_debug=False, compact=False)
+                # ✅ لا تخزن الأخطاء
+                if isinstance(rep, dict) and (rep.get("__error__") or rep.get("__trace__")):
+                    pass
                 else:
-                    _render_ai_report_readable(rep, show_debug=True, compact=False)
+                    cache[cache_key] = rep
+
+            # عرض التقرير
+            if view_mode == "مبسط":
+                _render_ai_report_readable(rep, show_debug=False, compact=True)
+            elif view_mode == "تفصيلي":
+                _render_ai_report_readable(rep, show_debug=False, compact=False)
+            elif view_mode == "بطاقات (Osoli)":
+                try:
+                    render_osoli_report(rep, title=f"🤖 تقرير المستشار | {ai_tf_label}")
+                except Exception:
+                    _render_ai_report_readable(rep, show_debug=False, compact=False)
+            else:
+                _render_ai_report_readable(rep, show_debug=True, compact=False)
 
             # قواعد المستخدم
             st.markdown("---")
@@ -1996,6 +2043,9 @@ def view_analysis(fin):
                         st.rerun()
                     else:
                         st.error(f"لم يتم الحفظ: {res.get('reason','')}")
+                        if res.get("trace"):
+                            with st.expander("Trace"):
+                                st.code(res.get("trace"), language="text")
 
             with st.expander("📌 عرض آخر الاستراتيجيات المحفوظة"):
                 rules = load_user_rules(enabled_only=True, max_rows=10) or []
@@ -2004,6 +2054,13 @@ def view_analysis(fin):
                         st.write(f"- **{r.get('title','قاعدة')}**: {r.get('rule_text','')}")
                 else:
                     st.info("لا توجد قواعد محفوظة بعد.")
+
+            # ✅ تشخيص سريع دائماً
+            with st.expander("🧪 تشخيص المستشار (AI Engine Diagnostics)"):
+                st.json(_ai_self_test())
+                if not AI_ENGINE_OK:
+                    st.warning("المشكلة غالباً داخل ai_engine.py (ImportError/Dependency/NameError).")
+                    st.info("أرسل لي نص الخطأ الموجود هنا وسأصلح ai_engine.py لك مباشرة.")
 
         # --------------------------
         # 💰 المالي
@@ -2104,10 +2161,7 @@ def view_backtester_ui(fin):
             st.caption(f"🔎 الرمز: {s_norm} | الفترة: {period} | الاستراتيجية: {strat}")
 
             with st.spinner("جاري جلب البيانات التاريخية..."):
-                try:
-                    data = get_chart_history(s_norm, period)
-                except TypeError:
-                    data = _get_chart_history_flex(s_norm, period, "1d")
+                data = get_chart_history(s_norm, period)
 
             if data is None or (isinstance(data, pd.DataFrame) and data.empty):
                 st.error("❌ لم يتم جلب بيانات (DataFrame فارغ)")
