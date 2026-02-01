@@ -3,14 +3,9 @@ import streamlit as st
 from analytics import calculate_portfolio_metrics, update_prices
 from components import inject_component_styles, inject_streamlit_ar_i18n
 
-# سنستورد الصفحات من views مبدئيًا (مرحلة 1 فقط) لتجنب نقل كل شيء مرة واحدة
-from views import (
-    view_dashboard, view_portfolio, view_sukuk_portfolio, view_analysis,
-    view_cash_log, view_backtester_ui, render_pulse_dashboard,
-    view_add_trade, view_tools, view_settings
-)
 
 def _ensure_ui_once():
+    """Inject CSS + Arabic i18n once (safe)."""
     if st.session_state.get("_ui_injected_once"):
         return
     st.session_state["_ui_injected_once"] = True
@@ -22,6 +17,7 @@ def _ensure_ui_once():
         inject_streamlit_ar_i18n(True)
     except Exception:
         pass
+
 
 def render_navbar():
     buttons = [
@@ -72,6 +68,7 @@ def render_navbar():
                     st.session_state.clear()
                     st.rerun()
 
+
 def router():
     _ensure_ui_once()
 
@@ -82,6 +79,13 @@ def router():
     pg = st.session_state.page
 
     fin = calculate_portfolio_metrics()
+
+    # ✅ Import داخلي لتفادي Circular Import (views يستورد router)
+    from views import (
+        view_dashboard, view_portfolio, view_sukuk_portfolio, view_analysis,
+        view_cash_log, view_backtester_ui, render_pulse_dashboard,
+        view_add_trade, view_tools, view_settings
+    )
 
     if pg == "home":
         view_dashboard(fin)
