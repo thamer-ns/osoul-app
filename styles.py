@@ -298,6 +298,109 @@ def apply_custom_css():
         }
 
         /* =====================================================
+           ✅ Report UI (Cards / Chips / Better JSON)
+           ===================================================== */
+
+        /* Grid container لعرض بطاقات جنب بعض */
+        .os-grid{
+            display:grid;
+            grid-template-columns: repeat(12, 1fr);
+            gap: 12px;
+            margin-top: 8px;
+            margin-bottom: 8px;
+        }
+        .os-col-12{ grid-column: span 12; }
+        .os-col-6{ grid-column: span 6; }
+        .os-col-4{ grid-column: span 4; }
+        .os-col-3{ grid-column: span 3; }
+
+        @media (max-width: 900px){
+            .os-col-6,.os-col-4,.os-col-3{ grid-column: span 12; }
+        }
+
+        /* Card */
+        .os-card{
+            background: var(--card-bg);
+            border: 1px solid var(--border2);
+            border-radius: 16px;
+            padding: 14px 14px;
+            box-shadow: 0 8px 18px rgba(15,23,42,0.06);
+        }
+        .os-card-title{
+            font-weight: 950;
+            margin-bottom: 8px;
+            color: var(--txt);
+            display:flex;
+            align-items:center;
+            gap:8px;
+        }
+        .os-muted{
+            color: var(--muted);
+            font-weight: 800;
+            font-size: 0.92rem;
+        }
+
+        /* Chips / Badges */
+        .os-chip{
+            display:inline-flex;
+            align-items:center;
+            gap:8px;
+            padding: 6px 10px;
+            border-radius: 999px;
+            border: 1px solid var(--border2);
+            background: var(--soft-bg);
+            font-weight: 900;
+            font-size: 0.82rem;
+            margin: 4px 4px 0 0;
+            white-space: nowrap;
+        }
+        .os-chip .mi{
+            font-family: 'Material Symbols Rounded' !important;
+            font-size: 18px;
+            line-height: 1;
+        }
+
+        .os-chip-green{ background:#DCFCE7; border-color: rgba(5,150,105,0.25); color:#166534; }
+        .os-chip-red{ background:#FEE2E2; border-color: rgba(220,38,38,0.25); color:#991B1B; }
+        .os-chip-blue{ background:#DBEAFE; border-color: rgba(37,99,235,0.25); color:#1E40AF; }
+        .os-chip-gray{ background:#F3F4F6; border-color: rgba(55,65,81,0.18); color:#374151; }
+        .os-chip-amber{ background:#FEF3C7; border-color: rgba(245,158,11,0.28); color:#92400E; }
+
+        /* Key/Value rows */
+        .os-kv{
+            display:flex;
+            justify-content:space-between;
+            gap:12px;
+            padding: 8px 0;
+            border-bottom: 1px dashed rgba(15,23,42,0.12);
+        }
+        .os-kv:last-child{ border-bottom:none; }
+        .os-k{ color: var(--muted); font-weight: 900; }
+        .os-v{ color: var(--txt); font-weight: 950; direction:ltr; text-align:left; }
+
+        /* ✅ تحسين شكل st.json / code blocks */
+        div[data-testid="stJson"] pre,
+        div[data-testid="stCodeBlock"] pre{
+            background: #0B1220 !important;
+            color: #E5E7EB !important;
+            border-radius: 14px !important;
+            border: 1px solid rgba(255,255,255,0.10) !important;
+            padding: 14px !important;
+            font-size: 0.85rem !important;
+            line-height: 1.55 !important;
+            direction: ltr !important;
+            text-align: left !important;
+            overflow-x: auto !important;
+            max-height: 420px;
+        }
+        div[data-testid="stJson"] pre code,
+        div[data-testid="stCodeBlock"] pre code{
+            color: #E5E7EB !important;
+            direction:ltr !important;
+            text-align:left !important;
+        }
+
+        /* =====================================================
            Mobile tweaks (مثل صورك على الجوال)
            ===================================================== */
         @media (max-width: 900px){
