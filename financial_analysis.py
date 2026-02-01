@@ -46,9 +46,23 @@ def _safe_float(x) -> float:
             return 0.0
         if isinstance(x, (np.floating, np.integer)):
             return float(x)
-        return float(str(x).replace(",", "").strip())
+        s = str(x).replace(",", "").strip()
+        if s.lower() in ("nan", "none", ""):
+            return 0.0
+        return float(s)
     except Exception:
         return 0.0
+
+
+def _safe_div(a, b, default=0.0):
+    try:
+        a = _safe_float(a)
+        b = _safe_float(b)
+        if b == 0:
+            return default
+        return a / b
+    except Exception:
+        return default
 
 
 def _safe_date_str(d) -> str:
@@ -635,18 +649,22 @@ def sync_auto_multi_sources(symbol: str, prefer="yahoo") -> tuple[bool, str]:
         sources = ["yahoo", "google", "argaam"]
 
     fetched = None
+    src_used = None
     for src in sources:
         if src == "yahoo":
             fetched = fetch_financials_from_yahoo(symbol)
             if fetched:
+                src_used = "yahoo"
                 break
         if src == "argaam":
             fetched = fetch_financials_from_argaam(symbol)
             if fetched:
+                src_used = "argaam"
                 break
         if src == "google":
             fetched = fetch_financials_from_google_finance(symbol)
             if fetched:
+                src_used = "google"
                 break
 
     if not fetched:
@@ -659,8 +677,8 @@ def sync_auto_multi_sources(symbol: str, prefer="yahoo") -> tuple[bool, str]:
         "operating_cash_flow", "current_assets", "current_liabilities", "long_term_debt"
     ]}
 
-    ok = save_financial_record(symbol, d, data, "Annual", f"Auto_{str(src).title()}")
-    return (ok, f"تمت المزامنة من {src} بتاريخ {d}" if ok else "فشل حفظ البيانات بعد الجلب")
+    ok = save_financial_record(symbol, d, data, "Annual", f"Auto_{str(src_used).title()}")
+    return (ok, f"تمت المزامنة من {src_used} بتاريخ {d}" if ok else "فشل حفظ البيانات بعد الجلب")
 
 
 # ==============================================================
@@ -752,14 +770,336 @@ def sync_auto_yahoo(symbol):
 
 
 # ==============================================================
-# 📐 5) Fundamental Ratios (Piotroski + Graham)
+# 📐 5) Fundamental Ratios (Piotroski + Graham + Advanced Pack)
 # ==============================================================
+def _fetch_yahoo_info(symbol: str) -> dict:
+    """
+    Fail-safe لقراءة info من Yahoo.
+    """
+    try:
+        t = yf.Ticker(symbol)
+        info = getattr(t, "info", {}) or {}
+        if not isinstance(info, dict):
+            return {}
+        return info
+    except Exception:
+        return {}
+
+
+def _compute_dupont(curr_row: pd.Series) -> dict:
+    """
+    DuPont:
+      ROE = (NetIncome/Revenue) * (Revenue/Assets) * (Assets/Equity)
+    """
+    out = {
+        "DuPont_Profit_Margin": 0.0,
+        "DuPont_Asset_Turnover": 0.0,
+        "DuPont_Equity_Multiplier": 0.0,
+        "ROE": 0.0,
+        "ROA": 0.0,
+        "Asset_Turnover": 0.0,
+    }
+    try:
+        rev = _safe_float(curr_row.get("revenue", 0))
+        ni = _safe_float(curr_row.get("net_income", 0))
+        assets = _safe_float(curr_row.get("total_assets", 0))
+        eq = _safe_float(curr_row.get("total_equity", 0))
+
+        pm = _safe_div(ni, rev, 0.0)
+        at = _safe_div(rev, assets, 0.0)
+        em = _safe_div(assets, eq, 0.0)
+
+        roe = pm * at * em if (pm and at and em) else _safe_div(ni, eq, 0.0)
+        roa = _safe_div(ni, assets, 0.0)
+
+        out["DuPont_Profit_Margin"] = float(pm)
+        out["DuPont_Asset_Turnover"] = float(at)
+        out["DuPont_Equity_Multiplier"] = float(em)
+        out["ROE"] = float(roe)
+        out["ROA"] = float(roa)
+        out["Asset_Turnover"] = float(at)
+    except Exception:
+        pass
+    return out
+
+
+def _compute_liquidity_leverage(curr_row: pd.Series, prev_row: pd.Series = None) -> dict:
+    out = {
+        "Current_Ratio": 0.0,
+        "Working_Capital": 0.0,
+        "Debt_to_Equity": 0.0,
+        "Liabilities_to_Assets": 0.0,
+        "LT_Debt_Trend": 0.0,  # سالب يعني تحسن (انخفاض دين)
+    }
+    try:
+        ca = _safe_float(curr_row.get("current_assets", 0))
+        cl = _safe_float(curr_row.get("current_liabilities", 0))
+        ltd = _safe_float(curr_row.get("long_term_debt", 0))
+        liab = _safe_float(curr_row.get("total_liabilities", 0))
+        assets = _safe_float(curr_row.get("total_assets", 0))
+        eq = _safe_float(curr_row.get("total_equity", 0))
+
+        wc = ca - cl
+        cr = _safe_div(ca, cl, 0.0)
+        dte = _safe_div(ltd, eq, 0.0) if eq > 0 else _safe_div(liab, assets, 0.0)
+        lta = _safe_div(liab, assets, 0.0)
+
+        out["Working_Capital"] = float(wc)
+        out["Current_Ratio"] = float(cr)
+        out["Debt_to_Equity"] = float(dte)
+        out["Liabilities_to_Assets"] = float(lta)
+
+        if prev_row is not None:
+            ltd_p = _safe_float(prev_row.get("long_term_debt", 0))
+            if ltd_p != 0:
+                out["LT_Debt_Trend"] = float((ltd - ltd_p) / abs(ltd_p))
+    except Exception:
+        pass
+    return out
+
+
+def _compute_earnings_quality(curr_row: pd.Series) -> dict:
+    """
+    Earnings Quality:
+      - OCF vs NetIncome
+      - Accruals ≈ (NI - OCF) / Assets
+    """
+    out = {
+        "OCF_to_NetIncome": 0.0,
+        "Accruals_to_Assets": 0.0,
+        "OCF_Margin": 0.0,
+    }
+    try:
+        ni = _safe_float(curr_row.get("net_income", 0))
+        ocf = _safe_float(curr_row.get("operating_cash_flow", 0))
+        assets = _safe_float(curr_row.get("total_assets", 0))
+        rev = _safe_float(curr_row.get("revenue", 0))
+
+        out["OCF_to_NetIncome"] = float(_safe_div(ocf, ni, 0.0)) if ni != 0 else (1.0 if ocf > 0 else 0.0)
+        out["Accruals_to_Assets"] = float(_safe_div((ni - ocf), assets, 0.0))
+        out["OCF_Margin"] = float(_safe_div(ocf, rev, 0.0))
+    except Exception:
+        pass
+    return out
+
+
+def _compute_altman_z_best_effort(symbol: str, curr_row: pd.Series, yahoo_info: dict) -> dict:
+    """
+    Altman Z (Best-effort):
+    Z = 1.2*(WC/TA) + 1.4*(RE/TA) + 3.3*(EBIT/TA) + 0.6*(MVE/TL) + 1.0*(S/TA)
+
+    ملاحظة: RE و EBIT عادة غير متوفرين من جدولك، لذلك:
+    - إذا لم نجد RE/EBIT من Yahoo، نضعهم 0 (ويظهر هذا في Opinions لاحقاً)
+    - MVE = marketCap من Yahoo
+    """
+    out = {
+        "Altman_Z": 0.0,
+        "Altman_Z_Quality": "partial",  # partial/full
+    }
+    try:
+        ta = _safe_float(curr_row.get("total_assets", 0))
+        if ta <= 0:
+            return out
+
+        ca = _safe_float(curr_row.get("current_assets", 0))
+        cl = _safe_float(curr_row.get("current_liabilities", 0))
+        wc = ca - cl
+
+        tl = _safe_float(curr_row.get("total_liabilities", 0))
+        sales = _safe_float(curr_row.get("revenue", 0))
+
+        # best-effort for EBIT & Retained Earnings
+        ebit = 0.0
+        retained = 0.0
+
+        # بعض الأحيان Yahoo يعطي ebitda فقط؛ نستخدمه كتقريب خفيف (مع خصم مبسط) أو نتركه 0
+        ebitda = _safe_float(yahoo_info.get("ebitda"))
+        if ebitda > 0:
+            # تقريب محافظ: EBIT ~ 0.7 EBITDA (بدون ادعاء دقة)
+            ebit = 0.7 * ebitda
+
+        # retained earnings غير متاح غالباً -> يبقى 0
+
+        mve = _safe_float(yahoo_info.get("marketCap"))
+
+        # coefficients
+        z = 0.0
+        z += 1.2 * _safe_div(wc, ta, 0.0)
+        z += 1.4 * _safe_div(retained, ta, 0.0)
+        z += 3.3 * _safe_div(ebit, ta, 0.0)
+        z += 0.6 * _safe_div(mve, tl, 0.0) if tl > 0 else 0.0
+        z += 1.0 * _safe_div(sales, ta, 0.0)
+
+        out["Altman_Z"] = float(z)
+        out["Altman_Z_Quality"] = "full" if (ebit > 0 and mve > 0 and sales > 0 and tl > 0) else "partial"
+    except Exception:
+        pass
+    return out
+
+
+def _compute_sgr(roe: float, yahoo_info: dict) -> dict:
+    """
+    Sustainable Growth Rate:
+      SGR = ROE * retention
+      retention = 1 - payoutRatio
+    """
+    out = {"SGR": 0.0, "Payout_Ratio": 0.0, "Retention_Ratio": 0.0, "SGR_Estimated": 0}
+    try:
+        payout = _safe_float(yahoo_info.get("payoutRatio"))
+        if payout <= 0 or payout >= 1:
+            # إذا غير متوفر/غير منطقي: نستخدم افتراض تحفظي 0.3 payout
+            payout = 0.30
+            out["SGR_Estimated"] = 1
+
+        retention = max(0.0, min(1.0, 1.0 - payout))
+        out["Payout_Ratio"] = float(payout)
+        out["Retention_Ratio"] = float(retention)
+        out["SGR"] = float(_safe_float(roe) * retention)
+    except Exception:
+        pass
+    return out
+
+
+def _compute_valuation_pack(yahoo_info: dict) -> dict:
+    out = {
+        "PE_Trailing": 0.0,
+        "PE_Forward": 0.0,
+        "PEG": 0.0,
+        "PB": 0.0,
+        "MarketCap": 0.0,
+        "EV": 0.0,
+        "EV_to_EBITDA": 0.0,
+        "Dividend_Yield": 0.0,
+    }
+    try:
+        out["PE_Trailing"] = float(_safe_float(yahoo_info.get("trailingPE")))
+        out["PE_Forward"] = float(_safe_float(yahoo_info.get("forwardPE")))
+        out["PEG"] = float(_safe_float(yahoo_info.get("pegRatio")))
+        out["PB"] = float(_safe_float(yahoo_info.get("priceToBook")))
+        out["MarketCap"] = float(_safe_float(yahoo_info.get("marketCap")))
+        out["EV"] = float(_safe_float(yahoo_info.get("enterpriseValue")))
+        out["EV_to_EBITDA"] = float(_safe_float(yahoo_info.get("enterpriseToEbitda")))
+        out["Dividend_Yield"] = float(_safe_float(yahoo_info.get("dividendYield")))
+    except Exception:
+        pass
+    return out
+
+
+def _score_fundamentals(metrics: dict) -> tuple[int, str, list]:
+    """
+    يرجع:
+      - score 0..10
+      - rating "قوي/جيد/متوسط/ضعيف"
+      - opinions[] (نصوص عربية)
+    """
+    score = 0
+    opinions = []
+
+    try:
+        piot = int(metrics.get("Piotroski_Score", 0) or 0)
+        roe = _safe_float(metrics.get("ROE", 0))
+        roa = _safe_float(metrics.get("ROA", 0))
+        cr = _safe_float(metrics.get("Current_Ratio", 0))
+        lta = _safe_float(metrics.get("Liabilities_to_Assets", 0))
+        ocf_ni = _safe_float(metrics.get("OCF_to_NetIncome", 0))
+        altz = _safe_float(metrics.get("Altman_Z", 0))
+        altq = str(metrics.get("Altman_Z_Quality", "partial"))
+
+        pe = _safe_float(metrics.get("PE_Trailing", 0))
+        peg = _safe_float(metrics.get("PEG", 0))
+
+        # Piotroski
+        if piot >= 7:
+            score += 3
+            opinions.append("💎 Piotroski مرتفع (جودة مالية قوية)")
+        elif piot <= 3:
+            score -= 2
+            opinions.append("⚠️ Piotroski منخفض (مخاطر مالية)")
+
+        # Profitability
+        if roe >= 0.12:
+            score += 2
+            opinions.append("✅ ROE قوي (>= 12%)")
+        elif roe <= 0.03 and roe > 0:
+            score -= 1
+            opinions.append("⚠️ ROE ضعيف")
+
+        if roa >= 0.05:
+            score += 1
+
+        # Liquidity
+        if cr >= 1.2:
+            score += 1
+            opinions.append("✅ السيولة جيدة (Current Ratio مناسب)")
+        elif cr > 0 and cr < 0.9:
+            score -= 1
+            opinions.append("⚠️ السيولة ضعيفة (Current Ratio منخفض)")
+
+        # Leverage
+        if lta > 0.75:
+            score -= 1
+            opinions.append("⚠️ التزامات مرتفعة مقارنة بالأصول")
+        elif 0 < lta <= 0.55:
+            score += 1
+
+        # Earnings quality
+        if ocf_ni >= 1.0:
+            score += 1
+            opinions.append("✅ جودة أرباح جيدة (OCF ≥ Net Income)")
+        elif 0 < ocf_ni < 0.6:
+            score -= 1
+            opinions.append("⚠️ جودة أرباح أقل (OCF أقل من صافي الربح)")
+
+        # Altman Z
+        if altz > 0:
+            if altz >= 3.0:
+                score += 2
+                opinions.append("✅ Altman Z قوي (مخاطر إفلاس منخفضة)")
+            elif altz < 1.8:
+                score -= 2
+                opinions.append("⛔ Altman Z منخفض (مخاطر أعلى)")
+            if altq != "full":
+                opinions.append("ℹ️ Altman Z محسوب بشكل جزئي حسب المتوفر")
+
+        # Valuation light
+        if peg > 0 and peg <= 1.2:
+            score += 1
+            opinions.append("✅ PEG جيد (تقييم معقول مقابل النمو)")
+        elif peg > 2.5:
+            score -= 1
+            opinions.append("⚠️ PEG مرتفع (تقييم مكلف)")
+
+        if pe > 0 and pe <= 14:
+            score += 1
+        elif pe >= 35:
+            score -= 1
+
+    except Exception:
+        pass
+
+    # clamp + rating
+    score = int(max(0, min(10, score)))
+
+    if score >= 8:
+        rating = "قوي"
+    elif score >= 6:
+        rating = "جيد"
+    elif score >= 4:
+        rating = "متوسط"
+    else:
+        rating = "ضعيف"
+
+    return score, rating, opinions
+
+
 def get_advanced_fundamental_ratios(symbol):
     """
     مخرجات متوافقة مع views.py:
     - Piotroski_Score
     - Fair_Value_Graham
     - Financial_Health / Rating / Opinions
+    + إضافات متقدمة:
+      DuPont / AltmanZ / SGR / Liquidity / EarningsQuality / Valuation
     """
     metrics = {
         "Fair_Value_Graham": 0.0,
@@ -768,6 +1108,40 @@ def get_advanced_fundamental_ratios(symbol):
         "Score": 0,
         "Rating": "N/A",
         "Opinions": "",
+
+        # Advanced pack defaults
+        "ROE": 0.0,
+        "ROA": 0.0,
+        "DuPont_Profit_Margin": 0.0,
+        "DuPont_Asset_Turnover": 0.0,
+        "DuPont_Equity_Multiplier": 0.0,
+
+        "Current_Ratio": 0.0,
+        "Working_Capital": 0.0,
+        "Debt_to_Equity": 0.0,
+        "Liabilities_to_Assets": 0.0,
+        "LT_Debt_Trend": 0.0,
+
+        "OCF_to_NetIncome": 0.0,
+        "Accruals_to_Assets": 0.0,
+        "OCF_Margin": 0.0,
+
+        "Altman_Z": 0.0,
+        "Altman_Z_Quality": "partial",
+
+        "SGR": 0.0,
+        "Payout_Ratio": 0.0,
+        "Retention_Ratio": 0.0,
+        "SGR_Estimated": 0,
+
+        "PE_Trailing": 0.0,
+        "PE_Forward": 0.0,
+        "PEG": 0.0,
+        "PB": 0.0,
+        "MarketCap": 0.0,
+        "EV": 0.0,
+        "EV_to_EBITDA": 0.0,
+        "Dividend_Yield": 0.0,
     }
 
     symbol = get_ticker_symbol(symbol)
@@ -781,8 +1155,13 @@ def get_advanced_fundamental_ratios(symbol):
     curr = df.iloc[0]
     prev = df.iloc[1] if len(df) > 1 else curr
 
+    # Yahoo info (valuation + marketcap + payout)
+    info = _fetch_yahoo_info(symbol)
+
     try:
-        # ✅ Piotroski مبسط
+        # ======================================================
+        # ✅ Piotroski (محسن لكن بنفس روحك)
+        # ======================================================
         score = 0
         opinions = []
 
@@ -823,48 +1202,87 @@ def get_advanced_fundamental_ratios(symbol):
         if cr_c > cr_p:
             score += 1
 
-        # 3) optional (إذا توفر equity/assets)
+        # 3) optional equity growth
         eq_c = _safe_float(curr.get("total_equity", 0))
         eq_p = _safe_float(prev.get("total_equity", 0))
         if eq_c > eq_p and eq_c > 0:
             score += 1
 
-        # نجعلها ضمن 0..9 بإضافة ثابت لطيف مثل كودك
+        # 0..9
         piotroski = int(min(max(score + 2, 0), 9))
         metrics["Piotroski_Score"] = piotroski
+        metrics["Score"] = piotroski  # legacy
 
-        if piotroski >= 7:
-            metrics["Financial_Health"] = "جيد"
-            metrics["Rating"] = "قوي"
-            opinions.append("✅ جودة أرباح/ملاءة جيدة (Piotroski مرتفع)")
-        elif piotroski <= 3:
-            metrics["Financial_Health"] = "هش"
-            metrics["Rating"] = "ضعيف"
-            opinions.append("⚠️ هشاشة مالية محتملة (Piotroski منخفض)")
-        else:
-            metrics["Financial_Health"] = "متوسط"
-            metrics["Rating"] = "متوسط"
+        # ======================================================
+        # ✅ DuPont + Efficiency + Liquidity + Earnings Quality
+        # ======================================================
+        dup = _compute_dupont(curr)
+        liq = _compute_liquidity_leverage(curr, prev)
+        eqy = _compute_earnings_quality(curr)
 
-        if ocf_c < 0:
-            opinions.append("⚠️ التدفق النقدي التشغيلي سالب")
+        metrics.update(dup)
+        metrics.update(liq)
+        metrics.update(eqy)
 
-        # ✅ Graham Value
+        # ======================================================
+        # ✅ Valuation/PEG pack
+        # ======================================================
+        metrics.update(_compute_valuation_pack(info))
+
+        # ======================================================
+        # ✅ Graham Value (كما عندك)
+        # ======================================================
         try:
-            t = yf.Ticker(symbol)
-            info = getattr(t, "info", {}) or {}
-            eps = info.get("trailingEps")
-            bvps = info.get("bookValue")
-
-            eps = _safe_float(eps)
-            bvps = _safe_float(bvps)
-
+            eps = _safe_float(info.get("trailingEps"))
+            bvps = _safe_float(info.get("bookValue"))
             if eps > 0 and bvps > 0:
                 metrics["Fair_Value_Graham"] = float((22.5 * eps * bvps) ** 0.5)
         except Exception:
             pass
 
-        metrics["Score"] = metrics["Piotroski_Score"]
-        metrics["Opinions"] = " | ".join(opinions)
+        # ======================================================
+        # ✅ Altman Z (best-effort)
+        # ======================================================
+        alt = _compute_altman_z_best_effort(symbol, curr, info)
+        metrics.update(alt)
+
+        # ======================================================
+        # ✅ SGR
+        # ======================================================
+        metrics.update(_compute_sgr(metrics.get("ROE", 0.0), info))
+
+        # ======================================================
+        # ✅ Rating + Financial_Health + Opinions
+        # ======================================================
+        # استخدم محرك تقييم شامل
+        fscore10, rating, adv_ops = _score_fundamentals(metrics)
+
+        # Financial_Health legacy
+        if metrics["Piotroski_Score"] >= 7:
+            metrics["Financial_Health"] = "جيد"
+        elif metrics["Piotroski_Score"] <= 3:
+            metrics["Financial_Health"] = "هش"
+        else:
+            metrics["Financial_Health"] = "متوسط"
+
+        # دمج الآراء (محافظة على كلمات يبحث عنها ai_engine: "قوي/جيد/سالب")
+        if ocf_c < 0:
+            adv_ops.append("⚠️ التدفق النقدي التشغيلي سالب")
+
+        # إذا SGR مبني على افتراض
+        if int(metrics.get("SGR_Estimated", 0)) == 1:
+            adv_ops.append("ℹ️ SGR محسوب بافتراض payoutRatio (تقديري)")
+
+        # Valuation notes
+        if _safe_float(metrics.get("PE_Trailing", 0)) == 0 and _safe_float(metrics.get("PEG", 0)) == 0:
+            adv_ops.append("ℹ️ بيانات التقييم (PE/PEG) غير متوفرة من Yahoo")
+
+        # Rating
+        metrics["Rating"] = rating
+        metrics["Score"] = int(max(fscore10, int(metrics.get("Piotroski_Score", 0) or 0)))
+
+        # Opinions string
+        metrics["Opinions"] = " | ".join([str(x) for x in adv_ops if str(x).strip()])[:1200]
 
     except Exception:
         pass
@@ -964,6 +1382,26 @@ def render_financial_dashboard_ui(symbol):
 
             with st.expander("البيانات التفصيلية"):
                 st.dataframe(df, use_container_width=True)
+
+            with st.expander("📌 مؤشرات متقدمة (DuPont / Altman / Valuation / SGR)"):
+                try:
+                    adv = {
+                        "ROE": metrics.get("ROE", 0),
+                        "ROA": metrics.get("ROA", 0),
+                        "DuPont PM": metrics.get("DuPont_Profit_Margin", 0),
+                        "DuPont AT": metrics.get("DuPont_Asset_Turnover", 0),
+                        "DuPont EM": metrics.get("DuPont_Equity_Multiplier", 0),
+                        "Altman Z": metrics.get("Altman_Z", 0),
+                        "SGR": metrics.get("SGR", 0),
+                        "CR": metrics.get("Current_Ratio", 0),
+                        "OCF/NI": metrics.get("OCF_to_NetIncome", 0),
+                        "PE": metrics.get("PE_Trailing", 0),
+                        "PEG": metrics.get("PEG", 0),
+                        "P/B": metrics.get("PB", 0),
+                    }
+                    st.json(adv)
+                except Exception:
+                    pass
 
     with tab_data_mgmt:
         st.info("يدعم: PDF تداول / Excel/CSV / Copy-Paste من المتصفح (TradingView/أرقام/Investing/Google Finance)")
