@@ -7,14 +7,14 @@ from components import inject_component_styles, inject_streamlit_ar_i18n
 from ui.pages.dashboard import view_dashboard
 from ui.pages.portfolio import view_portfolio
 from ui.pages.sukuk import view_sukuk_portfolio
+from ui.pages.cash import view_cash_log
 
 # ✅ باقي الصفحات حالياً من views_impl (مرحلة انتقالية)
 from views_impl import (
     view_analysis,
-    view_cash_log, view_backtester_ui, render_pulse_dashboard,
+    view_backtester_ui, render_pulse_dashboard,
     view_add_trade, view_tools, view_settings
 )
-
 
 
 def _ensure_ui_once():
