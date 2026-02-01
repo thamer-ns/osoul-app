@@ -1159,7 +1159,7 @@ def view_cash_log(fin):
                             nn = st.text_input("ملاحظة", value=str(curr.get("note", "") or ""), key=f"wit_fix_note_{tid}")
                             if st.form_submit_button("حفظ التعديلات"):
                                 execute_query("UPDATE withdrawals SET amount=%s, date=%s, note=%s WHERE id=%s", (na, str(nd), nn, tid))
-                                st.success("تم التعديل بنجاح")
+                                st.success("تم التعديل")
                                 st.cache_data.clear()
                                 st.rerun()
 
@@ -1267,8 +1267,7 @@ def render_financial_dashboard_ui(symbol):
             c1.metric("المتانة (F-Score)", f"{metrics.get('Piotroski_Score',0)}/9", metrics.get("Financial_Health","-"))
             fv = metrics.get("Fair_Value_Graham", 0)
             c2.metric("قيمة جراهام", f"{fv:,.2f}" if fv and fv > 0 else "N/A")
-            c3.write(f"**ملاحظات:** {metrics.get('Opinions', '-')}")
-
+            c3.write(f"**ملاحظات:** {metrics.get('Opinions', '-')}" )
             st.markdown("---")
 
             try:
