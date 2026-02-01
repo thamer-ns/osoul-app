@@ -6,9 +6,6 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 
-from market_data import get_chart_history
-from financial_analysis import get_advanced_fundamental_ratios
-
 
 # ============================================================
 # 🧠 AI Memory (DB Logging + Simple Online Learning)
@@ -49,6 +46,12 @@ def _safe_fetch_table(name: str):
 
 
 def _try_exec(sql: str, params=()):
+    """
+    Portable execute:
+    - Postgres style placeholders: %s
+    - SQLite style placeholders: ?
+    نحاول أولاً كما هو، وإذا فشل نجرب استبدال %s بـ ?
+    """
     execute_query, _ = _safe_import_db()
     if not execute_query:
         return False
@@ -56,7 +59,13 @@ def _try_exec(sql: str, params=()):
         execute_query(sql, params)
         return True
     except Exception:
-        return False
+        # fallback for SQLite paramstyle
+        try:
+            sql2 = sql.replace("%s", "?")
+            execute_query(sql2, params)
+            return True
+        except Exception:
+            return False
 
 
 def _now_str():
@@ -137,8 +146,10 @@ def log_ai_signal(symbol, timeframe, features: dict, report: dict, horizon_days=
             (
                 str(uuid.uuid4()),
                 _now_str(),
-                str(symbol), (str(sector) if sector is not None else None),
-                str(timeframe), int(horizon_days),
+                str(symbol),
+                (str(sector) if sector is not None else None),
+                str(timeframe),
+                int(horizon_days),
                 (str(strategy_name) if strategy_name is not None else None),
                 json.dumps(features or {}, ensure_ascii=False),
                 json.dumps(report or {}, ensure_ascii=False),
@@ -197,23 +208,25 @@ def _set_weight(key: str, weight: float):
         return False
     _ensure_ai_tables()
 
-    # SQLite/Postgres يدعمون UPSERT (لو كانت نسخة SQLite حديثة).
-    # وإذا ما دعمت، عندنا fallback.
+    # UPSERT: نستخدم صيغة مناسبة (ON CONFLICT(key)) ثم fallback
     try:
-        execute_query(
+        ok = _try_exec(
             """
             INSERT INTO ai_weights (key, weight, updated_at)
             VALUES (%s,%s,%s)
-            ON CONFLICT (key) DO UPDATE
+            ON CONFLICT(key) DO UPDATE
             SET weight=EXCLUDED.weight, updated_at=EXCLUDED.updated_at
             """,
             (str(key), float(weight), _now_str()),
         )
-        return True
+        return bool(ok)
     except Exception:
         try:
             _try_exec("DELETE FROM ai_weights WHERE key=%s", (str(key),))
-            _try_exec("INSERT INTO ai_weights (key, weight, updated_at) VALUES (%s,%s,%s)", (str(key), float(weight), _now_str()))
+            _try_exec(
+                "INSERT INTO ai_weights (key, weight, updated_at) VALUES (%s,%s,%s)",
+                (str(key), float(weight), _now_str())
+            )
             return True
         except Exception:
             return False
@@ -499,7 +512,7 @@ def _compute_indicators(df: pd.DataFrame):
     except Exception:
         pass
 
-    # Volatility(20) - std لعوائد يومية
+    # Volatility(20)
     try:
         ret = close.pct_change().fillna(0)
         out["vol20"] = ret.rolling(20).std().bfill()
@@ -560,6 +573,7 @@ def _eval_user_rule(parsed_rule: dict, df: pd.DataFrame, ind: dict):
     def ok_one(c):
         t = c.get("type")
         v = c.get("value")
+
         if t == "macd_cross" and macd is not None and sig is not None and macd_prev is not None and sig_prev is not None:
             if v == "up":
                 return (macd > sig) and (macd_prev <= sig_prev)
@@ -671,7 +685,7 @@ def _pivot_points(series, left=3, right=3, mode="high"):
     pivots = []
     arr = series.values
     for i in range(left, len(arr) - right):
-        window = arr[i - left : i + right + 1]
+        window = arr[i - left: i + right + 1]
         if mode == "high":
             if arr[i] == np.max(window):
                 pivots.append((i, float(arr[i])))
@@ -783,7 +797,6 @@ def _detect_order_block(df):
     feats = {"bull_ob_retest": 0, "bear_ob_retest": 0}
 
     close = df["Close"].astype(float)
-    open_ = df["Open"].astype(float)
     high = df["High"].astype(float)
     low = df["Low"].astype(float)
 
@@ -913,7 +926,9 @@ def _analyze_ichimoku(df):
 
 
 def _analyze_financial_golden_rules(symbol):
+    # ✅ Lazy import لتجنب كسر الاستيراد
     try:
+        from financial_analysis import get_advanced_fundamental_ratios
         metrics = get_advanced_fundamental_ratios(symbol)
     except Exception:
         return 0, [], {}
@@ -967,7 +982,6 @@ def _analyze_vsa_art_of_trading(df):
     high = df["High"].astype(float)
     low = df["Low"].astype(float)
     close = df["Close"].astype(float)
-    open_ = df["Open"].astype(float)
     vol = df["Volume"].astype(float)
 
     curr = df.iloc[-1]
@@ -1299,6 +1313,90 @@ def _risk_plan_from_atr_sr(df, ind):
 
 
 # ============================================================
+# ✅ Risk Gates + Scenarios
+# ============================================================
+def _risk_gates(report: dict) -> dict:
+    """
+    بوابات مخاطرة بسيطة:
+    - تمنع توصية شراء إذا R:R ضعيف
+    - تمنع الشراء إذا كسر دعم مؤكّد
+    """
+    gates = {"pass": True, "reasons": []}
+    rp = report.get("risk_plan") or {}
+    rr = rp.get("rr", None)
+
+    try:
+        if rr is not None and float(rr) > 0 and float(rr) < 1.2:
+            gates["pass"] = False
+            gates["reasons"].append("R:R أقل من 1.2 — مخاطرة غير مناسبة")
+    except Exception:
+        pass
+
+    feats = report.get("features") or {}
+    if int(feats.get("broke_support_confirm") or 0) == 1:
+        gates["pass"] = False
+        gates["reasons"].append("كسر دعم مؤكّد — يمنع الشراء")
+
+    return gates
+
+
+def _build_scenarios(df: pd.DataFrame, report: dict) -> list:
+    """
+    سيناريوهات مبسطة:
+    - اختراق مقاومة
+    - ارتداد من دعم
+    - فشل/كسر دعم
+    """
+    if df is None or df.empty:
+        return []
+
+    close = float(df["Close"].astype(float).iloc[-1])
+    feats = report.get("features") or {}
+    rp = report.get("risk_plan") or {}
+
+    # نستخدم مستويات الدعم/المقاومة التقريبية من zones
+    lows, highs = _support_resistance_zones(df, lookback=120, max_levels=6)
+    near_sup = None
+    near_res = None
+    if lows:
+        near_sup = min(lows, key=lambda x: abs(close - x))
+    if highs:
+        near_res = min(highs, key=lambda x: abs(close - x))
+
+    scenarios = []
+
+    if near_res is not None:
+        scenarios.append({
+            "name": "سيناريو اختراق",
+            "trigger": f"إغلاق يومي فوق المقاومة ~ {near_res:.2f}",
+            "entry": rp.get("entry"),
+            "stop": rp.get("stop"),
+            "target1": rp.get("target1"),
+            "note": "يفضّل مع حجم داعم/زخم",
+        })
+
+    if near_sup is not None:
+        scenarios.append({
+            "name": "سيناريو ارتداد",
+            "trigger": f"ثبات فوق الدعم ~ {near_sup:.2f} + شمعة انعكاس",
+            "entry": rp.get("entry"),
+            "stop": rp.get("stop"),
+            "target1": rp.get("target1"),
+            "note": "أفضل إذا ظهر No Supply / تجميع OBV",
+        })
+
+    if int(feats.get("broke_support_confirm") or 0) == 1 and near_sup is not None:
+        scenarios.append({
+            "name": "سيناريو فشل",
+            "trigger": f"إغلاق يومين تحت الدعم ~ {near_sup:.2f}",
+            "action": "خروج/تقليل مركز أو وقف خسارة",
+            "note": "متوافق مع broke_support_confirm",
+        })
+
+    return scenarios[:5]
+
+
+# ============================================================
 # Confidence / Explainability / Strategy
 # ============================================================
 def _calc_confidence(tech_score, fund_score, df):
@@ -1343,7 +1441,11 @@ def _build_explainability(tech_reasons, fund_reasons, total_score, tech_score, f
     if fund_score > 3 and tech_score < 0:
         notes.append("تعارض: المالي قوي لكن السعر ضعيف — مناسب لاستثمار قيمة بصبر.")
 
-    return {"positives": positives[:10], "negatives": negatives[:10], "notes": notes[:10]}
+    exp = {"positives": positives[:10], "negatives": negatives[:10], "notes": notes[:10]}
+    # إضافات منظمة للواجهة
+    exp["top_evidence"] = exp["positives"][:3]
+    exp["top_risks"] = exp["negatives"][:3]
+    return exp
 
 
 def _infer_strategy_hint(module_scores: dict):
@@ -1360,12 +1462,16 @@ def generate_ai_report(symbol, timeframe="1D"):
     """
     نفس منطقك، لكن:
     - يطبّع الرمز تلقائياً (1120 -> 1120.SR)
-    - يسجل قواعد المستخدم فعلاً على SQLite
-    - تمت إضافة محركات تحليل جديدة بدون حذف القديم
+    - DB Portable (SQLite/Postgres)
+    - Lazy imports لمنع كسر الاستيراد
+    - Risk Gates + Scenarios + Explainability improvements
     """
     symbol = _normalize_symbol(symbol)
 
     try:
+        # ✅ Lazy import
+        from market_data import get_chart_history
+
         df = get_chart_history(symbol, period="6mo")
         if df is None or df.empty:
             raise ValueError("no data")
@@ -1413,7 +1519,7 @@ def generate_ai_report(symbol, timeframe="1D"):
             except Exception:
                 pass
 
-        # إضافة قيم عددية (لا تدخل في weighted_bonus لأنها ليست 0/1)
+        # قيم عددية
         try:
             close_last = float(df["Close"].astype(float).iloc[-1])
             features["close"] = close_last
@@ -1527,6 +1633,7 @@ def generate_ai_report(symbol, timeframe="1D"):
 
         confidence, confidence_label = _calc_confidence(tech_score, fund_score, df)
         explainability = _build_explainability(tech_reasons, fund_reasons, total_score, tech_score, fund_score)
+        explainability["confidence_note"] = f"Confidence={int(confidence)}% ({confidence_label})"
 
         risk_plan = _risk_plan_from_atr_sr(df, ind)
 
@@ -1546,8 +1653,21 @@ def generate_ai_report(symbol, timeframe="1D"):
             "calibration": {},
             "strategy_name": strategy_name,
             "sector": sector,
-            "risk_plan": risk_plan,  # ✅ إضافة بدون حذف أي مفتاح سابق
+            "risk_plan": risk_plan,
         }
+
+        # ✅ Risk Gates + Scenarios
+        report["risk_gates"] = _risk_gates(report)
+        report["scenarios"] = _build_scenarios(df, report)
+
+        # إذا بوابات المخاطر رفضت، نعدل التوصية (بدون حذف معلوماتك)
+        try:
+            if (not report["risk_gates"]["pass"]) and ("شراء" in str(report["recommendation"]) or "Buy" in str(report["recommendation"])):
+                report["recommendation"] = "⚠️ إشارة موجودة لكن بوابات المخاطر رفضت"
+                report["color"] = "#ffc107"
+                report["strategy"] = "تم رفض التوصية بسبب: " + " | ".join(report["risk_gates"]["reasons"])
+        except Exception:
+            pass
 
         log_ai_signal(symbol, timeframe, features, report, horizon_days=20, sector=sector, strategy_name=strategy_name)
         return report
@@ -1567,7 +1687,9 @@ def generate_ai_report(symbol, timeframe="1D"):
             "calibration": {},
             "strategy_name": None,
             "sector": None,
-            "risk_plan": {},  # ✅ حتى لا ينكسر العرض
+            "risk_plan": {},
+            "risk_gates": {"pass": False, "reasons": ["AI Engine Error"]},
+            "scenarios": [],
         }
 
 
