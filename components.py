@@ -1,3 +1,4 @@
+# components.py
 import streamlit as st
 import pandas as pd
 import html
@@ -263,7 +264,6 @@ def inject_component_styles():
             border-bottom:1px solid rgba(148,163,184,0.15);
             color:#0F172A;
             font-weight:600;
-            font-size:0.85rem;
             white-space:nowrap;
             text-align:right;
         }
@@ -290,6 +290,86 @@ def inject_component_styles():
             font-weight:800;
         }
         .link:hover{ text-decoration:underline; }
+
+        /* =====================================================
+           ✅ Fallback CSS for Osoli Report (إذا ما كانت موجودة بـ styles.py)
+           ===================================================== */
+        .mi{
+            font-family: "Material Symbols Rounded" !important;
+            font-weight: normal !important;
+            font-style: normal !important;
+            line-height: 1 !important;
+            letter-spacing: normal !important;
+            text-transform: none !important;
+            display: inline-block !important;
+            white-space: nowrap !important;
+            word-wrap: normal !important;
+            direction: ltr !important;
+            -webkit-font-smoothing: antialiased !important;
+            font-feature-settings: "liga" !important;
+            font-size: 18px !important;
+            vertical-align: -4px !important;
+            margin-left: 6px !important;
+        }
+        .os-grid{
+            display:grid;
+            grid-template-columns: repeat(12, 1fr);
+            gap: 12px;
+            margin-top: 10px;
+        }
+        .os-col-12{ grid-column: span 12; }
+        .os-col-6{ grid-column: span 6; }
+        .os-col-4{ grid-column: span 4; }
+        .os-col-3{ grid-column: span 3; }
+        @media (max-width: 900px){
+            .os-col-6,.os-col-4,.os-col-3{ grid-column: span 12; }
+        }
+        .os-card{
+            background:#fff;
+            border:1px solid rgba(15,23,42,0.12);
+            border-radius:18px;
+            padding:14px 14px;
+            box-shadow: 0 10px 25px rgba(15,23,42,0.08);
+        }
+        .os-card-title{
+            font-weight: 950;
+            color:#0F172A;
+            margin-bottom: 10px;
+            display:flex;
+            align-items:center;
+            gap:8px;
+        }
+        .os-muted{
+            color:#64748B;
+            font-weight:800;
+        }
+        .os-kv{
+            display:flex;
+            justify-content:space-between;
+            gap:10px;
+            border-top:1px dashed rgba(15,23,42,0.12);
+            padding-top:8px;
+            margin-top:8px;
+        }
+        .os-k{ color:#64748B; font-weight:900; }
+        .os-v{ color:#0F172A; font-weight:950; direction:ltr; text-align:left; }
+        .os-chip{
+            display:inline-flex;
+            align-items:center;
+            gap:8px;
+            padding: 6px 12px;
+            border-radius: 999px;
+            font-weight: 950;
+            border: 1px solid rgba(15,23,42,0.12);
+            background: #F8FAFC;
+            margin-left: 8px;
+            margin-top: 6px;
+        }
+        .os-chip-gray{ background:#F1F5F9; }
+        .os-chip-blue{ background:#EEF2FF; border-color: rgba(37,99,235,0.25); }
+        .os-chip-green{ background:#ECFDF5; border-color: rgba(5,150,105,0.25); }
+        .os-chip-amber{ background:#FFFBEB; border-color: rgba(245,158,11,0.25); }
+        .os-chip-red{ background:#FEF2F2; border-color: rgba(220,38,38,0.25); }
         </style>
         """,
         unsafe_allow_html=True,
@@ -741,3 +821,158 @@ def render_smart_table(
     )
 
     render_custom_table(out, cfg)
+
+
+# ============================================================
+# 🧠 Osoli Report Renderer (Cards + Chips) ✅ NEW
+# ============================================================
+
+def _mi(symbol_name: str) -> str:
+    """Material Symbol (Rounded) span"""
+    return f'<span class="mi material-symbols-rounded">{html.escape(symbol_name)}</span>'
+
+def render_osoli_report(report: Dict[str, Any], *, title: str = "📌 تقرير التحليل"):
+    """
+    يعرض dict تقرير التحليل بشكل بطاقات وchips.
+    - لا يفترض شكل صارم للتقرير، ويحاول يقرأ مفاتيح شائعة.
+    - أي شيء ما قدر يفهمه يتركه بدون كسر.
+    """
+    if not isinstance(report, dict) or not report:
+        st.info("لا يوجد تقرير لعرضه.")
+        return
+
+    # مفاتيح شائعة (مرنة)
+    score = report.get("osoli_score") or report.get("score") or report.get("OsoliScore")
+    confidence = report.get("confidence") or report.get("conf") or report.get("confidence_pct")
+    recommendation = report.get("recommendation") or report.get("signal") or report.get("action")
+
+    gates = report.get("risk_gates") or report.get("gates") or report.get("risk") or {}
+    evidence = report.get("evidence") or report.get("why") or report.get("signals") or []
+    scenarios = report.get("scenarios") or report.get("scenario") or report.get("plans") or []
+
+    # Header
+    st.markdown(f"### {html.escape(_safe_text(title))}")
+
+    # Chips row (Top summary)
+    chips: List[str] = []
+
+    if score is not None:
+        try:
+            s = _safe_number(score, default=None)
+            score_txt = f"{s:.0f}/100" if s is not None else _safe_text(score)
+        except Exception:
+            score_txt = _safe_text(score)
+
+        chip_cls = "os-chip-blue"
+        try:
+            s2 = _safe_number(score, default=None)
+            if s2 is not None:
+                chip_cls = "os-chip-green" if s2 >= 70 else ("os-chip-amber" if s2 >= 50 else "os-chip-red")
+        except Exception:
+            pass
+
+        chips.append(
+            f'<span class="os-chip {chip_cls}">{_mi("donut_large")} الدرجة: {html.escape(score_txt)}</span>'
+        )
+
+    if confidence is not None:
+        conf_txt = _safe_text(confidence)
+        chips.append(
+            f'<span class="os-chip os-chip-gray">{_mi("verified")} الثقة: {html.escape(conf_txt)}</span>'
+        )
+
+    if recommendation:
+        rec_txt = _safe_text(recommendation)
+        chips.append(
+            f'<span class="os-chip os-chip-blue">{_mi("tips_and_updates")} التوصية: {html.escape(rec_txt)}</span>'
+        )
+
+    if chips:
+        st.markdown("".join(chips), unsafe_allow_html=True)
+
+    # Cards grid
+    st.markdown('<div class="os-grid">', unsafe_allow_html=True)
+
+    # Card: Risk gates
+    if isinstance(gates, dict) and gates:
+        items = []
+        for k, v in list(gates.items())[:12]:
+            items.append(
+                f'<div class="os-kv">'
+                f'  <div class="os-k">{html.escape(_safe_text(k))}</div>'
+                f'  <div class="os-v">{html.escape(_safe_text(v))}</div>'
+                f'</div>'
+            )
+
+        st.markdown(
+            f"""
+            <div class="os-card os-col-6">
+              <div class="os-card-title">{_mi("shield")} بوابات المخاطرة</div>
+              {''.join(items)}
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    # Card: Evidence
+    if isinstance(evidence, (list, tuple)) and evidence:
+        bullets = []
+        for x in list(evidence)[:14]:
+            bullets.append(f"<li>{html.escape(_safe_text(x))}</li>")
+
+        st.markdown(
+            f"""
+            <div class="os-card os-col-6">
+              <div class="os-card-title">{_mi("fact_check")} الأدلة</div>
+              <ul style="margin:0; padding-right:18px; color:#0F172A; font-weight:800;">
+                {''.join(bullets)}
+              </ul>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    # Card: Scenarios
+    if isinstance(scenarios, (list, tuple)) and scenarios:
+        parts = []
+        for sc in list(scenarios)[:8]:
+            if isinstance(sc, dict):
+                name = sc.get("name") or sc.get("title") or "سيناريو"
+                entry = sc.get("entry") or sc.get("buy") or sc.get("trigger") or "-"
+                stop = sc.get("stop") or sc.get("sl") or "-"
+                tp = sc.get("targets") or sc.get("tp") or sc.get("take_profit") or "-"
+                rr = sc.get("rr") or sc.get("r_r") or ""
+                rr_txt = f" | R:R {rr}" if rr else ""
+
+                parts.append(
+                    f"""
+                    <div style="border:1px solid rgba(15,23,42,0.10); border-radius:14px; padding:10px; margin-top:10px; background:#fff;">
+                      <div style="font-weight:950;">{html.escape(_safe_text(name))}{html.escape(rr_txt)}</div>
+                      <div class="os-muted">
+                        دخول: <b style="color:#0F172A">{html.escape(_safe_text(entry))}</b>
+                        — وقف: <b style="color:#DC2626">{html.escape(_safe_text(stop))}</b>
+                        — أهداف: <b style="color:#059669">{html.escape(_safe_text(tp))}</b>
+                      </div>
+                    </div>
+                    """
+                )
+            else:
+                parts.append(
+                    f"""
+                    <div style="border:1px solid rgba(15,23,42,0.10); border-radius:14px; padding:10px; margin-top:10px; background:#fff;">
+                      <div style="font-weight:900;">{html.escape(_safe_text(sc))}</div>
+                    </div>
+                    """
+                )
+
+        st.markdown(
+            f"""
+            <div class="os-card os-col-12">
+              <div class="os-card-title">{_mi("route")} السيناريوهات</div>
+              {''.join(parts)}
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+    st.markdown("</div>", unsafe_allow_html=True)  # end grid
