@@ -6,8 +6,10 @@ from ui.pages.portfolio import view_portfolio
 from ui.pages.sukuk import view_sukuk_portfolio
 from ui.pages.cash import view_cash_log
 
+# ✅ Analysis moved to ui.pages.analysis.main (tabs split)
+from ui.pages.analysis.main import view_analysis
+
 from views_impl import (
-    view_analysis,
     view_backtester_ui, render_pulse_dashboard,
     view_add_trade, view_tools, view_settings
 )
