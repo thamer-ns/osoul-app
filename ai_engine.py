@@ -11,7 +11,7 @@ from datetime import datetime
 # ============================================================
 # AI Engine Meta (Fix ImportError + Provide UI Meta)
 # ============================================================
-AI_ENGINE_VERSION = "2026.02.01"
+AI_ENGINE_VERSION = "2026.02.02"
 AI_ENGINE_NAME = "Osoli AI Engine"
 
 # ============================================================
@@ -26,6 +26,19 @@ def _normalize_symbol(sym: str) -> str:
     if sym.endswith("SR") and ".SR" not in sym:
         sym = sym.replace("SR", ".SR")
     return sym
+
+
+def _infer_market_mode(symbol: str) -> str:
+    """
+    ✅ مهم:
+    - السوق السعودي (أسهم) = لا شورت (buy فقط)
+    - السوق الأمريكي/أسواق تسمح بالشورت = buy/sell
+    معيار بسيط الآن:
+      - إذا .SR => sa
+      - غير ذلك => us (مستقبلاً تقدر توسعها)
+    """
+    s = str(symbol or "").upper()
+    return "sa" if s.endswith(".SR") else "us"
 
 
 def _now_str():
@@ -1140,7 +1153,7 @@ def _risk_plan_from_atr_sr(df, ind, direction="buy"):
     """
     ✅ تطوير بدون كسر:
     - كان عندك دائمًا Buy
-    - الآن يدعم buy/sell لكن افتراضيًا buy (يعني متوافق 100%)
+    - الآن يدعم buy/sell (للسوق الأمريكي مستقبلاً)
     """
     if df is None or df.empty:
         return {}
@@ -1315,6 +1328,10 @@ def generate_ai_report(symbol, timeframe="1D"):
     try:
         from market_data import get_chart_history
 
+        # ✅ تحديد السوق (لمنع الشورت في السعودي)
+        market_mode = _infer_market_mode(symbol)
+        allow_short = True if market_mode == "us" else False
+
         # ✅ تطوير: timeframe يحدد فترة جلب البيانات
         period = _map_period_from_timeframe(timeframe)
 
@@ -1343,7 +1360,7 @@ def generate_ai_report(symbol, timeframe="1D"):
         s_ob, o_ob, f_ob = _detect_order_block(df)
         s_ichi, o_ichi, f_ichi = _analyze_ichimoku(df)
 
-        # تجميع التقني (إضافة محركات جديدة — بدون إزالة أي قديم)
+        # تجميع التقني
         base_tech = (s_candle + s_struct + s_sr + s_liq + s_ob + s_ichi)
 
         tech_reasons = (o_struct or []) + (o_candle or []) + (o_sr or []) + (o_liq or []) + (o_ob or []) + (o_ichi or [])
@@ -1465,8 +1482,14 @@ def generate_ai_report(symbol, timeframe="1D"):
         explainability = _build_explainability(tech_reasons, fund_reasons, total_score, tech_score, fund_score)
         explainability["confidence_note"] = f"Confidence={int(confidence)}% ({confidence_label})"
 
-        # ✅ تطوير: الخطة حسب الاتجاه (لكن متوافق 100% لأن default buy)
-        direction = "buy" if total_score >= 0 else "sell"
+        # ============================================================
+        # ✅ إصلاح جوهري: السوق السعودي = buy فقط (لا شورت)
+        # ============================================================
+        if allow_short:
+            direction = "buy" if total_score >= 0 else "sell"
+        else:
+            direction = "buy"
+
         risk_plan = _risk_plan_from_atr_sr(df, ind, direction=direction)
 
         # ✅ Engine meta for UI / debug (Base Interval الصحيح)
@@ -1493,8 +1516,6 @@ def generate_ai_report(symbol, timeframe="1D"):
             "strategy_name": strategy_name,
             "sector": sector,
             "risk_plan": risk_plan,
-
-            # ✅ Added
             "engine_meta": {
                 "engine": AI_ENGINE_NAME,
                 "version": AI_ENGINE_VERSION,
@@ -1502,6 +1523,8 @@ def generate_ai_report(symbol, timeframe="1D"):
                 "period_used": str(period),
                 "rows": int(len(df)),
                 "last_bar": last_bar,
+                "market_mode": market_mode,     # ✅ جديد
+                "allow_short": bool(allow_short) # ✅ جديد
             },
         }
 
@@ -1551,6 +1574,8 @@ def generate_ai_report(symbol, timeframe="1D"):
                 "period_used": None,
                 "rows": 0,
                 "last_bar": None,
+                "market_mode": None,
+                "allow_short": False,
             },
         }
 
