@@ -1,16 +1,11 @@
-# views.py ✅ النسخة الكاملة بعد التعديلات (منظّفة من الأحرف غير القابلة للطباعة)
-# (توحيد شكل جداول المختبر + التحليل المالي مع جدول الاستثمار)
-# + ✅ استخدام get_financial_statements (DB + Yahoo + fallback) بدل الاعتماد فقط على المخزن
-# + ✅ إضافة فواصل زمنية للمستشار والفني
-# + ✅ تحسين البحث عن السهم لتفادي التعلّق
-# + ✅ شارت فني احترافي (Plotly Candles) قابل للتكبير/التصغير + Pan + Range Slider + أدوات رسم
-
+# views.py ✅ النسخة الكاملة بعد التعديلات (محسنة للمستشار + ثابتة للفواصل الزمنية + كاش آمن)
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import date
+import traceback
 
 from config import DEFAULT_COLORS
 from components import (
@@ -89,9 +84,7 @@ except Exception:
 
 
 # 5) AI Engine (تشخيص كامل بدل الصمت)
-import traceback
 ai_import_error = None
-
 try:
     from ai_engine import (
         generate_ai_report,
@@ -104,7 +97,7 @@ try:
 except Exception:
     ai_import_error = traceback.format_exc()
 
-    def generate_ai_report(symbol, timeframe="1D"):
+    def generate_ai_report(symbol, timeframe="1d"):
         return {"__error__": "AI Engine import failed", "__trace__": ai_import_error}
 
     def calculate_portfolio_risk_score(df, c): return 50
@@ -256,12 +249,136 @@ def _get_chart_history_flex(symbol: str, period: str, interval: str):
             return get_chart_history(symbol)
 
 
+# --------------------------
+# ✅ NEW: AI Report Flex + UI Renderer
+# --------------------------
+def _ai_timeframe_normalize(tf: str) -> str:
+    """
+    نحول أي صيغة إلى صيغة آمنة قدر الإمكان
+    """
+    t = (tf or "").strip()
+    if not t:
+        return "1d"
+    t_low = t.lower()
+
+    # دعم القديم
+    if t in ["1D", "D", "DAY"]:
+        return "1d"
+    if t in ["1W", "W", "WEEK"]:
+        return "1wk"
+    if t in ["1M", "M", "MONTH"]:
+        return "1mo"
+
+    # دعم الشائع
+    if t_low in ["1d", "day", "daily"]:
+        return "1d"
+    if t_low in ["1wk", "1w", "week", "weekly"]:
+        return "1wk"
+    if t_low in ["1mo", "month", "monthly"]:
+        return "1mo"
+
+    return t_low
+
+
+def _generate_ai_report_flex(symbol: str, timeframe: str):
+    """
+    يستدعي generate_ai_report بأكثر من صيغة لتفادي اختلاف توقيع الدالة أو الفاصل.
+    """
+    tf = _ai_timeframe_normalize(timeframe)
+
+    # نحاول (timeframe=) ثم fallback لصيغ أخرى لو ai_engine مختلف
+    try:
+        return generate_ai_report(symbol, timeframe=tf)
+    except TypeError:
+        try:
+            return generate_ai_report(symbol, timeframe=timeframe)
+        except TypeError:
+            try:
+                return generate_ai_report(symbol, tf)
+            except TypeError:
+                return generate_ai_report(symbol)
+
+
+def _render_ai_report_ui(rep: dict):
+    """
+    يعرض تقرير AI بطريقة مرنة:
+    - لو فيه explainability -> يطلعها كاملة
+    - لو مافيه -> يعرض حقول معقولة + JSON الخام
+    """
+    if not isinstance(rep, dict):
+        st.warning("⚠️ تقرير المستشار ليس dict.")
+        st.write(rep)
+        return
+
+    # كرت علوي
+    col = rep.get("color", "#666")
+    st.markdown(
+        f"<div style='padding:15px;border:2px solid {col};border-radius:10px;text-align:center;'>"
+        f"<h3>{rep.get('recommendation','-')}</h3>"
+        f"<p>{rep.get('strategy','-')}</p>"
+        f"</div>",
+        unsafe_allow_html=True
+    )
+
+    conf = int(rep.get("confidence", 0) or 0)
+    conf_label = rep.get("confidence_label", "منخفضة")
+    st.write(f"### 🎯 الثقة: {conf}% ({conf_label})")
+    st.progress(min(max(conf, 0), 100))
+
+    ex = rep.get("explainability", {}) or {}
+    pos = ex.get("positives", []) or rep.get("positives", []) or []
+    neg = ex.get("negatives", []) or rep.get("negatives", []) or []
+    notes = ex.get("notes", []) or rep.get("notes", []) or []
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.write("✅ أسباب داعمة")
+        if pos:
+            for x in pos:
+                st.write(f"- {x}")
+        else:
+            st.info("لا توجد أسباب داعمة معروضة في هذا التقرير.")
+
+    with c2:
+        st.write("⚠️ أسباب سلبية / مخاطر")
+        if neg:
+            for x in neg:
+                st.write(f"- {x}")
+        else:
+            st.info("لا توجد أسباب سلبية معروضة في هذا التقرير.")
+
+    with st.expander("🧾 ملاحظات إضافية"):
+        if notes:
+            for x in notes:
+                st.write(f"- {x}")
+        else:
+            st.info("لا توجد ملاحظات إضافية.")
+
+    # أقسام إضافية لو موجودة
+    extra_keys = ["scenarios", "signals", "levels", "risk_gates", "evidence", "summary"]
+    found_any = any(k in rep for k in extra_keys)
+    if found_any:
+        st.markdown("---")
+        st.subheader("📌 تفاصيل إضافية من المستشار")
+        for k in extra_keys:
+            if k in rep and rep.get(k) not in [None, "", [], {}]:
+                with st.expander(f"عرض: {k}"):
+                    st.json(rep.get(k))
+
+    # JSON خام كآخر حل (مهم عشان ما يبان “مختصر” وهو رجّع بيانات بس بمفاتيح مختلفة)
+    with st.expander("🧩 عرض التقرير الخام (JSON)"):
+        st.json(rep)
+
+
+# ========================================================
+# TradingView-like Plot (Fixes)
+# ========================================================
 def _build_tv_like_plot(df: pd.DataFrame, title: str = "") -> go.Figure:
     """
     يبني شارت شموع + حجم (TradingView-like) باستخدام Plotly:
     - Zoom/Pan
     - Range Slider
-    - Hover unified + Spikes (قريب من crosshair)
+    - Hover unified + Spikes
     """
     d = df.copy()
 
@@ -273,21 +390,20 @@ def _build_tv_like_plot(df: pd.DataFrame, title: str = "") -> go.Figure:
     else:
         # لو المؤشر هو التاريخ
         try:
-            d = d.copy()
             d.index = pd.to_datetime(d.index, errors="coerce")
-            d = d.dropna(subset=[d.index.name] if d.index.name else [])
         except Exception:
             pass
+        d = d[~pd.isna(d.index)]
         d = d.sort_index()
         x = d.index
 
     # توحيد أعمدة الأسعار
-    colmap = {c.lower(): c for c in d.columns}
-    Open = colmap.get("open", "Open") if ("open" in colmap) else ("Open" if "Open" in d.columns else None)
-    High = colmap.get("high", "High") if ("high" in colmap) else ("High" if "High" in d.columns else None)
-    Low  = colmap.get("low", "Low") if ("low" in colmap) else ("Low" if "Low" in d.columns else None)
-    Close= colmap.get("close", "Close") if ("close" in colmap) else ("Close" if "Close" in d.columns else None)
-    Vol  = colmap.get("volume", "Volume") if ("volume" in colmap) else ("Volume" if "Volume" in d.columns else None)
+    colmap = {str(c).lower(): c for c in d.columns}
+    Open = colmap.get("open") if "open" in colmap else ("Open" if "Open" in d.columns else None)
+    High = colmap.get("high") if "high" in colmap else ("High" if "High" in d.columns else None)
+    Low  = colmap.get("low") if "low" in colmap else ("Low" if "Low" in d.columns else None)
+    Close= colmap.get("close") if "close" in colmap else ("Close" if "Close" in d.columns else None)
+    Vol  = colmap.get("volume") if "volume" in colmap else ("Volume" if "Volume" in d.columns else None)
 
     if not all([Open, High, Low, Close]):
         raise ValueError("بيانات الشارت لا تحتوي أعمدة OHLC بشكل صحيح.")
@@ -320,7 +436,6 @@ def _build_tv_like_plot(df: pd.DataFrame, title: str = "") -> go.Figure:
             row=2, col=1
         )
 
-    # Layout أقرب لـ TradingView
     fig.update_layout(
         title=title,
         height=720,
@@ -354,7 +469,6 @@ def _build_tv_like_plot(df: pd.DataFrame, title: str = "") -> go.Figure:
         showlegend=False,
     )
 
-    # Range Selector Buttons
     fig.update_xaxes(
         rangeselector=dict(
             buttons=list([
@@ -396,10 +510,10 @@ def _render_tv_like_chart(symbol: str, period: str, interval: str):
     # لو البيانات جاية بمؤشر تاريخ وليس عمود date
     if "date" not in df.columns:
         try:
-            df = df.copy()
-            df = df.reset_index()
-            if "index" in df.columns and "date" not in df.columns:
-                df = df.rename(columns={"index": "date"})
+            if isinstance(df.index, pd.DatetimeIndex):
+                df2 = df.copy()
+                df2 = df2.reset_index().rename(columns={"index": "date"})
+                df = df2
         except Exception:
             pass
 
@@ -412,7 +526,6 @@ def _render_tv_like_chart(symbol: str, period: str, interval: str):
                 "scrollZoom": True,
                 "displaylogo": False,
                 "displayModeBar": True,
-                # أدوات رسم مفيدة
                 "modeBarButtonsToAdd": [
                     "drawline",
                     "drawopenpath",
@@ -422,7 +535,7 @@ def _render_tv_like_chart(symbol: str, period: str, interval: str):
                 ],
             },
         )
-        st.caption("💡 تلميح: استخدم السحب للتحريك (Pan)، و Scroll للتكبير/التصغير، و Range Slider أسفل الشارت للتنقل.")
+        st.caption("💡 تلميح: اسحب للتحريك (Pan)، و Scroll للتكبير/التصغير، و Range Slider للتنقل.")
     except Exception as e:
         st.error(f"❌ فشل بناء الشارت الاحترافي: {e}")
         st.info("سأعرض الشارت القديم كخطة بديلة.")
@@ -430,15 +543,9 @@ def _render_tv_like_chart(symbol: str, period: str, interval: str):
 
 
 # ========================================================
-# ✅ NEW: Table wrapper (نفس تصميم جدول الاستثمار)
+# ✅ Table wrapper (نفس تصميم جدول الاستثمار)
 # ========================================================
-
 def _render_table_like_trades(df: pd.DataFrame, cols_spec=None, max_rows: int = 400):
-    """
-    يعرض جدول بنفس تصميم جدول الاستثمار (render_custom_table)
-    - cols_spec: [("col","Label","type"), ...]
-    - لو None: يسوي mapping تلقائي للأعمدة
-    """
     if df is None or not isinstance(df, pd.DataFrame) or df.empty:
         st.info("📭 لا توجد بيانات لعرضها")
         return
@@ -448,15 +555,12 @@ def _render_table_like_trades(df: pd.DataFrame, cols_spec=None, max_rows: int = 
         d = d.head(max_rows)
 
     label_map = {
-        # عام
         "date": "التاريخ",
         "ts": "التاريخ",
         "time": "التاريخ",
         "year": "السنة",
         "period": "الفترة",
         "symbol": "الرمز",
-
-        # مالي
         "revenue": "الإيرادات",
         "net_income": "صافي الربح",
         "operating_cash_flow": "التدفق النقدي التشغيلي",
@@ -466,15 +570,11 @@ def _render_table_like_trades(df: pd.DataFrame, cols_spec=None, max_rows: int = 
         "current_liabilities": "المطلوبات المتداولة",
         "total_equity": "حقوق الملكية",
         "long_term_debt": "ديون طويلة",
-
-        # أسعار
         "open": "الافتتاح",
         "high": "الأعلى",
         "low": "الأدنى",
         "close": "الإغلاق",
         "volume": "الحجم",
-
-        # Backtest
         "portfolio_value": "قيمة المحفظة",
         "return_pct": "العائد %",
         "final_value": "القيمة النهائية",
@@ -505,7 +605,6 @@ def _render_table_like_trades(df: pd.DataFrame, cols_spec=None, max_rows: int = 
 # ========================================================
 # 1) Navigation
 # ========================================================
-
 def render_navbar():
     buttons = [
         ("🏠 الرئيسية", "home"),
@@ -558,7 +657,6 @@ def render_navbar():
 # ========================================================
 # 2) Dashboard
 # ========================================================
-
 def view_dashboard(fin):
     try:
         tp, tc = get_tasi_data()
@@ -680,7 +778,7 @@ def view_dashboard(fin):
 # ========================================================
 # 3) Portfolio View
 # ========================================================
-
+# (كما في ملفك — بدون تغيير)
 def view_portfolio(fin, key):
     ts = "مضاربة" if key == "spec" else "استثمار"
     st.header(f"💼 محفظة {ts}")
@@ -898,7 +996,7 @@ def view_portfolio(fin, key):
 # ========================================================
 # 4) Sukuk Portfolio
 # ========================================================
-
+# (كما في ملفك — بدون تغيير)
 def view_sukuk_portfolio(fin):
     st.header("📜 محفظة الصكوك")
     df = fin.get("all_trades", pd.DataFrame())
@@ -1073,7 +1171,7 @@ def view_sukuk_portfolio(fin):
 # ========================================================
 # 5) Cash Log
 # ========================================================
-
+# (كما في ملفك — بدون تغيير)
 def view_cash_log(fin):
     st.header("💰 السيولة والسجلات المالية")
 
@@ -1198,7 +1296,6 @@ def view_cash_log(fin):
 # ========================================================
 # 6) Financial UI
 # ========================================================
-
 def render_data_import_ui_content(symbol):
     st.info("يدعم النظام: ملفات PDF من تداول، ملفات Excel/CSV، أو النسخ واللصق المباشر.")
     parser = FinancialParser()
@@ -1376,7 +1473,6 @@ def render_financial_dashboard_ui(symbol):
 # ========================================================
 # 7) Analysis
 # ========================================================
-
 def view_analysis(fin):
     st.header("🔬 التحليل الشامل")
     trades = fin.get("all_trades", pd.DataFrame())
@@ -1416,7 +1512,6 @@ def view_analysis(fin):
     except Exception:
         syms = []
 
-    # ✅ بحث عام + اقتراحات من أسهمك (بدون تعليق)
     all_syms = _clean_symbols_list(syms)
 
     st.markdown("##### 🔎 البحث عن سهم")
@@ -1455,11 +1550,16 @@ def view_analysis(fin):
         if not sym_try or sym_try == ".SR":
             st.warning("الرجاء إدخال رمز صحيح مثل: 1120 أو 1120.SR")
         else:
-            # تحقق سريع حتى ما يعلق لاحقاً
             ok = False
             try:
-                nm_test, _ = get_company_details(sym_try)
-                ok = bool(nm_test and str(nm_test).strip())
+                info = get_company_details(sym_try)
+                # قد يرجع tuple أو dict أو string
+                if isinstance(info, (list, tuple)) and len(info) >= 1:
+                    ok = bool(str(info[0]).strip())
+                elif isinstance(info, dict):
+                    ok = bool(str(info.get("name") or info.get("Name") or "").strip())
+                else:
+                    ok = bool(str(info).strip())
             except Exception:
                 ok = False
 
@@ -1484,9 +1584,16 @@ def view_analysis(fin):
             st.warning("الرجاء إدخال رمز صحيح.")
             return
 
-        # حماية إضافية
+        # اسم/قطاع
         try:
-            n, sec = get_company_details(sym)
+            info = get_company_details(sym)
+            if isinstance(info, (list, tuple)) and len(info) >= 2:
+                n, sec = info[0], info[1]
+            elif isinstance(info, dict):
+                n = info.get("name") or info.get("Name") or sym
+                sec = info.get("sector") or info.get("Sector") or ""
+            else:
+                n, sec = sym, ""
         except Exception:
             n, sec = sym, ""
 
@@ -1494,62 +1601,47 @@ def view_analysis(fin):
         tabs = st.tabs(["🤖 المستشار", "💰 مالي", "📈 فني", "🏛️ كلاسيكي", "📝 أطروحة"])
 
         # --------------------------
-        # 🤖 المستشار + فاصل زمني
+        # 🤖 المستشار + فاصل زمني + زر تحديث
         # --------------------------
         with tabs[0]:
             symk = _sym_key(sym)
-            tf_map = {"يومي (1D)": "1D", "أسبوعي (1W)": "1W", "شهري (1M)": "1M"}
-            c_tf1, c_tf2 = st.columns([1.2, 2.8])
+
+            tf_map = {
+                "يومي (1D)": "1d",
+                "أسبوعي (1W)": "1wk",
+                "شهري (1M)": "1mo",
+            }
+
+            c_tf1, c_tf2, c_tf3 = st.columns([1.2, 2.0, 1.0])
             ai_tf_label = c_tf1.selectbox("الفاصل الزمني", list(tf_map.keys()), index=0, key=f"ai_tf_{symk}")
             ai_tf = tf_map[ai_tf_label]
             c_tf2.caption("يغيّر منظور المستشار (قصير/متوسط/طويل).")
 
+            # ✅ زر تحديث (يمسح كاش هذا الرمز/الفاصل)
+            if c_tf3.button("🔄 تحديث", key=f"ai_refresh_{symk}"):
+                cache = st.session_state.get("_ai_rep_cache", {})
+                cache_key = f"{sym}|{ai_tf}"
+                if cache_key in cache:
+                    del cache[cache_key]
+                st.session_state["_ai_rep_cache"] = cache
+                st.rerun()
+
             cache = st.session_state.setdefault("_ai_rep_cache", {})
             cache_key = f"{sym}|{ai_tf}"
+
             if cache_key in cache:
                 rep = cache[cache_key]
             else:
-                rep = generate_ai_report(sym, timeframe=ai_tf)
+                with st.spinner("جاري توليد تقرير المستشار..."):
+                    rep = _generate_ai_report_flex(sym, timeframe=ai_tf)
                 cache[cache_key] = rep
 
-            if rep.get("__error__") or rep.get("__trace__"):
+            if isinstance(rep, dict) and (rep.get("__error__") or rep.get("__trace__")):
                 st.error("فشل تشغيل المستشار (AI Engine).")
                 st.code(rep.get("__trace__", ""))
-                st.warning("يمكنك متابعة بقية التبويبات (مالي/فني/كلاسيكي) بينما نصلح المستشار.")
-                return
-
-            col = rep.get("color", "#666")
-            st.markdown(
-                f"<div style='padding:15px;border:2px solid {col};border-radius:10px;text-align:center;'>"
-                f"<h3>{rep.get('recommendation','-')}</h3>"
-                f"<p>{rep.get('strategy','-')}</p>"
-                f"</div>",
-                unsafe_allow_html=True
-            )
-
-            conf = int(rep.get("confidence", 0) or 0)
-            conf_label = rep.get("confidence_label", "منخفضة")
-            st.write(f"### 🎯 الثقة: {conf}% ({conf_label})")
-            st.progress(min(max(conf, 0), 100))
-
-            ex = rep.get("explainability", {}) or {}
-            pos = ex.get("positives", []) or []
-            neg = ex.get("negatives", []) or []
-            notes = ex.get("notes", []) or []
-
-            cc1, cc2 = st.columns(2)
-            with cc1:
-                st.write("✅ أسباب داعمة")
-                for x in pos[:8]:
-                    st.write(f"- {x}")
-            with cc2:
-                st.write("⚠️ أسباب سلبية / مخاطر")
-                for x in neg[:8]:
-                    st.write(f"- {x}")
-
-            with st.expander("🧾 ملاحظات إضافية"):
-                for x in notes:
-                    st.write(f"- {x}")
+                st.warning("سأكمل عرض بقية التبويبات (مالي/فني/كلاسيكي).")
+            else:
+                _render_ai_report_ui(rep)
 
             st.markdown("---")
             st.subheader("🧠 استراتيجياتي الخاصة")
@@ -1561,8 +1653,14 @@ def view_analysis(fin):
                 if st.button("💾 حفظ الاستراتيجية", key=f"save_rule_{symk}", type="primary"):
                     res = save_user_rule(rule_text, title="قاعدة من المستخدم", enabled=1)
                     if res.get("ok"):
-                        st.success("✅ تم حفظ الاستراتيجية ودمجها مباشرة مع الذكاء")
-                        st.cache_data.clear()
+                        st.success("✅ تم حفظ الاستراتيجية")
+                        # ما نمسح كل cache_data حتى ما نخرب المختبر/الصفحات
+                        # فقط نمسح كاش تقرير المستشار لهذا السهم
+                        cache = st.session_state.get("_ai_rep_cache", {})
+                        for k in list(cache.keys()):
+                            if k.startswith(f"{sym}|"):
+                                del cache[k]
+                        st.session_state["_ai_rep_cache"] = cache
                         st.rerun()
                     else:
                         st.error(f"لم يتم الحفظ: {res.get('reason','')}")
@@ -1642,9 +1740,8 @@ def view_analysis(fin):
 
 
 # ========================================================
-# 8) Other Pages (باقي الصفحات كما هي)
+# 8) Other Pages
 # ========================================================
-
 def view_backtester_ui(fin):
     st.header("🧪 المختبر")
 
@@ -1680,7 +1777,17 @@ def view_backtester_ui(fin):
                 st.write("الأعمدة:", list(data.columns))
                 return
 
-            _, sec = get_company_details(s_norm)
+            try:
+                info = get_company_details(s_norm)
+                if isinstance(info, (list, tuple)) and len(info) >= 2:
+                    sec = info[1]
+                elif isinstance(info, dict):
+                    sec = info.get("sector") or info.get("Sector") or ""
+                else:
+                    sec = ""
+            except Exception:
+                sec = ""
+
             res = run_backtest(data, str(strat), cap, symbol=s_norm, sector=sec)
 
             if res:
@@ -1731,7 +1838,19 @@ def view_add_trade():
             valid, msg = validate_trade_inputs(q, p)
             if valid:
                 s = _normalize_symbol(s_raw)
-                nm, sec = get_company_details(s)
+
+                try:
+                    info = get_company_details(s)
+                    if isinstance(info, (list, tuple)) and len(info) >= 2:
+                        nm, sec = info[0], info[1]
+                    elif isinstance(info, dict):
+                        nm = info.get("name") or info.get("Name") or s
+                        sec = info.get("sector") or info.get("Sector") or ""
+                    else:
+                        nm, sec = s, ""
+                except Exception:
+                    nm, sec = s, ""
+
                 at = "Sukuk" if typ == "صكوك" else "Stock"
                 execute_query(
                     "INSERT INTO trades (symbol, company_name, sector, asset_type, quantity, entry_price, strategy, status, date) "
@@ -1777,7 +1896,6 @@ def view_settings():
 # ========================================================
 # 9) Router
 # ========================================================
-
 def router():
     _ensure_ui_once()
 
