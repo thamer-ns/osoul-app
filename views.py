@@ -1,4 +1,6 @@
-# views.py  ✅ النسخة الكاملة بعد التعديلات (توحيد شكل جداول المختبر + التحليل المالي مع جدول الاستثمار)
+# views.py ✅ النسخة الكاملة بعد التعديلات
+# (توحيد شكل جداول المختبر + التحليل المالي مع جدول الاستثمار)
+# + ✅ استخدام get_financial_statements (DB + Yahoo + fallback) بدل الاعتماد فقط على المخزن
 
 import streamlit as st
 import pandas as pd
@@ -54,13 +56,15 @@ try:
         get_thesis, save_thesis,
         FinancialParser, save_financial_record,
         get_stored_financials_df, get_advanced_fundamental_ratios,
-        sync_auto_yahoo, get_fundamental_ratios
+        sync_auto_yahoo, get_fundamental_ratios,
+        get_financial_statements,  # ✅ NEW
     )
 except Exception:
     def get_thesis(s): return None
     def save_thesis(s, t, tg, r): pass
     def get_stored_financials_df(s, p): return pd.DataFrame()
     def get_advanced_fundamental_ratios(s): return {}
+    def get_financial_statements(s, p="Annual", refresh=False): return pd.DataFrame()  # ✅ NEW fallback
     class FinancialParser:
         def process_file_or_text(self, uploaded_file=None, text_input=None):
             return [], None, "FinancialParser غير متوفر"
@@ -1028,7 +1032,8 @@ def render_data_import_ui_content(symbol):
                 if st.button("💾 تأكيد وحفظ في قاعدة البيانات", key=f"fin_save_{final_symbol}"):
                     count = 0
                     for r in results:
-                        if save_financial_record(final_symbol, r["date"], r["data"], source="File/Paste"):
+                        # ✅ FIX: لا تمرر source كموقع رابع (كان يروح period_type بالغلط)
+                        if save_financial_record(final_symbol, r["date"], r["data"], period_type="Annual", source="File/Paste"):
                             count += 1
                     st.success(f"تم حفظ {count} سجلات لشركة {final_symbol}.")
                     st.rerun()
@@ -1042,10 +1047,21 @@ def render_financial_dashboard_ui(symbol):
     tab_dashboard, tab_data_mgmt = st.tabs(["📊 لوحة التحليل المالي", "⚙️ إدارة البيانات"])
 
     with tab_dashboard:
-        ptype = st.radio("نطاق التحليل:", ["Annual", "Quarterly"], horizontal=True, label_visibility="collapsed", key=f"fin_ptype_{symbol}")
-        df = get_stored_financials_df(symbol, ptype)
+        # ✅ NEW: اجلب السنوي والربعي بطريقة موحّدة (DB + Yahoo + fallback)
+        df_annual = get_financial_statements(symbol, "Annual")
+        df_quarter = get_financial_statements(symbol, "Quarterly")
 
-        if df.empty:
+        ptype = st.radio(
+            "نطاق التحليل:",
+            ["Annual", "Quarterly"],
+            horizontal=True,
+            label_visibility="collapsed",
+            key=f"fin_ptype_{symbol}"
+        )
+
+        df = df_annual if ptype == "Annual" else df_quarter
+
+        if df is None or df.empty:
             st.warning("⚠️ لا توجد بيانات مالية محفوظة لهذا السهم.")
             st.info("👈 انتقل لتبويب 'إدارة البيانات' لرفع ملف أو جلب المعلومات.")
         else:
@@ -1060,10 +1076,16 @@ def render_financial_dashboard_ui(symbol):
             try:
                 plot_df = df.copy()
                 if "date" in plot_df.columns:
-                    plot_df["Year"] = plot_df["date"].dt.strftime("%Y-%m")
-                    cols_to_plot = [c for c in ["revenue", "net_income", "operating_cash_flow"] if c in plot_df.columns and plot_df[c].sum() != 0]
+                    plot_df["Year"] = plot_df["date"].dt.strftime("%Y-%m") if hasattr(plot_df["date"].dt, "strftime") else plot_df["date"].astype(str)
+                    cols_to_plot = [c for c in ["revenue", "net_income", "operating_cash_flow"] if c in plot_df.columns and pd.to_numeric(plot_df[c], errors="coerce").fillna(0).sum() != 0]
                     if cols_to_plot:
-                        fig = px.bar(plot_df.sort_values("date"), x="Year", y=cols_to_plot, barmode="group", title="الأداء المالي التاريخي")
+                        fig = px.bar(
+                            plot_df.sort_values("date") if "date" in plot_df.columns else plot_df,
+                            x="Year",
+                            y=cols_to_plot,
+                            barmode="group",
+                            title="الأداء المالي التاريخي"
+                        )
                         st.plotly_chart(fig, use_container_width=True)
             except Exception:
                 pass
@@ -1594,3 +1616,4 @@ def router():
     else:
         st.session_state.page = "home"
         st.rerun()
+```0
