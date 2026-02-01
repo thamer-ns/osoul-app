@@ -3,10 +3,13 @@
 # + ✅ استخدام get_financial_statements (DB + Yahoo + fallback) بدل الاعتماد فقط على المخزن
 # + ✅ إضافة فواصل زمنية للمستشار والفني
 # + ✅ تحسين البحث عن السهم لتفادي التعلّق
+# + ✅ شارت فني احترافي (Plotly Candles) قابل للتكبير/التصغير + Pan + Range Slider + أدوات رسم
 
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from datetime import date
 
 from config import DEFAULT_COLORS
@@ -34,7 +37,7 @@ from security import validate_trade_inputs
 # 🛡️ Fail-Safe Imports
 # ========================================================
 
-# 1) Charts
+# 1) Charts (النسخة القديمة - نخليها fallback)
 try:
     from charts import render_technical_chart
 except Exception:
@@ -238,6 +241,192 @@ def _render_technical_chart_flex(symbol: str, period: str = "2y", interval: str 
                 return render_technical_chart(symbol, period)
             except TypeError:
                 return render_technical_chart(symbol)
+
+
+def _get_chart_history_flex(symbol: str, period: str, interval: str):
+    """
+    يحاول get_chart_history مع interval إذا كان مدعوم، وإلا يرجع period فقط.
+    """
+    try:
+        return get_chart_history(symbol, period=period, interval=interval)
+    except TypeError:
+        try:
+            return get_chart_history(symbol, period)
+        except TypeError:
+            return get_chart_history(symbol)
+
+
+def _build_tv_like_plot(df: pd.DataFrame, title: str = "") -> go.Figure:
+    """
+    يبني شارت شموع + حجم (TradingView-like) باستخدام Plotly:
+    - Zoom/Pan
+    - Range Slider
+    - Hover unified + Spikes (قريب من crosshair)
+    """
+    d = df.copy()
+
+    # توحيد العمود الزمني
+    if "date" in d.columns:
+        d["date"] = pd.to_datetime(d["date"], errors="coerce")
+        d = d.dropna(subset=["date"]).sort_values("date")
+        x = d["date"]
+    else:
+        # لو المؤشر هو التاريخ
+        try:
+            d = d.copy()
+            d.index = pd.to_datetime(d.index, errors="coerce")
+            d = d.dropna(subset=[d.index.name] if d.index.name else [])
+        except Exception:
+            pass
+        d = d.sort_index()
+        x = d.index
+
+    # توحيد أعمدة الأسعار
+    colmap = {c.lower(): c for c in d.columns}
+    Open = colmap.get("open", "Open") if ("open" in colmap) else ("Open" if "Open" in d.columns else None)
+    High = colmap.get("high", "High") if ("high" in colmap) else ("High" if "High" in d.columns else None)
+    Low  = colmap.get("low", "Low") if ("low" in colmap) else ("Low" if "Low" in d.columns else None)
+    Close= colmap.get("close", "Close") if ("close" in colmap) else ("Close" if "Close" in d.columns else None)
+    Vol  = colmap.get("volume", "Volume") if ("volume" in colmap) else ("Volume" if "Volume" in d.columns else None)
+
+    if not all([Open, High, Low, Close]):
+        raise ValueError("بيانات الشارت لا تحتوي أعمدة OHLC بشكل صحيح.")
+
+    # أرقام
+    for c in [Open, High, Low, Close]:
+        d[c] = pd.to_numeric(d[c], errors="coerce")
+    if Vol and Vol in d.columns:
+        d[Vol] = pd.to_numeric(d[Vol], errors="coerce").fillna(0)
+
+    fig = make_subplots(
+        rows=2, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.03,
+        row_heights=[0.75, 0.25]
+    )
+
+    fig.add_trace(
+        go.Candlestick(
+            x=x,
+            open=d[Open], high=d[High], low=d[Low], close=d[Close],
+            name="OHLC",
+        ),
+        row=1, col=1
+    )
+
+    if Vol and Vol in d.columns:
+        fig.add_trace(
+            go.Bar(x=x, y=d[Vol], name="Volume"),
+            row=2, col=1
+        )
+
+    # Layout أقرب لـ TradingView
+    fig.update_layout(
+        title=title,
+        height=720,
+        margin=dict(l=10, r=10, t=50, b=10),
+        xaxis=dict(
+            rangeslider=dict(visible=True),
+            showspikes=True,
+            spikemode="across",
+            spikesnap="cursor",
+            showline=True,
+        ),
+        xaxis2=dict(
+            showspikes=True,
+            spikemode="across",
+            spikesnap="cursor",
+        ),
+        yaxis=dict(
+            showspikes=True,
+            spikemode="across",
+            spikesnap="cursor",
+            fixedrange=False
+        ),
+        yaxis2=dict(
+            showspikes=True,
+            spikemode="across",
+            spikesnap="cursor",
+            fixedrange=False
+        ),
+        hovermode="x unified",
+        dragmode="pan",
+        showlegend=False,
+    )
+
+    # Range Selector Buttons
+    fig.update_xaxes(
+        rangeselector=dict(
+            buttons=list([
+                dict(count=7, label="7D", step="day", stepmode="backward"),
+                dict(count=1, label="1M", step="month", stepmode="backward"),
+                dict(count=3, label="3M", step="month", stepmode="backward"),
+                dict(count=6, label="6M", step="month", stepmode="backward"),
+                dict(count=1, label="1Y", step="year", stepmode="backward"),
+                dict(step="all", label="All"),
+            ])
+        )
+    )
+
+    return fig
+
+
+def _render_tv_like_chart(symbol: str, period: str, interval: str):
+    """
+    يرسم شارت احترافي داخل views.py بدون الاعتماد على charts.py.
+    """
+    with st.spinner("جاري جلب بيانات الشارت..."):
+        df = _get_chart_history_flex(symbol, period, interval)
+
+    if df is None:
+        st.error("❌ لم يتم جلب بيانات الشارت.")
+        return
+
+    if not isinstance(df, pd.DataFrame):
+        try:
+            df = pd.DataFrame(df)
+        except Exception:
+            st.error("❌ البيانات غير قابلة للتحويل إلى DataFrame.")
+            return
+
+    if df.empty:
+        st.warning("⚠️ البيانات فارغة (جرّب فترة أكبر).")
+        return
+
+    # لو البيانات جاية بمؤشر تاريخ وليس عمود date
+    if "date" not in df.columns:
+        try:
+            df = df.copy()
+            df = df.reset_index()
+            if "index" in df.columns and "date" not in df.columns:
+                df = df.rename(columns={"index": "date"})
+        except Exception:
+            pass
+
+    try:
+        fig = _build_tv_like_plot(df, title=f"{symbol} | {period} | {interval}")
+        st.plotly_chart(
+            fig,
+            use_container_width=True,
+            config={
+                "scrollZoom": True,
+                "displaylogo": False,
+                "displayModeBar": True,
+                # أدوات رسم مفيدة
+                "modeBarButtonsToAdd": [
+                    "drawline",
+                    "drawopenpath",
+                    "drawrect",
+                    "drawcircle",
+                    "eraseshape",
+                ],
+            },
+        )
+        st.caption("💡 تلميح: استخدم السحب للتحريك (Pan)، و Scroll للتكبير/التصغير، و Range Slider أسفل الشارت للتنقل.")
+    except Exception as e:
+        st.error(f"❌ فشل بناء الشارت الاحترافي: {e}")
+        st.info("سأعرض الشارت القديم كخطة بديلة.")
+        _render_technical_chart_flex(symbol, period=period, interval=interval)
 
 
 # ========================================================
@@ -1202,22 +1391,8 @@ def view_analysis(fin):
             with c_stress:
                 sdf = pd.DataFrame(res["scenarios"])
                 if not sdf.empty and "scenario" in sdf.columns and "impact_pct" in sdf.columns:
-                    cmap = {}
-                    try:
-                        for r in res["scenarios"]:
-                            if r.get("scenario") and r.get("color"):
-                                cmap[r["scenario"]] = r["color"]
-                    except Exception:
-                        cmap = None
-
                     st.plotly_chart(
-                        px.bar(
-                            sdf,
-                            x="scenario",
-                            y="impact_pct",
-                            color="scenario",
-                            color_discrete_map=cmap if cmap else None,
-                        ),
+                        px.bar(sdf, x="scenario", y="impact_pct", color="scenario"),
                         use_container_width=True,
                     )
             with c_insight:
@@ -1241,32 +1416,65 @@ def view_analysis(fin):
     except Exception:
         syms = []
 
-    # ✅ بحث خفيف + زر تحليل (لتفادي التعلّق)
+    # ✅ بحث عام + اقتراحات من أسهمك (بدون تعليق)
     all_syms = _clean_symbols_list(syms)
 
-    c1, c2, c3 = st.columns([1.2, 2.2, 1])
-    q = c1.text_input("بحث بالرمز", key="analysis_q", placeholder="مثال: 1120 أو 1120.SR")
+    st.markdown("##### 🔎 البحث عن سهم")
+    with st.form("analysis_search_form", clear_on_submit=False):
+        c1, c2, c3 = st.columns([1.6, 2.2, 1.2])
+        q = c1.text_input("اكتب الرمز", key="analysis_q", placeholder="مثال: 1120 أو 1120.SR")
 
-    q_plain = (q or "").strip().upper()
-    filtered = all_syms
-    if q_plain:
-        filtered = []
-        for s in all_syms:
-            su = s.upper()
-            if q_plain in su or q_plain in su.replace(".SR", ""):
-                filtered.append(s)
-        filtered = filtered[:80]
+        q_plain = (q or "").strip().upper()
+        filtered = all_syms
+        if q_plain:
+            filtered = []
+            for s in all_syms:
+                su = s.upper()
+                if q_plain in su or q_plain in su.replace(".SR", ""):
+                    filtered.append(s)
+            filtered = filtered[:80]
 
-    pick_list = filtered if filtered else (all_syms[:80] if all_syms else [])
-    picked = c2.selectbox("اختر السهم", pick_list, key="analysis_pick") if pick_list else None
+        picked = c2.selectbox(
+            "اقتراحات من أسهمك",
+            options=(filtered if filtered else (all_syms[:80] if all_syms else ["-"])),
+            key="analysis_pick",
+            disabled=(len(all_syms) == 0),
+        )
+        go_btn = c3.form_submit_button("تحليل", type="primary")
 
-    if c3.button("تحليل", key="analysis_go", type="primary"):
-        chosen = picked or q_plain
-        st.session_state["analysis_active_symbol"] = _normalize_symbol(chosen)
-
-    if c3.button("مسح", key="analysis_clear"):
+    if st.button("مسح", key="analysis_clear"):
         st.session_state.pop("analysis_active_symbol", None)
         st.rerun()
+
+    if go_btn:
+        raw = (q_plain or "").strip()
+        if (not raw) or raw == "-":
+            raw = picked if picked and picked != "-" else ""
+        sym_try = _normalize_symbol(raw)
+
+        if not sym_try or sym_try == ".SR":
+            st.warning("الرجاء إدخال رمز صحيح مثل: 1120 أو 1120.SR")
+        else:
+            # تحقق سريع حتى ما يعلق لاحقاً
+            ok = False
+            try:
+                nm_test, _ = get_company_details(sym_try)
+                ok = bool(nm_test and str(nm_test).strip())
+            except Exception:
+                ok = False
+
+            if not ok:
+                try:
+                    dfx = _get_chart_history_flex(sym_try, "1mo", "1d")
+                    ok = isinstance(dfx, pd.DataFrame) and (not dfx.empty)
+                except Exception:
+                    ok = False
+
+            if ok:
+                st.session_state["analysis_active_symbol"] = sym_try
+                st.rerun()
+            else:
+                st.error("❌ الرمز غير معروف أو لا يمكن جلب بياناته الآن. تأكد من كتابة الرمز بشكل صحيح.")
 
     sym = st.session_state.get("analysis_active_symbol")
 
@@ -1276,7 +1484,12 @@ def view_analysis(fin):
             st.warning("الرجاء إدخال رمز صحيح.")
             return
 
-        n, sec = get_company_details(sym)
+        # حماية إضافية
+        try:
+            n, sec = get_company_details(sym)
+        except Exception:
+            n, sec = sym, ""
+
         st.markdown(f"### {n} ({sym})")
         tabs = st.tabs(["🤖 المستشار", "💰 مالي", "📈 فني", "🏛️ كلاسيكي", "📝 أطروحة"])
 
@@ -1285,18 +1498,12 @@ def view_analysis(fin):
         # --------------------------
         with tabs[0]:
             symk = _sym_key(sym)
-
-            tf_map = {
-                "يومي (1D)": "1D",
-                "أسبوعي (1W)": "1W",
-                "شهري (1M)": "1M",
-            }
+            tf_map = {"يومي (1D)": "1D", "أسبوعي (1W)": "1W", "شهري (1M)": "1M"}
             c_tf1, c_tf2 = st.columns([1.2, 2.8])
             ai_tf_label = c_tf1.selectbox("الفاصل الزمني", list(tf_map.keys()), index=0, key=f"ai_tf_{symk}")
             ai_tf = tf_map[ai_tf_label]
             c_tf2.caption("يغيّر منظور المستشار (قصير/متوسط/طويل).")
 
-            # كاش بسيط لتفادي إعادة التوليد بدون داعي
             cache = st.session_state.setdefault("_ai_rep_cache", {})
             cache_key = f"{sym}|{ai_tf}"
             if cache_key in cache:
@@ -1312,7 +1519,6 @@ def view_analysis(fin):
                 return
 
             col = rep.get("color", "#666")
-
             st.markdown(
                 f"<div style='padding:15px;border:2px solid {col};border-radius:10px;text-align:center;'>"
                 f"<h3>{rep.get('recommendation','-')}</h3>"
@@ -1346,16 +1552,10 @@ def view_analysis(fin):
                     st.write(f"- {x}")
 
             st.markdown("---")
-
             st.subheader("🧠 استراتيجياتي الخاصة")
             st.caption("اكتب قواعدك بصيغة بسيطة مثل: (تقاطع الماكد صعوداً + اختراق خط الصفر) أو (RSI فوق 70)")
 
-            rule_text = st.text_area(
-                "✍️ أدخل الاستراتيجية",
-                key=f"user_rule_text_{symk}",
-                height=110
-            )
-
+            rule_text = st.text_area("✍️ أدخل الاستراتيجية", key=f"user_rule_text_{symk}", height=110)
             col1, col2 = st.columns([1, 2])
             with col1:
                 if st.button("💾 حفظ الاستراتيجية", key=f"save_rule_{symk}", type="primary"):
@@ -1366,8 +1566,6 @@ def view_analysis(fin):
                         st.rerun()
                     else:
                         st.error(f"لم يتم الحفظ: {res.get('reason','')}")
-            with col2:
-                st.caption("ملاحظة: الذكاء سيطبق القواعد تلقائياً عند توليد التقرير.")
 
             with st.expander("📌 عرض آخر الاستراتيجيات المحفوظة"):
                 rules = load_user_rules(enabled_only=True, max_rows=10) or []
@@ -1377,71 +1575,14 @@ def view_analysis(fin):
                 else:
                     st.info("لا توجد قواعد محفوظة بعد.")
 
-            st.markdown("---")
-
-            if run_backtest:
-                if st.button("🧪 تشغيل Backtest على هذا السهم", key=f"bt_{symk}"):
-                    try:
-                        data = get_chart_history(sym, "2y")
-                        _, sec2 = get_company_details(sym)
-
-                        rec_txt = str(rep.get("recommendation", "")).lower()
-                        trend_txt = str(rep.get("trend", "")).strip()
-
-                        if ("strong buy" in rec_txt) or ("شراء" in rec_txt):
-                            strategy = "Trend"
-                        elif ("مضاربة" in rec_txt) or ("⚡" in rec_txt):
-                            strategy = "Sniper"
-                        else:
-                            strategy = "Trend" if trend_txt == "صاعد" else "Sniper"
-
-                        resbt = run_backtest(data, strategy, 100000, symbol=sym, sector=sec2)
-
-                        if resbt:
-                            st.success(f"✅ اكتمل الاختبار (Strategy: {resbt.get('strategy_name_ar', strategy)})")
-                            st.metric("العائد", f"{resbt.get('return_pct', 0):.2f}%")
-                            if "df" in resbt and isinstance(resbt["df"], pd.DataFrame) and "Portfolio_Value" in resbt["df"]:
-                                st.line_chart(resbt["df"]["Portfolio_Value"])
-
-                            with st.expander("سجل الصفقات"):
-                                tlog = resbt.get("trades_log", pd.DataFrame())
-                                _render_table_like_trades(
-                                    tlog,
-                                    cols_spec=[
-                                        ("Date", "التاريخ", "date"),
-                                        ("Type", "النوع", "badge"),
-                                        ("Price", "السعر", "money"),
-                                        ("Qty", "الكمية", "money"),
-                                        ("Cash", "الكاش", "money"),
-                                        ("Value", "القيمة", "money"),
-                                    ],
-                                    max_rows=500
-                                )
-                        else:
-                            st.warning("⚠️ لم يرجع الاختبار نتيجة (قد تكون البيانات غير كافية).")
-
-                    except Exception as e:
-                        st.error(f"Backtest Error: {e}")
-            else:
-                st.caption("Backtester غير متوفر حالياً.")
-                if bt_import_error:
-                    st.code(bt_import_error)
-
-            cA, cB = st.columns(2)
-            with cA:
-                st.write("فني:")
-                for x in rep.get("tech_reasons", []):
-                    st.write(f"- {x}")
-            with cB:
-                st.write("مالي:")
-                for x in rep.get("fund_reasons", []):
-                    st.write(f"- {x}")
-
+        # --------------------------
+        # 💰 المالي
+        # --------------------------
         with tabs[1]:
             render_financial_dashboard_ui(sym)
 
         # --------------------------
-        # 📈 الفني + Period/Interval
+        # 📈 الفني (احترافي TradingView-like)
         # --------------------------
         with tabs[2]:
             symk = _sym_key(sym)
@@ -1463,15 +1604,31 @@ def view_analysis(fin):
                 "15 دقيقة": "15m",
             }
 
-            c_p, c_i = st.columns(2)
+            c_p, c_i, c_mode = st.columns([1.2, 1.2, 1.6])
             p_label = c_p.selectbox("الفترة (Period)", list(period_opts.keys()), index=2, key=f"tech_p_{symk}")
             i_label = c_i.selectbox("الفاصل (Interval)", list(interval_opts.keys()), index=0, key=f"tech_i_{symk}")
 
-            _render_technical_chart_flex(sym, period=period_opts[p_label], interval=interval_opts[i_label])
+            mode = c_mode.radio(
+                "وضع الشارت",
+                ["احترافي", "قديم (Fallback)"],
+                horizontal=True,
+                key=f"tech_mode_{symk}"
+            )
 
+            if mode == "احترافي":
+                _render_tv_like_chart(sym, period_opts[p_label], interval_opts[i_label])
+            else:
+                _render_technical_chart_flex(sym, period=period_opts[p_label], interval=interval_opts[i_label])
+
+        # --------------------------
+        # 🏛️ الكلاسيكي
+        # --------------------------
         with tabs[3]:
             render_classical_analysis(sym)
 
+        # --------------------------
+        # 📝 الأطروحة
+        # --------------------------
         with tabs[4]:
             th = get_thesis(sym)
             txt = th["thesis_text"] if (isinstance(th, dict) and "thesis_text" in th) else (
@@ -1485,7 +1642,7 @@ def view_analysis(fin):
 
 
 # ========================================================
-# 8) Other Pages
+# 8) Other Pages (باقي الصفحات كما هي)
 # ========================================================
 
 def view_backtester_ui(fin):
@@ -1518,32 +1675,6 @@ def view_backtester_ui(fin):
             if not isinstance(data, pd.DataFrame):
                 data = pd.DataFrame(data)
 
-            st.caption(f"📦 rows={len(data)} cols={len(data.columns)}")
-            try:
-                st.caption(f"🗓️ من: {data.index.min()}  إلى: {data.index.max()}")
-            except Exception:
-                pass
-
-            preview = data.tail(20).copy()
-            try:
-                preview = preview.reset_index()
-                if "index" in preview.columns:
-                    preview = preview.rename(columns={"index": "date"})
-            except Exception:
-                pass
-
-            cols = []
-            if "date" in preview.columns:
-                cols.append(("date", "التاريخ", "date"))
-            for k, lab in [("Open", "الافتتاح"), ("High", "الأعلى"), ("Low", "الأدنى"), ("Close", "الإغلاق"), ("Volume", "الحجم")]:
-                if k in preview.columns:
-                    cols.append((k, lab, "money" if k != "Volume" else "number"))
-
-            _render_table_like_trades(preview, cols_spec=cols if cols else None, max_rows=30)
-
-            if len(data) < 120:
-                st.warning("⚠️ أقل من 120 شمعة — غالبًا لن تظهر إشارات (جرّب 5y أو max).")
-
             if "Close" not in data.columns and "close" not in data.columns:
                 st.error("❌ لا يوجد عمود Close في البيانات")
                 st.write("الأعمدة:", list(data.columns))
@@ -1557,24 +1688,8 @@ def view_backtester_ui(fin):
                 st.metric("العائد", f"{res.get('return_pct', 0):.2f}%")
                 if "df" in res and isinstance(res["df"], pd.DataFrame) and "Portfolio_Value" in res["df"]:
                     st.line_chart(res["df"]["Portfolio_Value"])
-
-                with st.expander("سجل الصفقات"):
-                    tlog = res.get("trades_log", pd.DataFrame())
-                    _render_table_like_trades(
-                        tlog,
-                        cols_spec=[
-                            ("Date", "التاريخ", "date"),
-                            ("Type", "النوع", "badge"),
-                            ("Price", "السعر", "money"),
-                            ("Qty", "الكمية", "money"),
-                            ("Cash", "الكاش", "money"),
-                            ("Value", "القيمة", "money"),
-                        ],
-                        max_rows=800
-                    )
             else:
                 st.warning("⚠️ لم يرجع الاختبار نتيجة.")
-                st.info("إذا البيانات كبيرة، فالغالب أن الاستراتيجية لم تعطِ إشارات خلال الفترة.")
 
         except Exception as e:
             st.error(f"Backtest Error: {e}")
