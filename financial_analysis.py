@@ -94,7 +94,226 @@ def _looks_like_date_token(s: str) -> bool:
     s = str(s or "").strip()
     return bool(re.search(r"\b(20\d{2})\b", s) or re.search(r"\d{4}-\d{2}-\d{2}", s))
 
+# ==============================================================
+# ✅ Yahoo QuoteSummary JSON (Most stable for statements)
+# ==============================================================
+_YF_SESSION = None
 
+def _yf_session():
+    global _YF_SESSION
+    if _YF_SESSION is None:
+        if not requests:
+            return None
+        s = requests.Session()
+        s.headers.update({
+            "User-Agent": HEADERS["User-Agent"],
+            "Accept-Language": "en-US,en;q=0.9,ar;q=0.8",
+            "Accept": "application/json,text/plain,*/*",
+            "Connection": "keep-alive",
+        })
+        _YF_SESSION = s
+    return _YF_SESSION
+
+
+def _http_get_json(url: str, timeout: int = 8, retries: int = 2, sleep: float = 0.6) -> dict:
+    if not requests:
+        return {}
+    ses = _yf_session()
+    if not ses:
+        return {}
+    for i in range(retries + 1):
+        try:
+            r = ses.get(url, timeout=timeout)
+            if r.status_code == 200:
+                try:
+                    return r.json() or {}
+                except Exception:
+                    return {}
+            if r.status_code in (429, 503):
+                time.sleep(sleep * (2 if r.status_code == 429 else 1))
+        except Exception:
+            pass
+        if i < retries:
+            time.sleep(sleep)
+    return {}
+
+
+def _yf_raw(v, default=0.0) -> float:
+    """
+    Yahoo JSON often returns:
+      {"raw": 123, "fmt": "..."}
+    or None
+    """
+    try:
+        if v is None:
+            return float(default)
+        if isinstance(v, dict):
+            return float(v.get("raw", default) or default)
+        return float(v)
+    except Exception:
+        return float(default)
+
+
+def _yf_date_str(v) -> str:
+    """
+    endDate may be dict {"raw": 1703980800, "fmt": "2023-12-31"}
+    """
+    try:
+        if isinstance(v, dict):
+            if v.get("fmt"):
+                return _safe_date_str(v["fmt"])
+            raw = v.get("raw")
+            if raw:
+                return datetime.utcfromtimestamp(int(raw)).strftime("%Y-%m-%d")
+        return _safe_date_str(v)
+    except Exception:
+        return datetime.now().strftime("%Y-%m-%d")
+
+
+def _yahoo_quote_summary(symbol: str, modules: list[str]) -> dict:
+    """
+    Primary stable endpoint:
+    https://query2.finance.yahoo.com/v10/finance/quoteSummary/{symbol}?modules=...
+    """
+    sym = get_ticker_symbol(symbol)
+    if not sym:
+        return {}
+    mods = ",".join([m.strip() for m in modules if m and str(m).strip()])
+    if not mods:
+        return {}
+    url = f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{sym}?modules={mods}"
+    return _http_get_json(url)
+
+
+def _extract_stmt_list(root: dict, key: str) -> list:
+    """
+    Example keys:
+      incomeStatementHistory -> {"incomeStatementHistory": [{"endDate":..., "totalRevenue":...}, ...]}
+      incomeStatementHistoryQuarterly -> {"incomeStatementHistory": [...]}
+    """
+    try:
+        rs = (root or {}).get("quoteSummary", {}).get("result", [])
+        if not rs:
+            return []
+        obj = rs[0].get(key, {}) or {}
+        # most of them store in obj["incomeStatementHistory"] or ["balanceSheetStatements"] etc
+        for possible in ("incomeStatementHistory", "balanceSheetStatements", "cashflowStatements"):
+            if possible in obj and isinstance(obj[possible], list):
+                return obj[possible]
+        # fallback: first list in obj
+        for _, v in obj.items():
+            if isinstance(v, list) and v and isinstance(v[0], dict):
+                return v
+    except Exception:
+        pass
+    return []
+
+
+def _normalize_yahoo_statements(symbol: str, frequency: str = "Annual") -> list[dict]:
+    """
+    frequency: "Annual" or "Quarterly"
+    returns list of records:
+      [{"date": "YYYY-MM-DD", "data": {...}}, ...]
+    """
+    freq = str(frequency or "Annual").strip().title()
+    if freq not in ("Annual", "Quarterly"):
+        freq = "Annual"
+
+    modules = [
+        "incomeStatementHistory", "incomeStatementHistoryQuarterly",
+        "balanceSheetHistory", "balanceSheetHistoryQuarterly",
+        "cashflowStatementHistory", "cashflowStatementHistoryQuarterly",
+    ]
+    root = _yahoo_quote_summary(symbol, modules)
+    if not root:
+        return []
+
+    is_key = "incomeStatementHistoryQuarterly" if freq == "Quarterly" else "incomeStatementHistory"
+    bs_key = "balanceSheetHistoryQuarterly" if freq == "Quarterly" else "balanceSheetHistory"
+    cf_key = "cashflowStatementHistoryQuarterly" if freq == "Quarterly" else "cashflowStatementHistory"
+
+    income_list = _extract_stmt_list(root, is_key)
+    bs_list = _extract_stmt_list(root, bs_key)
+    cf_list = _extract_stmt_list(root, cf_key)
+
+    # map by date
+    by_date = {}
+
+    def upsert(rec: dict, kind: str):
+        if not isinstance(rec, dict):
+            return
+        d = _yf_date_str(rec.get("endDate") or rec.get("asOfDate") or rec.get("periodEndDate"))
+        if not d:
+            return
+        by_date.setdefault(d, {})
+        by_date[d][kind] = rec
+
+    for r in income_list:
+        upsert(r, "is")
+    for r in bs_list:
+        upsert(r, "bs")
+    for r in cf_list:
+        upsert(r, "cf")
+
+    if not by_date:
+        return []
+
+    def g(dct: dict, *keys, default=0.0) -> float:
+        for k in keys:
+            if k in dct:
+                return _yf_raw(dct.get(k), default=default)
+        return float(default)
+
+    out = []
+    for d in sorted(by_date.keys(), reverse=True):
+        isr = by_date[d].get("is", {}) or {}
+        bsr = by_date[d].get("bs", {}) or {}
+        cfr = by_date[d].get("cf", {}) or {}
+
+        data = {
+            "revenue": g(isr, "totalRevenue", "revenue", "totalOperatingRevenue", default=0.0),
+            "net_income": g(isr, "netIncome", "netIncomeCommonStockholders", "netIncomeApplicableToCommonShares", default=0.0),
+
+            "total_assets": g(bsr, "totalAssets", default=0.0),
+
+            # liabilities keys differ by dataset
+            "total_liabilities": g(bsr, "totalLiab", "totalLiabilitiesNetMinorityInterest", "totalLiabilities", default=0.0),
+
+            # equity keys differ
+            "total_equity": g(
+                bsr,
+                "totalStockholderEquity",
+                "totalEquityGrossMinorityInterest",
+                "totalEquity",
+                default=0.0
+            ),
+
+            "operating_cash_flow": g(cfr, "totalCashFromOperatingActivities", "operatingCashflow", default=0.0),
+
+            "current_assets": g(bsr, "totalCurrentAssets", "currentAssets", default=0.0),
+            "current_liabilities": g(bsr, "totalCurrentLiabilities", "currentLiabilities", default=0.0),
+
+            "long_term_debt": g(bsr, "longTermDebt", "longTermDebtNoncurrent", "longTermDebtAndCapitalLeaseObligation", default=0.0),
+        }
+
+        # drop empty record
+        if sum(abs(_safe_float(v)) for v in data.values()) == 0:
+            continue
+
+        out.append({"date": d, "data": data})
+
+    return out
+
+
+def fetch_financial_statements_yahoo_json(symbol: str, period_type: str = "Annual") -> list[dict]:
+    """
+    Returns list of {"date":..., "data":...}
+    period_type: Annual / Quarterly
+    """
+    try:
+        return _normalize_yahoo_statements(symbol, frequency=period_type)
+    except Exception:
+        return []
 # ==============================================================
 # 🧠 1) FinancialParser
 # ==============================================================
@@ -461,150 +680,85 @@ def get_stored_financials_df(symbol, period_type="Annual"):
     except Exception:
         return pd.DataFrame()
 
+# ==============================================================
+# ✅ Unified Financial Statements (DB cache + Yahoo JSON + fallback)
+# ==============================================================
+@st.cache_data(ttl=60 * 60 * 6, show_spinner=False)  # 6 hours, light UI cache only
+def get_financial_statements(symbol: str, period_type: str = "Annual", refresh: bool = False) -> pd.DataFrame:
+    """
+    يرجع DataFrame موحّد من جدول financialstatements.
+    - لو refresh=False: يرجع المخزن إن وجد (حتى لو قديم) + يحاول تحديثه في نفس الاستدعاء
+    - لو Yahoo JSON فشل: يرجع المخزن مباشرة
+    """
+    sym = get_ticker_symbol(symbol)
+    ptype = str(period_type or "Annual").strip().title()
+    if ptype not in ("Annual", "Quarterly"):
+        ptype = "Annual"
 
+    # 1) read stored first (so UI never breaks)
+    stored = get_stored_financials_df(sym, ptype)
+
+    # if not refresh and we already have data, just return it (fast & stable)
+    if (not refresh) and (stored is not None) and (not stored.empty):
+        return stored
+
+    # 2) try Yahoo JSON (best)
+    records = fetch_financial_statements_yahoo_json(sym, ptype)
+
+    # 3) fallback: try parser-based sources if Yahoo empty
+    if not records:
+        # Argaam / Google Finance best-effort (may fail silently)
+        try:
+            if ptype == "Annual":
+                d = fetch_financials_from_argaam(sym) or {}
+                if d:
+                    records = [{"date": d.get("date") or datetime.now().strftime("%Y-12-31"), "data": d}]
+        except Exception:
+            pass
+
+        if not records:
+            try:
+                if ptype == "Annual":
+                    d2 = fetch_financials_from_google_finance(sym) or {}
+                    if d2:
+                        records = [{"date": d2.get("date") or datetime.now().strftime("%Y-12-31"), "data": d2}]
+            except Exception:
+                pass
+
+    # 4) save whatever we got
+    if records:
+        for rec in records:
+            d = rec.get("date")
+            data = rec.get("data", {}) or {}
+            save_financial_record(sym, d, data, period_type=ptype, source="YahooJSON" if "revenue" in data else "External")
+
+        # return fresh from DB
+        return get_stored_financials_df(sym, ptype)
+
+    # 5) nothing fetched -> return stored (if any), else empty
+    return stored if stored is not None else pd.DataFrame()
 # ==============================================================
 # 🌍 3) External Sources (Analysis / Financial Statements)
 # ==============================================================
+
 def fetch_financials_from_yahoo(symbol: str) -> dict:
     """
-    يجلب أحدث سنة (Annual) من Yahoo إذا متاح.
-    يرجع dict للحقول الرئيسية.
+    ✅ الآن: يجلب من Yahoo JSON (quoteSummary) بدل yfinance.financials
+    يرجع أحدث سجل Annual.
     """
     sym = get_ticker_symbol(symbol)
-    out = {}
-
     try:
-        t = yf.Ticker(sym)
-
-        # Prefer annual
-        fin = t.financials if hasattr(t, "financials") else pd.DataFrame()
-        bs = t.balance_sheet if hasattr(t, "balance_sheet") else pd.DataFrame()
-        cf = t.cashflow if hasattr(t, "cashflow") else pd.DataFrame()
-
-        if fin is None:
-            fin = pd.DataFrame()
-        if bs is None:
-            bs = pd.DataFrame()
-        if cf is None:
-            cf = pd.DataFrame()
-
-        # pick latest date across columns
-        dates = sorted(list(set(fin.columns) | set(bs.columns) | set(cf.columns)), reverse=True)
-        if not dates:
+        recs = fetch_financial_statements_yahoo_json(sym, "Annual")
+        if not recs:
             return {}
-
-        d = dates[0]
-
-        def g(df, key):
-            try:
-                if df is None or df.empty:
-                    return 0.0
-                if key in df.index and d in df.columns:
-                    return _safe_float(df.loc[key, d])
-            except Exception:
-                pass
-            return 0.0
-
-        out = {
-            "date": _safe_date_str(d),
-            "revenue": g(fin, "Total Revenue"),
-            "net_income": g(fin, "Net Income"),
-            "total_assets": g(bs, "Total Assets"),
-            "total_liabilities": g(bs, "Total Liabilities Net Minority Interest"),
-            "total_equity": g(bs, "Total Equity Gross Minority Interest"),
-            "operating_cash_flow": g(cf, "Operating Cash Flow"),
-            "current_assets": g(bs, "Current Assets"),
-            "current_liabilities": g(bs, "Current Liabilities"),
-            "long_term_debt": g(bs, "Long Term Debt"),
-        }
-        return out
+        recs = sorted(recs, key=lambda x: x.get("date", ""), reverse=True)
+        top = recs[0]
+        data = top.get("data", {}) or {}
+        data["date"] = top.get("date")
+        return data
     except Exception:
         return {}
-
-
-def _fetch_html(url: str, timeout=6) -> str:
-    if not requests:
-        return ""
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=timeout)
-        if r.status_code != 200:
-            return ""
-        return r.text or ""
-    except Exception:
-        return ""
-
-
-def fetch_financials_from_google_finance(symbol: str) -> dict:
-    """
-    ✅ تحليل فقط (قد تتغير الصفحة).
-    نحاول نجمع نص الصفحة ونمرره للـ parser.
-    """
-    sym = get_ticker_symbol(symbol).replace(".SR", "")
-    if not sym.isdigit():
-        return {}
-
-    url = f"https://www.google.com/finance/quote/{sym}:TADAWUL"
-    html = _fetch_html(url, timeout=6)
-    if not html:
-        return {}
-
-    # نحول HTML إلى نص
-    try:
-        soup = BeautifulSoup(html, "html.parser") if BeautifulSoup else None
-        txt = soup.get_text("\n", strip=True) if soup else ""
-    except Exception:
-        txt = ""
-
-    if not txt.strip():
-        return {}
-
-    parser = FinancialParser()
-    results, detected = parser._detect_format_and_parse(txt)
-    if not results:
-        return {}
-
-    # نأخذ أحدث سجل
-    results = sorted(results, key=lambda x: x.get("date", ""), reverse=True)
-    rec = results[0]
-    data = rec.get("data", {}) or {}
-    data["date"] = rec.get("date")
-    data["_source_url"] = url
-    return data
-
-
-def fetch_financials_from_argaam(symbol: str) -> dict:
-    """
-    ✅ تحليل فقط + يمكن تستخدمه كاحتياط للقوائم.
-    صفحات أرقام قد تتغير؛ نجرب best-effort ونمرر النص للـ parser.
-    """
-    s = get_ticker_symbol(symbol).replace(".SR", "")
-    if not s.isdigit():
-        return {}
-
-    # روابط محتملة
-    urls = [
-        f"https://www.argaam.com/en/company/financials/{s}",
-        f"https://www.argaam.com/ar/company/financials/{s}",
-        f"https://www.argaam.com/en/company/stock/overview/{s}",
-        f"https://www.argaam.com/ar/company/stock/overview/{s}",
-    ]
-
-    for url in urls:
-        html = _fetch_html(url, timeout=7)
-        if not html:
-            continue
-        try:
-            soup = BeautifulSoup(html, "html.parser") if BeautifulSoup else None
-            txt = soup.get_text("\n", strip=True) if soup else ""
-        except Exception:
-            txt = ""
-
-        if not txt.strip():
-            continue
-
-        parser = FinancialParser()
-        results, detected = parser._detect_format_and_parse(txt)
-        if results:
+# نأخذ أحدث سجل
             results = sorted(results, key=lambda x: x.get("date", ""), reverse=True)
             rec = results[0]
             data = rec.get("data", {}) or {}
@@ -613,73 +767,6 @@ def fetch_financials_from_argaam(symbol: str) -> dict:
             return data
 
     return {}
-
-
-def fetch_financials_from_investing(symbol: str) -> dict:
-    """
-    Placeholder آمن — Investing يتغير كثير.
-    الأفضل تعتمد على Copy/Paste من الصفحة داخل النظام (مدعوم بالـ parser).
-    """
-    return {}
-
-
-def fetch_financials_from_tradingview(symbol: str) -> dict:
-    """
-    Placeholder آمن — TradingView أغلبه dynamic.
-    الأفضل تعتمد على Copy/Paste من TradingView داخل النظام (مدعوم).
-    """
-    return {}
-
-
-def sync_auto_multi_sources(symbol: str, prefer="yahoo") -> tuple[bool, str]:
-    """
-    ✅ حسب طلبك:
-    مصادر القوائم/التحليل يمكن تكون:
-    Yahoo / Google Finance / TradingView / Argaam / Investing / Browser paste
-    هنا نسوي مزامنة "أفضل محاولة" بدون كسر.
-
-    *ملاحظة*: لا نعتمد scraping كمصدر وحيد؛ Yahoo هو الأساسي.
-    """
-    symbol = get_ticker_symbol(symbol)
-    sources = []
-
-    if prefer == "yahoo":
-        sources = ["yahoo", "argaam", "google"]
-    else:
-        sources = ["yahoo", "google", "argaam"]
-
-    fetched = None
-    src_used = None
-    for src in sources:
-        if src == "yahoo":
-            fetched = fetch_financials_from_yahoo(symbol)
-            if fetched:
-                src_used = "yahoo"
-                break
-        if src == "argaam":
-            fetched = fetch_financials_from_argaam(symbol)
-            if fetched:
-                src_used = "argaam"
-                break
-        if src == "google":
-            fetched = fetch_financials_from_google_finance(symbol)
-            if fetched:
-                src_used = "google"
-                break
-
-    if not fetched:
-        return False, "لم نتمكن من جلب بيانات مالية آلياً. جرّب الرفع/اللصق."
-
-    d = fetched.get("date") or datetime.now().strftime("%Y-12-31")
-    data = {k: fetched.get(k, 0) for k in [
-        "revenue", "net_income",
-        "total_assets", "total_liabilities", "total_equity",
-        "operating_cash_flow", "current_assets", "current_liabilities", "long_term_debt"
-    ]}
-
-    ok = save_financial_record(symbol, d, data, "Annual", f"Auto_{str(src_used).title()}")
-    return (ok, f"تمت المزامنة من {src_used} بتاريخ {d}" if ok else "فشل حفظ البيانات بعد الجلب")
-
 
 # ==============================================================
 # ⚡ 4) Yahoo Sync (used by views.py)
