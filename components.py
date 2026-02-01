@@ -371,6 +371,261 @@ def render_ticker_card(symbol, name, price, change):
 
 def render_custom_table(df, columns_config):
     """
+   # ============================================================
+# ✅ Smart Table Layer (Auto Columns + Search/Filter + Smart Colors)
+# ============================================================
+
+def _guess_col_type(col_name: str, sample_val=None) -> str:
+    n = (col_name or "").strip().lower()
+
+    # status/badge
+    if n in ("status", "status_ar") or "status" in n or "الحالة" in n:
+        return "badge"
+
+    # date
+    if "date" in n or "time" in n or "ts" in n or "تاريخ" in n:
+        return "date"
+
+    # percent
+    if "pct" in n or "percent" in n or "نسبة" in n or n.endswith("%"):
+        return "percent"
+    if isinstance(sample_val, str) and "%" in sample_val:
+        return "percent"
+
+    # money-ish
+    money_keys = ("price", "cost", "value", "amount", "cash", "revenue", "income", "assets", "liab", "equity", "debt",
+                  "سعر", "قيمة", "تكلفة", "مبلغ", "سيولة", "إيراد", "ربح", "أصول", "مطلوبات", "حقوق", "دين")
+    if any(k in n for k in money_keys):
+        return "money"
+
+    # qty
+    if "qty" in n or "quantity" in n or "shares" in n or "كمية" in n:
+        return "number"
+
+    # gains/returns -> colorful
+    gain_keys = ("gain", "pl", "profit", "loss", "return", "change", "growth", "عائد", "ربح", "خسارة", "تغير", "نمو")
+    if any(k in n for k in gain_keys):
+        # لو كان pct غالبًا تم التقاطه فوق
+        return "colorful"
+
+    # default
+    # إذا رقم -> number/auto
+    x = _safe_number(sample_val, default=None)
+    if x is not None:
+        return "number"
+
+    return "text"
+
+
+def _auto_label(col: str) -> str:
+    """تحسين أسماء الأعمدة لو ما عندك mapping"""
+    s = (col or "").strip()
+    # لطّف snake_case
+    s = s.replace("_", " ")
+    return s
+
+
+def auto_columns_config(
+    df: pd.DataFrame,
+    *,
+    include: list | None = None,
+    exclude: list | None = None,
+    rename_map: dict | None = None,
+    type_overrides: dict | None = None,
+    max_cols: int = 18,
+) -> list:
+    """
+    يبني columns_config تلقائيًا لـ render_custom_table.
+    - include: قائمة أعمدة محددة (إن وجدت)
+    - exclude: أعمدة تستبعد
+    - rename_map: {col: "label"}
+    - type_overrides: {col: "money"/"percent"/...}
+    """
+    if df is None or df.empty:
+        return []
+
+    cols = list(df.columns)
+
+    if include:
+        cols = [c for c in include if c in df.columns]
+
+    if exclude:
+        ex = set(exclude)
+        cols = [c for c in cols if c not in ex]
+
+    # لا نطوّل جدًا
+    cols = cols[:max_cols]
+
+    cfg = []
+    for c in cols:
+        sample = None
+        try:
+            sample = df[c].dropna().iloc[0] if c in df.columns and df[c].notna().any() else None
+        except Exception:
+            sample = None
+
+        ctype = None
+        if type_overrides and c in type_overrides:
+            ctype = type_overrides[c]
+        else:
+            ctype = _guess_col_type(str(c), sample)
+
+        label = (rename_map or {}).get(c, _auto_label(str(c)))
+        cfg.append((c, label, ctype))
+
+    return cfg
+
+
+def _apply_search(df: pd.DataFrame, q: str, cols: list | None = None) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+    q = (q or "").strip()
+    if not q:
+        return df
+
+    cols = cols or list(df.columns)
+    cols = [c for c in cols if c in df.columns]
+
+    # search as string contains
+    mask = pd.Series([False] * len(df), index=df.index)
+    for c in cols:
+        try:
+            mask = mask | df[c].astype(str).str.contains(q, case=False, na=False)
+        except Exception:
+            pass
+    return df[mask].copy()
+
+
+def _apply_filters(df: pd.DataFrame, filters: dict) -> pd.DataFrame:
+    """
+    filters مثال:
+    {
+      "status": ["Open"],
+      "sector": ["Banks","Energy"]
+    }
+    """
+    if df is None or df.empty:
+        return df
+    out = df.copy()
+    for col, selected in (filters or {}).items():
+        if not selected or col not in out.columns:
+            continue
+        try:
+            out = out[out[col].astype(str).isin([str(x) for x in selected])]
+        except Exception:
+            pass
+    return out
+
+
+def _apply_sort(df: pd.DataFrame, sort_col: str, ascending: bool) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+    if not sort_col or sort_col not in df.columns:
+        return df
+    try:
+        return df.sort_values(sort_col, ascending=ascending)
+    except Exception:
+        return df
+
+
+def render_smart_table(
+    df: pd.DataFrame,
+    *,
+    key: str,
+    title: str | None = None,
+    columns_config: list | None = None,
+    include: list | None = None,
+    exclude: list | None = None,
+    rename_map: dict | None = None,
+    type_overrides: dict | None = None,
+    enable_search: bool = True,
+    search_cols: list | None = None,
+    filter_cols: list | None = None,
+    enable_sort: bool = True,
+    default_sort_col: str | None = None,
+    default_sort_asc: bool = False,
+    max_rows: int = 500,
+):
+    """
+    واجهة جاهزة:
+    - توليد columns_config تلقائيًا (إن لم يُمرّر)
+    - بحث + فلاتر + فرز
+    - تلوين ذكي يعتمد على render_custom_table
+    """
+    if df is None or df.empty:
+        st.info("📭 لا توجد بيانات متاحة")
+        return
+
+    # قص عدد الصفوف للواجهة (اختياري)
+    view_df = df.copy()
+    if max_rows and len(view_df) > max_rows:
+        view_df = view_df.head(max_rows).copy()
+
+    if title:
+        st.markdown(f"### {title}")
+
+    # ---- Toolbar
+    q = ""
+    filters = {}
+
+    # row 1: search + sort
+    if enable_search or enable_sort:
+        c1, c2, c3 = st.columns([2, 1, 1])
+        with c1:
+            if enable_search:
+                q = st.text_input("🔎 بحث داخل الجدول", key=f"{key}_q")
+        with c2:
+            sort_col = None
+            if enable_sort:
+                sort_options = [c for c in view_df.columns]
+                if default_sort_col and default_sort_col in view_df.columns:
+                    sort_col = st.selectbox("↕️ فرز حسب", sort_options, index=sort_options.index(default_sort_col), key=f"{key}_sort_col")
+                else:
+                    sort_col = st.selectbox("↕️ فرز حسب", sort_options, index=0, key=f"{key}_sort_col")
+            else:
+                sort_col = None
+        with c3:
+            asc = default_sort_asc
+            if enable_sort:
+                asc = st.selectbox("الاتجاه", ["⬇️ تنازلي", "⬆️ تصاعدي"], index=(1 if default_sort_asc else 0), key=f"{key}_sort_dir") == "⬆️ تصاعدي"
+    else:
+        sort_col, asc = None, default_sort_asc
+
+    # row 2: filters
+    if filter_cols:
+        st.markdown("<div style='margin-top:6px;'></div>", unsafe_allow_html=True)
+        fcols = st.columns(min(4, len(filter_cols)))
+        for i, col in enumerate(filter_cols):
+            if col not in view_df.columns:
+                continue
+            with fcols[i % len(fcols)]:
+                try:
+                    opts = sorted(view_df[col].astype(str).fillna("").unique().tolist())
+                except Exception:
+                    opts = []
+                sel = st.multiselect(f"فلترة: {col}", opts, default=[], key=f"{key}_flt_{col}")
+                if sel:
+                    filters[col] = sel
+
+    # Apply search/filters/sort
+    out = view_df
+    if enable_search:
+        out = _apply_search(out, q, cols=search_cols)
+    out = _apply_filters(out, filters)
+    if enable_sort:
+        out = _apply_sort(out, sort_col, asc)
+
+    # auto columns config
+    cfg = columns_config or auto_columns_config(
+        out,
+        include=include,
+        exclude=exclude,
+        rename_map=rename_map,
+        type_overrides=type_overrides,
+    )
+
+    # Render
+    render_custom_table(out, cfg)
     columns_config يدعم شكلين:
     1) القديم: (col_key, label, col_type)
     2) الجديد: (col_key, label, col_type, format_func)
