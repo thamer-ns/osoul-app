@@ -1,4 +1,4 @@
-Import streamlit as st
+import streamlit as st
 import pandas as pd
 import plotly.express as px
 from datetime import date
@@ -99,6 +99,8 @@ except Exception:
 # ========================================================
 def _normalize_symbol(sym: str) -> str:
     sym = (sym or "").strip().upper()
+    if not sym:
+        return ""
     if sym.isdigit():
         return f"{sym}.SR"
     sym = sym.replace(" ", "").replace("-", "")
@@ -107,12 +109,19 @@ def _normalize_symbol(sym: str) -> str:
     return sym
 
 
+def _safe_status_series(df: pd.DataFrame) -> pd.Series:
+    """يرجع status موحد lower/strip لتفادي Open/OPEN/Close/Closed..."""
+    if df is None or df.empty or "status" not in df.columns:
+        return pd.Series([], dtype=str)
+    return df["status"].astype(str).str.strip().str.lower()
+
+
 def _select_strategy_ui(key_prefix: str = "lab"):
     """
     يدعم list_strategies سواء رجعت:
     - ["Trend","Sniper"]
     - [("Trend","ترند"), ("Sniper","قناص")]
-    - [{"key":"Trend","name":"ترند"}] (إذا جاء شكل غريب نحاول نطبع نص)
+    - [{"key":"Trend","name":"ترند"}]
     ويرجع دائمًا قيمة strategy كنص (string) لتفادي خطأ tuple.title()
     """
     raw = list_strategies() or ["Trend", "Sniper"]
@@ -138,7 +147,7 @@ def _select_strategy_ui(key_prefix: str = "lab"):
         )
         return strat_map[label]
 
-    # dicts: {"key": "...", "name": "..."}
+    # dicts
     if raw and isinstance(raw[0], dict):
         strat_map = {}
         for d in raw:
@@ -156,9 +165,21 @@ def _select_strategy_ui(key_prefix: str = "lab"):
             return strat_map[label]
         return "Trend"
 
-    # default: list of strings
     raw_str = [str(x) for x in raw] if raw else ["Trend", "Sniper"]
     return st.selectbox("اختر الاستراتيجية", raw_str, index=0, key=f"{key_prefix}_strat")
+
+
+def _clean_symbols_list(values) -> list:
+    """ينظف الرموز: يحذف الفارغ/NaN ويطبّع ويزيل التكرار"""
+    out = []
+    try:
+        for x in (values or []):
+            s = _normalize_symbol(str(x))
+            if s and s != ".SR" and s.lower() != "nan":
+                out.append(s)
+    except Exception:
+        pass
+    return list(sorted(set(out)))
 
 
 # ========================================================
@@ -274,7 +295,8 @@ def view_dashboard(fin):
     st.markdown("<div style='margin-bottom: 25px;'></div>", unsafe_allow_html=True)
 
     if not df.empty:
-        closed_df = df[df["status"] == "Close"].copy() if "status" in df.columns else pd.DataFrame()
+        status = _safe_status_series(df)
+        closed_df = df[status.isin(["close", "closed"])].copy() if len(status) else pd.DataFrame()
         closed_cost = float(closed_df["total_cost"].sum()) if (not closed_df.empty and "total_cost" in closed_df.columns) else 0
         closed_sales = float(closed_df["market_value"].sum()) if (not closed_df.empty and "market_value" in closed_df.columns) else 0
         closed_pl = float(fin.get("realized_pl", 0))
@@ -292,7 +314,8 @@ def view_dashboard(fin):
     st.markdown("---")
 
     if not df.empty and "status" in df.columns:
-        open_trades = df[df["status"] == "Open"].copy()
+        status = _safe_status_series(df)
+        open_trades = df[status == "open"].copy()
         invest_val = 0
         spec_val = 0
         sukuk_val = 0
@@ -305,7 +328,7 @@ def view_dashboard(fin):
             pass
 
         if "asset_type" in open_trades.columns and "market_value" in open_trades.columns:
-            sukuk_val = open_trades[open_trades["asset_type"] == "Sukuk"]["market_value"].sum()
+            sukuk_val = open_trades[open_trades["asset_type"].astype(str).str.lower() == "sukuk"]["market_value"].sum()
 
         alloc_df = pd.DataFrame({
             "Asset": ["استثمار", "مضاربة", "صكوك", "كاش"],
@@ -359,9 +382,10 @@ def view_portfolio(fin, key):
         else:
             sub = df.copy()
 
-    if "status" in sub.columns:
-        op = sub[sub["status"] == "Open"].copy()
-        cl = sub[sub["status"] == "Close"].copy()
+    status = _safe_status_series(sub) if not sub.empty else pd.Series([], dtype=str)
+    if len(status):
+        op = sub[status == "open"].copy()
+        cl = sub[status.isin(["close", "closed"])].copy()
     else:
         op = sub.copy()
         cl = pd.DataFrame()
@@ -394,12 +418,17 @@ def view_portfolio(fin, key):
             c_sort, _ = st.columns([1, 3])
             sort_by = c_sort.selectbox(f"فرز {ts} حسب:", sort_opts, key=f"s_op_{key}")
 
+            # ✅ تنظيف الرموز قبل جلب الأسعار
+            symbols = _clean_symbols_list(op["symbol"].astype(str).tolist()) if "symbol" in op.columns else []
             try:
-                live_data = fetch_batch_data(op["symbol"].astype(str).unique().tolist()) if "symbol" in op.columns else {}
+                live_data = fetch_batch_data(symbols) if symbols else {}
             except Exception:
                 live_data = {}
 
-            op["symbol"] = op["symbol"].astype(str) if "symbol" in op.columns else ""
+            # ✅ طبّع عمود symbol داخل الجدول (لمنع mismatch)
+            if "symbol" in op.columns:
+                op["symbol"] = op["symbol"].astype(str).apply(_normalize_symbol)
+
             op["current_price"] = op["symbol"].apply(lambda x: live_data.get(x, {}).get("price", 0))
             op["prev_close"] = op["symbol"].apply(lambda x: live_data.get(x, {}).get("prev_close", 0))
 
@@ -555,14 +584,15 @@ def view_sukuk_portfolio(fin):
     if df.empty or "asset_type" not in df.columns:
         sukuk = pd.DataFrame()
     else:
-        sukuk = df[df["asset_type"] == "Sukuk"].copy()
+        sukuk = df[df["asset_type"].astype(str).str.lower() == "sukuk"].copy()
 
-    if sukuk.empty or "status" not in sukuk.columns:
+    status = _safe_status_series(sukuk) if not sukuk.empty else pd.Series([], dtype=str)
+    if len(status):
+        op = sukuk[status == "open"].copy()
+        cl = sukuk[status.isin(["close", "closed"])].copy()
+    else:
         op = sukuk.copy()
         cl = pd.DataFrame()
-    else:
-        op = sukuk[sukuk["status"] == "Open"].copy()
-        cl = sukuk[sukuk["status"] == "Close"].copy()
 
     t1, t2 = st.tabs(["الصكوك القائمة (Open)", "الأرشيف (Closed)"])
 
@@ -624,7 +654,7 @@ def view_sukuk_portfolio(fin):
                         sid = st.selectbox(
                             "اختر الصك للبيع:",
                             op["id"].tolist(),
-                            format_func=lambda x: f"{op[op['id']==x]['company_name'].iloc[0]} ({op[op['id']==x].get('quantity', pd.Series([0])).iloc[0]})",
+                            format_func=lambda x: f"{op[op['id']==x]['company_name'].iloc[0]}",
                             key="sell_sukuk_sel"
                         )
                         if sid:
@@ -721,9 +751,8 @@ def view_sukuk_portfolio(fin):
 # ========================================================
 # 5) Cash Log
 # ========================================================
-def view_cash_log():
+def view_cash_log(fin):
     st.header("💰 السيولة والسجلات المالية")
-    fin = calculate_portfolio_metrics()
 
     dep = fin.get("deposits", pd.DataFrame())
     wit = fin.get("withdrawals", pd.DataFrame())
@@ -807,11 +836,12 @@ def view_cash_log():
     with t3:
         with st.expander("💵 تسجيل عائد/توزيع"):
             with st.form("new_ret"):
-                s = st.text_input("رمز السهم", key="ret_sym")
+                s_raw = st.text_input("رمز السهم", key="ret_sym")
                 a = st.number_input("المبلغ", min_value=0.0, step=10.0, key="ret_amt")
                 d = st.date_input("التاريخ", date.today(), key="ret_date")
                 if st.form_submit_button("حفظ"):
                     if a > 0:
+                        s = _normalize_symbol(s_raw)
                         execute_query("INSERT INTO returnsgrants (date, symbol, amount) VALUES (%s,%s,%s)", (str(d), s, a))
                         st.success("تم")
                         st.cache_data.clear()
@@ -831,10 +861,11 @@ def view_cash_log():
                         tid = ret_map[sel_ret]
                         curr = ret[ret["id"] == tid].iloc[0]
                         with st.form(f"edit_ret_form_{tid}"):
-                            ns = st.text_input("رمز السهم", value=str(curr.get("symbol", "")), key=f"ret_fix_sym_{tid}")
+                            ns_raw = st.text_input("رمز السهم", value=str(curr.get("symbol", "")), key=f"ret_fix_sym_{tid}")
                             na = st.number_input("المبلغ الصحيح", value=float(curr.get("amount", 0)), key=f"ret_fix_amt_{tid}")
                             nd = st.date_input("التاريخ الصحيح", pd.to_datetime(curr.get("date", date.today())).date(), key=f"ret_fix_date_{tid}")
                             if st.form_submit_button("حفظ التعديلات"):
+                                ns = _normalize_symbol(ns_raw)
                                 execute_query("UPDATE returnsgrants SET symbol=%s, amount=%s, date=%s WHERE id=%s", (ns, na, str(nd), tid))
                                 st.success("تم التعديل بنجاح")
                                 st.cache_data.clear()
@@ -1009,7 +1040,8 @@ def view_analysis(fin):
     trades = fin.get("all_trades", pd.DataFrame())
 
     if not trades.empty and "status" in trades.columns:
-        open_pos = trades[trades["status"] == "Open"].copy()
+        status = _safe_status_series(trades)
+        open_pos = trades[status == "open"].copy()
         st.subheader("📊 اختبار التحمل")
         res = run_stress_test(float(fin.get("market_val_open", 0)), open_pos)
         if res.get("scenarios"):
@@ -1017,13 +1049,22 @@ def view_analysis(fin):
             with c_stress:
                 sdf = pd.DataFrame(res["scenarios"])
                 if not sdf.empty and "scenario" in sdf.columns and "impact_pct" in sdf.columns:
+                    # map ثابت للألوان
+                    cmap = {}
+                    try:
+                        for r in res["scenarios"]:
+                            if r.get("scenario") and r.get("color"):
+                                cmap[r["scenario"]] = r["color"]
+                    except Exception:
+                        cmap = None
+
                     st.plotly_chart(
                         px.bar(
                             sdf,
                             x="scenario",
                             y="impact_pct",
                             color="scenario",
-                            color_discrete_map={r["scenario"]: r["color"] for _, r in sdf.iterrows()} if "color" in sdf.columns else None,
+                            color_discrete_map=cmap if cmap else None,
                         ),
                         use_container_width=True,
                     )
@@ -1051,6 +1092,11 @@ def view_analysis(fin):
     sym = c2.selectbox("اختر السهم", options, key="analysis_symbol") if options else None
 
     if sym:
+        sym = _normalize_symbol(sym)
+        if not sym or sym == ".SR":
+            st.warning("الرجاء إدخال رمز صحيح.")
+            return
+
         n, sec = get_company_details(sym)
         st.markdown(f"### {n} ({sym})")
         tabs = st.tabs(["🤖 المستشار", "💰 مالي", "📈 فني", "🏛️ كلاسيكي", "📝 أطروحة"])
@@ -1058,10 +1104,12 @@ def view_analysis(fin):
         with tabs[0]:
             rep = generate_ai_report(sym)
 
+            # ✅ لا نوقف الصفحة كاملة
             if rep.get("__error__") or rep.get("__trace__"):
                 st.error("فشل تشغيل المستشار (AI Engine).")
                 st.code(rep.get("__trace__", ""))
-                st.stop()
+                st.warning("يمكنك متابعة بقية التبويبات (مالي/فني/كلاسيكي) بينما نصلح المستشار.")
+                return
 
             col = rep.get("color", "#666")
 
@@ -1249,7 +1297,6 @@ def view_backtester_ui(fin):
 
             _, sec = get_company_details(s_norm)
 
-            # ✅ strat هنا مضمون string وليس tuple
             res = run_backtest(data, str(strat), cap, symbol=s_norm, sector=sec)
 
             if res:
@@ -1275,6 +1322,7 @@ def render_pulse_dashboard():
         trades = pd.DataFrame()
 
     syms = list(trades["symbol"].astype(str).unique()) if (not trades.empty and "symbol" in trades.columns) else []
+    syms = _clean_symbols_list(syms)
     if syms:
         d = fetch_batch_data(syms)
         cols = st.columns(4)
@@ -1291,7 +1339,7 @@ def view_add_trade():
     st.header("➕ إضافة صفقة")
     with st.form("add_t"):
         c1, c2 = st.columns(2)
-        s = c1.text_input("رمز السهم (مثال: 1120)", key="add_sym")
+        s_raw = c1.text_input("رمز السهم (مثال: 1120)", key="add_sym")
         typ = c2.selectbox("نوع الصفقة", ["استثمار", "مضاربة", "صكوك"], key="add_typ")
         c3, c4, c5 = st.columns(3)
         q = c3.number_input("الكمية", min_value=1.0, key="add_q")
@@ -1301,6 +1349,7 @@ def view_add_trade():
         if st.form_submit_button("حفظ"):
             valid, msg = validate_trade_inputs(q, p)
             if valid:
+                s = _normalize_symbol(s_raw)
                 nm, sec = get_company_details(s)
                 at = "Sukuk" if typ == "صكوك" else "Stock"
                 execute_query(
@@ -1353,6 +1402,8 @@ def router():
 
     render_navbar()
     pg = st.session_state.page
+
+    # ✅ نحسب مرة واحدة فقط
     fin = calculate_portfolio_metrics()
 
     if pg == "home":
@@ -1366,7 +1417,7 @@ def router():
     elif pg == "analysis":
         view_analysis(fin)
     elif pg == "cash":
-        view_cash_log()
+        view_cash_log(fin)
     elif pg == "backtest":
         view_backtester_ui(fin)
     elif pg == "pulse":
