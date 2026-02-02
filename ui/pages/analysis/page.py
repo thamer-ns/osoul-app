@@ -3,24 +3,64 @@ import streamlit as st
 import pandas as pd
 
 from database import fetch_table
-from market_data import get_chart_history
 from data_source import get_company_details
+from market_data import get_chart_history
 
-from ui.common import clean_symbols_list, normalize_symbol, sym_key
+from ui.common import sym_key as _sym_key, normalize_symbol as _normalize_symbol
+from ui.common import clean_symbols_list as _clean_symbols_list
 
-
-def _call_first_available(mod, names, *args, **kwargs):
-    """Call the first callable found in mod from a list of candidate function names."""
-    for n in names:
-        fn = getattr(mod, n, None)
-        if callable(fn):
-            fn(*args, **kwargs)
-            return True
-    return False
+from ui.pages.analysis.tabs.ai import render_tab as render_ai_tab
+from ui.pages.analysis.tabs.finance import render_tab as render_finance_tab
+from ui.pages.analysis.tabs.technical import render_tab as render_technical_tab
+from ui.pages.analysis.tabs.classical import render_tab as render_classical_tab
+from ui.pages.analysis.tabs.thesis import render_tab as render_thesis_tab
 
 
-def _symbol_picker(fin) -> str:
-    """Pick a symbol for analysis and store it in session_state['analysis_active_symbol']."""
+def _symbol_exists_quick(sym: str) -> bool:
+    """تحقق سريع إذا الرمز معروف: (اسم شركة) أو (بيانات شارت)."""
+    if not sym:
+        return False
+
+    try:
+        info = get_company_details(sym)
+        if isinstance(info, (list, tuple)) and len(info) >= 1:
+            if str(info[0]).strip():
+                return True
+        elif isinstance(info, dict):
+            if str(info.get("name") or info.get("Name") or "").strip():
+                return True
+        else:
+            if str(info).strip():
+                return True
+    except Exception:
+        pass
+
+    # fallback: جرّب شارت شهر
+    try:
+        dfx = get_chart_history(sym, "1mo")
+        return isinstance(dfx, pd.DataFrame) and (not dfx.empty)
+    except Exception:
+        return False
+
+
+def _get_company_name_sector(sym: str):
+    """يرجع (name, sector) بشكل آمن."""
+    try:
+        info = get_company_details(sym)
+        if isinstance(info, (list, tuple)) and len(info) >= 2:
+            return str(info[0] or sym), str(info[1] or "")
+        if isinstance(info, dict):
+            n = info.get("name") or info.get("Name") or sym
+            sec = info.get("sector") or info.get("Sector") or ""
+            return str(n or sym), str(sec or "")
+    except Exception:
+        pass
+    return sym, ""
+
+
+def view_analysis(fin: dict):
+    st.header("🔬 التحليل الشامل")
+
     trades = fin.get("all_trades", pd.DataFrame())
 
     # watchlist
@@ -29,21 +69,17 @@ def _symbol_picker(fin) -> str:
     except Exception:
         wl = pd.DataFrame(columns=["symbol"])
 
+    # جمع الرموز من صفقات + ووتش ليست
     syms = []
     try:
-        if not trades.empty and "symbol" in trades.columns:
-            syms = list(
-                set(
-                    trades["symbol"].astype(str).unique().tolist()
-                    + (wl["symbol"].astype(str).unique().tolist() if "symbol" in wl.columns else [])
-                )
-            )
-        else:
-            syms = wl["symbol"].astype(str).unique().tolist() if "symbol" in wl.columns else []
+        if isinstance(trades, pd.DataFrame) and (not trades.empty) and ("symbol" in trades.columns):
+            syms += trades["symbol"].astype(str).unique().tolist()
+        if isinstance(wl, pd.DataFrame) and (not wl.empty) and ("symbol" in wl.columns):
+            syms += wl["symbol"].astype(str).unique().tolist()
     except Exception:
         syms = []
 
-    all_syms = clean_symbols_list(syms)
+    all_syms = _clean_symbols_list(list(set([s for s in syms if s])))
 
     st.markdown("##### 🔎 البحث عن سهم")
     with st.form("analysis_search_form", clear_on_submit=False):
@@ -52,13 +88,14 @@ def _symbol_picker(fin) -> str:
 
         q_plain = (q or "").strip().upper()
         filtered = all_syms
+
         if q_plain:
-            filtered = []
+            tmp = []
             for s in all_syms:
                 su = s.upper()
                 if q_plain in su or q_plain in su.replace(".SR", ""):
-                    filtered.append(s)
-            filtered = filtered[:80]
+                    tmp.append(s)
+            filtered = tmp[:80]
 
         picked = c2.selectbox(
             "اقتراحات من أسهمك",
@@ -66,140 +103,44 @@ def _symbol_picker(fin) -> str:
             key="analysis_pick",
             disabled=(len(all_syms) == 0),
         )
+
         go_btn = c3.form_submit_button("تحليل", type="primary")
 
-    if st.button("مسح", key="analysis_clear"):
-        st.session_state.pop("analysis_active_symbol", None)
-        st.rerun()
+    col_clear, _ = st.columns([1, 5])
+    with col_clear:
+        if st.button("مسح", key="analysis_clear"):
+            st.session_state.pop("analysis_active_symbol", None)
+            st.rerun()
 
     if go_btn:
         raw = (q_plain or "").strip()
         if (not raw) or raw == "-":
             raw = picked if picked and picked != "-" else ""
-        sym_try = normalize_symbol(raw)
+
+        sym_try = _normalize_symbol(raw)
 
         if not sym_try or sym_try == ".SR":
             st.warning("الرجاء إدخال رمز صحيح مثل: 1120 أو 1120.SR")
         else:
-            ok = False
-
-            # 1) تحقق عبر تفاصيل الشركة
-            try:
-                info = get_company_details(sym_try)
-                if isinstance(info, (list, tuple)) and len(info) >= 1:
-                    ok = bool(str(info[0]).strip())
-                elif isinstance(info, dict):
-                    ok = bool(str(info.get("name") or info.get("Name") or "").strip())
-                else:
-                    ok = bool(str(info).strip())
-            except Exception:
-                ok = False
-
-            # 2) fallback: تاريخ سعر بسيط
-            if not ok:
-                try:
-                    dfx = get_chart_history(sym_try, "1mo")
-                    ok = isinstance(dfx, pd.DataFrame) and (not dfx.empty)
-                except Exception:
-                    ok = False
-
-            if ok:
+            if _symbol_exists_quick(sym_try):
                 st.session_state["analysis_active_symbol"] = sym_try
                 st.rerun()
             else:
                 st.error("❌ الرمز غير معروف أو لا يمكن جلب بياناته الآن. تأكد من كتابة الرمز بشكل صحيح.")
 
-    return st.session_state.get("analysis_active_symbol", "")
+    sym = st.session_state.get("analysis_active_symbol")
+    if not sym:
+        st.info("اختر سهم من الأعلى لبدء التحليل.")
+        return
 
-
-def view_analysis(fin):
-    """
-    ✅ Entry point الرسمي للتحليل
-    هذا الاسم لازم يكون موجود لأن router/views يعتمدون عليه.
-    """
-    st.header("🔬 التحليل الشامل")
-
-    sym = _symbol_picker(fin)
-    sym = normalize_symbol(sym) if sym else ""
-
+    sym = _normalize_symbol(sym)
     if not sym or sym == ".SR":
-        st.info("اختر سهم لعرض تبويبات التحليل.")
+        st.warning("الرجاء إدخال رمز صحيح.")
         return
 
-    # اسم/قطاع
-    try:
-        info = get_company_details(sym)
-        if isinstance(info, (list, tuple)) and len(info) >= 2:
-            n, sec = info[0], info[1]
-        elif isinstance(info, dict):
-            n = info.get("name") or info.get("Name") or sym
-            sec = info.get("sector") or info.get("Sector") or ""
-        else:
-            n, sec = sym, ""
-    except Exception:
-        n, sec = sym, ""
+    name, sector = _get_company_name_sector(sym)
+    st.markdown(f"### {name} ({sym})")
+    if sector:
+        st.caption(sector)
 
-    st.markdown(f"### {n} ({sym})")
-    if sec:
-        st.caption(sec)
-
-    tabs = st.tabs(["🤖 المستشار", "💰 مالي", "📈 فني", "🏛️ كلاسيكي", "📝 أطروحة"])
-
-    # Import داخل الدالة لتجنب circular imports
-    try:
-        from ui.pages.analysis.tabs import ai as tab_ai
-        from ui.pages.analysis.tabs import finance as tab_fin
-        from ui.pages.analysis.tabs import technical as tab_tech
-        from ui.pages.analysis.tabs import classical as tab_classic
-        from ui.pages.analysis.tabs import thesis as tab_thesis
-    except Exception as e:
-        st.error("تعذر تحميل تبويبات التحليل من ui/pages/analysis/tabs")
-        st.exception(e)
-        return
-
-    symk = sym_key(sym)
-
-    with tabs[0]:
-        ok = _call_first_available(
-            tab_ai,
-            ["render", "render_ai", "render_ai_tab", "view", "view_ai", "tab"],
-            fin, sym, symk
-        )
-        if not ok:
-            st.error("تبويب AI: ما لقيت دالة تشغيل داخل ui/pages/analysis/tabs/ai.py")
-
-    with tabs[1]:
-        ok = _call_first_available(
-            tab_fin,
-            ["render", "render_finance", "render_finance_tab", "view", "view_finance", "tab"],
-            fin, sym, symk
-        )
-        if not ok:
-            st.error("تبويب المالي: ما لقيت دالة تشغيل داخل ui/pages/analysis/tabs/finance.py")
-
-    with tabs[2]:
-        ok = _call_first_available(
-            tab_tech,
-            ["render", "render_technical", "render_technical_tab", "view", "view_technical", "tab"],
-            fin, sym, symk
-        )
-        if not ok:
-            st.error("تبويب الفني: ما لقيت دالة تشغيل داخل ui/pages/analysis/tabs/technical.py")
-
-    with tabs[3]:
-        ok = _call_first_available(
-            tab_classic,
-            ["render", "render_classical", "render_classical_tab", "view", "view_classical", "tab"],
-            fin, sym, symk
-        )
-        if not ok:
-            st.error("تبويب الكلاسيكي: ما لقيت دالة تشغيل داخل ui/pages/analysis/tabs/classical.py")
-
-    with tabs[4]:
-        ok = _call_first_available(
-            tab_thesis,
-            ["render", "render_thesis", "render_thesis_tab", "view", "view_thesis", "tab"],
-            fin, sym, symk
-        )
-        if not ok:
-            st.error("تبويب الأطروحة: ما لقيت دالة تشغيل داخل ui/pages/analysis/tabs/thesis.py")
+    # ✅ المهم
