@@ -6,15 +6,18 @@ from typing import Any, Callable, Optional, Tuple, List
 import streamlit as st
 
 
-# ✅ استورد الملفات اللي فعلاً ممكن تحتوي دالة عرض
-# (لا تحط "ui.pages.analysis.ai" لأنه package وغالبًا ما يصدّر دوال)
+# =========================
+# 1) Import by module path
+# =========================
 CANDIDATE_MODULES: List[str] = [
-    "ui.pages.analysis.ai.ai_tab",   # الجديد (داخل مجلد ai)
-    "ui.pages.analysis.ai_tab",      # القديم (قبل التقسيم)
-    "ui.pages.analysis.ai.main",     # احتياط إذا عندك main.py داخل ai
+    "ui.pages.analysis.ai.ai_tab",
+    "ui.pages.analysis.ai_tab",
+    "ui.pages.analysis.ai.main",
+    # احتياط (بعض المشاريع يكون بدون ui.)
+    "pages.analysis.ai.ai_tab",
+    "pages.analysis.ai_tab",
 ]
 
-# أسماء دوال شائعة للتبويب
 CANDIDATE_FUNC_NAMES: List[str] = [
     "render_tab",
     "render_ai_tab",
@@ -37,8 +40,59 @@ def _import_first_available() -> Tuple[Optional[Any], Optional[str], str]:
     return None, None, "\n".join(errors)
 
 
+# =========================
+# 2) Import by file path (strong fallback)
+# =========================
+def _import_from_path() -> Tuple[Optional[Any], Optional[str], str]:
+    """
+    يحاول تحميل ai_tab.py مباشرة من المسار على القرص
+    حتى لو كانت مشاكل packages/__init__.py
+    """
+    try:
+        from pathlib import Path
+        from importlib.machinery import SourceFileLoader
+        from importlib.util import spec_from_loader, module_from_spec
+    except Exception as e:
+        return None, None, f"Path import prerequisites failed: {repr(e)}"
+
+    errors = []
+
+    try:
+        # هذا الملف: .../ui/pages/analysis/tabs/ai.py
+        here = Path(__file__).resolve()
+        analysis_dir = here.parents[1]  # .../ui/pages/analysis
+        cand_files = [
+            analysis_dir / "ai" / "ai_tab.py",
+            analysis_dir / "ai_tab.py",
+        ]
+
+        for fpath in cand_files:
+            try:
+                if not fpath.exists():
+                    errors.append(f"{str(fpath)}: NOT FOUND")
+                    continue
+
+                module_name = f"_legacy_ai_tab_{fpath.stem}_{abs(hash(str(fpath)))}"
+                loader = SourceFileLoader(module_name, str(fpath))
+                spec = spec_from_loader(module_name, loader)
+                if spec is None:
+                    errors.append(f"{str(fpath)}: spec is None")
+                    continue
+
+                mod = module_from_spec(spec)
+                loader.exec_module(mod)
+                return mod, str(fpath), ""
+            except Exception as e:
+                errors.append(f"{str(fpath)}: {repr(e)}")
+
+    except Exception as e:
+        errors.append(f"Path resolve failed: {repr(e)}")
+
+    return None, None, "\n".join(errors)
+
+
 def _find_callable(mod: Any) -> Optional[Callable]:
-    # 1) جرّب الأسماء المعروفة
+    # 1) جرّب الأسماء المتوقعة
     for name in CANDIDATE_FUNC_NAMES:
         fn = getattr(mod, name, None)
         if callable(fn):
@@ -51,21 +105,20 @@ def _find_callable(mod: Any) -> Optional[Callable]:
         obj = getattr(mod, name, None)
         if callable(obj):
             return obj
-
     return None
 
 
 def _call_signature_aware(fn: Callable, **kwargs):
     """
-    ينادي fn بأمان:
-    - إذا الدالة تقبل **kwargs => نعطيها كل شيء
-    - وإلا نعطيها فقط المفاتيح اللي موجودة في توقيع الدالة
+    ينادي الدالة حسب توقيعها:
+    - إذا فيها **kwargs => نعطيها كل شيء
+    - وإلا نعطيها فقط المفاتيح الموجودة في التوقيع
     """
     try:
         sig = inspect.signature(fn)
         params = sig.parameters
 
-        # إذا فيها **kwargs
+        # إذا تقبل **kwargs
         for p in params.values():
             if p.kind == inspect.Parameter.VAR_KEYWORD:
                 return fn(**kwargs)
@@ -74,10 +127,9 @@ def _call_signature_aware(fn: Callable, **kwargs):
         return fn(**filtered)
 
     except TypeError as e:
-        # fallback: نجرب طرق شائعة بدون kwargs
+        # fallback: طرق شائعة
         symbol = kwargs.get("symbol")
         fin = kwargs.get("fin")
-
         try:
             return fn(symbol, fin)
         except Exception:
@@ -95,32 +147,37 @@ def render_tab(
     **extra_kwargs,
 ):
     """
-    ✅ هذه الدالة هي اللي page.py يتوقعها
-    وتقبل company_name + sector عشان ما يطلع TypeError
+    ✅ entry point الذي page.py يتوقعه
     """
+    # أولاً: محاولة import بالمسار
     mod, mod_name, import_errors = _import_first_available()
 
+    # إذا فشل: حمّل من المسار على القرص
     if not mod:
-        st.error("تعذر تحميل واجهة AI: لم أستطع استيراد أي مسار متوقع.")
-        with st.expander("تفاصيل محاولات الاستيراد"):
-            st.code(import_errors or "No details", language="text")
-        st.info(
-            "✅ تأكد أن أحد هذه الملفات موجود وفيه دالة عرض:\n"
-            "- ui/pages/analysis/ai/ai_tab.py\n"
-            "- ui/pages/analysis/ai_tab.py"
-        )
-        return
+        mod, mod_name, path_errors = _import_from_path()
+        if not mod:
+            st.error("تعذر تحميل واجهة AI: لم أستطع استيراد أي مسار متوقع أو تحميل الملف من المسار.")
+            with st.expander("تفاصيل محاولات الاستيراد (module paths)"):
+                st.code(import_errors or "No details", language="text")
+            with st.expander("تفاصيل محاولات التحميل من المسار (file paths)"):
+                st.code(path_errors or "No details", language="text")
+            st.info(
+                "✅ المطلوب الآن:\n"
+                "1) افتح expander اللي فوق وانسخ لي أول سطر Error واضح (غالبًا SyntaxError/ImportError)\n"
+                "2) أو ارسل محتوى الملف الموجود فعليًا:\n"
+                "- ui/pages/analysis/ai/ai_tab.py أو ui/pages/analysis/ai_tab.py"
+            )
+            return
 
     fn = _find_callable(mod)
     if not fn:
-        st.error(f"تم استيراد الموديول بنجاح ({mod_name}) لكن لم أجد دالة عرض مناسبة داخله.")
+        st.error(f"تم تحميل ملف AI بنجاح ({mod_name}) لكن لم أجد دالة عرض مناسبة داخله.")
         with st.expander("الدوال الموجودة في الملف"):
             names = [n for n in dir(mod) if not n.startswith("_")]
             st.write(names)
-        st.info("✅ افتح ملف ai_tab.py وشوف اسم الدالة الأساسية للعرض.")
+        st.info("✅ افتح ai_tab.py وارسلي اسم الدالة الأساسية حق العرض (أو ارسل الملف كامل وأنا أضبطه).")
         return
 
-    # نبني kwargs ونعطي الدالة حسب توقيعها
     kwargs = {
         "symbol": symbol,
         "fin": fin,
@@ -135,7 +192,7 @@ def render_tab(
         st.error("تعذر تشغيل واجهة AI رغم العثور على الدالة.")
         st.write(str(e))
         with st.expander("تشخيص"):
-            st.write("Imported module:", mod_name)
+            st.write("Loaded from:", mod_name)
             st.write("Chosen function:", getattr(fn, "__name__", "unknown"))
             try:
                 st.write("Signature:", str(inspect.signature(fn)))
