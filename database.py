@@ -23,8 +23,6 @@ def get_connection_pool():
         return None
 
     try:
-        # إنشاء مسبح اتصالات بحد أدنى 1 وحد أقصى 20
-        # ملاحظة: sslmode يمرر إلى psycopg2.connect عبر kwargs (صحيح)
         return psycopg2.pool.SimpleConnectionPool(
             minconn=1,
             maxconn=20,
@@ -60,7 +58,7 @@ def get_db():
     try:
         conn = pool_obj.getconn()
 
-        # ✅ إصلاح: لو الاتصال قديم/مقفول — اغلقه وخذ غيره
+        # ✅ لو الاتصال قديم/مقفول — اغلقه وخذ غيره
         if not _conn_is_healthy(conn):
             try:
                 pool_obj.putconn(conn, close=True)
@@ -116,12 +114,18 @@ KNOWN_TABLES = [
 def normalize_sql_tables(query: str) -> str:
     """
     يحول أسماء الجداول المعروفة إلى lowercase إذا كانت غير مقتبسة "Quoted".
+    (Case-insensitive) لتفادي مشاكل Users vs users وغيرها.
     """
     if not query:
         return query
     fixed = query
     for t in KNOWN_TABLES:
-        fixed = re.sub(rf'(?<!")\b{re.escape(t)}\b(?!")', str(t).lower(), fixed)
+        fixed = re.sub(
+            rf'(?<!")\b{re.escape(t)}\b(?!")',
+            str(t).lower(),
+            fixed,
+            flags=re.IGNORECASE,
+        )
     return fixed
 
 
@@ -148,7 +152,6 @@ def _is_safe_identifier(name: str) -> bool:
     if name is None:
         return False
     s = str(name).strip()
-    # يسمح بحالة وجود نقاط؟ عادة لا نحتاج schema.table داخل public
     return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", s))
 
 
@@ -199,10 +202,7 @@ def fetch_table(table_name):
         if not conn:
             return pd.DataFrame()
 
-        # 0) تحقق من سلامة اسم الجدول (لتجنب SQL injection عبر identifier)
-        # لو اسم الجدول عندك يحتوي أحرف غريبة — عطّني الاسم ونعدّل القاعدة.
         if not _is_safe_identifier(name_raw):
-            # حاول على الأقل بالـ normalize لو كان من KNOWN_TABLES (Users/Trades...)
             maybe = normalize_sql_tables(name_raw).strip().replace('"', "")
             if not _is_safe_identifier(maybe):
                 return pd.DataFrame()
@@ -298,7 +298,8 @@ def init_db():
 def db_create_user(u, p):
     try:
         h = bcrypt.hashpw(p.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-        return execute_query("INSERT INTO Users (username, password) VALUES (%s, %s)", (u, h))
+        # ✅ استخدم users مباشرة (موجود في init_db)
+        return execute_query("INSERT INTO users (username, password) VALUES (%s, %s)", (u, h))
     except Exception as e:
         print(f"Create User Error: {e}")
         return False
@@ -363,7 +364,6 @@ def db_healthcheck():
                     except Exception:
                         info["counts"][t] = None
 
-                # فحص الجداول المكررة (Capital vs Small)
                 cur.execute(
                     """
                     SELECT tablename FROM pg_tables
