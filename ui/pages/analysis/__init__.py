@@ -1,10 +1,11 @@
 # ui/pages/analysis/__init__.py
-# analysis/__init__.py
 """
-DEPRECATED: هذا الباكيج قديم.
-المصدر الرسمي الآن: ui.pages.analysis
-هذا الملف موجود فقط لتجنب كسر أي imports قديمة.
+Analysis package
+✅ المصدر الرسمي للتحليل داخل: ui.pages.analysis
 """
 
-from ui.pages.analysis.page import view_analysis  # noqa: F401
-
+try:
+    from ui.pages.analysis.page import view_analysis  # noqa: F401
+except Exception:
+    # نخليه ما يكسر import الباكيج بالكامل أثناء التطوير
+    view_analysis = None
