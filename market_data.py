@@ -2,14 +2,20 @@
 import re
 import time
 import json
-import requests
-from bs4 import BeautifulSoup
+from typing import List, Dict, Any, Optional
 
 import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
-from typing import List, Dict, Any, Optional
+
+# ✅ Optional web deps (avoid crash in some deployments)
+try:
+    import requests
+    from bs4 import BeautifulSoup
+except Exception:
+    requests = None
+    BeautifulSoup = None
 
 
 # ============================================================
@@ -25,12 +31,14 @@ HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
 
-_SESSION = requests.Session()
-_SESSION.headers.update(HEADERS)
+_SESSION = None
+if requests:
+    _SESSION = requests.Session()
+    _SESSION.headers.update(HEADERS)
 
 
 def _http_get(url: str, timeout: int = 5, retries: int = 2, sleep: float = 0.5):
-    if not url:
+    if not url or not requests or not _SESSION:
         return None
 
     for i in range(retries + 1):
@@ -61,11 +69,9 @@ def get_ticker_symbol(symbol: str) -> str:
     if s in ["TASI", ".TASI", "^TASI", "^TASI.SR"]:
         return "^TASI.SR"
 
-    # أرقام السوق السعودي
     if s.isdigit():
         return f"{s}.SR"
 
-    # إذا رمز شركة بدون .SR (مثل SABIC) نضيف .SR (ما لم يكن مؤشر ^)
     if not s.startswith("^") and not s.endswith(".SR"):
         return f"{s}.SR"
 
@@ -134,18 +140,11 @@ def _safe_div(a, b, default=0.0):
 # 🧼 Index Cleaner (مهم جداً لمنع "الخط العمودي" في الشارت)
 # ============================================================
 def _ensure_datetime_index(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    - يحول index إلى DatetimeIndex إن أمكن
-    - يحذف NaT
-    - يحذف التكرار
-    - يرتب زمنيًا
-    """
     if df is None or df.empty:
         return pd.DataFrame()
 
     d = df.copy()
 
-    # لو فيه عمود تاريخ
     for c in ["date", "Date", "datetime", "Datetime", "time", "Time", "timestamp", "Timestamp"]:
         if c in d.columns:
             d[c] = pd.to_datetime(d[c], errors="coerce")
@@ -174,17 +173,11 @@ def _ensure_datetime_index(df: pd.DataFrame) -> pd.DataFrame:
 # 🧱 OHLCV Normalizer (Fix MultiIndex/Tuple Columns)
 # ============================================================
 def _normalize_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    ✅ تنظيف بيانات yfinance
-    - يعالج MultiIndex columns (سواء كانت (Open, SYMBOL) أو (SYMBOL, Open))
-    - يوحد أسماء الأعمدة (Open, High, Low, Close, Adj Close, Volume)
-    """
     if df is None or df.empty:
         return pd.DataFrame()
 
     d = df.copy()
 
-    # 1) MultiIndex: نحدد أي level يحتوي على Open/High/Low/Close
     if isinstance(d.columns, pd.MultiIndex):
         levels = list(range(d.columns.nlevels))
         ohlcv_keys = {"open", "high", "low", "close", "adj close", "volume", "adjclose"}
@@ -200,12 +193,8 @@ def _normalize_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
 
         d.columns = d.columns.get_level_values(best_level)
 
-    # 2) tuples/lists -> string
-    d.columns = [
-        str(c[0] if isinstance(c, (tuple, list)) and len(c) else c) for c in d.columns
-    ]
+    d.columns = [str(c[0] if isinstance(c, (tuple, list)) and len(c) else c) for c in d.columns]
 
-    # 3) canonical names
     canonical = {
         "open": "Open",
         "high": "High",
@@ -224,43 +213,34 @@ def _normalize_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
 
     d.rename(columns=rename_map, inplace=True)
 
-    # 4) fallbacks
     if "Close" not in d.columns and "Adj Close" in d.columns:
         d["Close"] = d["Adj Close"]
     if "Open" not in d.columns and "Close" in d.columns:
         d["Open"] = d["Close"]
 
-    # 5) numeric cast
     for c in ["Open", "High", "Low", "Close", "Volume"]:
         if c in d.columns:
             d[c] = pd.to_numeric(d[c], errors="coerce")
 
-    # 6) drop empty rows
     needed = ["Open", "High", "Low", "Close"]
     if not any(c in d.columns for c in needed):
         return pd.DataFrame()
 
     d = d.dropna(subset=[c for c in needed if c in d.columns], how="all")
-
-    # 7) ensure datetime index
     d = _ensure_datetime_index(d)
-
     return d
 
 
 # ============================================================
 # ⏱️ Interval Helpers (Smart defaults + Yahoo limits friendly)
 # ============================================================
-# Yahoo/yfinance قيود intraday غالباً:
-# - 1m ~ 7 أيام
-# - باقي intraday (مثل 60m) غالباً <= 60 يوم
 _INTRADAY_LIMITS = {
     "1m": "7d",
     "2m": "60d",
     "5m": "60d",
     "15m": "60d",
     "30m": "60d",
-    "60m": "60d",   # ساعة
+    "60m": "60d",
     "90m": "60d",
 }
 
@@ -268,7 +248,6 @@ _INTRADAY_LIMITS = {
 def _normalize_interval(interval: str) -> str:
     itv = str(interval or "").strip().lower()
 
-    # دعم عربي + مرادفات
     if itv in ["1h", "1hour", "hour", "ساعة"]:
         return "60m"
     if itv in ["day", "daily", "يوم", "1d"]:
@@ -278,7 +257,6 @@ def _normalize_interval(interval: str) -> str:
     if itv in ["month", "monthly", "شهر", "1mo"]:
         return "1mo"
 
-    # توحيد 1w -> 1wk
     if itv == "1w":
         return "1wk"
 
@@ -288,11 +266,9 @@ def _normalize_interval(interval: str) -> str:
 def _default_period_for_interval(interval: str, years: int = 5) -> str:
     itv = _normalize_interval(interval)
 
-    # intraday
     if itv in _INTRADAY_LIMITS:
         return _INTRADAY_LIMITS[itv]
 
-    # daily/weekly/monthly -> 5 سنوات افتراضياً
     if years and years >= 5:
         return "5y"
     if years and years >= 2:
@@ -301,16 +277,12 @@ def _default_period_for_interval(interval: str, years: int = 5) -> str:
 
 
 def _build_period_fallbacks(interval: str, period: str, years: int) -> List[str]:
-    """
-    يبني قائمة محاولات fallback آمنة حسب interval
-    """
     itv = _normalize_interval(interval)
     prd = (period or "").strip().lower()
 
     if not prd:
         prd = _default_period_for_interval(itv, years=years)
 
-    # intraday: لا تستخدم max/سنوات كثيرة (Yahoo يرفض)
     if itv in _INTRADAY_LIMITS:
         lim = _INTRADAY_LIMITS.get(itv, "60d")
         tries = []
@@ -319,7 +291,6 @@ def _build_period_fallbacks(interval: str, period: str, years: int) -> List[str]
         if lim not in tries:
             tries.append(lim)
         tries += ["60d", "30d", "14d", "7d"]
-        # إزالة التكرار مع الحفاظ على الترتيب
         out, seen = [], set()
         for x in tries:
             if x and x not in seen:
@@ -327,7 +298,6 @@ def _build_period_fallbacks(interval: str, period: str, years: int) -> List[str]
                 seen.add(x)
         return out
 
-    # daily/weekly/monthly
     tries = [prd, "5y", "2y", "1y", "6mo", "3mo", "max"]
     out, seen = [], set()
     for x in tries:
@@ -341,16 +311,17 @@ def _build_period_fallbacks(interval: str, period: str, years: int) -> List[str]
 # 📈 Google Finance (Snapshot)
 # ============================================================
 def fetch_google_finance_snapshot(symbol: str) -> Dict[str, Any]:
-    """مصدر مساعد للتحليل (Snapshot فقط)"""
     sym = str(symbol or "").strip().upper()
     if not sym:
         return {}
 
     norm = get_ticker_symbol(sym)
 
-    # المؤشرات تختلف، رجوع آمن
     if norm.startswith("^"):
         return {"source": "google_finance", "price": 0.0, "ok": False, "note": "Index pages differ."}
+
+    if not BeautifulSoup:
+        return {"source": "google_finance", "price": 0.0, "ok": False, "note": "bs4 not installed."}
 
     ticker = norm.replace(".SR", "").replace("^", "")
     url = f"https://www.google.com/finance/quote/{ticker}:TADAWUL"
@@ -389,7 +360,7 @@ def fetch_investing_snapshot(symbol: str) -> Dict[str, Any]:
 # 🟦 Argaam (أرقام) - المصدر الاحتياطي القوي
 # ============================================================
 def _extract_argaam_price_from_html(html: str) -> float:
-    if not html:
+    if not html or not BeautifulSoup:
         return 0.0
 
     soup = BeautifulSoup(html, "html.parser")
@@ -506,7 +477,6 @@ def fetch_price_from_yahoo(symbol: str) -> Dict[str, float]:
 # ============================================================
 @st.cache_data(ttl=300, show_spinner=False)
 def get_tasi_data():
-    """جلب بيانات المؤشر العام (كاش 5 دقائق)"""
     try:
         tick = yf.Ticker("^TASI.SR")
         fi = getattr(tick, "fast_info", None)
@@ -534,13 +504,6 @@ def get_tasi_data():
 # ============================================================
 @st.cache_data(ttl=900, show_spinner=False)
 def get_chart_history(symbol: str, period: str = None, interval: str = "1d", years: int = 5) -> pd.DataFrame:
-    """
-    ✅ نسخة ذكية ومحترفة:
-    - يضمن DatetimeIndex (لتفادي الشارت العمودي)
-    - period تلقائي حسب interval
-    - intraday يلتزم بالحدود (60d عادة)
-    - fallbacks آمنة حسب نوع الفاصل
-    """
     sym = get_ticker_symbol(symbol)
     if not sym:
         return pd.DataFrame()
@@ -557,12 +520,11 @@ def get_chart_history(symbol: str, period: str = None, interval: str = "1d", yea
                 auto_adjust=False,
                 progress=False,
                 threads=False,
-                group_by="column",   # يقلل فرص MultiIndex
+                group_by="column",
             )
             df = _normalize_ohlcv_columns(df)
 
             if df is not None and not df.empty:
-                # تأكيد محور الوقت
                 df = _ensure_datetime_index(df)
                 if not df.empty and "Close" in df.columns:
                     return df
@@ -572,24 +534,12 @@ def get_chart_history(symbol: str, period: str = None, interval: str = "1d", yea
     return pd.DataFrame()
 
 
-# ============================================================
-# ✅ TASI History (مخصص للمقارنة)
-# ============================================================
 @st.cache_data(ttl=900, show_spinner=False)
 def get_tasi_history(period: str = None, interval: str = "1d") -> pd.DataFrame:
-    """تاريخ المؤشر العام بنفس صيغة get_chart_history (افتراضياً 5 سنوات)"""
     return get_chart_history("^TASI.SR", period=period, interval=interval, years=5)
 
 
-# ============================================================
-# ✅ Comparative Strength vs TASI (Relative Strength)
-# ============================================================
 def get_relative_strength_vs_tasi(symbol: str, period: str = None, interval: str = "1d") -> Dict[str, Any]:
-    """
-    يحسب قوة السهم مقابل تاسي:
-    - RS line = Close(stock) / Close(TASI)
-    - Outperformance windows: 1m/3m/6m/1y
-    """
     sym = get_ticker_symbol(symbol)
 
     stock = get_chart_history(sym, period=period, interval=interval, years=5)
@@ -653,9 +603,6 @@ def get_relative_strength_vs_tasi(symbol: str, period: str = None, interval: str
     }
 
 
-# ============================================================
-# 💹 Batch Prices (تحديث جماعي للمحفظة)
-# ============================================================
 @st.cache_data(ttl=120, show_spinner=False)
 def fetch_batch_data(symbols_list: list):
     results = {}
@@ -727,16 +674,12 @@ def fetch_batch_data(symbols_list: list):
 
         results[raw_sym] = res_entry
 
-        # دعم كل variants حتى لو الواجهة تستخدم بدون .SR
         for v in _symbol_variants(raw_sym):
             results.setdefault(v, res_entry)
 
     return results
 
 
-# ============================================================
-# 🧾 Static Info (بيانات ثابتة للمحرك الذكي)
-# ============================================================
 def get_static_info(symbol: str) -> Dict[str, Any]:
     sym = get_ticker_symbol(symbol) or str(symbol or "").strip().upper()
     name = sym
@@ -767,9 +710,6 @@ def get_static_info(symbol: str) -> Dict[str, Any]:
     }
 
 
-# ============================================================
-# 🔎 Analysis Registry (مجمع المصادر للتحليل)
-# ============================================================
 def get_analysis_sources(symbol: str) -> Dict[str, Any]:
     sym = get_ticker_symbol(symbol)
     out = {"symbol": sym, "sources": {}}
