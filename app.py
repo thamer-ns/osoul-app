@@ -66,4 +66,3 @@ except Exception as e:
     st.error("حدث خطأ غير متوقع في التطبيق.")
     st.exception(e)
     st.stop()
-    python -c "
