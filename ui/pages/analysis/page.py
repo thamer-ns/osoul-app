@@ -143,4 +143,23 @@ def view_analysis(fin: dict):
     if sector:
         st.caption(sector)
 
-    # ✅ المهم
+    # ======================================================
+    # ✅ التبويبات (هنا كان سبب التكرار عندك غالباً)
+    # كل تبويب ينفّذ دالة واحدة فقط.
+    # ======================================================
+    tabs = st.tabs(["🤖 المستشار", "💰 مالي", "📈 فني", "🏛️ كلاسيكي", "📝 أطروحة"])
+
+    with tabs[0]:
+        render_ai_tab(fin=fin, symbol=sym)
+
+    with tabs[1]:
+        render_finance_tab(fin=fin, symbol=sym)
+
+    with tabs[2]:
+        render_technical_tab(fin=fin, symbol=sym)
+
+    with tabs[3]:
+        render_classical_tab(fin=fin, symbol=sym)
+
+    with tabs[4]:
+        render_thesis_tab(fin=fin, symbol=sym)
