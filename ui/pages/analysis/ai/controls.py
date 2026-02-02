@@ -1,12 +1,6 @@
 # ui/pages/analysis/ai/controls.py
 import streamlit as st
-
-from ui.pages.analysis.shared import badge
-
-
-def _k(symbol: str) -> str:
-    s = (symbol or "sym").replace(".", "_").replace(" ", "_")
-    return s
+from ui.pages.analysis.shared import badge, sym_key
 
 
 def render_ai_controls(symbol: str, ai_engine_ok: bool):
@@ -16,16 +10,8 @@ def render_ai_controls(symbol: str, ai_engine_ok: bool):
     - view mode
     - status badge
     - refresh button (returns bool)
-
-    Returns:
-      {
-        "tf_label": str,
-        "tf": str,
-        "view_mode": str,
-        "refresh": bool,
-      }
     """
-    symk = _k(symbol)
+    symk = sym_key(symbol)
 
     tf_map = {"يومي (1D)": "1d", "أسبوعي (1W)": "1wk", "شهري (1M)": "1mo"}
     view_modes = ["مبسط", "تفصيلي", "بطاقات (Osoli)", "مطور (مع JSON)"]
