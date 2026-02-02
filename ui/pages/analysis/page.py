@@ -6,14 +6,11 @@ from database import fetch_table
 from market_data import get_chart_history
 from data_source import get_company_details
 
-from ui.common import clean_symbols_list, normalize_symbol, sym_key, safe_status_series
+from ui.common import clean_symbols_list, normalize_symbol, sym_key
 
 
 def _call_first_available(mod, names, *args, **kwargs):
-    """
-    يحاول يستدعي أول دالة موجودة ضمن قائمة names داخل module.
-    إذا ولا وحدة موجودة يرجع False.
-    """
+    """Call the first callable found in mod from a list of candidate function names."""
     for n in names:
         fn = getattr(mod, n, None)
         if callable(fn):
@@ -23,12 +20,7 @@ def _call_first_available(mod, names, *args, **kwargs):
 
 
 def _symbol_picker(fin) -> str:
-    """
-    يختار رمز للتحليل من:
-    - صفقات المستخدم
-    - watchlist
-    ويخزن الرمز في session_state: analysis_active_symbol
-    """
+    """Pick a symbol for analysis and store it in session_state['analysis_active_symbol']."""
     trades = fin.get("all_trades", pd.DataFrame())
 
     # watchlist
@@ -40,10 +32,12 @@ def _symbol_picker(fin) -> str:
     syms = []
     try:
         if not trades.empty and "symbol" in trades.columns:
-            syms = list(set(
-                trades["symbol"].astype(str).unique().tolist() +
-                (wl["symbol"].astype(str).unique().tolist() if "symbol" in wl.columns else [])
-            ))
+            syms = list(
+                set(
+                    trades["symbol"].astype(str).unique().tolist()
+                    + (wl["symbol"].astype(str).unique().tolist() if "symbol" in wl.columns else [])
+                )
+            )
         else:
             syms = wl["symbol"].astype(str).unique().tolist() if "symbol" in wl.columns else []
     except Exception:
@@ -88,6 +82,8 @@ def _symbol_picker(fin) -> str:
             st.warning("الرجاء إدخال رمز صحيح مثل: 1120 أو 1120.SR")
         else:
             ok = False
+
+            # 1) تحقق عبر تفاصيل الشركة
             try:
                 info = get_company_details(sym_try)
                 if isinstance(info, (list, tuple)) and len(info) >= 1:
@@ -99,6 +95,7 @@ def _symbol_picker(fin) -> str:
             except Exception:
                 ok = False
 
+            # 2) fallback: تاريخ سعر بسيط
             if not ok:
                 try:
                     dfx = get_chart_history(sym_try, "1mo")
@@ -118,11 +115,10 @@ def _symbol_picker(fin) -> str:
 def view_analysis(fin):
     """
     ✅ Entry point الرسمي للتحليل
-    هذا هو الاسم الذي تعتمد عليه views.py و ui/router.py
+    هذا الاسم لازم يكون موجود لأن router/views يعتمدون عليه.
     """
     st.header("🔬 التحليل الشامل")
 
-    # اختيار الرمز
     sym = _symbol_picker(fin)
     sym = normalize_symbol(sym) if sym else ""
 
@@ -136,4 +132,74 @@ def view_analysis(fin):
         if isinstance(info, (list, tuple)) and len(info) >= 2:
             n, sec = info[0], info[1]
         elif isinstance(info, dict):
-            n = info.get("na
+            n = info.get("name") or info.get("Name") or sym
+            sec = info.get("sector") or info.get("Sector") or ""
+        else:
+            n, sec = sym, ""
+    except Exception:
+        n, sec = sym, ""
+
+    st.markdown(f"### {n} ({sym})")
+    if sec:
+        st.caption(sec)
+
+    tabs = st.tabs(["🤖 المستشار", "💰 مالي", "📈 فني", "🏛️ كلاسيكي", "📝 أطروحة"])
+
+    # Import داخل الدالة لتجنب circular imports
+    try:
+        from ui.pages.analysis.tabs import ai as tab_ai
+        from ui.pages.analysis.tabs import finance as tab_fin
+        from ui.pages.analysis.tabs import technical as tab_tech
+        from ui.pages.analysis.tabs import classical as tab_classic
+        from ui.pages.analysis.tabs import thesis as tab_thesis
+    except Exception as e:
+        st.error("تعذر تحميل تبويبات التحليل من ui/pages/analysis/tabs")
+        st.exception(e)
+        return
+
+    symk = sym_key(sym)
+
+    with tabs[0]:
+        ok = _call_first_available(
+            tab_ai,
+            ["render", "render_ai", "render_ai_tab", "view", "view_ai", "tab"],
+            fin, sym, symk
+        )
+        if not ok:
+            st.error("تبويب AI: ما لقيت دالة تشغيل داخل ui/pages/analysis/tabs/ai.py")
+
+    with tabs[1]:
+        ok = _call_first_available(
+            tab_fin,
+            ["render", "render_finance", "render_finance_tab", "view", "view_finance", "tab"],
+            fin, sym, symk
+        )
+        if not ok:
+            st.error("تبويب المالي: ما لقيت دالة تشغيل داخل ui/pages/analysis/tabs/finance.py")
+
+    with tabs[2]:
+        ok = _call_first_available(
+            tab_tech,
+            ["render", "render_technical", "render_technical_tab", "view", "view_technical", "tab"],
+            fin, sym, symk
+        )
+        if not ok:
+            st.error("تبويب الفني: ما لقيت دالة تشغيل داخل ui/pages/analysis/tabs/technical.py")
+
+    with tabs[3]:
+        ok = _call_first_available(
+            tab_classic,
+            ["render", "render_classical", "render_classical_tab", "view", "view_classical", "tab"],
+            fin, sym, symk
+        )
+        if not ok:
+            st.error("تبويب الكلاسيكي: ما لقيت دالة تشغيل داخل ui/pages/analysis/tabs/classical.py")
+
+    with tabs[4]:
+        ok = _call_first_available(
+            tab_thesis,
+            ["render", "render_thesis", "render_thesis_tab", "view", "view_thesis", "tab"],
+            fin, sym, symk
+        )
+        if not ok:
+            st.error("تبويب الأطروحة: ما لقيت دالة تشغيل داخل ui/pages/analysis/tabs/thesis.py")
