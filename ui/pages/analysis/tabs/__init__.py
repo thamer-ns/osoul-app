@@ -1,4 +1,2 @@
-# analysis/tabs/__init__.py
-"""
-DEPRECATED: استخدم ui.pages.analysis.tabs
-"""
+# ui/pages/analysis/tabs/__init__.py
+# Package marker for analysis tabs.
