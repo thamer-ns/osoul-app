@@ -1,3 +1,4 @@
+# .streamlit/test_connection.py
 import streamlit as st
 import psycopg2
 import pandas as pd  # ✅ التعديل 1: سنستخدم هذه المكتبة الآن
