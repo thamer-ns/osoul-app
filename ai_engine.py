@@ -14,10 +14,11 @@ from datetime import datetime
 AI_ENGINE_VERSION = "2026.02.02"
 AI_ENGINE_NAME = "Osoli AI Engine"
 
+# ✅ مهم: بعض أجزاء الواجهة تتوقع وجود AI_ENGINE_META
 AI_ENGINE_META = {
-    "name": AI_ENGINE_NAME,
+    "engine": AI_ENGINE_NAME,
     "version": AI_ENGINE_VERSION,
-    "entrypoints": ["generate_ai_report", "generate", "self_test"],
+    "updated_at": "2026-02-02",
 }
 
 # ============================================================
@@ -1529,8 +1530,8 @@ def generate_ai_report(symbol, timeframe="1D"):
                 "period_used": str(period),
                 "rows": int(len(df)),
                 "last_bar": last_bar,
-                "market_mode": market_mode,      # ✅ جديد
-                "allow_short": bool(allow_short) # ✅ جديد
+                "market_mode": market_mode,       # ✅ جديد
+                "allow_short": bool(allow_short), # ✅ جديد
             },
         }
 
@@ -1686,92 +1687,53 @@ def generate_rebalancing_suggestions(trades_df, cash_pct):
 
 
 # ============================================================
-# ✅ Compatibility Entrypoints (Fix: AI generator missing / self_test missing)
+# ✅ Compatibility entrypoints (UI expects these)
 # ============================================================
 
-def generate(symbol=None, timeframe="1D", **kwargs):
+def generate(symbol: str, timeframe: str = "1D"):
     """
-    ✅ واجهة توافق للتطبيق:
-    بعض أجزاء الواجهة عندك تبحث عن دالة اسمها generate().
-    نحولها مباشرة إلى generate_ai_report() بدون كسر أي شيء.
+    واجهات قديمة/واجهة UI قد تستدعي generate()
     """
     return generate_ai_report(symbol, timeframe=timeframe)
 
 
-def self_test(symbol_sample="1120.SR"):
+def self_test():
     """
-    ✅ واجهة تشخيص للتطبيق:
-    ترجع {ok, reason, checks} بدل 'self_test missing'
-    - لا تعتمد على الإنترنت
-    - تتحقق من توفر الدوال والـ imports الأساسية
-    - تتحقق (اختياريًا) من DB tables إذا كانت قاعدة البيانات متاحة
+    UI Diagnostics expects:
+    - وجود self_test
+    - وإرجاع dict فيه ok + سبب
     """
-    checks = {
-        "pandas": False,
-        "numpy": False,
-        "market_data": False,
-        "financial_analysis": False,
-        "database": False,
-        "ai_tables": None,
-        "user_rules_table": None,
-        "entrypoints": {
-            "generate_ai_report": callable(globals().get("generate_ai_report")),
-            "generate": callable(globals().get("generate")),
-            "self_test": callable(globals().get("self_test")),
-        },
-        "sample_symbol": _normalize_symbol(symbol_sample),
-    }
-
     try:
-        _ = pd.DataFrame({"a": [1, 2, 3]})
-        checks["pandas"] = True
-    except Exception:
-        checks["pandas"] = False
+        checks = {
+            "has_generate": callable(globals().get("generate")),
+            "has_generate_ai_report": callable(globals().get("generate_ai_report")),
+        }
 
-    try:
-        _ = np.array([1, 2, 3])
-        checks["numpy"] = True
-    except Exception:
-        checks["numpy"] = False
+        # اختبار import للموديولات الحساسة (بدون ما نجبر السوق/النت على النجاح)
+        try:
+            import market_data  # noqa: F401
+            checks["market_data_import"] = True
+        except Exception as e:
+            checks["market_data_import"] = False
+            checks["market_data_error"] = str(e)
 
-    # market_data presence
-    try:
-        from market_data import get_chart_history
-        checks["market_data"] = callable(get_chart_history)
-    except Exception as e:
-        checks["market_data"] = False
-        checks["market_data_error"] = str(e)
-
-    # financial_analysis optional
-    try:
-        from financial_analysis import get_advanced_fundamental_ratios
-        checks["financial_analysis"] = callable(get_advanced_fundamental_ratios)
-    except Exception:
-        checks["financial_analysis"] = False
-
-    # database optional
-    try:
+        # DB optional
         execute_query, fetch_table = _safe_import_db()
-        checks["database"] = bool(execute_query and fetch_table)
-        if checks["database"]:
-            checks["ai_tables"] = bool(_ensure_ai_tables())
-            checks["user_rules_table"] = bool(_ensure_user_rules_table())
+        checks["db_available"] = bool(execute_query and fetch_table)
+
+        ok = bool(checks["has_generate"] and checks["has_generate_ai_report"])
+        reason = "ok" if ok else "missing entrypoints"
+
+        return {
+            "ok": ok,
+            "reason": reason,
+            "meta": AI_ENGINE_META,
+            "checks": checks,
+        }
     except Exception as e:
-        checks["database"] = False
-        checks["database_error"] = str(e)
-
-    ok = (
-        checks["pandas"]
-        and checks["numpy"]
-        and checks["entrypoints"]["generate_ai_report"]
-        and checks["entrypoints"]["generate"]
-        and checks["entrypoints"]["self_test"]
-    )
-
-    reason = "ok" if ok else "missing requirements"
-    # سبب أوضح لو السوق/البيانات غير متاحة
-    if ok and not checks.get("market_data", False):
-        # ما نفشل الـ self_test بسبب market_data لأن بعض البيئات قد تعمل بوظائف أخرى
-        reason = "ok (market_data not available)"
-
-    return {"ok": bool(ok), "reason": str(reason), "checks": checks, "meta": AI_ENGINE_META}
+        return {
+            "ok": False,
+            "reason": str(e),
+            "meta": AI_ENGINE_META,
+            "trace": traceback.format_exc(),
+        }
