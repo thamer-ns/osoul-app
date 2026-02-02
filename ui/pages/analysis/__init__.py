@@ -1,11 +1,4 @@
 # ui/pages/analysis/__init__.py
-"""
-Analysis package
-✅ المصدر الرسمي للتحليل داخل: ui.pages.analysis
-"""
+# الهدف: تصدير view_analysis فقط بدون أي imports جانبية تسبب تكرار/سايد-إفكت
 
-try:
-    from ui.pages.analysis.page import view_analysis  # noqa: F401
-except Exception:
-    # نخليه ما يكسر import الباكيج بالكامل أثناء التطوير
-    view_analysis = None
+from ui.pages.analysis.page import view_analysis  # noqa: F401
