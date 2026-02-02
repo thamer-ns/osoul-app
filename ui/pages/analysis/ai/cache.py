@@ -13,8 +13,7 @@ def make_key(symbol: str, tf: str) -> str:
 
 
 def get(symbol: str, tf: str):
-    c = _cache()
-    return c.get(make_key(symbol, tf))
+    return _cache().get(make_key(symbol, tf))
 
 
 def set(symbol: str, tf: str, rep):
@@ -33,11 +32,6 @@ def clear_symbol(symbol: str):
 
 
 def get_or_generate(symbol: str, tf: str, generator_fn, spinner_text: str = "جاري توليد تقرير المستشار..."):
-    """
-    Uses session cache unless:
-      - missing
-      - or generated rep is an error dict containing __error__ or __trace__ (then don't cache)
-    """
     cached = get(symbol, tf)
     if cached is not None:
         return cached
