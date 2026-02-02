@@ -2,34 +2,18 @@
 import streamlit as st
 
 
-def to_float(x, default=None):
-    try:
-        if x is None or x == "":
-            return default
-        return float(x)
-    except Exception:
-        return default
+def sym_key(symbol: str) -> str:
+    s = (symbol or "sym").strip()
+    return s.replace(".", "_").replace(" ", "_")
 
 
-def fmt_price(x):
-    v = to_float(x, None)
-    return "—" if v is None else f"{v:,.2f}"
-
-
-def safe_list(x):
-    if x is None:
-        return []
-    if isinstance(x, list):
-        return [i for i in x if i is not None and str(i).strip() != ""]
-    return [x]
-
-
-def badge(text, tone="neutral"):
+def badge(text: str, tone: str = "neutral"):
     bg = {
         "success": "#e8fff2",
         "warning": "#fff6e5",
         "danger":  "#ffecec",
         "neutral": "#f2f4f7",
+        "blue":    "#e9f3ff",
     }.get(tone, "#f2f4f7")
 
     fg = {
@@ -37,6 +21,7 @@ def badge(text, tone="neutral"):
         "warning": "#8a5a00",
         "danger":  "#a40e26",
         "neutral": "#344054",
+        "blue":    "#175cd3",
     }.get(tone, "#344054")
 
     st.markdown(
