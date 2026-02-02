@@ -1,5 +1,6 @@
 # ui/pages/analysis/ai/user_rules.py
 import streamlit as st
+from ui.pages.analysis.shared import sym_key
 
 
 def render_user_rules_panel(
@@ -8,13 +9,7 @@ def render_user_rules_panel(
     load_user_rules_fn,
     on_saved=None,
 ):
-    """
-    Renders:
-    - input textarea for user strategy/rules
-    - save button
-    - expander to show last saved rules
-    """
-    symk = (symbol or "sym").replace(".", "_").replace(" ", "_")
+    symk = sym_key(symbol)
 
     st.subheader("🧠 استراتيجياتي الخاصة")
     st.caption("اكتب قواعدك بصيغة بسيطة مثل: (تقاطع الماكد صعوداً + اختراق خط الصفر) أو (RSI فوق 70)")
