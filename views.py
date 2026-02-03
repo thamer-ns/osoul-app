@@ -823,7 +823,7 @@ def _build_tv_like_plot(df: pd.DataFrame, title: str = "") -> go.Figure:
     Open = colmap.get("open") if "open" in colmap else ("Open" if "Open" in d.columns else None)
     High = colmap.get("high") if "high" in colmap else ("High" if "High" in d.columns else None)
     Low  = colmap.get("low")  if "low"  in colmap else ("Low"  if "Low"  in d.columns else None)
-    Close= colmap.get("close")if "close"in colmap else ("Close"if "Close"in d.columns else None)
+    Close= colmap.get("close")if "close"in colmap else ("Close"if "Close" in d.columns else None)
     Vol  = colmap.get("volume")if "volume"in colmap else ("Volume" if "Volume" in d.columns else None)
 
     if not all([Open, High, Low, Close]):
