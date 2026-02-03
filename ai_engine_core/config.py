@@ -1,4 +1,4 @@
-# ai_engine/config.py
+# ai_engine_core/config.py
 
 # ============================================================
 # AI Engine Meta (Fix ImportError + Provide UI Meta)
