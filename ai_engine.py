@@ -13,6 +13,61 @@ from datetime import datetime
 # ============================================================
 AI_ENGINE_VERSION = "2026.02.01"
 AI_ENGINE_NAME = "Osoli AI Engine"
+# ============================================================
+# ✅ Public API Compatibility (generate / self_test)
+# ============================================================
+
+AI_ENGINE_OK = True  # تستخدمه الواجهة لمعرفة جاهزية المحرك
+
+
+def self_test() -> dict:
+    """
+    ✅ تشخيص سريع بدون كسر البرنامج
+    الهدف: الواجهة كانت تتوقع وجود self_test وتعرض نتيجته.
+    """
+    rep = {
+        "ok": True,
+        "engine": AI_ENGINE_NAME,
+        "version": AI_ENGINE_VERSION,
+        "checks": {},
+        "reason": None,
+    }
+
+    # 1) تحقق من DB (اختياري)
+    try:
+        execute_query, fetch_table = _safe_import_db()
+        rep["checks"]["db_available"] = bool(execute_query and fetch_table)
+    except Exception as e:
+        rep["checks"]["db_available"] = False
+        rep["checks"]["db_error"] = repr(e)
+
+    # 2) تحقق من market_data.get_chart_history
+    try:
+        from market_data import get_chart_history  # noqa
+        rep["checks"]["market_data_ok"] = True
+    except Exception as e:
+        rep["checks"]["market_data_ok"] = False
+        rep["checks"]["market_data_error"] = repr(e)
+        rep["ok"] = False
+        rep["reason"] = "market_data missing get_chart_history"
+
+    # 3) تحقق من financial_analysis.get_advanced_fundamental_ratios (اختياري)
+    # (إذا ما كان موجود بالنسخة القديمة لا نخرب المحرك — فقط نعلمك)
+    try:
+        from financial_analysis import get_advanced_fundamental_ratios  # noqa
+        rep["checks"]["fundamental_ok"] = True
+    except Exception as e:
+        rep["checks"]["fundamental_ok"] = False
+        rep["checks"]["fundamental_error"] = repr(e)
+        # لا نعتبره فشل كامل لأن محركك يقدر يشتغل بدون المالي
+        # لكن الواجهة ممكن تبغى تعرف السبب
+        if rep["reason"] is None:
+            rep["reason"] = "financial_analysis missing get_advanced_fundamental_ratios"
+
+    # 4) تحقق من وجود generate_ai_report
+    rep["checks"]["has_generate_ai_report"] = callable(globals().get("generate_ai_report"))
+
+    return rep
 
 # ============================================================
 # Helpers
