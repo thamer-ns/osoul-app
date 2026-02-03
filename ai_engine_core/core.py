@@ -2,6 +2,10 @@
 
 from datetime import datetime
 
+def _now_str():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
 def _normalize_symbol(sym: str) -> str:
     sym = (sym or "").strip().upper()
     if sym.isdigit():
@@ -11,10 +15,12 @@ def _normalize_symbol(sym: str) -> str:
         sym = sym.replace("SR", ".SR")
     return sym
 
-def _now_str():
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 def _map_period_from_timeframe(timeframe: str):
+    """
+    ✅ إضافة: استخدام timeframe في اختيار فترة جلب البيانات (بدون كسر أي شيء)
+    لأن get_chart_history عندك ممكن يدعم period فقط.
+    """
     tf = (timeframe or "1D").upper().strip()
     if tf in ["1H", "60M", "H"]:
         return "60d"
