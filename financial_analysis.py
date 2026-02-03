@@ -606,14 +606,17 @@ class FinancialParser:
 # ==============================================================
 def save_financial_record(symbol, date_str, data, period_type="Annual", source="Manual"):
     """
-    ✅ إصلاح أسماء الجداول:
-    - financialstatements (lowercase) بدون quotes
+    ✅ إصلاحات مهمة تمنع فشل الإدخال وسقوط صفحة المستشار:
+    - financialstatements lowercase بدون quotes
+    - قص source/period_type إلى 20 (لأن DB عندك VARCHAR(20))
     """
     try:
         symbol = get_ticker_symbol(symbol)
         date_str = _safe_date_str(date_str)
-        period_type = str(period_type or "Annual").strip().title()
-        source = str(source or "Manual").strip()[:30]
+
+        # ✅ DB columns are VARCHAR(20)
+        period_type = str(period_type or "Annual").strip().title()[:20]
+        source = str(source or "Manual").strip()[:20]
 
         keys = [
             "revenue",
@@ -683,7 +686,7 @@ def get_stored_financials_df(symbol, period_type="Annual"):
     """
     try:
         symbol = get_ticker_symbol(symbol)
-        period_type = str(period_type or "Annual").strip().title()
+        period_type = str(period_type or "Annual").strip().title()[:20]
 
         df = fetch_table("financialstatements")
         if df is None or df.empty:
@@ -712,6 +715,8 @@ def fetch_financials_from_google_finance(symbol: str) -> dict:
     قد تتغير الصفحة لذلك نعتبره احتياطي فقط.
     """
     try:
+        if not requests:
+            return {}
         sym = get_ticker_symbol(symbol).replace(".SR", "")
         if not sym.isdigit():
             return {}
@@ -746,6 +751,9 @@ def fetch_financials_from_argaam(symbol: str) -> dict:
     Best-effort parsing from Argaam text -> FinancialParser.
     قد تتغير الصفحة لذلك نعتبره احتياطي فقط.
     """
+    if not requests:
+        return {}
+
     s = get_ticker_symbol(symbol).replace(".SR", "")
     if not s.isdigit():
         return {}
@@ -817,6 +825,7 @@ def get_financial_statements(symbol: str, period_type: str = "Annual", refresh: 
     ptype = str(period_type or "Annual").strip().title()
     if ptype not in ("Annual", "Quarterly"):
         ptype = "Annual"
+    ptype = ptype[:20]
 
     stored = get_stored_financials_df(sym, ptype)
 
@@ -1516,7 +1525,11 @@ def render_financial_dashboard_ui(symbol):
 
         c_up, c_pst = st.columns(2)
         with c_up:
-            uploaded_file = st.file_uploader("رفع ملف (PDF, Excel, CSV)", type=["pdf", "xlsx", "xls", "csv"], key=f"fin_up_{symbol}")
+            uploaded_file = st.file_uploader(
+                "رفع ملف (PDF, Excel, CSV)",
+                type=["pdf", "xlsx", "xls", "csv"],
+                key=f"fin_up_{symbol}",
+            )
         with c_pst:
             pasted_text = st.text_area("أو الصق النص هنا", height=120, key=f"fin_paste_{symbol}")
 
