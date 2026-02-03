@@ -1,4 +1,5 @@
-# ai_engine/technicals.py
+# ai_engine_core/technicals.py
+
 import numpy as np
 import pandas as pd
 
