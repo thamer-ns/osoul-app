@@ -1,5 +1,4 @@
 # ai_engine_core/reporting.py
-
 import traceback
 import pandas as pd
 
@@ -27,25 +26,68 @@ from .risk import (
 from .user_rules import load_user_rules, _eval_user_rule
 from .logging_learning import log_ai_signal, _get_weight
 
+
+def _timeframe_to_interval(timeframe: str) -> str:
+    tf = str(timeframe or "").strip().upper()
+    # Keep simple mapping (expand later)
+    if tf in ("1H", "60M", "H"):
+        return "60m"
+    if tf in ("30M",):
+        return "30m"
+    if tf in ("15M",):
+        return "15m"
+    if tf in ("5M",):
+        return "5m"
+    if tf in ("1W", "W"):
+        return "1wk"
+    if tf in ("1M", "MO", "MONTH"):
+        return "1mo"
+    return "1d"
+
+
+def _dedup_limit(items, limit=12):
+    out, seen = [], set()
+    for x in (items or []):
+        s = str(x).strip()
+        if not s:
+            continue
+        k = s.lower()
+        if k in seen:
+            continue
+        out.append(s)
+        seen.add(k)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def generate_ai_report(symbol, timeframe="1D"):
     symbol = _normalize_symbol(symbol)
 
     try:
-        from market_data import get_chart_history
+        from market_data import get_chart_history, get_static_info
 
         period = _map_period_from_timeframe(timeframe)
+        interval = _timeframe_to_interval(timeframe)
 
+        # Fetch history with interval support
         try:
-            df = get_chart_history(symbol, period=period)
+            df = get_chart_history(symbol, period=period, interval=interval)
         except TypeError:
+            # older signature fallback
             df = get_chart_history(symbol, period)
 
         if df is None or (isinstance(df, pd.DataFrame) and df.empty):
             raise ValueError("no data")
 
         df = _ensure_ohlcv_columns(df)
-        if df is None or df.empty or len(df) < 60:
-            raise ValueError("insufficient candles")
+        if df is None or df.empty:
+            raise ValueError("no ohlcv")
+
+        # Minimum candles based on interval
+        min_rows = 60 if interval in ("1d", "1wk", "1mo") else 120
+        if len(df) < min_rows:
+            raise ValueError(f"insufficient candles ({len(df)}<{min_rows})")
 
         ind = _compute_indicators(df)
 
@@ -63,16 +105,18 @@ def generate_ai_report(symbol, timeframe="1D"):
         tech_reasons = (o_struct or []) + (o_candle or []) + (o_sr or []) + (o_liq or []) + (o_ob or []) + (o_ichi or [])
         fund_reasons = o_fund or []
 
+        # Features aggregation
         features = {}
         fund_feats = (m_fund or {}).get("_fund_features", {}) if isinstance(m_fund, dict) else {}
         for d in [f_sr, fund_feats, f_liq, f_ob, f_ichi]:
             try:
                 for k, v in (d or {}).items():
                     if isinstance(v, (bool, int)):
-                        features[k] = int(v)
+                        features[str(k)] = int(v)
             except Exception:
                 pass
 
+        # Numeric features (safe)
         try:
             features["close"] = float(df["Close"].iloc[-1])
             if isinstance(ind.get("rsi14"), pd.Series):
@@ -88,6 +132,7 @@ def generate_ai_report(symbol, timeframe="1D"):
         except Exception:
             pass
 
+        # Weighted bonus on boolean flags only
         weighted_bonus = 0.0
         for k, v in features.items():
             if isinstance(v, (bool, int)) and int(v) == 1:
@@ -97,6 +142,7 @@ def generate_ai_report(symbol, timeframe="1D"):
         fund_score = float(s_fund)
         total_score = float(tech_score + fund_score)
 
+        # User rules delta
         user_delta = 0.0
         try:
             rules = load_user_rules(enabled_only=True, max_rows=30)
@@ -112,15 +158,18 @@ def generate_ai_report(symbol, timeframe="1D"):
                     if reason:
                         tech_reasons.append(reason)
                     for kk, vv in (f_user or {}).items():
-                        features[kk] = int(vv)
+                        try:
+                            features[str(kk)] = int(vv)
+                        except Exception:
+                            pass
 
         if abs(user_delta) > 0:
             tech_score = float(tech_score + user_delta)
             total_score = float(tech_score + fund_score)
 
+        # Sector
         sector = None
         try:
-            from market_data import get_static_info
             info = get_static_info(symbol) or {}
             if isinstance(info, dict):
                 sector = info.get("sector") or info.get("Sector") or info.get("industry") or None
@@ -164,30 +213,44 @@ def generate_ai_report(symbol, timeframe="1D"):
             clr = "#0d6efd"
             strat = "مالي قوي والسعر ضعيف — مناسب للصبر."
 
-        if not tech_reasons:
-            tech_reasons = ["حركة السعر طبيعية"]
-        if not fund_reasons:
-            fund_reasons = ["المؤشرات المالية طبيعية"]
+        tech_reasons = _dedup_limit(tech_reasons, limit=12) or ["حركة السعر طبيعية"]
+        fund_reasons = _dedup_limit(fund_reasons, limit=8) or ["المؤشرات المالية طبيعية"]
 
         confidence, confidence_label = _calc_confidence(tech_score, fund_score, df)
+        # Normalize confidence to 0..100
+        try:
+            confidence = float(confidence)
+            if 0 <= confidence <= 1:
+                confidence *= 100.0
+        except Exception:
+            confidence = 0.0
+
         explainability = _build_explainability(tech_reasons, fund_reasons, total_score, tech_score, fund_score)
         explainability["confidence_note"] = f"Confidence={int(confidence)}% ({confidence_label})"
 
-        direction = "buy" if total_score >= 0 else "sell"
+        # Better direction rule
+        if total_score >= 2:
+            direction = "buy"
+        elif total_score <= -2:
+            direction = "sell"
+        else:
+            direction = "neutral"
+
         risk_plan = _risk_plan_from_atr_sr(df, ind, direction=direction)
 
         try:
-            last_idx = df.index[-1]
-            last_bar = str(last_idx)
+            last_bar = str(df.index[-1])
         except Exception:
             last_bar = None
 
         report = {
+            "status": "ok",
             "recommendation": rec,
             "color": clr,
             "strategy": strat,
             "tech_score": round(float(tech_score), 2),
             "fund_score": round(float(fund_score), 2),
+            "total_score": round(float(total_score), 2),
             "tech_reasons": tech_reasons,
             "fund_reasons": fund_reasons,
             "trend": "صاعد" if float(tech_score) >= 0 else "هابط",
@@ -204,6 +267,7 @@ def generate_ai_report(symbol, timeframe="1D"):
                 "version": AI_ENGINE_VERSION,
                 "timeframe": str(timeframe),
                 "period_used": str(period),
+                "interval_used": str(interval),
                 "rows": int(len(df)),
                 "last_bar": last_bar,
             },
@@ -228,9 +292,9 @@ def generate_ai_report(symbol, timeframe="1D"):
 
     except Exception as e:
         tr = traceback.format_exc()
-        return {
+        base = {
+            "status": "error",
             "__error__": str(e),
-            "__trace__": tr,
             "recommendation": "غير متاح",
             "color": "#6c757d",
             "strategy": "نقص بيانات أو خطأ داخلي",
@@ -252,7 +316,12 @@ def generate_ai_report(symbol, timeframe="1D"):
                 "version": AI_ENGINE_VERSION,
                 "timeframe": str(timeframe),
                 "period_used": None,
+                "interval_used": None,
                 "rows": 0,
                 "last_bar": None,
             },
         }
+        # keep trace for debugging only if explicitly enabled
+        # (you can wire this to st.secrets["DEBUG"] if you want)
+        base["__trace__"] = tr
+        return base
