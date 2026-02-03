@@ -1,63 +1,8 @@
-# ai_engine_core/indicators.py
-
+# ai_engine/indicators.py
 import pandas as pd
 import numpy as np
 
-def _ensure_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
-    # ✅ انسخ نفس دالتك كما هي من الملف الأصلي
-    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
-        return df
-
-    try:
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = [str(c[-1]) for c in df.columns]
-    except Exception:
-        pass
-
-    cols = {c: c for c in df.columns}
-    lower = {str(c).lower(): c for c in df.columns}
-
-    def pick(*names):
-        for n in names:
-            if n in cols:
-                return cols[n]
-            if n.lower() in lower:
-                return lower[n.lower()]
-        return None
-
-    m_open = pick("Open", "open", "OPEN")
-    m_high = pick("High", "high", "HIGH")
-    m_low = pick("Low", "low", "LOW")
-    m_close = pick("Close", "close", "Adj Close", "adjclose", "adj_close", "ADJ CLOSE")
-    m_vol = pick("Volume", "volume", "VOL", "vol")
-
-    ren = {}
-    if m_open and m_open != "Open": ren[m_open] = "Open"
-    if m_high and m_high != "High": ren[m_high] = "High"
-    if m_low and m_low != "Low": ren[m_low] = "Low"
-    if m_close and m_close != "Close": ren[m_close] = "Close"
-    if m_vol and m_vol != "Volume": ren[m_vol] = "Volume"
-    if ren:
-        df = df.rename(columns=ren)
-
-    for c in ["Open", "High", "Low", "Close"]:
-        if c not in df.columns:
-            raise ValueError(f"missing {c}")
-
-    if "Volume" not in df.columns:
-        df["Volume"] = 0.0
-
-    for c in ["Open", "High", "Low", "Close", "Volume"]:
-        try:
-            df[c] = pd.to_numeric(df[c], errors="coerce")
-        except Exception:
-            pass
-
-    df = df.dropna(subset=["Open", "High", "Low", "Close"]).copy()
-    return df
-
 def _compute_indicators(df: pd.DataFrame):
-    # ✅ انسخ نفس دالتك كما هي
     out = {}
     if df is None or df.empty or len(df) < 60:
         return out
@@ -71,6 +16,7 @@ def _compute_indicators(df: pd.DataFrame):
     out["sma50"] = close.rolling(50).mean()
     out["sma200"] = close.rolling(200).mean()
 
+    # RSI
     delta = close.diff()
     gain = delta.clip(lower=0).rolling(14).mean()
     loss = (-delta.clip(upper=0)).rolling(14).mean()
@@ -78,6 +24,7 @@ def _compute_indicators(df: pd.DataFrame):
     rsi = 100 - (100 / (1 + rs))
     out["rsi14"] = rsi.bfill().fillna(50)
 
+    # MACD
     ema12 = close.ewm(span=12, adjust=False).mean()
     ema26 = close.ewm(span=26, adjust=False).mean()
     macd = ema12 - ema26
@@ -87,6 +34,7 @@ def _compute_indicators(df: pd.DataFrame):
     out["macd_signal"] = signal
     out["macd_hist"] = hist
 
+    # ATR
     try:
         prev_close = close.shift(1)
         tr = pd.concat([(high - low), (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
@@ -94,8 +42,51 @@ def _compute_indicators(df: pd.DataFrame):
     except Exception:
         pass
 
-    # ... باقي المؤشرات عندك (ADX/Stoch/OBV/vol/fib) انسخها كما هي إن رغبت
-    # (أنا تركتها مختصرة هنا لتجنب تكرار ضخم - لكن الأفضل نقلها كاملة من ملفك)
+    # ADX
+    try:
+        up_move = high.diff()
+        down_move = -low.diff()
+        plus_dm = np.where((up_move > down_move) & (up_move > 0), up_move, 0.0)
+        minus_dm = np.where((down_move > up_move) & (down_move > 0), down_move, 0.0)
+
+        prev_close = close.shift(1)
+        tr = pd.concat([(high - low), (high - prev_close).abs(), (low - prev_close).abs()], axis=1).max(axis=1)
+
+        atr = tr.rolling(14).mean()
+        plus_di = 100 * (pd.Series(plus_dm, index=df.index).rolling(14).sum() / atr.replace(0, np.nan))
+        minus_di = 100 * (pd.Series(minus_dm, index=df.index).rolling(14).sum() / atr.replace(0, np.nan))
+        dx = (100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan))
+        out["adx14"] = dx.rolling(14).mean().bfill()
+        out["plus_di14"] = plus_di.bfill()
+        out["minus_di14"] = minus_di.bfill()
+    except Exception:
+        pass
+
+    # Stochastic
+    try:
+        ll14 = low.rolling(14).min()
+        hh14 = high.rolling(14).max()
+        k = 100 * (close - ll14) / (hh14 - ll14).replace(0, np.nan)
+        d = k.rolling(3).mean()
+        out["stoch_k"] = k.bfill()
+        out["stoch_d"] = d.bfill()
+    except Exception:
+        pass
+
+    # OBV
+    try:
+        direction = np.sign(close.diff()).fillna(0)
+        obv = (direction * vol).fillna(0).cumsum()
+        out["obv"] = obv
+    except Exception:
+        pass
+
+    # Volatility
+    try:
+        ret = close.pct_change().fillna(0)
+        out["vol20"] = ret.rolling(20).std().bfill()
+    except Exception:
+        pass
 
     # Fib + Range
     try:
