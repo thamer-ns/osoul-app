@@ -1,9 +1,10 @@
-# ai_engine/logging_learning.py
+# ai_engine_core/logging_learning.py
+
 import json
 import uuid
 
-from .db import _safe_import_db, _now_str, _try_exec
-from .tables import _ensure_ai_tables
+from .db import _safe_import_db, _try_exec, _ensure_ai_tables
+from .core import _now_str
 
 def log_ai_signal(symbol, timeframe, features: dict, report: dict, horizon_days=20, sector=None, strategy_name=None):
     execute_query, _ = _safe_import_db()
@@ -81,7 +82,6 @@ def _set_weight(key: str, weight: float):
         return False
     _ensure_ai_tables()
 
-    # UPSERT (أفضلية) ثم fallback مضمون
     ok = _try_exec(
         """
         INSERT INTO ai_weights (key, weight, updated_at)
