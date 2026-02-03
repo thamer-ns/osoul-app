@@ -43,7 +43,8 @@ def _http_get(url: str, timeout: int = 5, retries: int = 2, sleep: float = 0.5):
 
     for i in range(retries + 1):
         try:
-            r = _SESSION.get(url, timeout=timeout)
+            # ✅ allow_redirects=True to handle 301/302
+            r = _SESSION.get(url, timeout=timeout, allow_redirects=True)
             if r.status_code == 200 and r.text:
                 return r
             if r.status_code == 429:
@@ -524,12 +525,24 @@ def get_chart_history(symbol: str, period: str = None, interval: str = "1d", yea
             )
             df = _normalize_ohlcv_columns(df)
 
+            # ✅ Clean invalid rows (candles)
+            if df is not None and not df.empty:
+                if "Close" in df.columns:
+                    df = df[pd.to_numeric(df["Close"], errors="coerce").fillna(0) > 0]
+                df = df.dropna(
+                    subset=[c for c in ["Open", "High", "Low", "Close"] if c in df.columns],
+                    how="any",
+                )
+
             if df is not None and not df.empty:
                 df = _ensure_datetime_index(df)
                 if not df.empty and "Close" in df.columns:
                     return df
         except Exception:
             pass
+        finally:
+            # ✅ Gentle backoff to reduce rate-limit pressure
+            time.sleep(0.25)
 
     return pd.DataFrame()
 
@@ -653,6 +666,26 @@ def fetch_batch_data(symbols_list: list):
         year_high = _safe_float(d.get("year_high", 0.0))
         year_low = _safe_float(d.get("year_low", 0.0))
         source = "yahoo"
+
+        # ✅ Yahoo history fallback before Argaam
+        if price <= 0:
+            try:
+                h = yf.download(
+                    norm,
+                    period="5d",
+                    interval="1d",
+                    progress=False,
+                    threads=False,
+                    group_by="column",
+                )
+                h = _normalize_ohlcv_columns(h)
+                if not h.empty and "Close" in h.columns:
+                    price = float(_safe_float(h["Close"].iloc[-1]))
+                    if prev_close <= 0 and len(h) >= 2:
+                        prev_close = float(_safe_float(h["Close"].iloc[-2]))
+                    source = "yahoo_history"
+            except Exception:
+                pass
 
         if price <= 0:
             p2 = fetch_price_from_argaam(raw_sym)
