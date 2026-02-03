@@ -7,7 +7,14 @@ from components import inject_component_styles, inject_streamlit_ar_i18n
 from ui.pages.dashboard import view_dashboard
 from ui.pages.portfolio import view_portfolio
 from ui.pages.sukuk import view_sukuk_portfolio
-from ui.pages.analysis.page import view_analysis
+
+# ✅ Fail-safe import for advisor/analysis page (prevents app crash)
+try:
+    from ui.pages.analysis.page import view_analysis
+    _analysis_import_error = None
+except Exception as e:
+    view_analysis = None
+    _analysis_import_error = repr(e)
 
 # ✅ باقي الصفحات حالياً من views_impl (مرحلة انتقالية)
 from views_impl import (
@@ -80,6 +87,31 @@ def render_navbar():
                     st.rerun()
 
 
+def safe_view_analysis(*args, **kwargs):
+    """
+    Use this instead of view_analysis to avoid crashing the whole app
+    if analysis page imports fail.
+    """
+    if callable(view_analysis):
+        try:
+            return view_analysis(*args, **kwargs)
+        except Exception as e:
+            st.error("❌ تعذر تشغيل صفحة المستشار/التحليل.")
+            st.info("📌 الخطأ حدث أثناء التنفيذ داخل view_analysis (وليس الاستيراد).")
+            st.code(repr(e))
+            return
+
+    st.error("❌ تعذر تشغيل صفحة المستشار/التحليل (view_analysis).")
+    st.info(
+        "✅ الأسباب الأكثر شيوعًا:\n"
+        "1) نقص ملف __init__.py داخل ui/ أو ui/pages/ أو ui/pages/analysis/\n"
+        "2) خطأ Import داخل ui.pages.analysis.page (مكتبة ناقصة أو خطأ كود)\n"
+        "3) ai_engine.py لا يحتوي generate / self_test\n"
+    )
+    if _analysis_import_error:
+        st.code(_analysis_import_error)
+
+
 def router():
     _ensure_ui_once()
 
@@ -100,7 +132,7 @@ def router():
     elif pg == "sukuk":
         view_sukuk_portfolio(fin)
     elif pg == "analysis":
-        view_analysis(fin)
+        safe_view_analysis(fin)
     elif pg == "cash":
         view_cash_log(fin)
     elif pg == "backtest":
