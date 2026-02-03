@@ -1707,3 +1707,18 @@ def generate_rebalancing_suggestions(trades_df, cash_pct):
         pass
 
     return suggestions
+    # ============================================================
+# ✅ Backward-compatible aliases expected by some UIs
+# ============================================================
+
+def generate(symbol: str, timeframe: str = "1D", **kwargs):
+    """
+    ✅ بعض الواجهات القديمة/الجديدة تتوقع اسم generate بدل generate_ai_report
+    """
+    return generate_ai_report(symbol, timeframe=timeframe)
+
+
+# Alias إضافي احتياطاً (بعض الواجهات تسميها generate_report)
+def generate_report(symbol: str, timeframe: str = "1D", **kwargs):
+    return generate_ai_report(symbol, timeframe=timeframe)
+
