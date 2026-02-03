@@ -1,7 +1,12 @@
-# ai_engine_core/config.py
+# ai_engine/config.py
 
+# ============================================================
+# AI Engine Meta (Fix ImportError + Provide UI Meta)
+# ============================================================
 AI_ENGINE_VERSION = "2026.02.03"
 AI_ENGINE_NAME = "Osoli AI Engine"
 
-# تستخدمه الواجهة لمعرفة جاهزية المحرك
-AI_ENGINE_OK = True
+# ============================================================
+# ✅ Public API Compatibility (generate / self_test)
+# ============================================================
+AI_ENGINE_OK = True  # تستخدمه الواجهة لمعرفة جاهزية المحرك
