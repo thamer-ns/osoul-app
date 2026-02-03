@@ -1,8 +1,10 @@
-# ai_engine/reporting.py
+# ai_engine_core/reporting.py
+
 import traceback
 import pandas as pd
 
 from .config import AI_ENGINE_NAME, AI_ENGINE_VERSION
+from .core import _normalize_symbol, _map_period_from_timeframe
 from .ohlcv import _ensure_ohlcv_columns
 from .indicators import _compute_indicators
 from .technicals import (
@@ -25,38 +27,12 @@ from .risk import (
 from .user_rules import load_user_rules, _eval_user_rule
 from .logging_learning import log_ai_signal, _get_weight
 
-def _normalize_symbol(sym: str) -> str:
-    sym = (sym or "").strip().upper()
-    if sym.isdigit():
-        return f"{sym}.SR"
-    sym = sym.replace(" ", "").replace("-", "")
-    if sym.endswith("SR") and ".SR" not in sym:
-        sym = sym.replace("SR", ".SR")
-    return sym
-
-def _map_period_from_timeframe(timeframe: str):
-    """
-    ✅ إضافة: استخدام timeframe في اختيار فترة جلب البيانات (بدون كسر أي شيء)
-    لأن get_chart_history عندك ممكن يدعم period فقط.
-    """
-    tf = (timeframe or "1D").upper().strip()
-    if tf in ["1H", "60M", "H"]:
-        return "60d"
-    if tf in ["4H", "240M"]:
-        return "180d"
-    if tf in ["1W", "W"]:
-        return "5y"
-    if tf in ["1MO", "1M", "MO"]:
-        return "10y"
-    return "6mo"
-
 def generate_ai_report(symbol, timeframe="1D"):
     symbol = _normalize_symbol(symbol)
 
     try:
         from market_data import get_chart_history
 
-        # ✅ تطوير: timeframe يحدد فترة جلب البيانات
         period = _map_period_from_timeframe(timeframe)
 
         try:
@@ -73,24 +49,20 @@ def generate_ai_report(symbol, timeframe="1D"):
 
         ind = _compute_indicators(df)
 
-        # المحركات الأساسية (كما عندك)
         s_candle, o_candle = _detect_advanced_patterns(df)
         s_struct, o_struct = _analyze_market_structure(df)
         s_sr, o_sr, f_sr = _analyze_sr(df)
         s_fund, o_fund, m_fund = _analyze_financial_golden_rules(symbol)
 
-        # ✅ إضافة بدون حذف: تفعيل محركات موجودة عندك لكنها ما كانت داخلة في التقرير
         s_liq, o_liq, f_liq = _detect_liquidity_sweep(df)
         s_ob, o_ob, f_ob = _detect_order_block(df)
         s_ichi, o_ichi, f_ichi = _analyze_ichimoku(df)
 
-        # تجميع التقني (إضافة محركات جديدة — بدون إزالة أي قديم)
         base_tech = (s_candle + s_struct + s_sr + s_liq + s_ob + s_ichi)
 
         tech_reasons = (o_struct or []) + (o_candle or []) + (o_sr or []) + (o_liq or []) + (o_ob or []) + (o_ichi or [])
         fund_reasons = o_fund or []
 
-        # features
         features = {}
         fund_feats = (m_fund or {}).get("_fund_features", {}) if isinstance(m_fund, dict) else {}
         for d in [f_sr, fund_feats, f_liq, f_ob, f_ichi]:
@@ -101,7 +73,6 @@ def generate_ai_report(symbol, timeframe="1D"):
             except Exception:
                 pass
 
-        # أرقام مفيدة
         try:
             features["close"] = float(df["Close"].iloc[-1])
             if isinstance(ind.get("rsi14"), pd.Series):
@@ -117,7 +88,6 @@ def generate_ai_report(symbol, timeframe="1D"):
         except Exception:
             pass
 
-        # Weighted bonus للعوامل الثنائية
         weighted_bonus = 0.0
         for k, v in features.items():
             if isinstance(v, (bool, int)) and int(v) == 1:
@@ -127,7 +97,6 @@ def generate_ai_report(symbol, timeframe="1D"):
         fund_score = float(s_fund)
         total_score = float(tech_score + fund_score)
 
-        # قواعد المستخدم
         user_delta = 0.0
         try:
             rules = load_user_rules(enabled_only=True, max_rows=30)
@@ -149,7 +118,6 @@ def generate_ai_report(symbol, timeframe="1D"):
             tech_score = float(tech_score + user_delta)
             total_score = float(tech_score + fund_score)
 
-        # Sector
         sector = None
         try:
             from market_data import get_static_info
@@ -171,7 +139,6 @@ def generate_ai_report(symbol, timeframe="1D"):
         }
         strategy_name = _infer_strategy_hint(module_scores)
 
-        # Recommendation
         rec = "⚖️ محايد / مراقبة"
         clr = "#6c757d"
         strat = "السعر في منطقة حيرة. انتظر إشارة أوضح."
@@ -206,11 +173,9 @@ def generate_ai_report(symbol, timeframe="1D"):
         explainability = _build_explainability(tech_reasons, fund_reasons, total_score, tech_score, fund_score)
         explainability["confidence_note"] = f"Confidence={int(confidence)}% ({confidence_label})"
 
-        # ✅ تطوير: الخطة حسب الاتجاه (لكن متوافق 100% لأن default buy)
         direction = "buy" if total_score >= 0 else "sell"
         risk_plan = _risk_plan_from_atr_sr(df, ind, direction=direction)
 
-        # ✅ Engine meta for UI / debug (Base Interval الصحيح)
         try:
             last_idx = df.index[-1]
             last_bar = str(last_idx)
@@ -234,8 +199,6 @@ def generate_ai_report(symbol, timeframe="1D"):
             "strategy_name": strategy_name,
             "sector": sector,
             "risk_plan": risk_plan,
-
-            # ✅ Added
             "engine_meta": {
                 "engine": AI_ENGINE_NAME,
                 "version": AI_ENGINE_VERSION,
@@ -249,7 +212,6 @@ def generate_ai_report(symbol, timeframe="1D"):
         report["risk_gates"] = _risk_gates(report)
         report["scenarios"] = _build_scenarios(df, report)
 
-        # تعديل التوصية إذا بوابات المخاطر رفضت
         try:
             if (not report["risk_gates"]["pass"]) and ("شراء" in str(report["recommendation"]) or "Buy" in str(report["recommendation"])):
                 report["recommendation"] = "⚠️ إشارة موجودة لكن بوابات المخاطر رفضت"
