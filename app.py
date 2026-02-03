@@ -46,7 +46,7 @@ if inject_component_styles:
         st.warning("تنبيه: حصل خطأ أثناء تحميل ستايلات components.")
         st.exception(e)
 
-# ✅ CSS العام
+# ✅ CSS العام (لا تغيّره ولا تحطه تحت شرط)
 apply_custom_css()
 
 # ✅ CSS واجهة النتائج (بطاقات/أيقونات) لو موجود
