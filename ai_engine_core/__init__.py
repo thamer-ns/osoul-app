@@ -8,18 +8,43 @@ from .portfolio import (
     generate_rebalancing_suggestions,
 )
 from .user_rules import save_user_rule, load_user_rules
-from .logging_learning import (  # type: ignore
+from .logging_learning import (
     log_ai_signal,
     update_ai_outcome,
     learn_from_history,
     _get_weight,
 )
 
-# ✅ Backward-compatible aliases expected by some UIs
+__all__ = [
+    # meta
+    "AI_ENGINE_VERSION",
+    "AI_ENGINE_NAME",
+    "AI_ENGINE_OK",
+
+    # main
+    "generate_ai_report",
+    "generate",
+    "generate_report",
+    "self_test",
+
+    # portfolio
+    "calculate_portfolio_risk_score",
+    "run_stress_test",
+    "generate_rebalancing_suggestions",
+
+    # user rules
+    "save_user_rule",
+    "load_user_rules",
+
+    # learning/logging
+    "log_ai_signal",
+    "update_ai_outcome",
+    "learn_from_history",
+    "_get_weight",
+]
+
+
 def generate(symbol: str, timeframe: str = "1D", **kwargs):
-    """
-    ✅ بعض الواجهات القديمة/الجديدة تتوقع اسم generate بدل generate_ai_report
-    """
     return generate_ai_report(symbol, timeframe=timeframe)
 
 
@@ -28,10 +53,6 @@ def generate_report(symbol: str, timeframe: str = "1D", **kwargs):
 
 
 def self_test() -> dict:
-    """
-    ✅ تشخيص سريع بدون كسر البرنامج
-    الهدف: الواجهة كانت تتوقع وجود self_test وتعرض نتيجته.
-    """
     rep = {
         "ok": True,
         "engine": AI_ENGINE_NAME,
@@ -40,7 +61,7 @@ def self_test() -> dict:
         "reason": None,
     }
 
-    # 1) تحقق من DB (اختياري)
+    # 1) DB
     try:
         from .db import _safe_import_db
         execute_query, fetch_table = _safe_import_db()
@@ -49,7 +70,7 @@ def self_test() -> dict:
         rep["checks"]["db_available"] = False
         rep["checks"]["db_error"] = repr(e)
 
-    # 2) تحقق من market_data.get_chart_history
+    # 2) market_data.get_chart_history
     try:
         from market_data import get_chart_history  # noqa
         rep["checks"]["market_data_ok"] = True
@@ -59,7 +80,7 @@ def self_test() -> dict:
         rep["ok"] = False
         rep["reason"] = "market_data missing get_chart_history"
 
-    # 3) تحقق من financial_analysis.get_advanced_fundamental_ratios (اختياري)
+    # 3) financial_analysis.get_advanced_fundamental_ratios
     try:
         from financial_analysis import get_advanced_fundamental_ratios  # noqa
         rep["checks"]["fundamental_ok"] = True
@@ -69,7 +90,7 @@ def self_test() -> dict:
         if rep["reason"] is None:
             rep["reason"] = "financial_analysis missing get_advanced_fundamental_ratios"
 
-    # 4) تحقق من وجود generate_ai_report
+    # 4) has generate_ai_report
     rep["checks"]["has_generate_ai_report"] = callable(globals().get("generate_ai_report"))
 
     return rep
