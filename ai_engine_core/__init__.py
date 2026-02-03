@@ -1,18 +1,18 @@
-# ai_engine/__init__.py
+# ai_engine_core/__init__.py
+
 from .config import AI_ENGINE_VERSION, AI_ENGINE_NAME, AI_ENGINE_OK
-from .db import _safe_import_db
 from .reporting import generate_ai_report
-from .user_rules import save_user_rule, load_user_rules
-from .logging_learning import (
-    log_ai_signal,
-    update_ai_outcome,
-    learn_from_history,
-    _get_weight,
-)
 from .portfolio import (
     calculate_portfolio_risk_score,
     run_stress_test,
     generate_rebalancing_suggestions,
+)
+from .user_rules import save_user_rule, load_user_rules
+from .logging_learning import (  # type: ignore
+    log_ai_signal,
+    update_ai_outcome,
+    learn_from_history,
+    _get_weight,
 )
 
 # ✅ Backward-compatible aliases expected by some UIs
@@ -22,8 +22,10 @@ def generate(symbol: str, timeframe: str = "1D", **kwargs):
     """
     return generate_ai_report(symbol, timeframe=timeframe)
 
+
 def generate_report(symbol: str, timeframe: str = "1D", **kwargs):
     return generate_ai_report(symbol, timeframe=timeframe)
+
 
 def self_test() -> dict:
     """
@@ -40,6 +42,7 @@ def self_test() -> dict:
 
     # 1) تحقق من DB (اختياري)
     try:
+        from .db import _safe_import_db
         execute_query, fetch_table = _safe_import_db()
         rep["checks"]["db_available"] = bool(execute_query and fetch_table)
     except Exception as e:
@@ -57,7 +60,6 @@ def self_test() -> dict:
         rep["reason"] = "market_data missing get_chart_history"
 
     # 3) تحقق من financial_analysis.get_advanced_fundamental_ratios (اختياري)
-    # (إذا ما كان موجود بالنسخة القديمة لا نخرب المحرك — فقط نعلمك)
     try:
         from financial_analysis import get_advanced_fundamental_ratios  # noqa
         rep["checks"]["fundamental_ok"] = True
