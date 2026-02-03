@@ -1,6 +1,6 @@
-# ai_engine/risk.py
-import pandas as pd
+# ai_engine_core/risk.py
 
+import pandas as pd
 from .technicals import _pivot_points
 
 def _support_resistance_zones(df, lookback=120, max_levels=6):
