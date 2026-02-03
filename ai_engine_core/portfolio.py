@@ -1,4 +1,4 @@
-# ai_engine/portfolio.py
+# ai_engine_core/portfolio.py
 
 def calculate_portfolio_risk_score(trades_df, cash_percent):
     try:
