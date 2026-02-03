@@ -1,4 +1,5 @@
-# ai_engine/indicators.py
+# ai_engine_core/indicators.py
+
 import pandas as pd
 import numpy as np
 
