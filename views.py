@@ -1857,6 +1857,7 @@ def render_financial_dashboard_ui(symbol):
             fv = metrics.get("Fair_Value_Graham", 0)
             c2.metric("قيمة جراهام", f"{fv:,.2f}" if fv and fv > 0 else "N/A")
             c3.write(f"**ملاحظات:** {metrics.get('Opinions', '-')}")
+
             st.markdown("---")
 
             # مخطط الإيرادات/الربح/التدفق النقدي
