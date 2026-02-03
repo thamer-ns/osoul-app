@@ -1,11 +1,12 @@
-# ai_engine/user_rules.py
+# ai_engine_core/user_rules.py
+
 import json
 import re
 import uuid
 import pandas as pd
 
-from .db import _safe_import_db, _now_str, _try_exec, _safe_fetch_table
-from .tables import _ensure_user_rules_table
+from .db import _safe_import_db, _try_exec, _safe_fetch_table, _ensure_user_rules_table
+from .core import _now_str
 
 def save_user_rule(rule_text: str, title: str = None, enabled: int = 1):
     execute_query, _ = _safe_import_db()
