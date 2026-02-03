@@ -1143,3 +1143,17 @@ def render_financial_dashboard_ui(symbol):
                             saved += 1
                     st.success(f"تم حفظ {saved} سجل/سجلات")
                     st.rerun()
+# ==============================================================
+# ✅ Backward-compat exports (DO NOT REMOVE)
+# ==============================================================
+
+# بعض الصفحات القديمة تستورد الاسم هذا مباشرة:
+# from financial_analysis import get_advanced_fundamental_ratios
+# فإذا الملف الحالي عندك ما عاد يعرّفها، يصير ImportError.
+
+try:
+    get_advanced_fundamental_ratios  # noqa
+except NameError:
+    def get_advanced_fundamental_ratios(symbol):
+        # fallback: استخدم الدالة المتوفرة عندك
+        return get_fundamental_ratios(symbol)
