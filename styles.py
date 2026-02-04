@@ -1,259 +1,482 @@
 # styles.py
 import streamlit as st
 
-
-def apply_global_styles():
-    """
-    Global UI / CSS for Osoli.
-
-    Goals:
-    - Centered content (max-width) even in wide layout
-    - Reduce excessive whitespace
-    - Modern navbar chips styles
-    - Better readable "note" blocks instead of code-like boxes
-    - RTL-friendly tweaks (without breaking existing RTL)
-    """
-
+def apply_custom_css():
     st.markdown(
         """
-<style>
-/* -------------------------
-   Layout: wide but centered
--------------------------- */
-:root{
-  --os-bg: #0e1117;
-  --os-panel: #111827;
-  --os-panel-2:#0b1220;
-  --os-border: rgba(255,255,255,.08);
-  --os-border-2: rgba(255,255,255,.12);
-  --os-text: rgba(255,255,255,.92);
-  --os-muted: rgba(255,255,255,.72);
-  --os-muted2: rgba(255,255,255,.56);
-  --os-accent: #4f46e5;
-  --os-accent2:#22c55e;
-  --os-warn:#f59e0b;
-  --os-danger:#ef4444;
-  --os-radius: 16px;
-  --os-shadow: 0 12px 30px rgba(0,0,0,.35);
-  --os-shadow-soft: 0 8px 18px rgba(0,0,0,.25);
-  --os-font: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Noto Kufi Arabic", "Noto Sans Arabic";
-}
+        <style>
+        /* =====================================================
+           Fonts
+           ===================================================== */
+        @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap');
+        @import url('https://fonts.googleapis.com/icon?family=Material+Icons');
 
-html, body, [class*="css"]{
-  font-family: var(--os-font);
-}
+        /* ✅ Material Symbols (سبب expand_more كنص) */
+        @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
+        @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
+        @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Sharp:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
 
-/* Streamlit main container centering */
-section.main > div{
-  max-width: 1280px;
-  margin-left: auto;
-  margin-right: auto;
-  padding-left: 18px;
-  padding-right: 18px;
-}
+        /* =====================================================
+           Theme variables (لتحسين الوضوح)
+           ===================================================== */
+        :root{
+            --txt: #0F172A;
+            --muted: #64748B;
+            --primary: #0B57D0;      /* أزرق أوضح */
+            --primary2: #083A9B;
+            --border: rgba(15,23,42,0.12);
+            --border2: rgba(15,23,42,0.18);
+            --card-bg: #ffffff;
+            --soft-bg: #F8FAFC;
+            --shadow: 0 10px 25px rgba(15,23,42,0.10);
+            --shadow2: 0 20px 45px rgba(15,23,42,0.12);
+            --green: #059669;
+            --red: #DC2626;
+            --blue: #2563EB;
+        }
 
-/* Reduce vertical whitespace between blocks */
-.block-container{
-  padding-top: 1.5rem !important;
-  padding-bottom: 2.0rem !important;
-}
+        /* =====================================================
+           Base RTL + Cairo
+           (بدون كسر الأيقونات)
+           ===================================================== */
+        html, body, [class*="css"], p, div, label, input, button, textarea, h1,h2,h3,h4,h5,h6 {
+            font-family: 'Cairo', sans-serif !important;
+            direction: rtl !important;
+            text-align: right !important;
+            color: var(--txt);
+        }
 
-/* Hide Streamlit default menu/footer for cleaner app feel */
-#MainMenu {visibility: hidden;}
-footer {visibility: hidden;}
-header {visibility: hidden;}
+        /* ✅ طبّق Cairo على span لكن استثنِ أيقونات Material */
+        span:not(.material-icons)
+            :not(.material-symbols-outlined)
+            :not(.material-symbols-rounded)
+            :not(.material-symbols-sharp)
+            :not([class*="material-symbols"])
+        {
+            font-family: 'Cairo', sans-serif !important;
+            direction: rtl !important;
+            text-align: right !important;
+        }
 
-/* -------------------------
-   Navbar (chips)
--------------------------- */
-.os-nav-wrap{
-  position: sticky;
-  top: 0;
-  z-index: 999;
-  backdrop-filter: blur(8px);
-  background: linear-gradient(180deg, rgba(14,17,23,.92), rgba(14,17,23,.75));
-  border-bottom: 1px solid var(--os-border);
-  padding: 10px 0 12px 0;
-  margin: -10px -18px 18px -18px; /* stretch edge-to-edge inside centered container */
-}
+        /* =====================================================
+           Material Icons / Symbols fixes
+           ===================================================== */
+        .material-icons,
+        i.material-icons,
+        span.material-icons {
+            font-family: 'Material Icons' !important;
+            direction: ltr !important;
+            text-align: center !important;
+            font-weight: normal !important;
+            font-style: normal !important;
+            letter-spacing: normal !important;
+            text-transform: none !important;
+            white-space: nowrap !important;
+            -webkit-font-feature-settings: "liga" !important;
+            font-feature-settings: "liga" !important;
+            -webkit-font-smoothing: antialiased !important;
+        }
 
-.os-nav-inner{
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 0 18px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-}
+        .material-symbols-outlined,
+        .material-symbols-rounded,
+        .material-symbols-sharp,
+        [class*="material-symbols"] {
+            font-family: 'Material Symbols Outlined', 'Material Symbols Rounded', 'Material Symbols Sharp' !important;
+            direction: ltr !important;
+            text-align: center !important;
+            font-weight: normal !important;
+            font-style: normal !important;
+            letter-spacing: normal !important;
+            text-transform: none !important;
+            white-space: nowrap !important;
+            -webkit-font-feature-settings: "liga" !important;
+            font-feature-settings: "liga" !important;
+            -webkit-font-smoothing: antialiased !important;
+        }
 
-.os-brand{
-  display:flex;
-  align-items:center;
-  gap:10px;
-  min-width: max-content;
-}
+        /* =====================================================
+           UI Cleanup
+           ===================================================== */
+        footer, header, #MainMenu { display: none !important; }
+        [data-testid="stElementToolbar"] { display: none !important; }
+        div[role="tooltip"] { display: none !important; opacity: 0 !important; visibility: hidden !important; }
+        button[title="View fullscreen"] { display: none !important; }
 
-.os-brand .logo{
-  width: 36px;
-  height: 36px;
-  border-radius: 12px;
-  background: radial-gradient(circle at 25% 20%, rgba(79,70,229,.95), rgba(34,197,94,.85));
-  box-shadow: var(--os-shadow-soft);
-}
+        section[data-testid="stSidebar"] {
+            border-right: none !important;
+            border-left: none !important;
+            box-shadow: none !important;
+        }
 
-.os-brand .title{
-  font-weight: 800;
-  letter-spacing: .2px;
-  color: var(--os-text);
-  font-size: 16px;
-  line-height: 1.1;
-}
+        /* =====================================================
+           Expander (رفع التباين)
+           ===================================================== */
+        div[data-testid="stExpander"]{
+            border: 1px solid var(--border2) !important;
+            border-radius: 14px !important;
+            background: var(--card-bg) !important;
+            box-shadow: 0 8px 18px rgba(15,23,42,0.06) !important;
+            margin-bottom: 12px !important;
+        }
+        div[data-testid="stExpander"] details summary{
+            font-weight: 900 !important;
+            color: var(--primary) !important;
+            padding: 12px 16px !important;
+        }
+        div[data-testid="stExpander"] details summary:hover{
+            background: rgba(37,99,235,0.06) !important;
+        }
 
-.os-brand .subtitle{
-  font-size: 12px;
-  color: var(--os-muted2);
-  line-height: 1.1;
-}
+        /* =====================================================
+           KPI Cards (أقوى/أوضح مثل قبل)
+           ===================================================== */
+        .kpi-card {
+            background: var(--card-bg) !important;
+            border-radius: 22px !important;
+            padding: 22px 20px !important;
+            position: relative;
+            overflow: hidden;
+            border: 1px solid var(--border) !important;
+            box-shadow: var(--shadow) !important;
+            transition: all 0.25s ease;
+            margin-bottom: 16px !important;
+        }
+        .kpi-card:hover {
+            transform: translateY(-4px) !important;
+            box-shadow: var(--shadow2) !important;
+            border-color: rgba(37,99,235,0.30) !important;
+        }
+        .kpi-icon-bg {
+            position: absolute;
+            left: -10px;
+            bottom: -18px;
+            font-size: 5.2rem;
+            opacity: 0.10;              /* ✅ كان منخفض—رفعناه شوي */
+            transform: rotate(12deg);
+            transition: all 0.35s ease;
+            color: var(--txt);
+            pointer-events: none;
+        }
+        .kpi-card:hover .kpi-icon-bg {
+            transform: rotate(0deg) scale(1.12);
+            opacity: 0.16;
+            left: -4px;
+        }
+        .kpi-label{
+            color: var(--muted) !important;
+            font-size: 0.95rem !important;
+            font-weight: 800 !important;
+            margin-bottom: 6px !important;
+        }
+        .kpi-value{
+            font-size: 2.05rem !important;   /* ✅ أوضح */
+            font-weight: 950 !important;
+            color: var(--txt) !important;
+            direction: ltr !important;
+            text-align: left !important;
+            letter-spacing: 0.2px;
+        }
 
-.os-chips{
-  display:flex;
-  align-items:center;
-  gap: 8px;
-  overflow-x: auto;
-  padding: 4px 2px;
-  scrollbar-width: thin;
-}
+        /* =====================================================
+           TASI Card (أوضح + Badge أجمل)
+           ===================================================== */
+        .tasi-card{
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary2) 100%) !important;
+            border-radius: 22px !important;
+            padding: 26px !important;
+            color: #fff !important;
+            display:flex;
+            justify-content:space-between;
+            align-items:center;
+            box-shadow: 0 16px 38px rgba(11,87,208,0.28) !important;
+            margin-bottom: 22px !important;
+            border: 1px solid rgba(255,255,255,0.14) !important;
+        }
+        .tasi-card *{
+            color:#fff !important;
+        }
+        /* لو عندك داخلها رقم كبير اعطه بروز */
+        .tasi-card .tasi-number{
+            font-size: 3.2rem !important;
+            font-weight: 950 !important;
+            direction:ltr !important;
+            text-align:left !important;
+            letter-spacing: 0.5px;
+            text-shadow: 0 2px 10px rgba(0,0,0,0.12);
+        }
+        .tasi-card .tasi-sub{
+            opacity: 0.92;
+            font-weight: 800;
+        }
+        .tasi-card .tasi-badge{
+            display:inline-flex;
+            align-items:center;
+            gap:8px;
+            padding: 6px 12px;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.18);
+            border: 1px solid rgba(255,255,255,0.20);
+            font-weight: 900;
+            direction:ltr;
+        }
 
-.os-chip{
-  border: 1px solid var(--os-border);
-  background: rgba(255,255,255,.03);
-  color: var(--os-muted);
-  padding: 8px 12px;
-  border-radius: 999px;
-  font-size: 13px;
-  font-weight: 650;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: all .18s ease;
-  user-select: none;
-}
+        /* =====================================================
+           Tables (أوضح)
+           ===================================================== */
+        .finance-table{
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+            border: 1px solid var(--border2);
+            border-radius: 14px;
+            overflow: hidden;
+            background: #fff;
+            margin-top: 14px;
+            box-shadow: 0 8px 18px rgba(15,23,42,0.06);
+        }
+        .finance-table th{
+            background: #F1F5FF !important;
+            color: #1E40AF !important;
+            font-weight: 900;
+            padding: 14px;
+            text-align: right;
+            border-bottom: 2px solid rgba(37,99,235,0.18);
+            white-space: nowrap;
+        }
+        .finance-table td{
+            padding: 12px 14px;
+            text-align: right;
+            border-bottom: 1px solid rgba(15,23,42,0.08);
+            color: #0F172A;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+        .finance-table tr:hover td{
+            background: rgba(37,99,235,0.04);
+        }
 
-.os-chip:hover{
-  transform: translateY(-1px);
-  border-color: var(--os-border-2);
-  color: var(--os-text);
-  background: rgba(255,255,255,.05);
-}
+        .txt-green { color: var(--green) !important; font-weight: 900 !important; }
+        .txt-red   { color: var(--red) !important; font-weight: 900 !important; }
+        .txt-blue  { color: var(--blue) !important; font-weight: 900 !important; }
 
-.os-chip.active{
-  background: rgba(79,70,229,.22);
-  border-color: rgba(79,70,229,.65);
-  color: rgba(255,255,255,.95);
-}
+        .badge-open{
+            background: #DCFCE7;
+            color: #166534;
+            padding: 4px 12px;
+            border-radius: 999px;
+            font-size: 0.78rem;
+            font-weight: 900;
+            border: 1px solid rgba(5,150,105,0.20);
+        }
+        .badge-closed{
+            background: #F3F4F6;
+            color: #374151;
+            padding: 4px 12px;
+            border-radius: 999px;
+            font-size: 0.78rem;
+            font-weight: 900;
+            border: 1px solid rgba(55,65,81,0.14);
+        }
 
-/* -------------------------
-   Cards & panels
--------------------------- */
-.os-card{
-  border: 1px solid var(--os-border);
-  background: rgba(255,255,255,.03);
-  border-radius: var(--os-radius);
-  padding: 16px 18px;
-  box-shadow: var(--os-shadow-soft);
-}
+        /* Buttons */
+        div.stButton > button{
+            width: 100%;
+            border-radius: 14px;
+            height: 50px;
+            font-weight: 900;
+            border: 1px solid rgba(15,23,42,0.10);
+            box-shadow: 0 6px 14px rgba(15,23,42,0.06);
+            background: #fff;
+            color: #0F172A;
+            transition: 0.2s;
+        }
+        div.stButton > button:hover{
+            transform: translateY(-2px);
+            box-shadow: 0 12px 24px rgba(15,23,42,0.10);
+            color: var(--primary);
+            border-color: rgba(37,99,235,0.30);
+        }
 
-.os-card h3, .os-card h2, .os-card h1{
-  margin: 0 0 10px 0;
-}
+        /* =====================================================
+           ✅ Report UI (Cards / Chips / Better JSON)
+           ===================================================== */
 
-.os-divider{
-  height: 1px;
-  background: var(--os-border);
-  margin: 14px 0;
-}
+        /* Grid container لعرض بطاقات جنب بعض */
+        .os-grid{
+            display:grid;
+            grid-template-columns: repeat(12, 1fr);
+            gap: 12px;
+            margin-top: 8px;
+            margin-bottom: 8px;
+        }
+        .os-col-12{ grid-column: span 12; }
+        .os-col-6{ grid-column: span 6; }
+        .os-col-4{ grid-column: span 4; }
+        .os-col-3{ grid-column: span 3; }
 
-/* -------------------------
-   Note block (replace code-y look)
--------------------------- */
-.os-note{
-  border: 1px solid var(--os-border);
-  background: rgba(255,255,255,.035);
-  border-radius: 14px;
-  padding: 14px 16px;
-  line-height: 1.7;
-  color: var(--os-text);
-}
+        @media (max-width: 900px){
+            .os-col-6,.os-col-4,.os-col-3{ grid-column: span 12; }
+        }
 
-.os-note .label{
-  font-weight: 800;
-  font-size: 12px;
-  letter-spacing: .2px;
-  color: var(--os-muted2);
-  margin-bottom: 8px;
-}
+        /* Card */
+        .os-card{
+            background: var(--card-bg);
+            border: 1px solid var(--border2);
+            border-radius: 16px;
+            padding: 14px 14px;
+            box-shadow: 0 8px 18px rgba(15,23,42,0.06);
+        }
+        .os-card-title{
+            font-weight: 950;
+            margin-bottom: 8px;
+            color: var(--txt);
+            display:flex;
+            align-items:center;
+            gap:8px;
+        }
+        .os-muted{
+            color: var(--muted);
+            font-weight: 800;
+            font-size: 0.92rem;
+        }
 
-/* -------------------------
-   Improve default expander look
--------------------------- */
-div[data-testid="stExpander"]{
-  border: 1px solid var(--os-border) !important;
-  border-radius: var(--os-radius) !important;
-  background: rgba(255,255,255,.02) !important;
-  overflow: hidden;
-}
+        /* Chips / Badges */
+        .os-chip{
+            display:inline-flex;
+            align-items:center;
+            gap:8px;
+            padding: 6px 10px;
+            border-radius: 999px;
+            border: 1px solid var(--border2);
+            background: var(--soft-bg);
+            font-weight: 900;
+            font-size: 0.82rem;
+            margin: 4px 4px 0 0;
+            white-space: nowrap;
+        }
+        .os-chip .mi{
+            font-family: 'Material Symbols Rounded' !important;
+            font-size: 18px;
+            line-height: 1;
+        }
 
-div[data-testid="stExpander"] summary{
-  padding: 10px 14px !important;
-}
+        .os-chip-green{ background:#DCFCE7; border-color: rgba(5,150,105,0.25); color:#166534; }
+        .os-chip-red{ background:#FEE2E2; border-color: rgba(220,38,38,0.25); color:#991B1B; }
+        .os-chip-blue{ background:#DBEAFE; border-color: rgba(37,99,235,0.25); color:#1E40AF; }
+        .os-chip-gray{ background:#F3F4F6; border-color: rgba(55,65,81,0.18); color:#374151; }
+        .os-chip-amber{ background:#FEF3C7; border-color: rgba(245,158,11,0.28); color:#92400E; }
 
-div[data-testid="stExpander"] summary:hover{
-  background: rgba(255,255,255,.03) !important;
-}
+        /* Key/Value rows */
+        .os-kv{
+            display:flex;
+            justify-content:space-between;
+            gap:12px;
+            padding: 8px 0;
+            border-bottom: 1px dashed rgba(15,23,42,0.12);
+        }
+        .os-kv:last-child{ border-bottom:none; }
+        .os-k{ color: var(--muted); font-weight: 900; }
+        .os-v{ color: var(--txt); font-weight: 950; direction:ltr; text-align:left; }
 
-/* -------------------------
-   Dataframes spacing
--------------------------- */
-div[data-testid="stDataFrame"]{
-  border-radius: var(--os-radius);
-  overflow: hidden;
-  border: 1px solid var(--os-border);
-}
+        /* ✅ تحسين شكل st.json / code blocks */
+        div[data-testid="stJson"] pre,
+        div[data-testid="stCodeBlock"] pre{
+            background: #0B1220 !important;
+            color: #E5E7EB !important;
+            border-radius: 14px !important;
+            border: 1px solid rgba(255,255,255,0.10) !important;
+            padding: 14px !important;
+            font-size: 0.85rem !important;
+            line-height: 1.55 !important;
+            direction: ltr !important;
+            text-align: left !important;
+            overflow-x: auto !important;
+            max-height: 420px;
+        }
+        div[data-testid="stJson"] pre code,
+        div[data-testid="stCodeBlock"] pre code{
+            color: #E5E7EB !important;
+            direction:ltr !important;
+            text-align:left !important;
+        }
 
-/* -------------------------
-   Buttons (Streamlit)
--------------------------- */
-.stButton > button{
-  border-radius: 999px !important;
-  border: 1px solid var(--os-border) !important;
-  background: rgba(255,255,255,.03) !important;
-  color: var(--os-text) !important;
-  font-weight: 700 !important;
-  padding: 0.55rem 0.9rem !important;
-  transition: all .16s ease !important;
-}
+        /* =====================================================
+           Mobile tweaks (مثل صورك على الجوال)
+           ===================================================== */
+        @media (max-width: 900px){
+            .kpi-card{ padding: 18px 16px !important; border-radius: 18px !important; }
+            .kpi-value{ font-size: 1.85rem !important; }
+            .tasi-card{ padding: 20px !important; border-radius: 18px !important; }
+            .tasi-card .tasi-number{ font-size: 2.6rem !important; }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
 
-.stButton > button:hover{
-  transform: translateY(-1px) !important;
-  border-color: var(--os-border-2) !important;
-  background: rgba(255,255,255,.05) !important;
-}
 
-/* Primary buttons: try to detect by aria-label may vary, keep subtle */
-.stButton > button[kind="primary"]{
-  border-color: rgba(79,70,229,.6) !important;
-  background: rgba(79,70,229,.18) !important;
-}
+# =====================================================
+# ✅ UI Polish (اختياري)
+# =====================================================
+# هذا CSS إضافي "فوق" شغلك الحالي بدون ما يغيّره.
+# تقدر تناديه من app.py كالتالي (اختياري):
+#   try:
+#       from styles import apply_ui_css
+#       apply_ui_css()
+#   except Exception:
+#       pass
 
-/* -------------------------
-   RTL hints (keep existing RTL logic if present)
--------------------------- */
-body{
-  direction: rtl;
-  text-align: right;
-}
 
-</style>
-""",
+def apply_ui_css():
+    st.markdown(
+        """
+        <style>
+        /* =====================================================
+           Layout: تقليل الفراغ + تحديد عرض المحتوى
+           (لا يغيّر ألوانك ولا كروتك)
+           ===================================================== */
+
+        /* خلي المحتوى في المنتصف مع حد عرض مناسب */
+        section.main > div{
+            max-width: 1280px;
+            margin-left: auto;
+            margin-right: auto;
+            padding-left: 18px;
+            padding-right: 18px;
+        }
+
+        /* تقليل المساحات العلوية والسفلية */
+        .block-container{
+            padding-top: 1.4rem !important;
+            padding-bottom: 2.0rem !important;
+        }
+
+        /* تقليل فراغات العناصر المتتابعة (بدون كسر شكل الكروت) */
+        div[data-testid="stVerticalBlock"] > div:has(> div[data-testid="stMarkdownContainer"]){
+            margin-bottom: 10px;
+        }
+
+        /* تحسين سلوك الجداول على الجوال */
+        div[data-testid="stDataFrame"]{
+            border-radius: 14px;
+            overflow: hidden;
+        }
+
+        /* تحسين عرض الـ code/json (لو يطلع HTML كنص) */
+        div[data-testid="stCodeBlock"] pre{
+            border-radius: 14px !important;
+        }
+
+        @media (max-width: 900px){
+            section.main > div{
+                padding-left: 12px;
+                padding-right: 12px;
+            }
+            .block-container{
+                padding-top: 1.0rem !important;
+            }
+        }
+        </style>
+        """,
         unsafe_allow_html=True,
     )
