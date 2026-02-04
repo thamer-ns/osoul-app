@@ -38,7 +38,9 @@ NAV_MORE = [
 _ALLOWED = {k for _, k in (NAV_MAIN + NAV_MORE)}
 
 
-def _safe_get_query_page() -> str | None:
+from typing import Optional
+
+def _safe_get_query_page() -> Optional[str]:
     """
     Read st.query_params.get('page') safely across Streamlit versions.
     Returns None if unavailable.
