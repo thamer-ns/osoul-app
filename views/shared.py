@@ -109,9 +109,12 @@ except Exception:
             return {"__error__": "AI Engine import failed", "__trace__": ai_import_error}
 
     # اختياريات: إذا ما كانت مصدّرة من ai_engine.py
-    def calculate_portfolio_risk_score(df, c): return 50
-    def run_stress_test(v, df): return {"scenarios": [], "insight": ""}
-    def generate_rebalancing_suggestions(df, c): return []
+    def calculate_portfolio_risk_score(df, c):
+        return None
+    def run_stress_test(v, df):
+        return {"__error__": "AI Engine import failed", "__trace__": ai_import_error, "scenarios": [], "insight": ""}
+    def generate_rebalancing_suggestions(df, c):
+        return {"__error__": "AI Engine import failed", "__trace__": ai_import_error, "items": []}
 
     # ✅ User rules fallback
     try:
