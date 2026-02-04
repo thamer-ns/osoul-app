@@ -25,11 +25,6 @@ def validate_trade_inputs(quantity, price):
 
 
 def _validate_username(u: str):
-    """
-    قواعد بسيطة:
-    - 3 إلى 30 حرف
-    - أحرف/أرقام/._-
-    """
     u = (u or "").strip()
     if len(u) < 3:
         return False, "اسم المستخدم قصير جداً"
@@ -48,11 +43,8 @@ def _validate_password(p: str):
 
 
 def _user_exists_in_db(username: str) -> bool:
-    """
-    تحقق سريع (بدون كسر لو الجدول غير موجود).
-    """
     try:
-        df = fetch_table("users")  # database.py يعالج case
+        df = fetch_table("users")
         if df is None or df.empty or "username" not in df.columns:
             return False
         return (df["username"].astype(str) == str(username)).any()
@@ -61,82 +53,75 @@ def _user_exists_in_db(username: str) -> bool:
 
 
 # ============================================================
-# 2) Cookie Manager + Safe Parsing
+# 2) Cookie Manager
 # ============================================================
 
-COOKIE_KEY = "osoul_auth"   # ✅ نستخدم كوكي واحدة واضحة
-COOKIE_DAYS = 30
-
-
 def get_manager():
-    # key لازم يكون ثابت
     if "_cookie_manager" not in st.session_state:
+        # مهم: key ثابت حتى لا تتغير الكوكي عند rerun
         st.session_state._cookie_manager = stx.CookieManager(key="osoul_auth_manager")
     return st.session_state._cookie_manager
 
 
-def _build_cookie_payload(username: str, days: int = COOKIE_DAYS) -> str:
-    """
-    payload بسيط:
-    username|exp_ts
-    """
-    username = (username or "").strip()
-    exp_ts = int(time.time() + days * 86400)
-    return f"{username}|{exp_ts}"
-
-
-def _parse_cookie_payload(payload: str):
-    """
-    يرجع (username, exp_ts) أو (None, None)
-    """
+def _get_cookie_user(cookie_manager):
     try:
-        if not payload or "|" not in str(payload):
-            return None, None
-        u, exp = str(payload).split("|", 1)
-        u = (u or "").strip()
-        exp_ts = int(float(exp))
-        if not u:
-            return None, None
-        return u, exp_ts
-    except Exception:
-        return None, None
-
-
-def _cookie_not_expired(exp_ts: int) -> bool:
-    try:
-        return int(exp_ts) > int(time.time())
-    except Exception:
-        return False
-
-
-def _get_cookie_raw(cookie_manager):
-    """
-    قراءة مباشرة.
-    """
-    try:
-        return cookie_manager.get(COOKIE_KEY)
+        return cookie_manager.get("osoul_user")
     except Exception:
         return None
 
 
-def _bootstrap_cookie_once(cookie_manager):
+# ============================================================
+# ✅ 2.5) Auth Bootstrap (حل إعادة تسجيل الدخول عند تحديث الصفحة)
+# ============================================================
+
+def _bootstrap_auth_from_cookie():
     """
-    ✅ مهم: بعض البيئات ترجع None في أول run بعد Refresh رغم أن الكوكي موجودة.
-    الحل: rerun واحد فقط (بدون sleep).
+    الهدف:
+    - بعض بيئات Streamlit ترجع cookie=None في أول تشغيل/أول rerun لأن الكوكي ما تكون جاهزة.
+    - هذا يسبب ظهور شاشة الدخول كل مرة.
+    الحل:
+    - نجرب قراءة الكوكي مرة
+    - لو رجعت None في أول محاولة -> rerun واحد فقط
+    - بعدها نعتبر bootstrap انتهى وما نرجع نزعج المستخدم
     """
-    if st.session_state.get("_cookies_bootstrapped") is True:
+    s = st.session_state
+
+    # إذا سبق تفعيل جلسة صحيحة لا نلمسها
+    if s.get("authenticated") is True and s.get("username"):
+        s["_auth_bootstrapped"] = True
         return
 
-    # جرّب قراءة أولية
-    raw = _get_cookie_raw(cookie_manager)
+    # نفّذ bootstrap مرة واحدة
+    if s.get("_auth_bootstrapped") is True:
+        return
 
-    # إذا ما لقاها، نسوي rerun واحد فقط لتجهيز الكوكي
-    # (هذا يمنع ظهور شاشة تسجيل الدخول للمستخدم بعد refresh)
-    if raw is None:
-        st.session_state["_cookies_bootstrapped"] = True
+    tries = int(s.get("_auth_bootstrap_tries", 0))
+    cookie_manager = get_manager()
+    cookie_user = _get_cookie_user(cookie_manager)
+
+    # إذا الكوكي موجودة ومستخدمها صحيح
+    if cookie_user:
+        if _user_exists_in_db(cookie_user):
+            s["username"] = cookie_user
+            s["authenticated"] = True
+            s["_auth_bootstrapped"] = True
+            return
+        else:
+            # كوكي قديمة/غير صالحة: احذفها
+            try:
+                cookie_manager.delete("osoul_user")
+            except Exception:
+                pass
+
+    # إذا ما فيه كوكي (أو ما جاهزة)
+    # نعطي محاولة rerun واحدة فقط (لتهيئة الكوكي) ثم نوقف
+    if cookie_user is None and tries < 1:
+        s["_auth_bootstrap_tries"] = tries + 1
+        # rerun واحد فقط
         st.rerun()
 
-    st.session_state["_cookies_bootstrapped"] = True
+    # بعدها نثبت أنها bootstrapped حتى لا نعيد نفس الدوامة
+    s["_auth_bootstrapped"] = True
 
 
 # ============================================================
@@ -144,10 +129,6 @@ def _bootstrap_cookie_once(cookie_manager):
 # ============================================================
 
 def _rate_limit_ok():
-    """
-    يمنع محاولات كثيرة خلال وقت قصير:
-    - 5 محاولات خلال 60 ثانية -> قفل مؤقت 30 ثانية
-    """
     now = time.time()
     s = st.session_state
 
@@ -179,33 +160,14 @@ def _register_login_attempt():
 # ============================================================
 
 def login_system():
-    # 1) Session check (أسرع طريق)
+    # ✅ bootstrap cookies once (prevents relogin on refresh)
+    _bootstrap_auth_from_cookie()
+
+    # 1) Session check
     if st.session_state.get("username") and st.session_state.get("authenticated") is True:
         return True
 
-    cookie_manager = get_manager()
-
-    # ✅ bootstrapping للكوكي بعد Refresh (مرة واحدة فقط)
-    _bootstrap_cookie_once(cookie_manager)
-
-    # 2) Cookie check
-    raw = _get_cookie_raw(cookie_manager)
-    cookie_user, exp_ts = _parse_cookie_payload(raw)
-
-    if cookie_user and exp_ts and _cookie_not_expired(exp_ts):
-        # ✅ تحقق من DB (يمنع كوكي غير صالحة)
-        if _user_exists_in_db(cookie_user):
-            st.session_state["username"] = cookie_user
-            st.session_state["authenticated"] = True
-            return True
-        else:
-            # كوكي قديمة: احذفها
-            try:
-                cookie_manager.delete(COOKIE_KEY)
-            except Exception:
-                pass
-
-    # 3) Show Login UI
+    # 2) Show Login UI
     c1, c2, c3 = st.columns([1, 2, 1])
     with c2:
         st.markdown(
@@ -243,11 +205,9 @@ def login_system():
                         st.session_state["authenticated"] = True
 
                         if rem:
-                            # ✅ نخزن payload مع صلاحية
-                            payload = _build_cookie_payload(u, days=COOKIE_DAYS)
-                            expires = datetime.datetime.now() + datetime.timedelta(days=COOKIE_DAYS)
+                            expires = datetime.datetime.now() + datetime.timedelta(days=30)
                             try:
-                                cookie_manager.set(COOKIE_KEY, payload, expires_at=expires)
+                                get_manager().set("osoul_user", u, expires_at=expires)
                             except Exception:
                                 pass
 
@@ -297,12 +257,19 @@ def login_system():
 
 def logout():
     try:
-        get_manager().delete(COOKIE_KEY)
+        get_manager().delete("osoul_user")
     except Exception:
         pass
 
     # ✅ لا تمسح كل شيء، فقط مفاتيح الدخول
-    for k in ["username", "authenticated", "_login_attempts", "_login_locked_until", "_cookies_bootstrapped"]:
+    for k in [
+        "username",
+        "authenticated",
+        "_login_attempts",
+        "_login_locked_until",
+        "_auth_bootstrapped",
+        "_auth_bootstrap_tries",
+    ]:
         if k in st.session_state:
             del st.session_state[k]
 
