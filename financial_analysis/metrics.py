@@ -1,5 +1,6 @@
 # financial_analysis/metrics.py
-from typing import Tuple, List
+
+from typing import Tuple, List, Dict, Any
 
 import pandas as pd
 import yfinance as yf
@@ -22,6 +23,15 @@ def _fetch_yahoo_info(symbol: str) -> dict:
         return info
     except Exception:
         return {}
+
+
+def _best_key(row: pd.Series, keys: List[str], default=0.0) -> float:
+    for k in keys:
+        if k in row.index:
+            v = _safe_float(row.get(k, 0.0))
+            if v != 0:
+                return v
+    return _safe_float(default)
 
 
 def _compute_dupont(curr_row: pd.Series) -> dict:
@@ -112,6 +122,104 @@ def _compute_earnings_quality(curr_row: pd.Series) -> dict:
     return out
 
 
+def _compute_efficiency_pack(curr_row: pd.Series) -> dict:
+    """
+    Best-effort margins:
+    - Gross / Operating / Net margin
+    Depends on availability in stored financials.
+    """
+    out = {
+        "Gross_Margin": 0.0,
+        "Operating_Margin": 0.0,
+        "Net_Margin": 0.0,
+    }
+    try:
+        rev = _safe_float(curr_row.get("revenue", 0))
+        if rev <= 0:
+            return out
+
+        gp = _best_key(curr_row, ["gross_profit", "grossProfit"], default=0.0)
+        op_inc = _best_key(curr_row, ["operating_income", "operatingIncome", "ebit"], default=0.0)
+        ni = _safe_float(curr_row.get("net_income", 0))
+
+        out["Gross_Margin"] = float(_safe_div(gp, rev, 0.0))
+        out["Operating_Margin"] = float(_safe_div(op_inc, rev, 0.0))
+        out["Net_Margin"] = float(_safe_div(ni, rev, 0.0))
+    except Exception:
+        pass
+    return out
+
+
+def _compute_cashflow_pack(curr_row: pd.Series) -> dict:
+    """
+    Best-effort FCF:
+    - FCF = OCF - Capex (if capex exists)
+    """
+    out = {
+        "Free_Cash_Flow": 0.0,
+        "FCF_Margin": 0.0,
+        "FCF_to_NetIncome": 0.0,
+    }
+    try:
+        ocf = _safe_float(curr_row.get("operating_cash_flow", 0))
+        capex = _best_key(curr_row, ["capex", "capital_expenditure", "capitalExpenditures"], default=0.0)
+        rev = _safe_float(curr_row.get("revenue", 0))
+        ni = _safe_float(curr_row.get("net_income", 0))
+
+        # capex is usually negative in some sources; treat as cash outflow magnitude
+        capex_out = abs(_safe_float(capex))
+        fcf = ocf - capex_out
+
+        out["Free_Cash_Flow"] = float(fcf)
+        out["FCF_Margin"] = float(_safe_div(fcf, rev, 0.0)) if rev > 0 else 0.0
+        out["FCF_to_NetIncome"] = float(_safe_div(fcf, ni, 0.0)) if ni != 0 else (1.0 if fcf > 0 else 0.0)
+    except Exception:
+        pass
+    return out
+
+
+def _compute_growth_pack(curr_row: pd.Series, prev_row: pd.Series) -> dict:
+    out = {
+        "Revenue_Growth_YoY": 0.0,
+        "NetIncome_Growth_YoY": 0.0,
+    }
+    try:
+        rev_c = _safe_float(curr_row.get("revenue", 0))
+        rev_p = _safe_float(prev_row.get("revenue", 0))
+        ni_c = _safe_float(curr_row.get("net_income", 0))
+        ni_p = _safe_float(prev_row.get("net_income", 0))
+
+        if rev_p != 0:
+            out["Revenue_Growth_YoY"] = float((rev_c - rev_p) / abs(rev_p))
+        if ni_p != 0:
+            out["NetIncome_Growth_YoY"] = float((ni_c - ni_p) / abs(ni_p))
+    except Exception:
+        pass
+    return out
+
+
+def _compute_interest_coverage_best_effort(curr_row: pd.Series, yahoo_info: dict) -> dict:
+    """
+    Best-effort:
+    - Interest coverage = EBIT / Interest expense
+    Interest expense often missing; fallback to Yahoo if possible (rare).
+    """
+    out = {"Interest_Coverage": 0.0, "Interest_Coverage_Quality": "partial"}
+    try:
+        ebit = _best_key(curr_row, ["ebit", "operating_income", "operatingIncome"], default=0.0)
+        ie = _best_key(curr_row, ["interest_expense", "interestExpense"], default=0.0)
+
+        if ie == 0:
+            # very best-effort: try Yahoo
+            ie = _safe_float(yahoo_info.get("interestExpense"))
+        if ie != 0:
+            out["Interest_Coverage"] = float(_safe_div(ebit, abs(ie), 0.0))
+            out["Interest_Coverage_Quality"] = "full"
+    except Exception:
+        pass
+    return out
+
+
 def _compute_altman_z_best_effort(symbol: str, curr_row: pd.Series, yahoo_info: dict) -> dict:
     out = {
         "Altman_Z": 0.0,
@@ -130,7 +238,7 @@ def _compute_altman_z_best_effort(symbol: str, curr_row: pd.Series, yahoo_info: 
         sales = _safe_float(curr_row.get("revenue", 0))
 
         ebit = 0.0
-        retained = 0.0
+        retained = 0.0  # optional if not available
 
         ebitda = _safe_float(yahoo_info.get("ebitda"))
         if ebitda > 0:
@@ -194,6 +302,54 @@ def _compute_valuation_pack(yahoo_info: dict) -> dict:
     return out
 
 
+def _build_fund_flags(metrics: dict) -> Dict[str, int]:
+    """
+    ✅ Flags جاهزة للـ gates لاحقًا
+    """
+    flags = {
+        "fund_neg_ocf": 0,
+        "fund_low_liquidity": 0,
+        "fund_high_leverage": 0,
+        "fund_altman_low": 0,
+        "fund_strong_quality": 0,
+        "fund_overvalued": 0,
+        "fund_undervalued": 0,
+    }
+    try:
+        ocf = _safe_float(metrics.get("operating_cash_flow", 0.0))
+        # note: operating_cash_flow might not exist here; we infer from ratios
+        ocf_margin = _safe_float(metrics.get("OCF_Margin", 0.0))
+        if ocf_margin < 0:
+            flags["fund_neg_ocf"] = 1
+
+        cr = _safe_float(metrics.get("Current_Ratio", 0.0))
+        if 0 < cr < 0.9:
+            flags["fund_low_liquidity"] = 1
+
+        lta = _safe_float(metrics.get("Liabilities_to_Assets", 0.0))
+        if lta > 0.75:
+            flags["fund_high_leverage"] = 1
+
+        altz = _safe_float(metrics.get("Altman_Z", 0.0))
+        if altz > 0 and altz < 1.8:
+            flags["fund_altman_low"] = 1
+
+        piot = int(metrics.get("Piotroski_Score", 0) or 0)
+        ocf_ni = _safe_float(metrics.get("OCF_to_NetIncome", 0.0))
+        if piot >= 7 and ocf_ni >= 1.0 and altz >= 3.0:
+            flags["fund_strong_quality"] = 1
+
+        pe = _safe_float(metrics.get("PE_Trailing", 0.0))
+        peg = _safe_float(metrics.get("PEG", 0.0))
+        if (pe >= 35) or (peg > 2.5):
+            flags["fund_overvalued"] = 1
+        if (peg > 0 and peg <= 1.2) and (pe > 0 and pe <= 16):
+            flags["fund_undervalued"] = 1
+    except Exception:
+        pass
+    return {k: int(v) for k, v in flags.items()}
+
+
 def _score_fundamentals(metrics: dict) -> Tuple[int, str, List[str]]:
     score = 0
     opinions: List[str] = []
@@ -210,6 +366,10 @@ def _score_fundamentals(metrics: dict) -> Tuple[int, str, List[str]]:
 
         pe = _safe_float(metrics.get("PE_Trailing", 0))
         peg = _safe_float(metrics.get("PEG", 0))
+
+        rev_g = _safe_float(metrics.get("Revenue_Growth_YoY", 0))
+        ni_g = _safe_float(metrics.get("NetIncome_Growth_YoY", 0))
+        fcf_m = _safe_float(metrics.get("FCF_Margin", 0))
 
         if piot >= 7:
             score += 3
@@ -248,6 +408,13 @@ def _score_fundamentals(metrics: dict) -> Tuple[int, str, List[str]]:
             score -= 1
             opinions.append("⚠️ جودة أرباح أقل (OCF أقل من صافي الربح)")
 
+        if fcf_m > 0.06:
+            score += 1
+            opinions.append("✅ تدفق حر جيد (FCF Margin جيد)")
+        elif fcf_m < 0:
+            score -= 1
+            opinions.append("⚠️ تدفق حر سلبي (FCF سلبي)")
+
         if altz > 0:
             if altz >= 3.0:
                 score += 2
@@ -257,6 +424,17 @@ def _score_fundamentals(metrics: dict) -> Tuple[int, str, List[str]]:
                 opinions.append("⛔ Altman Z منخفض (مخاطر أعلى)")
             if altq != "full":
                 opinions.append("ℹ️ Altman Z محسوب بشكل جزئي حسب المتوفر")
+
+        # Growth (best-effort)
+        if rev_g > 0.10:
+            score += 1
+            opinions.append("📈 نمو إيرادات جيد (YoY)")
+        if ni_g > 0.10:
+            score += 1
+            opinions.append("📈 نمو أرباح جيد (YoY)")
+        if rev_g < -0.10 and ni_g < -0.10:
+            score -= 1
+            opinions.append("📉 تراجع نمو ملحوظ (YoY)")
 
         if peg > 0 and peg <= 1.2:
             score += 1
@@ -288,7 +466,7 @@ def _score_fundamentals(metrics: dict) -> Tuple[int, str, List[str]]:
 
 
 def get_advanced_fundamental_ratios(symbol):
-    metrics = {
+    metrics: Dict[str, Any] = {
         "Fair_Value_Graham": 0.0,
         "Piotroski_Score": 0,
         "Financial_Health": "غير متوفر",
@@ -322,6 +500,21 @@ def get_advanced_fundamental_ratios(symbol):
         "EV": 0.0,
         "EV_to_EBITDA": 0.0,
         "Dividend_Yield": 0.0,
+
+        # ✅ New additions (safe)
+        "Gross_Margin": 0.0,
+        "Operating_Margin": 0.0,
+        "Net_Margin": 0.0,
+        "Free_Cash_Flow": 0.0,
+        "FCF_Margin": 0.0,
+        "FCF_to_NetIncome": 0.0,
+        "Revenue_Growth_YoY": 0.0,
+        "NetIncome_Growth_YoY": 0.0,
+        "Interest_Coverage": 0.0,
+        "Interest_Coverage_Quality": "partial",
+
+        # optional flags (for gates later)
+        "_fund_flags": {},
     }
 
     symbol = get_ticker_symbol(symbol)
@@ -338,6 +531,9 @@ def get_advanced_fundamental_ratios(symbol):
     info = _fetch_yahoo_info(symbol)
 
     try:
+        # --------------------------
+        # Piotroski (simple internal)
+        # --------------------------
         score = 0
 
         net_income_c = _safe_float(curr.get("net_income", 0))
@@ -384,16 +580,26 @@ def get_advanced_fundamental_ratios(symbol):
         metrics["Piotroski_Score"] = piotroski
         metrics["Score"] = piotroski
 
+        # --------------------------
+        # Packs
+        # --------------------------
         dup = _compute_dupont(curr)
         liq = _compute_liquidity_leverage(curr, prev)
         eqy = _compute_earnings_quality(curr)
+        eff = _compute_efficiency_pack(curr)
+        cfp = _compute_cashflow_pack(curr)
+        grp = _compute_growth_pack(curr, prev)
 
         metrics.update(dup)
         metrics.update(liq)
         metrics.update(eqy)
+        metrics.update(eff)
+        metrics.update(cfp)
+        metrics.update(grp)
 
         metrics.update(_compute_valuation_pack(info))
 
+        # Graham Fair value
         try:
             eps = _safe_float(info.get("trailingEps"))
             bvps = _safe_float(info.get("bookValue"))
@@ -403,10 +609,12 @@ def get_advanced_fundamental_ratios(symbol):
             pass
 
         metrics.update(_compute_altman_z_best_effort(symbol, curr, info))
+        metrics.update(_compute_interest_coverage_best_effort(curr, info))
         metrics.update(_compute_sgr(metrics.get("ROE", 0.0), info))
 
         fscore10, rating, adv_ops = _score_fundamentals(metrics)
 
+        # Health label
         if metrics["Piotroski_Score"] >= 7:
             metrics["Financial_Health"] = "جيد"
         elif metrics["Piotroski_Score"] <= 3:
@@ -414,7 +622,8 @@ def get_advanced_fundamental_ratios(symbol):
         else:
             metrics["Financial_Health"] = "متوسط"
 
-        if ocf_c < 0:
+        # Additional opinions
+        if _safe_float(metrics.get("OCF_Margin", 0)) < 0:
             adv_ops.append("⚠️ التدفق النقدي التشغيلي سالب")
 
         if int(metrics.get("SGR_Estimated", 0)) == 1:
@@ -423,9 +632,13 @@ def get_advanced_fundamental_ratios(symbol):
         if _safe_float(metrics.get("PE_Trailing", 0)) == 0 and _safe_float(metrics.get("PEG", 0)) == 0:
             adv_ops.append("ℹ️ بيانات التقييم (PE/PEG) غير متوفرة من Yahoo")
 
+        # Save rating/score/opinions
         metrics["Rating"] = rating
         metrics["Score"] = int(max(fscore10, int(metrics.get("Piotroski_Score", 0) or 0)))
         metrics["Opinions"] = " | ".join([str(x) for x in adv_ops if str(x).strip()])[:1200]
+
+        # ✅ Fund flags for AI gates later
+        metrics["_fund_flags"] = _build_fund_flags(metrics)
 
     except Exception:
         pass
