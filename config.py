@@ -1,4 +1,5 @@
 # config.py
+import os
 import streamlit as st
 from pathlib import Path
 
@@ -6,7 +7,27 @@ from pathlib import Path
 # 1. هوية التطبيق (App Identity)
 # ==========================================
 APP_NAME = "أصولي"
-APP_ICON = "🏛️"
+
+# =====================================================
+# شعار/أيقونة التطبيق (اختياري)
+# - إذا وضعت ملفات الشعار داخل assets/ سيتم استخدامها تلقائياً
+# - وإلا يبقى التطبيق على الأيقونة الافتراضية بدون أي كسر
+# =====================================================
+ASSETS_DIR = Path(__file__).parent / "assets"
+LOGO_APP_PATH = ASSETS_DIR / "logo_app.png"    # أيقونة مربعة
+LOGO_FULL_PATH = ASSETS_DIR / "logo_full.png"  # شعار كامل
+LOGO_MARK_PATH = ASSETS_DIR / "logo_mark.png"  # الرمز فقط
+
+def get_app_icon():
+    # Streamlit يدعم مسار صورة كـ page_icon
+    if LOGO_MARK_PATH.exists():
+        return str(LOGO_MARK_PATH)
+    if LOGO_APP_PATH.exists():
+        return str(LOGO_APP_PATH)
+    return "🏛️"
+
+# يُستخدم مباشرة في st.set_page_config(page_icon=APP_ICON)
+APP_ICON = get_app_icon()
 VERSION = "1.0.0"
 
 # ==========================================
