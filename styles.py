@@ -1,9 +1,58 @@
 # styles.py
 import streamlit as st
 
+
 def apply_custom_css():
-    st.markdown(
+    """Inject global CSS.
+
+    - Keeps your existing look.
+    - Adds **Light/Dark** theme support (no feature removal).
+      Theme key: `st.session_state['ui_theme']` in {"light", "dark"}.
+    """
+
+    theme = (st.session_state.get("ui_theme") or "light").strip().lower()
+    if theme not in ("light", "dark"):
+        theme = "light"
+
+    # ✅ CSS variables are the safest way to theme Streamlit without breaking logic.
+    if theme == "dark":
+        var_css = """
+            --app-bg: #071018;
+            --txt: #E5E7EB;
+            --muted: #94A3B8;
+            --primary: #38BDF8;
+            --primary2: #0EA5E9;
+            --border: rgba(148,163,184,0.18);
+            --border2: rgba(148,163,184,0.28);
+            --card-bg: #0B1220;
+            --soft-bg: #0F172A;
+            --shadow: 0 10px 25px rgba(0,0,0,0.35);
+            --shadow2: 0 20px 45px rgba(0,0,0,0.45);
+            --green: #34D399;
+            --red: #F87171;
+            --blue: #60A5FA;
+            --amber: #FBBF24;
         """
+    else:
+        var_css = """
+            --app-bg: #F6F8FB;
+            --txt: #0F172A;
+            --muted: #64748B;
+            --primary: #0B57D0;
+            --primary2: #083A9B;
+            --border: rgba(15,23,42,0.12);
+            --border2: rgba(15,23,42,0.18);
+            --card-bg: #ffffff;
+            --soft-bg: #F8FAFC;
+            --shadow: 0 10px 25px rgba(15,23,42,0.10);
+            --shadow2: 0 20px 45px rgba(15,23,42,0.12);
+            --green: #059669;
+            --red: #DC2626;
+            --blue: #2563EB;
+            --amber: #F59E0B;
+        """
+
+    css = """
         <style>
         /* =====================================================
            Fonts
@@ -20,21 +69,11 @@ def apply_custom_css():
            Theme variables (لتحسين الوضوح)
            ===================================================== */
         :root{
-            --txt: #0F172A;
-            --muted: #64748B;
-            --primary: #0B57D0;
-            --primary2: #083A9B;
-            --border: rgba(15,23,42,0.12);
-            --border2: rgba(15,23,42,0.18);
-            --card-bg: #ffffff;
-            --soft-bg: #F8FAFC;
-            --shadow: 0 10px 25px rgba(15,23,42,0.10);
-            --shadow2: 0 20px 45px rgba(15,23,42,0.12);
-            --green: #059669;
-            --red: #DC2626;
-            --blue: #2563EB;
-            --amber: #F59E0B;
+            __VAR_CSS__
         }
+
+        /* ✅ App background for both themes */
+        .stApp { background: var(--app-bg) !important; }
 
         /* =====================================================
            Base RTL + Cairo (بدون كسر الأيقونات)
@@ -484,6 +523,9 @@ def apply_custom_css():
             .kpi-value{ font-size: 1.85rem !important; }
         }
         </style>
-        """,
-        unsafe_allow_html=True
-    )
+        """
+
+    # Insert theme variables safely without turning the whole CSS into an f-string.
+    css = css.replace("__VAR_CSS__", var_css)
+
+    st.markdown(css, unsafe_allow_html=True)
