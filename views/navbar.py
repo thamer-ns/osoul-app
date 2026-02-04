@@ -2,6 +2,7 @@
 import streamlit as st
 
 import base64
+from typing import Optional
 from pathlib import Path
 
 
@@ -37,8 +38,6 @@ NAV_MORE = [
 # كل المفاتيح المسموحة
 _ALLOWED = {k for _, k in (NAV_MAIN + NAV_MORE)}
 
-
-from typing import Optional
 
 def _safe_get_query_page() -> Optional[str]:
     """
@@ -112,33 +111,6 @@ def render_navbar():
     if current not in _ALLOWED:
         current = "home"
         st.session_state["page"] = "home"
-
-    # -------------------------------
-    # Brand header (خفيف)
-    # -------------------------------
-    logo_uri = _logo_data_uri("assets/logo_mark.png")
-    # المطلوب: إظهار الشعار فقط (بدون أي نص إضافي فوق شريط الأيقونات)
-    if logo_uri:
-        st.markdown(
-            f"""
-            <div style="
-                position: sticky; top: 0; z-index: 999;
-                background: #ffffffcc;
-                backdrop-filter: blur(8px);
-                border-bottom: 1px solid rgba(15,23,42,0.10);
-                padding: 10px 0 12px 0;
-                margin: -10px 0 12px 0;
-            ">
-              <div style="max-width:1280px;margin:0 auto;padding:0 18px;display:flex;align-items:center;justify-content:flex-end;">
-                <img src="{logo_uri}" alt="OSOOLI" style="height:64px;width:auto;" />
-              </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    else:
-        # fallback: لا نعرض أي شيء لو الشعار غير موجود
-        pass
 
     # -------------------------------
     # Main nav row
