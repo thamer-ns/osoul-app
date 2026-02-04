@@ -1,4 +1,5 @@
 # app.pyimport os
+import os
 import streamlit as st
 
 from config import APP_NAME, APP_ICON
@@ -18,8 +19,8 @@ except Exception:
     inject_component_styles = None
 
 
-def _safe_image(path: str, width: int | None = None):
-    """عرض صورة إن وجدت بدون كسر التطبيق."""
+def _safe_image(path, width=None):
+    """عرض صورة إن وجدت بدون كسر التطبيق.""" 
     try:
         if path and os.path.exists(path):
             st.image(path, width=width)
@@ -27,9 +28,17 @@ def _safe_image(path: str, width: int | None = None):
         pass
 
 
+# ✅ page icon (Fail-safe)
+_icon = APP_ICON
+try:
+    if os.path.exists("assets/logo_mark.png"):
+        _icon = "assets/logo_mark.png"
+except Exception:
+    _icon = APP_ICON
+
 st.set_page_config(
     page_title=APP_NAME,
-    page_icon="assets/logo_mark.png" if os.path.exists("assets/logo_mark.png") else APP_ICON,
+    page_icon=_icon,
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -68,12 +77,10 @@ if apply_ui_css:
     try:
         apply_ui_css()
     except Exception:
-        # لا نكسر التطبيق لو CSS اختياري فشل
         pass
 
 # ✅ هيدر الشعار (اختياري/Fail-safe)
-if os.path.exists("assets/logo_full.png"):
-    _safe_image("assets/logo_full.png", width=240)
+_safe_image("assets/logo_full.png", width=240)
 
 # ✅ سايدبار شعار صغير (اختياري/Fail-safe)
 with st.sidebar:
