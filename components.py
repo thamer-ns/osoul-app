@@ -4,7 +4,84 @@ import pandas as pd
 import html
 import math
 import re
+import os
+import base64
 from typing import Any, Dict, List, Optional, Tuple
+
+
+# ============================================================
+# ✅ App Header helpers (Fail-safe)
+# ============================================================
+
+def _img_to_base64(path: str) -> Optional[str]:
+    """Return base64 for image at `path` or None if not available."""
+    try:
+        if not path or not os.path.exists(path):
+            return None
+        with open(path, "rb") as f:
+            return base64.b64encode(f.read()).decode("utf-8")
+    except Exception:
+        return None
+
+
+def render_app_header(
+    title: str,
+    subtitle: str = "منصة تحليل الأسهم — مالي، فني، كلاسيكي، وإدارة مخاطر",
+    logo_full_path: str = "assets/logo_full.png",
+    logo_mark_path: str = "assets/logo_mark.png",
+    show_in_sidebar: bool = True,
+):
+    """Render a lightweight, professional header.
+
+    - Uses CSS classes from styles.py (.os-app-header ...)
+    - Never raises (fail-safe)
+    """
+    try:
+        # Sidebar mark
+        if show_in_sidebar:
+            b64m = _img_to_base64(logo_mark_path)
+            if b64m:
+                with st.sidebar:
+                    st.markdown(
+                        f"""
+                        <div style='display:flex;justify-content:center;padding:6px 0 12px 0;'>
+                          <img src='data:image/png;base64,{b64m}' style='width:110px;height:auto;'/>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+
+        # Main header
+        b64 = _img_to_base64(logo_full_path)
+        if b64:
+            logo_html = f"<img class='os-app-logo' src='data:image/png;base64,{b64}' alt='logo'/>"
+        else:
+            logo_html = ""
+
+        st.markdown(
+            f"""
+            <div class='os-app-header'>
+              <div class='os-app-left'>
+                {logo_html}
+                <div>
+                  <div class='os-app-title'>{html.escape(title)}</div>
+                  <div class='os-app-sub'>{html.escape(subtitle)}</div>
+                </div>
+              </div>
+              <div class='os-app-right'>
+                <span class='os-chip os-chip-blue'><span class='mi'>insights</span>تحليل</span>
+                <span class='os-chip os-chip-gray'><span class='mi'>shield</span>مخاطر</span>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    except Exception:
+        # Absolute fallback
+        try:
+            st.markdown(f"### {title}")
+        except Exception:
+            pass
 
 # ============================================================
 # 🧼 Helpers: Safe parsing/formatting
