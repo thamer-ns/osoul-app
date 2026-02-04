@@ -121,7 +121,7 @@ def render_technical_tab(sym: str):
     # Chart
     try:
         if mode == "احترافي":
-            _render_tv_like_chart(sym, period_opts[p_label], interval_opts[i_label], show_rangeslider=show_rangeslider)
+            _render_tv_like_chart(sym, period_opts[p_label], interval_opts[i_label])
         else:
             _render_technical_chart_flex(sym, period=period_opts[p_label], interval=interval_opts[i_label])
     except Exception as e:
