@@ -1,6 +1,6 @@
-# app.py
+# app.pyimport os
 import streamlit as st
-import os
+
 from config import APP_NAME, APP_ICON
 from database import init_db
 from styles import apply_custom_css
@@ -11,34 +11,30 @@ try:
 except Exception:
     apply_ui_css = None
 
+# ✅ (اختياري) ستايلات components
 try:
     from components import inject_component_styles
 except Exception:
     inject_component_styles = None
 
-# ----------------------------------------------
-# Page config + App branding (assets/*)
-# ----------------------------------------------
-ASSETS_ICON = os.path.join("assets", "logo_mark.png")
-ASSETS_FULL = os.path.join("assets", "logo_full.png")
-ASSETS_APP  = os.path.join("assets", "logo_app.png")
 
-_page_icon = APP_ICON
-# Prefer brand mark if provided
-try:
-    if os.path.exists(ASSETS_ICON):
-        _page_icon = ASSETS_ICON
-except Exception:
-    pass
+def _safe_image(path: str, width: int | None = None):
+    """عرض صورة إن وجدت بدون كسر التطبيق."""
+    try:
+        if path and os.path.exists(path):
+            st.image(path, width=width)
+    except Exception:
+        pass
+
 
 st.set_page_config(
     page_title=APP_NAME,
-    page_icon=_page_icon,
+    page_icon="assets/logo_mark.png" if os.path.exists("assets/logo_mark.png") else APP_ICON,
     layout="wide",
     initial_sidebar_state="collapsed",
 )
 
-
+# إخفاء عناصر Streamlit الافتراضية
 st.markdown(
     "<style>#MainMenu{visibility:hidden;} footer{visibility:hidden;} header{visibility:hidden;}</style>",
     unsafe_allow_html=True
@@ -56,6 +52,7 @@ except Exception as e:
     st.exception(e)
     st.stop()
 
+# ✅ حقن ستايلات المكوّنات إن كانت موجودة
 if inject_component_styles:
     try:
         inject_component_styles()
@@ -66,26 +63,21 @@ if inject_component_styles:
 # ✅ CSS العام (لا تغيّره ولا تحطه تحت شرط)
 apply_custom_css()
 
-# ----------------------------------------------
-# Brand header (safe if assets missing)
-# ----------------------------------------------
-try:
-    if os.path.exists(ASSETS_ICON):
-        st.sidebar.image(ASSETS_ICON, width=110)
-except Exception:
-    pass
-
-# Top header inside main page (optional)
-try:
-    if os.path.exists(ASSETS_FULL):
-        st.image(ASSETS_FULL, width=240)
-except Exception:
-    pass
-
 # ✅ CSS واجهة النتائج (بطاقات/أيقونات) لو موجود
- (بطاقات/أيقونات) لو موجود
 if apply_ui_css:
-    apply_ui_css()
+    try:
+        apply_ui_css()
+    except Exception:
+        # لا نكسر التطبيق لو CSS اختياري فشل
+        pass
+
+# ✅ هيدر الشعار (اختياري/Fail-safe)
+if os.path.exists("assets/logo_full.png"):
+    _safe_image("assets/logo_full.png", width=240)
+
+# ✅ سايدبار شعار صغير (اختياري/Fail-safe)
+with st.sidebar:
+    _safe_image("assets/logo_mark.png", width=120)
 
 if "page" not in st.session_state:
     st.session_state["page"] = "home"
