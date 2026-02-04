@@ -1,4 +1,4 @@
-#analytics.py
+# analytics.py
 import pandas as pd
 import numpy as np
 import streamlit as st
@@ -141,18 +141,12 @@ def _normalize_trade_status(trades: pd.DataFrame) -> pd.DataFrame:
 
     status_str = trades["status"].astype(str).str.strip().str.lower()
 
-    # closed if:
     has_exit_price = pd.to_numeric(trades.get("exit_price", 0), errors="coerce").fillna(0).astype(float) > 0
-    has_exit_date = trades["exit_date"].notna()
     status_says_closed = status_str.isin([
         "close", "closed", "sold", "مغلقة", "مغلق", "تم البيع", "بيع"
     ])
 
-    # ✅ مهم: لا نعتمد على exit_date لوحده لأن بعض البيانات تحط تاريخ بدون سعر بيع
     is_closed = has_exit_price | status_says_closed
-    # إذا تبغى تعتبر exit_date مع exit_price فقط:
-    # is_closed = is_closed | (has_exit_date & has_exit_price)
-
     trades["status"] = np.where(is_closed, "Close", "Open")
     return trades
 
@@ -201,6 +195,11 @@ def calculate_portfolio_metrics(include_xirr: bool = True, cache_key: str = ""):
     ✅ Fix timezone issues
     ✅ Optional XIRR
     ✅ cache_key يكسر الكاش عند أي تغيير بالبيانات
+
+    🔥 إضافات مريحة للواجهة:
+    - portfolio_value
+    - cash_pct
+    - open_positions_df / closed_positions_df
     """
     default_res = {
         "cost_open": 0.0,
@@ -215,6 +214,10 @@ def calculate_portfolio_metrics(include_xirr: bool = True, cache_key: str = ""):
         "withdrawals": pd.DataFrame(),
         "returns": pd.DataFrame(),
         "all_trades": pd.DataFrame(),
+        "open_positions_df": pd.DataFrame(),
+        "closed_positions_df": pd.DataFrame(),
+        "portfolio_value": 0.0,
+        "cash_pct": 0.0,
         "xirr": None,
         "xirr_note": "",
         "data_quality": {"ok": True, "notes": []},
@@ -250,10 +253,14 @@ def calculate_portfolio_metrics(include_xirr: bool = True, cache_key: str = ""):
                 "total_withdrawn": total_wit,
                 "total_returns": total_ret,
                 "cash": float(cash),
+                "portfolio_value": float(cash),
+                "cash_pct": 100.0 if float(cash) > 0 else 0.0,
                 "deposits": dep if dep is not None else pd.DataFrame(),
                 "withdrawals": wit if wit is not None else pd.DataFrame(),
                 "returns": ret if ret is not None else pd.DataFrame(),
                 "all_trades": pd.DataFrame(),
+                "open_positions_df": pd.DataFrame(),
+                "closed_positions_df": pd.DataFrame(),
             }
             if include_xirr:
                 xirr_val, note = compute_portfolio_xirr(dep, wit, ret, ending_value=float(cash))
@@ -316,16 +323,24 @@ def calculate_portfolio_metrics(include_xirr: bool = True, cache_key: str = ""):
 
         data_quality = {"ok": (len(dq_notes) == 0), "notes": dq_notes}
 
+        # ✅ إضافات للواجهة
+        portfolio_value = float(open_trades["market_value"].sum() + cash_calculated)
+        cash_pct = (float(cash_calculated) / portfolio_value * 100.0) if portfolio_value > 0 else 0.0
+
         out = {
             "cost_open": float(open_trades["total_cost"].sum()),
             "market_val_open": float(open_trades["market_value"].sum()),
             "unrealized_pl": float(open_trades["gain"].sum()),
             "realized_pl": float(closed_trades["gain"].sum()),
             "cash": float(cash_calculated),
+            "portfolio_value": float(portfolio_value),
+            "cash_pct": float(cash_pct),
             "total_deposited": float(total_dep),
             "total_withdrawn": float(total_wit),
             "total_returns": float(total_ret),
             "all_trades": trades,
+            "open_positions_df": open_trades,
+            "closed_positions_df": closed_trades,
             "deposits": dep if dep is not None else pd.DataFrame(),
             "withdrawals": wit if wit is not None else pd.DataFrame(),
             "returns": ret if ret is not None else pd.DataFrame(),
@@ -362,7 +377,6 @@ def update_prices():
         if "symbol" not in df.columns:
             return True
 
-        # status normalization
         if "status" not in df.columns:
             df["status"] = "Open"
 
@@ -393,7 +407,6 @@ def update_prices():
                 (float(price), sym),
             )
 
-        # ✅ كسر الكاش بعد التحديث
         st.cache_data.clear()
         return True
 
