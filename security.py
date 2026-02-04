@@ -3,6 +3,7 @@ import streamlit as st
 import extra_streamlit_components as stx
 import datetime
 import time
+import os
 import re
 
 from database import db_verify_user, db_create_user, fetch_table
@@ -170,10 +171,20 @@ def login_system():
     # 2) Show Login UI
     c1, c2, c3 = st.columns([1, 2, 1])
     with c2:
-        st.markdown(
-            f"<h1 style='text-align:center;color:#0052CC'>{APP_ICON} {APP_NAME}</h1>",
-            unsafe_allow_html=True
-        )
+        # ✅ لا نطبع مسار الصورة كنص داخل العنوان (كان يظهر مثل: mount/src/...png)
+        _icon_path = APP_ICON if isinstance(APP_ICON, str) else ""
+        if _icon_path and _icon_path.lower().endswith((".png", ".jpg", ".jpeg", ".webp")) and os.path.exists(_icon_path):
+            st.image(_icon_path, width=90)
+            st.markdown(
+                f"<h1 style='text-align:center;color:#0052CC;margin-top:-10px'>{APP_NAME}</h1>",
+                unsafe_allow_html=True,
+            )
+        else:
+            # إذا كان APP_ICON إيموجي أو نص قصير
+            st.markdown(
+                f"<h1 style='text-align:center;color:#0052CC'>{APP_ICON} {APP_NAME}</h1>",
+                unsafe_allow_html=True,
+            )
 
         t1, t2 = st.tabs(["🔒 دخول", "👤 تسجيل"])
 
