@@ -1107,7 +1107,7 @@ def render_osoli_report(rep: dict, title: str = "🤖 تقرير أصولي", *a
 # TradingView-like Plot (كما في ملفك)
 # ========================================================
 
-def _build_tv_like_plot(df: pd.DataFrame, title: str = "") -> go.Figure:
+def _build_tv_like_plot(df: pd.DataFrame, title: str = "", show_rangeslider: bool = False) -> go.Figure:
     d = df.copy()
 
     if "date" in d.columns:
@@ -1166,7 +1166,7 @@ def _build_tv_like_plot(df: pd.DataFrame, title: str = "") -> go.Figure:
         height=720,
         margin=dict(l=10, r=10, t=50, b=10),
         xaxis=dict(
-            rangeslider=dict(visible=True),
+            rangeslider=dict(visible=bool(show_rangeslider)),
             showspikes=True,
             spikemode="across",
             spikesnap="cursor",
@@ -1209,7 +1209,7 @@ def _build_tv_like_plot(df: pd.DataFrame, title: str = "") -> go.Figure:
 
     return fig
 
-def _render_tv_like_chart(symbol: str, period: str, interval: str):
+def _render_tv_like_chart(symbol: str, period: str, interval: str, show_rangeslider: bool = False):
     with st.spinner("جاري جلب بيانات الشارت..."):
         df = _get_chart_history_flex(symbol, period, interval)
 
@@ -1236,7 +1236,7 @@ def _render_tv_like_chart(symbol: str, period: str, interval: str):
             pass
 
     try:
-        fig = _build_tv_like_plot(df, title=f"{symbol} | {period} | {interval}")
+        fig = _build_tv_like_plot(df, title=f"{symbol} | {period} | {interval}", show_rangeslider=show_rangeslider)
         st.plotly_chart(
             fig,
             use_container_width=True,
