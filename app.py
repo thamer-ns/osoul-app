@@ -71,22 +71,39 @@ st.set_page_config(
 st.markdown(
     """
     <style>
+      /* Hide Streamlit built-in sidebar + nav */
       section[data-testid="stSidebar"],
       div[data-testid="stSidebar"],
-      aside { display: none !important; }
-
-      [data-testid="collapsedControl"],
-      button[kind="headerNoPadding"] {
+      nav[data-testid="stSidebarNav"],
+      aside {
         display: none !important;
+      }
+
+      /* Hide the sidebar toggle / collapsed control (hamburger) */
+      button[data-testid="collapsedControl"],
+      div[data-testid="collapsedControl"],
+      button[data-testid="stSidebarCollapsedControl"],
+      div[data-testid="stSidebarCollapsedControl"] {
+        display: none !important;
+      }
+
+      /* Hide Streamlit header toolbar / menu chrome */
+      header,
+      [data-testid="stHeader"],
+      [data-testid="stToolbar"],
+      #MainMenu,
+      footer {
+        visibility: hidden !important;
+        height: 0px !important;
+      }
+
+      /* Remove top padding that Streamlit adds for header */
+      .block-container {
+        padding-top: 1rem !important;
       }
     </style>
     """,
     unsafe_allow_html=True,
-)
-
-st.markdown(
-    "<style>#MainMenu{visibility:hidden;} footer{visibility:hidden;} header{visibility:hidden;}</style>",
-    unsafe_allow_html=True
 )
 
 @st.cache_resource
