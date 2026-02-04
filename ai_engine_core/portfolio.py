@@ -1,6 +1,8 @@
 # ai_engine_core/portfolio.py
 
 import math
+import logging
+log = logging.getLogger("osooli")
 from typing import Dict, Any, List, Tuple, Optional
 
 import pandas as pd
@@ -88,8 +90,15 @@ def calculate_portfolio_risk_score(trades_df, cash_percent):
             return 0
 
         if "market_value" not in open_trades.columns:
-            return 50
-
+            # حاول احتسابها من الكمية والسعر (بدون نتائج وهمية)
+            qty_col = "quantity" if "quantity" in open_trades.columns else ("qty" if "qty" in open_trades.columns else None)
+            price_col = "current_price" if "current_price" in open_trades.columns else ("market_price" if "market_price" in open_trades.columns else ("price" if "price" in open_trades.columns else ("entry_price" if "entry_price" in open_trades.columns else None)))
+            if qty_col and price_col:
+                q = pd.to_numeric(open_trades[qty_col], errors="coerce").fillna(0)
+                p = pd.to_numeric(open_trades[price_col], errors="coerce").fillna(0)
+                open_trades["market_value"] = q * p
+            else:
+                return None
         mv = pd.to_numeric(open_trades["market_value"], errors="coerce").fillna(0.0).astype(float)
         total_mv = float(mv.sum())
         if total_mv <= 0:
@@ -159,8 +168,12 @@ def calculate_portfolio_risk_score(trades_df, cash_percent):
         total = concentration_score + liquidity_score + strategy_score + positions_score + dd_score
         return float(_clamp(round(total, 1), 0, 100))
 
-    except Exception:
-        return 50
+    except Exception as e:
+        try:
+            log.exception("calculate_portfolio_risk_score failed")
+        except Exception:
+            pass
+        return None
 
 
 # =========================================================
