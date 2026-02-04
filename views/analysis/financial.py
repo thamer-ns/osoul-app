@@ -4,10 +4,33 @@ import pandas as pd
 from datetime import date
 
 from views.shared import (
-    FinancialParser, save_financial_record, sync_auto_yahoo,
-    get_financial_statements, get_advanced_fundamental_ratios,
-    _sym_key, _render_table_like_trades
+    FinancialParser,
+    save_financial_record,
+    sync_auto_yahoo,
+    get_financial_statements,
+    get_advanced_fundamental_ratios,
+    _sym_key,
+    _render_table_like_trades,
 )
+
+
+def _to_num(x, default=0.0):
+    try:
+        if x is None or x == "":
+            return default
+        return float(x)
+    except Exception:
+        return default
+
+
+def _kv_card(title: str, rows: list):
+    """Card helper (عرض فقط). rows: list[(k,v)]"""
+    html = [f"<div class='os-card'><div class='os-card-title'>{title}</div>"]
+    for k, v in rows:
+        html.append(f"<div class='os-kv'><div class='os-k'>{k}</div><div class='os-v'>{v}</div></div>")
+    html.append("</div>")
+    st.markdown("\n".join(html), unsafe_allow_html=True)
+
 
 def render_data_import_ui_content(symbol):
     st.info("يدعم النظام: ملفات PDF من تداول، ملفات Excel/CSV، أو النسخ واللصق المباشر.")
@@ -17,12 +40,12 @@ def render_data_import_ui_content(symbol):
     uploaded_file = st.file_uploader(
         "رفع ملف قوائم مالية (PDF, Excel, CSV)",
         type=["pdf", "xlsx", "xls", "csv"],
-        key=f"fin_upload_{sk}"
+        key=f"fin_upload_{sk}",
     )
     pasted_text = st.text_area(
         "أو الصق البيانات هنا مباشرة:",
         key=f"fin_paste_{sk}",
-        height=140
+        height=140,
     )
 
     if st.button("🚀 معالجة واستخراج البيانات", key=f"fin_parse_{sk}"):
@@ -51,7 +74,10 @@ def render_data_import_ui_content(symbol):
                     final_symbol = detected_symbol
 
             if not final_symbol:
-                final_symbol = st.text_input("⚠️ الرجاء إدخال رمز السهم (مثال: 1120.SR):", key=f"fin_manual_sym_{sk}")
+                final_symbol = st.text_input(
+                    "⚠️ الرجاء إدخال رمز السهم (مثال: 1120.SR):",
+                    key=f"fin_manual_sym_{sk}",
+                )
 
             if final_symbol:
                 st.write("### 🧐 مراجعة البيانات المستخرجة:")
@@ -61,7 +87,9 @@ def render_data_import_ui_content(symbol):
                 if st.button("💾 تأكيد وحفظ في قاعدة البيانات", key=f"fin_save_{_sym_key(final_symbol)}"):
                     count = 0
                     for r in results:
-                        if save_financial_record(final_symbol, r["date"], r["data"], period_type="Annual", source="File/Paste"):
+                        if save_financial_record(
+                            final_symbol, r["date"], r["data"], period_type="Annual", source="File/Paste"
+                        ):
                             count += 1
                     st.success(f"تم حفظ {count} سجلات لشركة {final_symbol}.")
                     st.rerun()
@@ -70,81 +98,167 @@ def render_data_import_ui_content(symbol):
         else:
             st.error("لم يتم العثور على بيانات مالية صالحة.")
 
+
 def render_financial_dashboard_ui(symbol):
+    """
+    ✅ تحسين واجهة عرض التبويب المالي بدون تغيير المنطق:
+    - ترتيب أوضح
+    - Cards/KPIs بدلاً من تكدس نصوص
+    - تشخيص اكتمال البيانات حتى تتأكد ما فيه شيء “مبرمج” ولا يظهر
+    """
     tab_dashboard, tab_data_mgmt = st.tabs(["📊 لوحة التحليل المالي", "⚙️ إدارة البيانات"])
 
+    # =====================================================
+    # Dashboard
+    # =====================================================
     with tab_dashboard:
         df_annual = get_financial_statements(symbol, "Annual")
         df_quarter = get_financial_statements(symbol, "Quarterly")
 
+        st.markdown("### 💰 لوحة التحليل المالي")
         ptype = st.radio(
             "نطاق التحليل:",
             ["Annual", "Quarterly"],
             horizontal=True,
             label_visibility="collapsed",
-            key=f"fin_ptype_{_sym_key(symbol)}"
+            key=f"fin_ptype_{_sym_key(symbol)}",
         )
-
         df = df_annual if ptype == "Annual" else df_quarter
+
+        # ---- Diagnostics card
+        _kv_card(
+            "🧪 فحص البيانات",
+            [
+                ("الفترة", ptype),
+                ("عدد السجلات", str(int(len(df)) if isinstance(df, pd.DataFrame) else 0)),
+                ("حالة البيانات", "متوفرة ✅" if (isinstance(df, pd.DataFrame) and not df.empty) else "غير متوفرة ⚠️"),
+            ],
+        )
 
         if df is None or df.empty:
             st.warning("⚠️ لا توجد بيانات مالية محفوظة لهذا السهم.")
             st.info("👈 انتقل لتبويب 'إدارة البيانات' لرفع ملف أو جلب المعلومات.")
-        else:
-            metrics = get_advanced_fundamental_ratios(symbol)
-            c1, c2, c3 = st.columns(3)
-            c1.metric("المتانة (F-Score)", f"{metrics.get('Piotroski_Score',0)}/9", metrics.get("Financial_Health","-"))
-            fv = metrics.get("Fair_Value_Graham", 0)
-            c2.metric("قيمة جراهام", f"{fv:,.2f}" if fv and fv > 0 else "N/A")
-            c3.write(f"**ملاحظات:** {metrics.get('Opinions', '-')}")
+            return
 
-            st.markdown("---")
+        # ---- Metrics
+        metrics = {}
+        try:
+            metrics = get_advanced_fundamental_ratios(symbol) or {}
+        except Exception:
+            metrics = {}
 
-            try:
-                plot_df = df.copy()
-                if "date" in plot_df.columns:
-                    plot_df["Year"] = plot_df["date"].dt.strftime("%Y-%m") if hasattr(plot_df["date"].dt, "strftime") else plot_df["date"].astype(str)
-                    cols_to_plot = [
-                        c for c in ["revenue", "net_income", "operating_cash_flow"]
-                        if c in plot_df.columns and pd.to_numeric(plot_df[c], errors="coerce").fillna(0).sum() != 0
-                    ]
-                    if cols_to_plot:
-                        import plotly.express as px
-                        fig = px.bar(
-                            plot_df.sort_values("date") if "date" in plot_df.columns else plot_df,
-                            x="Year",
-                            y=cols_to_plot,
-                            barmode="group",
-                            title="الأداء المالي التاريخي"
-                        )
-                        st.plotly_chart(fig, use_container_width=True)
-            except Exception:
-                pass
+        fscore = metrics.get("Piotroski_Score", 0)
+        health = metrics.get("Financial_Health", "-")
+        fv = metrics.get("Fair_Value_Graham", 0)
+        opinions = metrics.get("Opinions", "-")
 
-            with st.expander("عرض الجدول التفصيلي"):
-                _render_table_like_trades(df, max_rows=600)
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.metric("المتانة (F-Score)", f"{_to_num(fscore, 0):.0f}/9", str(health))
+        with c2:
+            st.metric("قيمة جراهام", f"{_to_num(fv, 0):,.2f}" if _to_num(fv, 0) > 0 else "N/A")
+        with c3:
+            st.metric("الرأي", "جاهز" if opinions and str(opinions).strip() != "-" else "—")
+        with c4:
+            st.metric("عدد الأعمدة", str(len(df.columns)))
 
+        st.markdown(
+            f"""
+            <div class="os-card" style="margin-top:10px;">
+              <div class="os-card-title">📝 ملاحظات مالية</div>
+              <div class="os-muted">{opinions}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        st.markdown("---")
+
+        # ---- Charts selector
+        st.markdown("### 📊 الرسوم البيانية")
+        cols_to_plot = []
+        try:
+            plot_df = df.copy()
+            if "date" in plot_df.columns:
+                try:
+                    plot_df["Year"] = pd.to_datetime(plot_df["date"], errors="coerce").dt.strftime("%Y-%m")
+                except Exception:
+                    plot_df["Year"] = plot_df["date"].astype(str)
+            else:
+                plot_df["Year"] = [str(i) for i in range(len(plot_df))]
+
+            candidates = [
+                ("revenue", "الإيرادات"),
+                ("net_income", "صافي الربح"),
+                ("operating_cash_flow", "التدفق النقدي التشغيلي"),
+                ("total_assets", "إجمالي الأصول"),
+                ("total_liabilities", "إجمالي المطلوبات"),
+                ("total_equity", "حقوق الملكية"),
+            ]
+
+            available = [(c, lbl) for c, lbl in candidates if c in plot_df.columns]
+            default = [c for c, _ in available[:3]]
+            pick = st.multiselect(
+                "اختر المؤشرات لعرضها",
+                options=[c for c, _ in available],
+                default=default,
+                key=f"fin_plot_pick_{_sym_key(symbol)}",
+            )
+            cols_to_plot = pick
+            if cols_to_plot:
+                import plotly.express as px
+
+                fig = px.bar(
+                    plot_df.sort_values("date") if "date" in plot_df.columns else plot_df,
+                    x="Year",
+                    y=cols_to_plot,
+                    barmode="group",
+                    title="الأداء المالي التاريخي",
+                )
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("اختر مؤشرًا واحدًا على الأقل لعرض الرسم.")
+        except Exception:
+            st.warning("تعذر رسم البيانات الآن (تحقق من وجود عمود التاريخ/القيم).")
+
+        st.markdown("---")
+        with st.expander("📋 عرض الجدول التفصيلي"):
+            _render_table_like_trades(df, max_rows=600)
+
+    # =====================================================
+    # Data management
+    # =====================================================
     with tab_data_mgmt:
-        st.markdown("#### مصادر البيانات")
+        st.markdown("### ⚙️ إدارة البيانات")
+        st.caption("هنا تستطيع تحديث البيانات تلقائيًا أو استيرادها أو إدخالها يدويًا بدون فقد أي ميزة.")
+
         t1, t2, t3 = st.tabs(["⚡ تحديث آلي (Yahoo)", "📂 استيراد ملف/نص", "✍️ إدخال يدوي شامل"])
 
         with t1:
-            st.caption("جلب البيانات من Yahoo Finance مباشرة")
-            if st.button("بدء المزامنة الآلية", key=f"sync_yahoo_{_sym_key(symbol)}"):
+            st.markdown(
+                """
+                <div class="os-card">
+                  <div class="os-card-title">⚡ مزامنة تلقائية</div>
+                  <div class="os-muted">سيتم جلب البيانات من Yahoo Finance مباشرة (حسب توفر الرمز والاتصال).</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            if st.button("بدء المزامنة الآلية", key=f"sync_yahoo_{_sym_key(symbol)}", type="primary"):
                 with st.spinner("جاري الاتصال..."):
                     ok, msg = sync_auto_yahoo(symbol)
-                    if ok:
-                        st.success(msg)
-                        st.rerun()
-                    else:
-                        st.error(msg)
+                if ok:
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
 
         with t2:
             render_data_import_ui_content(symbol)
 
         with t3:
             st.markdown("##### تسجيل البيانات المالية يدوياً")
-            st.caption("أدخل البيانات اللازمة للتحليل المالي.")
+            st.caption("أدخل البيانات اللازمة للتحليل المالي. (نفس حقولك—بدون حذف).")
 
             with st.form(f"manual_fin_entry_{_sym_key(symbol)}"):
                 col_meta1, col_meta2 = st.columns(2)
@@ -176,7 +290,7 @@ def render_financial_dashboard_ui(symbol):
                 lt_debt = c_bs6.number_input("الديون طويلة الأجل", min_value=0.0, format="%.2f", key=f"fin_ltdebt_{_sym_key(symbol)}")
 
                 st.divider()
-                if st.form_submit_button("💾 حفظ البيانات"):
+                if st.form_submit_button("💾 حفظ البيانات", type="primary"):
                     data = {
                         "revenue": rev,
                         "net_income": net_inc,
