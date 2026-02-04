@@ -29,6 +29,24 @@ def _has_ohlcv(df):
     return all(c in df.columns for c in need)
 
 
+def _safe_pct(a, b, default=0.0):
+    try:
+        a = float(a)
+        b = float(b)
+        if b == 0:
+            return default
+        return (a - b) / abs(b)
+    except Exception:
+        return default
+
+
+def _clip01(x):
+    try:
+        return max(0.0, min(1.0, float(x)))
+    except Exception:
+        return 0.0
+
+
 # =========================================================
 # ✨ Candlestick patterns (existing) — with safety
 # =========================================================
@@ -428,6 +446,20 @@ def _analyze_financial_golden_rules(symbol):
             score -= 4
             feats["fund_neg_ocf"] = 1
             obs.append("⚠️ التدفق النقدي التشغيلي سالب")
+
+        # ✅ NEW (اختياري): دمج flags إذا metrics.py صار يرجعها
+        try:
+            fflags = metrics.get("_fund_flags") or {}
+            # (لا نغيّر سكور هنا كثير — نضيف Observations فقط)
+            if int(fflags.get("fund_high_leverage") or 0) == 1:
+                obs.append("⚠️ التزامات مرتفعة (Leverage high)")
+            if int(fflags.get("fund_altman_low") or 0) == 1:
+                obs.append("⛔ Altman Z منخفض (مخاطر أعلى)")
+            if int(fflags.get("fund_low_liquidity") or 0) == 1:
+                obs.append("⚠️ سيولة ضعيفة (Current Ratio منخفض)")
+        except Exception:
+            pass
+
     except Exception:
         pass
 
@@ -436,7 +468,7 @@ def _analyze_financial_golden_rules(symbol):
 
 
 # =========================================================
-# ✅ إضافات: أفكار اتفقنا عليها (بدون كسر)
+# ✅ إضافات: أفكار اتفقنا عليها (بدون كسر) — موجودة عندك
 # =========================================================
 def _detect_inside_bar(df, lookback=3):
     """
@@ -529,16 +561,13 @@ def _detect_rsi_divergence(df, ind: dict, lookback=80):
     close = pd.to_numeric(d["Close"], errors="coerce").astype(float)
     r = rsi.reindex(d.index).astype(float)
 
-    # pivots for price
     pl = _pivot_points(close, 3, 3, mode="low")
     ph = _pivot_points(close, 3, 3, mode="high")
 
-    # Bullish divergence: last two lows
     try:
         if len(pl) >= 2:
             i1, p1 = pl[-2]
             i2, p2 = pl[-1]
-            # map to rsi points (same index positions in tail array)
             r1 = float(r.iloc[i1])
             r2 = float(r.iloc[i2])
             if (p2 < p1) and (r2 > r1):
@@ -546,7 +575,6 @@ def _detect_rsi_divergence(df, ind: dict, lookback=80):
                 score += 2
                 obs.append("🟢 Divergence RSI إيجابي (قاع أدنى بالسعر + RSI أعلى)")
 
-        # Bearish divergence: last two highs
         if len(ph) >= 2:
             j1, q1 = ph[-2]
             j2, q2 = ph[-1]
@@ -624,7 +652,6 @@ def _vsa_lite(df, lookback=60):
     if avg_spread <= 0 or avg_vol <= 0:
         return 0, [], feats
 
-    # last candle
     h = float(high.iloc[-1])
     l = float(low.iloc[-1])
     c = float(close.iloc[-1])
@@ -632,27 +659,300 @@ def _vsa_lite(df, lookback=60):
     sp = float(spread.iloc[-1])
     mid = l + 0.5 * (h - l)
 
-    # No Supply
     if (sp < avg_spread * 0.7) and (v < avg_vol * 0.7) and (c >= mid):
         feats["vsa_no_supply"] = 1
         score += 1
         obs.append("🟩 VSA: No Supply (عرض قليل/فوليوم ضعيف) — احتمال توقف بيع")
 
-    # No Demand
     if (sp < avg_spread * 0.7) and (v < avg_vol * 0.7) and (c <= mid):
         feats["vsa_no_demand"] = 1
         score -= 1
         obs.append("🟥 VSA: No Demand (طلب ضعيف) — حذر استمرار ضعف")
 
-    # Climax
     if (v > avg_vol * 2.2) and (sp > avg_spread * 1.6):
         feats["vsa_climax"] = 1
-        # اتجاه الإغلاق يعطي دلالة
         if c >= mid:
             score += 1
             obs.append("🌋 VSA: Climactic Volume (ذروة مع إغلاق قوي) — احتمال نهاية هبوط/انعكاس")
         else:
             score -= 1
             obs.append("🌋 VSA: Climactic Volume (ذروة مع إغلاق ضعيف) — احتمال توزيع/نهاية صعود")
+
+    return score, obs, feats
+
+
+# =========================================================
+# ✅ إضافات جديدة: مؤشرات/متوسطات/زخم/تأكيد حجم
+# =========================================================
+def _analyze_ma_trend(ind: dict):
+    """
+    MA 50/200 + Golden/Death Cross + Price bias (يدخل عبر features)
+    """
+    feats = {
+        "ma_price_above_50": 0,
+        "ma_price_above_200": 0,
+        "golden_cross": 0,
+        "death_cross": 0,
+    }
+    if not isinstance(ind, dict):
+        return 0, [], feats
+
+    sma50 = ind.get("sma50")
+    sma200 = ind.get("sma200")
+    close = ind.get("_close_series")  # optional hook if provided
+
+    if not isinstance(sma50, pd.Series) or sma50.empty:
+        return 0, [], feats
+
+    score = 0
+    obs = []
+
+    try:
+        s50 = float(sma50.iloc[-1])
+    except Exception:
+        s50 = None
+
+    try:
+        s200 = float(sma200.iloc[-1]) if isinstance(sma200, pd.Series) and not pd.isna(sma200.iloc[-1]) else None
+    except Exception:
+        s200 = None
+
+    c = None
+    if isinstance(close, pd.Series) and not close.empty:
+        try:
+            c = float(close.iloc[-1])
+        except Exception:
+            c = None
+
+    if c is not None and s50 is not None and s50 > 0:
+        if c >= s50:
+            feats["ma_price_above_50"] = 1
+            score += 1
+            obs.append("📈 السعر فوق MA50 (زخم إيجابي)")
+        else:
+            score -= 1
+            obs.append("📉 السعر تحت MA50 (ضغط سلبي)")
+
+    if c is not None and s200 is not None and s200 > 0:
+        if c >= s200:
+            feats["ma_price_above_200"] = 1
+            score += 1
+            obs.append("🏗️ السعر فوق MA200 (اتجاه طويل إيجابي)")
+        else:
+            score -= 1
+            obs.append("🏚️ السعر تحت MA200 (اتجاه طويل سلبي)")
+
+    # Golden/Death cross
+    try:
+        if s200 is not None and isinstance(sma50, pd.Series) and isinstance(sma200, pd.Series) and len(sma50) >= 3 and len(sma200) >= 3:
+            prev = float(sma50.iloc[-2] - sma200.iloc[-2])
+            now = float(sma50.iloc[-1] - sma200.iloc[-1])
+
+            if prev <= 0 and now > 0:
+                feats["golden_cross"] = 1
+                score += 2
+                obs.append("✨ Golden Cross (MA50 اخترق MA200 للأعلى)")
+            if prev >= 0 and now < 0:
+                feats["death_cross"] = 1
+                score -= 2
+                obs.append("☠️ Death Cross (MA50 كسر MA200 للأسفل)")
+    except Exception:
+        pass
+
+    return score, obs, feats
+
+
+def _analyze_momentum_signals(ind: dict):
+    """
+    RSI/MACD/Stoch إشارات بسيطة:
+    - RSI overbought/oversold
+    - MACD cross
+    - Stoch cross
+    """
+    feats = {
+        "rsi_overbought": 0,
+        "rsi_oversold": 0,
+        "macd_cross_up": 0,
+        "macd_cross_dn": 0,
+        "stoch_cross_up": 0,
+        "stoch_cross_dn": 0,
+    }
+    if not isinstance(ind, dict):
+        return 0, [], feats
+
+    score = 0
+    obs = []
+
+    # RSI
+    rsi = ind.get("rsi14")
+    if isinstance(rsi, pd.Series) and len(rsi) >= 2 and not pd.isna(rsi.iloc[-1]):
+        v = float(rsi.iloc[-1])
+        if v >= 70:
+            feats["rsi_overbought"] = 1
+            score -= 1
+            obs.append("🔥 RSI تشبع شرائي (حذر جني أرباح)")
+        elif v <= 30:
+            feats["rsi_oversold"] = 1
+            score += 1
+            obs.append("🧊 RSI تشبع بيعي (ارتداد محتمل)")
+
+    # MACD cross
+    macd = ind.get("macd")
+    sig = ind.get("macd_signal")
+    if isinstance(macd, pd.Series) and isinstance(sig, pd.Series) and len(macd) >= 2 and len(sig) >= 2:
+        try:
+            prev = float(macd.iloc[-2] - sig.iloc[-2])
+            now = float(macd.iloc[-1] - sig.iloc[-1])
+            if prev <= 0 and now > 0:
+                feats["macd_cross_up"] = 1
+                score += 1
+                obs.append("🔀 MACD تقاطع صاعد (إشارة دعم للشراء)")
+            if prev >= 0 and now < 0:
+                feats["macd_cross_dn"] = 1
+                score -= 1
+                obs.append("🔀 MACD تقاطع هابط (إشارة دعم للبيع)")
+        except Exception:
+            pass
+
+    # Stoch cross
+    k = ind.get("stoch_k")
+    d = ind.get("stoch_d")
+    if isinstance(k, pd.Series) and isinstance(d, pd.Series) and len(k) >= 2 and len(d) >= 2:
+        try:
+            prev = float(k.iloc[-2] - d.iloc[-2])
+            now = float(k.iloc[-1] - d.iloc[-1])
+            if prev <= 0 and now > 0:
+                feats["stoch_cross_up"] = 1
+                score += 1
+                obs.append("🎛️ Stochastic تقاطع صاعد")
+            if prev >= 0 and now < 0:
+                feats["stoch_cross_dn"] = 1
+                score -= 1
+                obs.append("🎛️ Stochastic تقاطع هابط")
+        except Exception:
+            pass
+
+    return score, obs, feats
+
+
+def _volume_confirm(df, lookback=30):
+    """
+    Volume confirmation:
+    - spike if volume > avg * 1.8
+    """
+    feats = {"vol_spike": 0}
+    if df is None or df.empty or len(df) < max(lookback, 25) or not _has_ohlcv(df):
+        return 0, [], feats
+
+    if "Volume" not in df.columns:
+        return 0, [], feats
+
+    score = 0
+    obs = []
+
+    v = pd.to_numeric(df["Volume"], errors="coerce").fillna(0).astype(float)
+    avg = float(v.tail(lookback).mean()) if len(v) >= lookback else float(v.mean())
+    last = float(v.iloc[-1])
+
+    if avg > 0 and last > avg * 1.8:
+        feats["vol_spike"] = 1
+        score += 1
+        obs.append("📣 حجم تداول مرتفع (تأكيد حركة/اختراق محتمل)")
+
+    return score, obs, feats
+
+
+def _detect_double_top_bottom(df, lookback=180, tol=0.015):
+    """
+    Double Top / Bottom مبسط:
+    - يستخدم pivots على Close
+    - قمتين متقاربتين + فشل الاختراق => سلبي
+    - قاعين متقاربين + فشل الكسر => إيجابي
+    """
+    feats = {"double_top": 0, "double_bottom": 0}
+    if df is None or df.empty or len(df) < max(lookback, 80) or not _has_ohlcv(df):
+        return 0, [], feats
+
+    score = 0
+    obs = []
+
+    d = df.tail(lookback).copy()
+    close = pd.to_numeric(d["Close"], errors="coerce").astype(float)
+    if close.isna().all():
+        return 0, [], feats
+
+    ph = _pivot_points(close, 4, 4, "high")
+    pl = _pivot_points(close, 4, 4, "low")
+
+    try:
+        c = float(close.iloc[-1])
+    except Exception:
+        c = None
+
+    # Double Top
+    try:
+        if len(ph) >= 2 and c is not None:
+            (i1, h1), (i2, h2) = ph[-2], ph[-1]
+            if h1 > 0 and abs(h2 - h1) / h1 <= tol:
+                # failed breakout: close below the mid area
+                mid = (h1 + h2) / 2.0
+                if c < mid * (1 - 0.006):
+                    feats["double_top"] = 1
+                    score -= 2
+                    obs.append("⛰️ Double Top (قمتين متقاربتين) — احتمال انعكاس سلبي")
+    except Exception:
+        pass
+
+    # Double Bottom
+    try:
+        if len(pl) >= 2 and c is not None:
+            (j1, l1), (j2, l2) = pl[-2], pl[-1]
+            if l1 > 0 and abs(l2 - l1) / l1 <= tol:
+                mid = (l1 + l2) / 2.0
+                if c > mid * (1 + 0.006):
+                    feats["double_bottom"] = 1
+                    score += 2
+                    obs.append("🏞️ Double Bottom (قاعين متقاربين) — احتمال انعكاس إيجابي")
+    except Exception:
+        pass
+
+    return score, obs, feats
+
+
+def _analyze_relative_strength_vs_tasi(symbol: str):
+    """
+    Optional: uses market_data.get_relative_strength_vs_tasi
+    """
+    feats = {"rs_strong_vs_tasi": 0, "rs_weak_vs_tasi": 0}
+    score = 0
+    obs = []
+
+    try:
+        from market_data import get_relative_strength_vs_tasi
+    except Exception:
+        return 0, [], feats
+
+    try:
+        rs = get_relative_strength_vs_tasi(symbol, period=None, interval="1d") or {}
+        if not rs.get("ok"):
+            return 0, [], feats
+
+        label = str(rs.get("label") or "")
+        out_3m = _sf(rs.get("outperf_3m"), 0.0)
+        out_1m = _sf(rs.get("outperf_1m"), 0.0)
+
+        if ("أقوى" in label) or (out_3m > 0.05 and out_1m > 0):
+            feats["rs_strong_vs_tasi"] = 1
+            score += 1
+            obs.append("📌 السهم أقوى من تاسي (Relative Strength إيجابي)")
+        elif ("أضعف" in label) or (out_3m < -0.05 and out_1m < 0):
+            feats["rs_weak_vs_tasi"] = 1
+            score -= 1
+            obs.append("📌 السهم أضعف من تاسي (Relative Strength سلبي)")
+        else:
+            obs.append("📌 Relative Strength محايد مقابل تاسي")
+
+    except Exception:
+        pass
 
     return score, obs, feats
