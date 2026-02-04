@@ -415,6 +415,68 @@ def apply_custom_css():
         }
 
         /* =====================================================
+           ✅ App Header (Logo + Title + Subtitle)
+           ===================================================== */
+        .os-app-header{
+            display:flex;
+            align-items:center;
+            justify-content:space-between;
+            gap:16px;
+            padding: 14px 16px;
+            border-radius: 18px;
+            border: 1px solid var(--border2);
+            background: linear-gradient(135deg, rgba(11,87,208,0.06), rgba(99,102,241,0.05));
+            box-shadow: 0 10px 24px rgba(15,23,42,0.06);
+            margin: 10px 0 14px 0;
+        }
+        .os-app-header .os-h-left{
+            display:flex;
+            align-items:center;
+            gap:12px;
+            min-width: 0;
+        }
+        .os-app-header .os-h-logo{
+            width: 52px;
+            height: 52px;
+            border-radius: 14px;
+            background: #fff;
+            border: 1px solid rgba(15,23,42,0.10);
+            overflow:hidden;
+            display:grid;
+            place-items:center;
+            flex: 0 0 auto;
+        }
+        .os-app-header .os-h-logo img{ width:100%; height:100%; object-fit:contain; }
+        .os-app-header .os-h-title{
+            font-size: 1.35rem;
+            font-weight: 950;
+            line-height: 1.15;
+            margin: 0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .os-app-header .os-h-sub{
+            margin-top: 4px;
+            color: var(--muted);
+            font-weight: 800;
+            font-size: 0.92rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .os-app-header .os-h-right{
+            display:flex;
+            gap:8px;
+            flex-wrap:wrap;
+            justify-content:flex-end;
+        }
+        @media (max-width: 900px){
+            .os-app-header{ flex-direction: column; align-items: stretch; }
+            .os-app-header .os-h-right{ justify-content:flex-start; }
+        }
+
+        /* =====================================================
            Mobile tweaks
            ===================================================== */
         @media (max-width: 900px){
