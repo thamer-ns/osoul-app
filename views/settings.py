@@ -11,6 +11,27 @@ def view_settings():
     st.header("الإعدادات")
 
     # =====================================================
+    # ✅ Theme (Light/Dark) - CSS only, no logic changes
+    # =====================================================
+    with st.expander("🌓 المظهر (ثيم فاتح/داكن)", expanded=False):
+        current = (st.session_state.get("ui_theme") or "light").strip().lower()
+        current = current if current in ("light", "dark") else "light"
+
+        choice = st.radio(
+            "اختر ثيم البرنامج",
+            options=["light", "dark"],
+            format_func=lambda x: "فاتح" if x == "light" else "داكن",
+            index=0 if current == "light" else 1,
+            horizontal=True,
+            key="ui_theme_picker",
+        )
+
+        if choice != current:
+            st.session_state["ui_theme"] = choice
+            st.success("✅ تم تغيير الثيم.\nقد تحتاج تحديث الصفحة إذا لم يظهر التغيير فوراً.")
+            st.rerun()
+
+    # =====================================================
     # الهوية والشعار (اختياري)
     # - يعرض الشعار إذا كان موجوداً داخل assets/
     # - لا يغيّر أي منطق أو إعدادات، فقط تحسين العرض
@@ -26,6 +47,52 @@ def view_settings():
         ])
 
         with st.expander("🎨 الهوية والشعار", expanded=False):
+            # ---------------------------------
+            # ✅ Logo preset selector (Try/Preview)
+            # ---------------------------------
+            presets = {
+                "افتراضي": {
+                    "full": "assets/logo_full.png",
+                    "mark": "assets/logo_mark.png",
+                    "app":  "assets/logo_app.png",
+                },
+                "دائري": {
+                    "full": "assets/logo_full.png",
+                    "mark": "assets/logo_tile.png",
+                    "app":  "assets/logo_app.png",
+                },
+                "شفاف": {
+                    "full": "assets/logo_full.png",
+                    "mark": "assets/logo_mark.png",
+                    "app":  "assets/logo_mark.png",
+                },
+                "مربع": {
+                    "full": "assets/logo_full.png",
+                    "mark": "assets/logo_app.png",
+                    "app":  "assets/logo_app.png",
+                },
+            }
+
+            cur_preset = st.session_state.get("ui_logo_preset") or "افتراضي"
+            if cur_preset not in presets:
+                cur_preset = "افتراضي"
+
+            picked = st.selectbox(
+                "اختر أسلوب الشعار (للتجربة)",
+                options=list(presets.keys()),
+                index=list(presets.keys()).index(cur_preset),
+                help="يؤثر على شعار الهيدر/السايدبار وأيقونة الصفحة (CSS/عرض فقط)",
+                key="ui_logo_preset_picker",
+            )
+
+            if picked != cur_preset:
+                st.session_state["ui_logo_preset"] = picked
+                st.session_state["ui_logo_full"] = presets[picked]["full"]
+                st.session_state["ui_logo_mark"] = presets[picked]["mark"]
+                st.session_state["ui_logo_app"] = presets[picked]["app"]
+                st.success("✅ تم تحديث اختيار الشعار.\nقد تحتاج تحديث الصفحة/إعادة تشغيل التطبيق لتحديث favicon.")
+                st.rerun()
+
             if any_logo:
                 cols = st.columns(3)
                 with cols[0]:
