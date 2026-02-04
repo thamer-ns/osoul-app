@@ -937,7 +937,6 @@ def _render_ai_report_readable(rep: dict, show_debug: bool = False, compact: boo
     # ==========================
     has_plan = any([data.get("entry"), data.get("risk"), data.get("levels"), data.get("targets")])
     if has_plan:
-        st.markdown("### 🧭 خطة الدخول والمخاطر")
         _render_entry_risk_levels(
             data.get("entry") or {},
             data.get("risk") or {},
@@ -952,105 +951,120 @@ def _render_ai_report_readable(rep: dict, show_debug: bool = False, compact: boo
     # ==========================
     st.markdown("---")
 
-    # Searches (منفصل لكل عمود)
-    c_search1, c_search2 = st.columns(2)
-    with c_search1:
-        q_ev = st.text_input("بحث داخل الأدلة", value="", placeholder="مثال: اختراق / OB / RSI / سيولة ...", key="ev_search")
-        auto_rank_ev = st.toggle("ترتيب تلقائي (الأقوى أولاً)", value=True, key="ev_rank")
-    with c_search2:
-        q_rk = st.text_input("بحث داخل المخاطر", value="", placeholder="مثال: كسر دعم / ديون / Leverage ...", key="rk_search")
-        auto_rank_rk = st.toggle("ترتيب تلقائي (الأقوى أولاً)", value=True, key="rk_rank")
+    # عرض سريع (مختصر) + تفاصيل داخل Expander لتسهيل القراءة
+    ev_all = _safe_list(data.get("top_evidence", []))
+    rk_all = _safe_list(data.get("top_risks", []))
 
     a, b = st.columns(2)
-
-    # -------- Evidence column --------
     with a:
         st.markdown("<div class='os-card'>", unsafe_allow_html=True)
-        ev_all = _safe_list(data.get("top_evidence", []))
-        ev_f = _filter_items(ev_all, q_ev)
-        if auto_rank_ev:
-            ev_f = _rank_items(ev_f, mode="evidence")
-
-        view_table_ev = st.toggle("عرض كجدول (تلوين الصفوف)", value=False, key="ev_table")
-
-        st.markdown("<div class='os-card-title'>✅ أقوى الأدلة</div>", unsafe_allow_html=True)
+        st.markdown("<div class='os-card-title'>✅ أقوى الأدلة (مختصر)</div>", unsafe_allow_html=True)
         if not ev_all:
             st.caption("لا يوجد")
         else:
-            st.caption(f"المعروض: {len(ev_f)}/{len(ev_all)}")
-
-
-        if view_table_ev:
-            _render_colored_rows_table(ev_f, tone="success", max_rows=(20 if compact else 40))
-        else:
-            # تصنيف تلقائي للأدلة (فني/مالي/VSA/كلاسيكي/أخرى)
-            groups = _group_evidence(ev_f)
-            # ترتيب عرض ثابت
-            ordered = ["فني", "مالي", "VSA", "كلاسيكي/هيكلي", "أخرى"]
-            shown_any = False
-            lim = 6 if compact else 30
-
-            for cat in ordered:
-                items = groups.get(cat, [])
-                if not items:
-                    continue
-                shown_any = True
-                st.markdown(f"**{cat}**  \n<span class='os-muted'>({len(items)})</span>", unsafe_allow_html=True)
-                for s in items[:lim]:
-                    st.write(f"- ✅ {s}")
-                if len(items) > lim:
-                    with st.expander(f"عرض المزيد من {cat}"):
-                        for s in items[lim:]:
-                            st.write(f"- ✅ {s}")
-
-            if not shown_any:
-                st.caption("لا توجد نتائج مطابقة للبحث.")
-
-        # قائمة خامة لضمان عدم فقد أي شيء
-        with st.expander("🧾 عرض قائمة الأدلة كاملة (خام)"):
-            for s in ev_all[:200]:
-                st.write(f"- {s}")
-
+            for s in ev_all[:6 if compact else 10]:
+                st.markdown(f"- ✅ {s}")
         st.markdown("</div>", unsafe_allow_html=True)
-
-    # -------- Risks column --------
 
     with b:
         st.markdown("<div class='os-card'>", unsafe_allow_html=True)
-        rk_all = _safe_list(data.get("top_risks", []))
-        rk_f = _filter_items(rk_all, q_rk)
-        if auto_rank_rk:
-            rk_f = _rank_items(rk_f, mode="risk")
-
-        view_table_rk = st.toggle("عرض كجدول (تلوين الصفوف)", value=False, key="rk_table")
-
-        st.markdown("<div class='os-card-title'>⚠️ أكبر المخاطر</div>", unsafe_allow_html=True)
+        st.markdown("<div class='os-card-title'>⚠️ أكبر المخاطر (مختصر)</div>", unsafe_allow_html=True)
         if not rk_all:
             st.caption("لا يوجد")
         else:
-            st.caption(f"المعروض: {len(rk_f)}/{len(rk_all)}")
-
-
-        if view_table_rk:
-            _render_colored_rows_table(rk_f, tone="danger", max_rows=(20 if compact else 40))
-        else:
-            lim = 6 if compact else 30
-            if not rk_f:
-                st.caption("لا توجد نتائج مطابقة للبحث.")
-            else:
-                for s in rk_f[:lim]:
-                    st.write(f"- ⚠️ {s}")
-                if len(rk_f) > lim:
-                    with st.expander("عرض المزيد من المخاطر"):
-                        for s in rk_f[lim:]:
-                            st.write(f"- ⚠️ {s}")
-
-        with st.expander("🧾 عرض قائمة المخاطر كاملة (خام)"):
-
-            for s in rk_all[:200]:
-                st.write(f"- {s}")
-
+            for s in rk_all[:6 if compact else 10]:
+                st.markdown(f"- ⚠️ {s}")
         st.markdown("</div>", unsafe_allow_html=True)
+
+    with st.expander("تفاصيل الأدلة والمخاطر (بحث/ترتيب/تصنيف)"):
+        # Searches (منفصل لكل عمود)
+        c_search1, c_search2 = st.columns(2)
+        with c_search1:
+            q_ev = st.text_input("بحث داخل الأدلة", value="", placeholder="مثال: اختراق / OB / RSI / سيولة ...", key="ev_search")
+            auto_rank_ev = st.toggle("ترتيب تلقائي (الأقوى أولاً)", value=True, key="ev_rank")
+        with c_search2:
+            q_rk = st.text_input("بحث داخل المخاطر", value="", placeholder="مثال: كسر دعم / ديون / Leverage ...", key="rk_search")
+            auto_rank_rk = st.toggle("ترتيب تلقائي (الأقوى أولاً)", value=True, key="rk_rank")
+
+        a2, b2 = st.columns(2)
+
+        # -------- Evidence column --------
+        with a2:
+            st.markdown("<div class='os-card'>", unsafe_allow_html=True)
+            ev_f = _filter_items(ev_all, q_ev)
+            if auto_rank_ev:
+                ev_f = _rank_items(ev_f, mode="evidence")
+
+            view_table_ev = st.toggle("عرض كجدول (تلوين الصفوف)", value=False, key="ev_table")
+
+            st.markdown("<div class='os-card-title'>✅ أقوى الأدلة</div>", unsafe_allow_html=True)
+            if not ev_all:
+                st.caption("لا يوجد")
+            else:
+                st.caption(f"المعروض: {len(ev_f)}/{len(ev_all)}")
+
+            if view_table_ev:
+                _render_colored_rows_table(ev_f, tone="success", max_rows=(20 if compact else 40))
+            else:
+                groups = _group_evidence(ev_f)
+                ordered = ["فني", "مالي", "VSA", "كلاسيكي/هيكلي", "أخرى"]
+                shown_any = False
+                lim = 6 if compact else 30
+                for cat in ordered:
+                    items = groups.get(cat, [])
+                    if not items:
+                        continue
+                    shown_any = True
+                    st.markdown(f"**{cat}**  \n<span class='os-muted'>({len(items)})</span>", unsafe_allow_html=True)
+                    for s in items[:lim]:
+                        st.markdown(f"- ✅ {s}")
+                    if len(items) > lim:
+                        with st.expander(f"عرض المزيد من {cat}"):
+                            for s in items[lim:]:
+                                st.markdown(f"- ✅ {s}")
+                if not shown_any:
+                    st.caption("لا توجد نتائج مطابقة للبحث.")
+
+            with st.expander("🧾 عرض قائمة الأدلة كاملة (خام)"):
+                for s in ev_all[:200]:
+                    st.markdown(f"- {s}")
+
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        # -------- Risks column --------
+        with b2:
+            st.markdown("<div class='os-card'>", unsafe_allow_html=True)
+            rk_f = _filter_items(rk_all, q_rk)
+            if auto_rank_rk:
+                rk_f = _rank_items(rk_f, mode="risk")
+
+            view_table_rk = st.toggle("عرض كجدول (تلوين الصفوف)", value=False, key="rk_table")
+
+            st.markdown("<div class='os-card-title'>⚠️ أكبر المخاطر</div>", unsafe_allow_html=True)
+            if not rk_all:
+                st.caption("لا يوجد")
+            else:
+                st.caption(f"المعروض: {len(rk_f)}/{len(rk_all)}")
+
+            if view_table_rk:
+                _render_colored_rows_table(rk_f, tone="danger", max_rows=(20 if compact else 40))
+            else:
+                lim = 6 if compact else 30
+                if not rk_f:
+                    st.caption("لا توجد نتائج مطابقة للبحث.")
+                else:
+                    for s in rk_f[:lim]:
+                        st.markdown(f"- ⚠️ {s}")
+                    if len(rk_f) > lim:
+                        with st.expander("عرض المزيد من المخاطر"):
+                            for s in rk_f[lim:]:
+                                st.markdown(f"- ⚠️ {s}")
+
+            with st.expander("🧾 عرض قائمة المخاطر كاملة (خام)"):
+                for s in rk_all[:200]:
+                    st.markdown(f"- {s}")
+
+            st.markdown("</div>", unsafe_allow_html=True)
 
     # ==========================
     # Risk gates
