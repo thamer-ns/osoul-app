@@ -257,7 +257,6 @@ def _get_chart_history_flex(symbol: str, period: str, interval: str):
 # ✅ AI Helpers + Renderer (كما في ملفك)
 # ========================================================
 
-# ✅ تعديل: نخلي الـ timeframe بصيغة محركك (1D/1W/1M/1H..)
 def _ai_timeframe_normalize(tf: str) -> str:
     t = (tf or "").strip()
     if not t:
@@ -266,7 +265,6 @@ def _ai_timeframe_normalize(tf: str) -> str:
     u = t.strip().upper()
     l = t.strip().lower()
 
-    # Daily/Weekly/Monthly
     if u in ["1D", "D", "DAY", "DAILY"] or l in ["1d", "day", "daily"]:
         return "1D"
     if u in ["1W", "W", "WEEK", "WEEKLY"] or l in ["1wk", "1w", "week", "weekly"]:
@@ -274,7 +272,6 @@ def _ai_timeframe_normalize(tf: str) -> str:
     if u in ["1M", "M", "MONTH", "MONTHLY"] or l in ["1mo", "month", "monthly"]:
         return "1M"
 
-    # Intraday (لو تبغاه)
     if u in ["1H", "H", "60M", "60MIN"] or l in ["1h", "60m"]:
         return "1H"
     if u in ["30M", "30MIN"] or l in ["30m"]:
@@ -284,7 +281,6 @@ def _ai_timeframe_normalize(tf: str) -> str:
     if u in ["5M", "5MIN"] or l in ["5m"]:
         return "5M"
 
-    # fallback: لو المستخدم كتب شيء غريب، خلّه كما هو لكن Upper
     return u
 
 def _generate_ai_report_flex(symbol: str, timeframe: str):
@@ -467,22 +463,94 @@ def _render_risk_gates(risk_gates: dict):
         else:
             st.caption("لا توجد أسباب مسجلة.")
 
+# ========================================================
+# ✅ NEW: Table (Colored rows) for Evidence/Risks
+# ========================================================
+
+def _render_colored_rows_table(title: str, items, tone: str = "success", icon: str = "✅", max_rows: int = 12):
+    """
+    يعرض items كجدول صفوف ملوّنة (بدون تغيير البيانات).
+    tone:
+      - success => أخضر خفيف (للأدلة)
+      - danger  => أحمر خفيف (للمخاطر)
+    """
+    items = _safe_list(items)
+    st.markdown(f"**{title}**")
+
+    if not items:
+        st.caption("لا يوجد")
+        return
+
+    # ألوان خفيفة
+    if tone == "success":
+        row_bg = "rgba(5,150,105,0.08)"
+        row_bd = "rgba(5,150,105,0.18)"
+    elif tone == "danger":
+        row_bg = "rgba(220,38,38,0.08)"
+        row_bd = "rgba(220,38,38,0.18)"
+    else:
+        row_bg = "rgba(15,23,42,0.04)"
+        row_bd = "rgba(15,23,42,0.10)"
+
+    # HTML Table بسيط يعتمد على نفس هوية جدول الصفقات (finance-table)
+    rows_html = ""
+    for i, x in enumerate(items[:max_rows], start=1):
+        txt = str(x)
+        rows_html += f"""
+            <tr style="background:{row_bg};">
+              <td style="width:56px; font-weight:900; border-bottom:1px solid rgba(15,23,42,0.08);">{i}</td>
+              <td style="border-bottom:1px solid rgba(15,23,42,0.08); font-weight:800;">{icon} {txt}</td>
+            </tr>
+        """
+
+    st.markdown(
+        f"""
+        <table class="finance-table" style="margin-top:10px;">
+          <thead>
+            <tr>
+              <th style="width:56px;">#</th>
+              <th>الوصف</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows_html}
+          </tbody>
+        </table>
+        """,
+        unsafe_allow_html=True
+    )
+
+# ========================================================
+# ✅ Targets (تحويلها لـ render_custom_table بدلاً من st.dataframe)
+# ========================================================
+
 def _render_targets(targets):
     targets = _safe_list(targets)
     if not targets:
         st.info("لا توجد أهداف جاهزة حالياً.")
         return
+
     rows = []
-    for t in targets[:8]:
+    for t in targets[:12]:
         if isinstance(t, dict):
             rows.append({
-                "الهدف": t.get("name") or t.get("label") or "Target",
-                "السعر": _fmt_price(t.get("price") or t.get("value")),
-                "ملاحظة": t.get("note") or ""
+                "target": t.get("name") or t.get("label") or "Target",
+                "price": _fmt_price(t.get("price") or t.get("value")),
+                "note": t.get("note") or ""
             })
         else:
-            rows.append({"الهدف": "Target", "السعر": _fmt_price(t), "ملاحظة": ""})
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            rows.append({"target": "Target", "price": _fmt_price(t), "note": ""})
+
+    df = pd.DataFrame(rows)
+
+    cols_spec = [
+        ("target", "الهدف", "text"),
+        ("price", "السعر", "money"),
+        ("note", "ملاحظة", "text"),
+    ]
+
+    # ✅ نفس شكل جدول الصفقات (موحّد)
+    render_custom_table(df, cols_spec)
 
 def _render_entry_risk_levels(entry: dict, risk: dict, levels: dict, score: int):
     st.markdown("### 🧭 خطة الدخول والمخاطر")
@@ -580,7 +648,6 @@ def _render_scenarios(scenarios):
 # =========================
 
 def _chip(text: str, tone: str = "neutral"):
-    # يستخدم CSS الموجود في styles.py (.os-chip ودرجات الألوان)
     cls = {
         "success": "os-chip-green",
         "warning": "os-chip-amber",
@@ -663,7 +730,6 @@ def _render_ai_report_readable(rep: dict, show_debug: bool = False, compact: boo
     conf = int(_to_float(data.get("confidence"), 0) or 0)
     conf_label = str(data.get("confidence_label") or "—")
 
-    # Chips row
     st.markdown("<div class='os-card' style='padding:12px;margin-top:10px;'>", unsafe_allow_html=True)
     _chip(f"Score {score}/100", _tone_score(score))
     _chip(f"{conf_label} ({conf}%)", _tone_conf(conf))
@@ -673,7 +739,6 @@ def _render_ai_report_readable(rep: dict, show_debug: bool = False, compact: boo
     )
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # Progress
     st.progress(max(0, min(100, conf)))
 
     # ==========================
@@ -686,7 +751,6 @@ def _render_ai_report_readable(rep: dict, show_debug: bool = False, compact: boo
         if _looks_like_html(summary_text):
             st.markdown(summary_text, unsafe_allow_html=True)
         else:
-            # عرض قابل للقراءة (بدون ما يظهر كود كبير)
             st.markdown(
                 f"<div style='white-space:pre-wrap;line-height:1.8;font-weight:800;color:var(--txt);'>{summary_text}</div>",
                 unsafe_allow_html=True
@@ -710,32 +774,30 @@ def _render_ai_report_readable(rep: dict, show_debug: bool = False, compact: boo
         _render_targets(data.get("targets") or [])
 
     # ==========================
-    # Evidence & Risks
+    # Evidence & Risks  (✅ الآن جداول ملوّنة)
     # ==========================
     st.markdown("---")
     a, b = st.columns(2)
     with a:
         st.markdown("<div class='os-card'>", unsafe_allow_html=True)
-        st.markdown("<div class='os-card-title'>✅ أقوى الأدلة</div>", unsafe_allow_html=True)
-        ev = _safe_list(data.get("top_evidence", []))
-        if not ev:
-            st.caption("لا يوجد")
-        else:
-            lim = 3 if compact else 10
-            for x in ev[:lim]:
-                st.write(f"- ✅ {x}")
+        _render_colored_rows_table(
+            "✅ أقوى الأدلة",
+            data.get("top_evidence", []),
+            tone="success",
+            icon="✅",
+            max_rows=(6 if compact else 14)
+        )
         st.markdown("</div>", unsafe_allow_html=True)
 
     with b:
         st.markdown("<div class='os-card'>", unsafe_allow_html=True)
-        st.markdown("<div class='os-card-title'>⚠️ أكبر المخاطر</div>", unsafe_allow_html=True)
-        rk = _safe_list(data.get("top_risks", []))
-        if not rk:
-            st.caption("لا يوجد")
-        else:
-            lim = 3 if compact else 10
-            for x in rk[:lim]:
-                st.write(f"- ⚠️ {x}")
+        _render_colored_rows_table(
+            "⚠️ أكبر المخاطر",
+            data.get("top_risks", []),
+            tone="danger",
+            icon="⚠️",
+            max_rows=(6 if compact else 14)
+        )
         st.markdown("</div>", unsafe_allow_html=True)
 
     # ==========================
@@ -764,7 +826,6 @@ def _render_ai_report_readable(rep: dict, show_debug: bool = False, compact: boo
         with st.expander("🧩 عرض التقرير الخام (JSON)"):
             st.json(data.get("raw", rep))
 
-
 def render_osoli_report(rep: dict, title: str = "🤖 تقرير أصولي", *args, **kwargs):
     """واجهة بطاقات (Osoli) محسّنة — مع الحفاظ على العرض الأصلي الموجود في components.py.
     - بشكل افتراضي: يعرض نسخة محسّنة (بطاقات + Chips)
@@ -772,21 +833,17 @@ def render_osoli_report(rep: dict, title: str = "🤖 تقرير أصولي", *a
     """
     st.markdown(f"### {title}")
 
-    # نسخة محسّنة تعتمد على نفس parse (_extract_ai) — لا تغيير في البيانات
     try:
         _render_ai_report_readable(rep, show_debug=False, compact=False)
     except Exception as e:
         st.warning("⚠️ تعذر عرض البطاقات المحسّنة، سيتم استخدام العرض الأصلي.")
         st.code(str(e))
 
-    # النسخة الأصلية (كما هي) لضمان عدم فقد أي تفاصيل/مزايا
     with st.expander("🧩 عرض أصولي (النسخة الأصلية)"):
         try:
             return _render_osoli_report_base(rep, title=title, *args, **kwargs)
         except TypeError:
-            # بعض النسخ لا تدعم title كوسيط
             return _render_osoli_report_base(rep, *args, **kwargs)
-
 
 # ========================================================
 # TradingView-like Plot (كما في ملفك)
