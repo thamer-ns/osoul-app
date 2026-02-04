@@ -427,16 +427,12 @@ def apply_custom_css():
 #       pass
 
 
+# ✅ UI Polish (اختياري) — إضافة فوق شغلك
 def apply_ui_css():
     st.markdown(
         """
         <style>
-        /* =====================================================
-           Layout: تقليل الفراغ + تحديد عرض المحتوى
-           (لا يغيّر ألوانك ولا كروتك)
-           ===================================================== */
-
-        /* خلي المحتوى في المنتصف مع حد عرض مناسب */
+        /* تحديد عرض المحتوى في المنتصف + تقليل الفراغات */
         section.main > div{
             max-width: 1280px;
             margin-left: auto;
@@ -444,29 +440,10 @@ def apply_ui_css():
             padding-left: 18px;
             padding-right: 18px;
         }
-
-        /* تقليل المساحات العلوية والسفلية */
         .block-container{
             padding-top: 1.4rem !important;
             padding-bottom: 2.0rem !important;
         }
-
-        /* تقليل فراغات العناصر المتتابعة (بدون كسر شكل الكروت) */
-        div[data-testid="stVerticalBlock"] > div:has(> div[data-testid="stMarkdownContainer"]){
-            margin-bottom: 10px;
-        }
-
-        /* تحسين سلوك الجداول على الجوال */
-        div[data-testid="stDataFrame"]{
-            border-radius: 14px;
-            overflow: hidden;
-        }
-
-        /* تحسين عرض الـ code/json (لو يطلع HTML كنص) */
-        div[data-testid="stCodeBlock"] pre{
-            border-radius: 14px !important;
-        }
-
         @media (max-width: 900px){
             section.main > div{
                 padding-left: 12px;
@@ -480,3 +457,4 @@ def apply_ui_css():
         """,
         unsafe_allow_html=True,
     )
+
