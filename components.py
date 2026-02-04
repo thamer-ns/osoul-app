@@ -42,7 +42,7 @@ def render_app_header(
         _ = show_in_sidebar
 
         # Main header
-        b64 = _img_to_base64(logo_full_path)
+        b64 = _img_to_base64(logo_mark_path)
         if b64:
             logo_html = f"<img class='os-app-logo' src='data:image/png;base64,{b64}' alt='logo'/>"
         else:
