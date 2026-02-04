@@ -1,4 +1,5 @@
 # ai_engine_core/reporting.py
+
 import traceback
 import pandas as pd
 
@@ -6,6 +7,7 @@ from .config import AI_ENGINE_NAME, AI_ENGINE_VERSION
 from .core import _normalize_symbol, _map_period_from_timeframe
 from .ohlcv import _ensure_ohlcv_columns
 from .indicators import _compute_indicators
+
 from .technicals import (
     _detect_advanced_patterns,
     _analyze_market_structure,
@@ -14,6 +16,34 @@ from .technicals import (
     _analyze_ichimoku,
     _analyze_financial_golden_rules,
 )
+
+# ✅ Optional technical modules (added ideas) — safe imports
+try:
+    from .technicals import _detect_inside_bar
+except Exception:
+    _detect_inside_bar = None
+
+try:
+    from .technicals import _detect_gaps
+except Exception:
+    _detect_gaps = None
+
+try:
+    from .technicals import _detect_rsi_divergence
+except Exception:
+    _detect_rsi_divergence = None
+
+try:
+    from .technicals import _regime_hint_from_adx
+except Exception:
+    _regime_hint_from_adx = None
+
+try:
+    from .technicals import _vsa_lite
+except Exception:
+    _vsa_lite = None
+
+
 from .risk import (
     _analyze_sr,
     _risk_plan_from_atr_sr,
@@ -23,6 +53,7 @@ from .risk import (
     _build_explainability,
     _infer_strategy_hint,
 )
+
 from .user_rules import load_user_rules, _eval_user_rule
 from .logging_learning import log_ai_signal, _get_weight
 
@@ -61,11 +92,29 @@ def _dedup_limit(items, limit=12):
     return out
 
 
+def _safe_float(x, default=0.0):
+    try:
+        if x is None:
+            return default
+        return float(x)
+    except Exception:
+        return default
+
+
 def generate_ai_report(symbol, timeframe="1D"):
     symbol = _normalize_symbol(symbol)
 
     try:
-        from market_data import get_chart_history, get_static_info
+        from market_data import (
+            get_chart_history,
+            get_static_info,
+        )
+
+        # ✅ optional import (won't break)
+        try:
+            from market_data import get_relative_strength_vs_tasi
+        except Exception:
+            get_relative_strength_vs_tasi = None
 
         period = _map_period_from_timeframe(timeframe)
         interval = _timeframe_to_interval(timeframe)
@@ -89,8 +138,12 @@ def generate_ai_report(symbol, timeframe="1D"):
         if len(df) < min_rows:
             raise ValueError(f"insufficient candles ({len(df)}<{min_rows})")
 
+        # Indicators pack
         ind = _compute_indicators(df)
 
+        # =========================
+        # Core tech modules (existing)
+        # =========================
         s_candle, o_candle = _detect_advanced_patterns(df)
         s_struct, o_struct = _analyze_market_structure(df)
         s_sr, o_sr, f_sr = _analyze_sr(df)
@@ -100,15 +153,66 @@ def generate_ai_report(symbol, timeframe="1D"):
         s_ob, o_ob, f_ob = _detect_order_block(df)
         s_ichi, o_ichi, f_ichi = _analyze_ichimoku(df)
 
-        base_tech = (s_candle + s_struct + s_sr + s_liq + s_ob + s_ichi)
+        # =========================
+        # Optional tech add-ons (agreed ideas)
+        # =========================
+        s_inside, o_inside, f_inside = 0, [], {}
+        if callable(_detect_inside_bar):
+            try:
+                s_inside, o_inside, f_inside = _detect_inside_bar(df)
+            except Exception:
+                s_inside, o_inside, f_inside = 0, [], {}
 
-        tech_reasons = (o_struct or []) + (o_candle or []) + (o_sr or []) + (o_liq or []) + (o_ob or []) + (o_ichi or [])
+        s_gaps, o_gaps, f_gaps = 0, [], {}
+        if callable(_detect_gaps):
+            try:
+                s_gaps, o_gaps, f_gaps = _detect_gaps(df)
+            except Exception:
+                s_gaps, o_gaps, f_gaps = 0, [], {}
+
+        s_div, o_div, f_div = 0, [], {}
+        if callable(_detect_rsi_divergence):
+            try:
+                s_div, o_div, f_div = _detect_rsi_divergence(df, ind)
+            except Exception:
+                s_div, o_div, f_div = 0, [], {}
+
+        s_reg, o_reg, f_reg = 0, [], {}
+        if callable(_regime_hint_from_adx):
+            try:
+                s_reg, o_reg, f_reg = _regime_hint_from_adx(ind)
+            except Exception:
+                s_reg, o_reg, f_reg = 0, [], {}
+
+        s_vsa, o_vsa, f_vsa = 0, [], {}
+        if callable(_vsa_lite):
+            try:
+                s_vsa, o_vsa, f_vsa = _vsa_lite(df)
+            except Exception:
+                s_vsa, o_vsa, f_vsa = 0, [], {}
+
+        # =========================
+        # Base score (tech)
+        # =========================
+        base_tech = (
+            s_candle + s_struct + s_sr + s_liq + s_ob + s_ichi
+            + s_inside + s_gaps + s_div + s_reg + s_vsa
+        )
+
+        tech_reasons = (
+            (o_struct or []) + (o_candle or []) + (o_sr or [])
+            + (o_liq or []) + (o_ob or []) + (o_ichi or [])
+            + (o_inside or []) + (o_gaps or []) + (o_div or []) + (o_reg or []) + (o_vsa or [])
+        )
         fund_reasons = o_fund or []
 
+        # =========================
         # Features aggregation
+        # =========================
         features = {}
+
         fund_feats = (m_fund or {}).get("_fund_features", {}) if isinstance(m_fund, dict) else {}
-        for d in [f_sr, fund_feats, f_liq, f_ob, f_ichi]:
+        for d in [f_sr, fund_feats, f_liq, f_ob, f_ichi, f_inside, f_gaps, f_div, f_reg, f_vsa]:
             try:
                 for k, v in (d or {}).items():
                     if isinstance(v, (bool, int)):
@@ -119,18 +223,43 @@ def generate_ai_report(symbol, timeframe="1D"):
         # Numeric features (safe)
         try:
             features["close"] = float(df["Close"].iloc[-1])
+
             if isinstance(ind.get("rsi14"), pd.Series):
                 features["rsi14"] = float(ind["rsi14"].iloc[-1])
-            if isinstance(ind.get("sma50"), pd.Series):
+
+            if isinstance(ind.get("macd"), pd.Series) and not pd.isna(ind["macd"].iloc[-1]):
+                features["macd"] = float(ind["macd"].iloc[-1])
+
+            if isinstance(ind.get("adx14"), pd.Series) and not pd.isna(ind["adx14"].iloc[-1]):
+                features["adx14"] = float(ind["adx14"].iloc[-1])
+
+            if isinstance(ind.get("sma50"), pd.Series) and not pd.isna(ind["sma50"].iloc[-1]):
                 features["sma50"] = float(ind["sma50"].iloc[-1])
+
             if isinstance(ind.get("sma200"), pd.Series) and not pd.isna(ind["sma200"].iloc[-1]):
                 features["sma200"] = float(ind["sma200"].iloc[-1])
+
             if isinstance(ind.get("atr14"), pd.Series) and not pd.isna(ind["atr14"].iloc[-1]):
                 features["atr14"] = float(ind["atr14"].iloc[-1])
+
             if ind.get("fib382") is not None:
                 features["fib382"] = float(ind["fib382"])
         except Exception:
             pass
+
+        # ✅ Relative strength vs TASI (optional)
+        if get_relative_strength_vs_tasi is not None:
+            try:
+                rs = get_relative_strength_vs_tasi(symbol, period=None, interval="1d") or {}
+                if rs.get("ok"):
+                    features["rs_outperf_3m"] = _safe_float(rs.get("outperf_3m"), 0.0)
+                    features["rs_outperf_1m"] = _safe_float(rs.get("outperf_1m"), 0.0)
+                    features["rs_label"] = str(rs.get("label") or "")
+                    # add reasons lightly
+                    if str(rs.get("label") or "").strip():
+                        tech_reasons.append(f"📌 Relative Strength vs TASI: {rs.get('label')}")
+            except Exception:
+                pass
 
         # Weighted bonus on boolean flags only
         weighted_bonus = 0.0
@@ -142,7 +271,9 @@ def generate_ai_report(symbol, timeframe="1D"):
         fund_score = float(s_fund)
         total_score = float(tech_score + fund_score)
 
+        # =========================
         # User rules delta
+        # =========================
         user_delta = 0.0
         try:
             rules = load_user_rules(enabled_only=True, max_rows=30)
@@ -176,6 +307,7 @@ def generate_ai_report(symbol, timeframe="1D"):
         except Exception:
             sector = None
 
+        # module scores for strategy hint
         module_scores = {
             "MarketStructure": s_struct,
             "Candles": s_candle,
@@ -183,11 +315,19 @@ def generate_ai_report(symbol, timeframe="1D"):
             "LiquiditySweep": s_liq,
             "OrderBlock": s_ob,
             "Ichimoku": s_ichi,
+            "InsideBar": s_inside,
+            "Gaps": s_gaps,
+            "Divergence": s_div,
+            "Regime": s_reg,
+            "VSA": s_vsa,
             "Fundamental": s_fund,
             "UserRules": user_delta,
         }
         strategy_name = _infer_strategy_hint(module_scores)
 
+        # =========================
+        # Recommendation mapping (kept same style)
+        # =========================
         rec = "⚖️ محايد / مراقبة"
         clr = "#6c757d"
         strat = "السعر في منطقة حيرة. انتظر إشارة أوضح."
@@ -321,7 +461,5 @@ def generate_ai_report(symbol, timeframe="1D"):
                 "last_bar": None,
             },
         }
-        # keep trace for debugging only if explicitly enabled
-        # (you can wire this to st.secrets["DEBUG"] if you want)
         base["__trace__"] = tr
         return base
