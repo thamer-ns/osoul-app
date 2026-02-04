@@ -137,6 +137,10 @@ def apply_custom_css():
            UI Cleanup
            ===================================================== */
         footer, header, #MainMenu { display: none !important; }
+
+        /* Streamlit hamburger / collapsed sidebar control (keep app truly sidebar-less) */
+        div[data-testid="stSidebarCollapsedControl"] { display: none !important; }
+        div[data-testid="stSidebar"] { display: none !important; }
         [data-testid="stElementToolbar"] { display: none !important; }
         div[role="tooltip"] { display: none !important; opacity: 0 !important; visibility: hidden !important; }
         button[title="View fullscreen"] { display: none !important; }
