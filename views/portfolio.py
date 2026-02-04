@@ -173,7 +173,29 @@ def view_portfolio(fin, key):
                     if "impact_pct" in df_sc.columns:
                         df_sc["impact_pct"] = pd.to_numeric(df_sc["impact_pct"], errors="coerce").fillna(0.0).astype(float)
                         df_sc["impact_pct"] = df_sc["impact_pct"].round(2)
-                    render_custom_table(df_sc, key="portfolio_stress_scenarios", use_container_width=True)
+
+                    # ✅ توحيد شكل الجدول (نفس جدول الصفقات) + إصلاح TypeError
+                    # render_custom_table في components.py لا يدعم key/use_container_width
+                    cols = []
+                    if "scenario" in df_sc.columns:
+                        cols.append(("scenario", "السيناريو", "text"))
+                    if "name" in df_sc.columns and ("scenario" not in df_sc.columns):
+                        cols.append(("name", "السيناريو", "text"))
+                    if "impact_pct" in df_sc.columns:
+                        cols.append(("impact_pct", "الأثر %", "percent"))
+                    if "impact_value" in df_sc.columns:
+                        cols.append(("impact_value", "الأثر (قيمة)", "money"))
+                    if "impact" in df_sc.columns and ("impact_value" not in df_sc.columns):
+                        cols.append(("impact", "الأثر", "money"))
+                    if "note" in df_sc.columns:
+                        cols.append(("note", "ملاحظة", "text"))
+
+                    # fallback: لو ما عرفنا الأعمدة، اعرض أول 6 أعمدة
+                    if not cols:
+                        for c in list(df_sc.columns)[:6]:
+                            cols.append((c, str(c), "text"))
+
+                    render_custom_table(df_sc, cols)
                 else:
                     st.info("لا توجد سيناريوهات متاحة حالياً.")
 
