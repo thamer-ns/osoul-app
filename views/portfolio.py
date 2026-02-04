@@ -1,4 +1,4 @@
-#views/portfolio.py
+# views/portfolio.py
 import streamlit as st
 import pandas as pd
 from datetime import date
@@ -9,6 +9,57 @@ from market_data import fetch_batch_data
 from data_source import get_company_details
 from security import validate_trade_inputs
 from views.shared import _safe_status_series, _clean_symbols_list, _normalize_symbol
+
+# ✅ Portfolio risk engine (safe import)
+try:
+    from ai_engine_core.portfolio import (
+        calculate_portfolio_risk_score,
+        run_stress_test,
+        generate_rebalancing_suggestions,
+        portfolio_risk_gates,
+    )
+except Exception:
+    calculate_portfolio_risk_score = None
+    run_stress_test = None
+    generate_rebalancing_suggestions = None
+    portfolio_risk_gates = None
+
+
+def _sf(x, default=0.0) -> float:
+    try:
+        if x is None:
+            return float(default)
+        return float(x)
+    except Exception:
+        return float(default)
+
+
+def _safe_cash_pct(fin: dict, open_market_val: float) -> float:
+    """
+    يأخذ cash_pct من analytics إن توفر،
+    وإلا يحسبه: cash / (cash + open_market_val)
+    """
+    try:
+        if isinstance(fin, dict) and "cash_pct" in fin:
+            return float(_sf(fin.get("cash_pct", 0.0), 0.0))
+    except Exception:
+        pass
+
+    cash = _sf((fin or {}).get("cash", 0.0), 0.0) if isinstance(fin, dict) else 0.0
+    pv = float(max(0.0, cash + _sf(open_market_val, 0.0)))
+    return float((cash / pv) * 100.0) if pv > 0 else 0.0
+
+
+def _risk_score_badge(score: float) -> str:
+    score = float(_sf(score, 0.0))
+    if score >= 75:
+        return "danger"
+    if score >= 55:
+        return "warn"
+    if score >= 35:
+        return "neutral"
+    return "success"
+
 
 def view_portfolio(fin, key):
     ts = "مضاربة" if key == "spec" else "استثمار"
@@ -25,7 +76,7 @@ def view_portfolio(fin, key):
         unsafe_allow_html=True
     )
 
-    df = fin.get("all_trades", pd.DataFrame())
+    df = fin.get("all_trades", pd.DataFrame()) if isinstance(fin, dict) else pd.DataFrame()
     if df.empty:
         sub = pd.DataFrame(columns=["status", "total_cost", "market_value", "gain", "symbol", "date", "id"])
     else:
@@ -58,6 +109,104 @@ def view_portfolio(fin, key):
 
         st.markdown("---")
 
+        # =========================================================
+        # 🛡️ لوحة مخاطر المحفظة (NEW)
+        # =========================================================
+        with st.expander("🛡️ لوحة مخاطر المحفظة (بوابات + Stress Test + اقتراحات)", expanded=True):
+            cash = _sf((fin or {}).get("cash", 0.0), 0.0) if isinstance(fin, dict) else 0.0
+            cash_pct = _safe_cash_pct(fin or {}, total_market)
+            portfolio_value = _sf((fin or {}).get("portfolio_value", cash + total_market), cash + total_market)
+
+            c_r1, c_r2, c_r3, c_r4 = st.columns(4)
+            with c_r1:
+                render_kpi("قيمة المحفظة", safe_fmt(portfolio_value), "blue")
+            with c_r2:
+                render_kpi("الكاش", safe_fmt(cash), "neutral")
+            with c_r3:
+                render_kpi("نسبة الكاش", f"{cash_pct:.1f}%", "success" if cash_pct >= 15 else ("warn" if cash_pct >= 8 else "danger"), "٪")
+
+            risk_score = None
+            if callable(calculate_portfolio_risk_score) and isinstance(op, pd.DataFrame) and not op.empty:
+                try:
+                    risk_score = float(calculate_portfolio_risk_score(op, cash_pct))
+                except Exception:
+                    risk_score = None
+
+            with c_r4:
+                if risk_score is None:
+                    render_kpi("Risk Score", "N/A", "neutral")
+                else:
+                    render_kpi("Risk Score", f"{risk_score:.0f}/100", _risk_score_badge(risk_score))
+
+            # Gates
+            if callable(portfolio_risk_gates) and isinstance(op, pd.DataFrame) and not op.empty:
+                try:
+                    gates = portfolio_risk_gates(op, cash_pct)
+                except Exception:
+                    gates = {"pass": True, "reasons": [], "risk_score": risk_score or 0.0}
+            else:
+                gates = {"pass": True, "reasons": [], "risk_score": risk_score or 0.0}
+
+            if gates.get("pass", True):
+                st.success("✅ بوابات المخاطر: PASS — الوضع مقبول")
+            else:
+                st.warning("⚠️ بوابات المخاطر: FAIL — يفضل تخفيف المخاطر/رفع الكاش")
+                for r in (gates.get("reasons") or [])[:8]:
+                    if str(r).strip():
+                        st.write(f"- {r}")
+
+            # Stress test
+            if callable(run_stress_test):
+                try:
+                    stress = run_stress_test(portfolio_value, op)
+                except Exception:
+                    stress = {"scenarios": [], "insight": "غير متاح"}
+
+                st.markdown("**📉 Stress Test (تأثير تقديري على المحفظة)**")
+                if stress.get("insight"):
+                    st.caption(stress["insight"])
+
+                sc = stress.get("scenarios") or []
+                if sc:
+                    df_sc = pd.DataFrame(sc)
+                    # عرض مرتب
+                    if "impact_pct" in df_sc.columns:
+                        df_sc["impact_pct"] = pd.to_numeric(df_sc["impact_pct"], errors="coerce").fillna(0.0).astype(float)
+                        df_sc["impact_pct"] = df_sc["impact_pct"].round(2)
+                    st.dataframe(df_sc, use_container_width=True)
+                else:
+                    st.info("لا توجد سيناريوهات متاحة حالياً.")
+
+            # Rebalancing suggestions
+            if callable(generate_rebalancing_suggestions):
+                try:
+                    sugg = generate_rebalancing_suggestions(op, cash_pct)
+                except Exception:
+                    sugg = []
+            else:
+                sugg = []
+
+            st.markdown("**🧭 اقتراحات إعادة توازن**")
+            if sugg:
+                for level, text in sugg[:10]:
+                    level = str(level or "").lower()
+                    txt = str(text or "").strip()
+                    if not txt:
+                        continue
+                    if "danger" in level:
+                        st.error(txt)
+                    elif "priority" in level:
+                        st.warning(txt)
+                    elif "warn" in level:
+                        st.warning(txt)
+                    else:
+                        st.info(txt)
+            else:
+                st.info("لا توجد اقتراحات حالياً — الوضع مستقر.")
+
+        # =========================================================
+        # ✅ جدول الصفقات القائمة (كما هو)
+        # =========================================================
         if not op.empty:
             for col in ["company_name", "sector", "gain_pct", "weight"]:
                 if col not in op.columns:
@@ -223,6 +372,7 @@ def view_portfolio(fin, key):
         else:
             st.info("الأرشيف فارغ")
 
+
 def render_pulse_dashboard():
     st.header("نبض السوق")
     try:
@@ -242,6 +392,7 @@ def render_pulse_dashboard():
                 render_ticker_card(s, "سهم", v.get("price", 0), chg)
     else:
         st.info("لا توجد رموز لعرض نبض السوق.")
+
 
 def view_add_trade():
     st.header("➕ إضافة صفقة")
