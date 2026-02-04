@@ -6,6 +6,13 @@ import plotly.graph_objects as go
 
 from market_data import get_chart_history
 
+# Optional: unify tables with the app's table renderer
+try:
+    from components import render_custom_table
+except Exception:
+    render_custom_table = None
+
+
 
 # ============================================================
 # ✅ Helpers: Safety / Normalization
@@ -118,6 +125,48 @@ def _ensure_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
 
     out = out.dropna(subset=["Open", "High", "Low", "Close"])
     return out
+
+
+
+# ============================================================
+# ✅ UI Helpers (Cards/Tables) - Additive only
+# ============================================================
+def _os_card(title: str, rows: list, icon: str = "insights"):
+    """Small card using the CSS already defined in styles.py (.os-card / .os-kv)."""
+    try:
+        body = ""
+        for k, v in (rows or []):
+            body += f"""<div class='os-kv'><div class='os-k'>{k}</div><div class='os-v'>{v}</div></div>"""
+        st.markdown(
+            f"""
+            <div class="os-card">
+              <div class="os-card-title"><span class="mi">{icon}</span>{title}</div>
+              {body}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    except Exception:
+        st.markdown(f"**{title}**")
+        for k, v in (rows or []):
+            st.write(f"- {k}: {v}")
+
+def _render_levels_table(rows: list):
+    """Render levels table with unified styling."""
+    if not rows:
+        st.info("لا توجد مستويات لعرضها.")
+        return
+    df = pd.DataFrame(rows)
+    if render_custom_table:
+        # Build cols spec similar to trades table styling
+        cols_spec = []
+        for c in df.columns:
+            lbl = str(c)
+            typ = "money" if "سعر" in lbl or "Price" in lbl else "text"
+            cols_spec.append((c, lbl, typ))
+        render_custom_table(df, cols_spec)
+    else:
+        st.dataframe(df, use_container_width=True, hide_index=True)
 
 
 def _atr(df: pd.DataFrame, n: int = 14) -> pd.Series:
@@ -606,7 +655,65 @@ def render_classical_analysis(symbol: str, interval: str = "1d"):
     st.plotly_chart(fig, use_container_width=True)
 
     # --------------------------------------------------------
+    # ✅ Levels Snapshot (Unified cards + table) - Additive only
+    # --------------------------------------------------------
+    try:
+        st.markdown("#### 🧱 لقطة المستويات (من نفس التحليل)")
+        rows_cards = []
+
+        # Trend
+        trend_note = "غير متاح"
+        if not np.isnan(last_sma200):
+            trend_note = "صاعد (فوق SMA200)" if last_close > last_sma200 else "هابط (تحت SMA200)"
+        else:
+            trend_note = "لا يوجد SMA200 كافٍ"
+
+        v, vma, vol_ok = _vol_confirm(df, factor=1.2)
+        rows_cards.append(("Trend", trend_note))
+        rows_cards.append(("ATR(14)", f"{last_atr:.3f}" if last_atr > 0 else "N/A"))
+        rows_cards.append(("تأكيد الحجم", "✅ قوي" if vol_ok else ("⚠️ ضعيف" if vma > 0 else "N/A")))
+
+        st.markdown("<div class='os-grid'>", unsafe_allow_html=True)
+        st.markdown("<div class='os-col-6'>", unsafe_allow_html=True)
+        _os_card("ملخص سريع", [("السعر الحالي", f"{last_close:.2f}"), *rows_cards], icon="stacked_line_chart")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        # Nearest key levels (best-effort)
+        lvl_rows = []
+        if show_sr:
+            for s in supports[:4]:
+                lvl_rows.append({"النوع": "Support", "المستوى": f"{float(s):.2f}"})
+            for r in resistances[:4]:
+                lvl_rows.append({"النوع": "Resistance", "المستوى": f"{float(r):.2f}"})
+
+        if show_fib and fibs:
+            for k, v_ in list(fibs.items())[:6]:
+                lvl_rows.append({"النوع": f"Fib {k}", "المستوى": f"{float(v_):.2f}"})
+
+        if show_pivots and pivots_pack:
+            for pack in pivots_pack[:3]:
+                p = pack.get("pivots") or {}
+                for key_ in ["P", "R1", "R2", "S1", "S2"]:
+                    if key_ in p:
+                        lvl_rows.append({"النوع": f"{pack['tf']} {key_}", "المستوى": f"{float(p[key_]):.2f}"})
+
+        st.markdown("<div class='os-col-6'>", unsafe_allow_html=True)
+        if lvl_rows:
+            _os_card("أقرب مستويات مهمة", [("عدد المستويات", str(len(lvl_rows))), ("ملاحظة", "تم تجميعها من (Fib/SR/Pivots)")], icon="layers")
+        else:
+            _os_card("أقرب مستويات مهمة", [("ملاحظة", "لا توجد مستويات كافية لعرض لقطة")], icon="layers")
+        st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        if lvl_rows:
+            with st.expander("📋 جدول المستويات (موحّد)"):
+                _render_levels_table(lvl_rows)
+    except Exception:
+        pass
+
+    # --------------------------------------------------------
     # Summary Cards
+
     # --------------------------------------------------------
     st.markdown("#### 🔢 ملخص سريع")
     trend_is_bull = False
