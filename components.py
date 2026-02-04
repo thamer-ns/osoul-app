@@ -515,7 +515,7 @@ def render_ticker_card(symbol, name, price, change):
 # 📋 Custom Table
 # ============================================================
 
-def render_custom_table(df, columns_config):
+def render_custom_table(df, columns_config, *args, **kwargs):
     """
     columns_config يدعم شكلين:
     1) القديم: (col_key, label, col_type)
