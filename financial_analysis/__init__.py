@@ -25,5 +25,10 @@ from .metrics import get_advanced_fundamental_ratios, get_fundamental_ratios
 # thesis
 from .thesis import get_thesis, save_thesis
 
-# ui
-from .ui import render_financial_dashboard_ui
+# ui (اختياري): لا نخلي أي خطأ في واجهة UI يكسر استيراد الحزمة كاملة
+# لأن views/shared.py يستورد financial_analysis داخل try/except
+# فإذا فشل الاستيراد لأي سبب، يتعطل التحليل المالي بالكامل.
+try:
+    from .ui import render_financial_dashboard_ui
+except Exception:
+    render_financial_dashboard_ui = None
