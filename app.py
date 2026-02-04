@@ -67,6 +67,23 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
+# ✅ إلغاء القائمة الجانبية نهائياً (حتى زر الفتح)
+st.markdown(
+    """
+    <style>
+      section[data-testid="stSidebar"],
+      div[data-testid="stSidebar"],
+      aside { display: none !important; }
+
+      [data-testid="collapsedControl"],
+      button[kind="headerNoPadding"] {
+        display: none !important;
+      }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 st.markdown(
     "<style>#MainMenu{visibility:hidden;} footer{visibility:hidden;} header{visibility:hidden;}</style>",
     unsafe_allow_html=True
@@ -111,8 +128,7 @@ if render_app_header:
 else:
     _safe_image(st.session_state.get("ui_logo_full") or "assets/logo_full.png", width=240)
 
-with st.sidebar:
-    _safe_image(st.session_state.get("ui_logo_mark") or "assets/logo_mark.png", width=120)
+# ✅ السايدبار ملغي بالكامل
 
 # ✅ CSS واجهة النتائج (بطاقات/أيقونات) لو موجود
 if apply_ui_css:
