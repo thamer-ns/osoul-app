@@ -33,10 +33,18 @@ STRATEGY_CATALOG = {
     },
 
     # موجودة في الكاتالوج وجاهزة لتفعيل خوارزمياتها لاحقاً
-    "Ichimoku": {"name_ar": "☁️ إشيموكو", "family": "Trend", "timeframes": ["1D", "4H"], "notes": "يُفعل لاحقاً."},
-    "VSA": {"name_ar": "📊 VSA (حجم/سبريد)", "family": "Volume", "timeframes": ["1D", "1H"], "notes": "يُفعل لاحقاً."},
-    "SMC": {"name_ar": "🏛️ SMC / هيكل السوق", "family": "Structure", "timeframes": ["1D", "4H"], "notes": "يُفعل لاحقاً."},
-    "SupplyDemand": {"name_ar": "🧲 العرض والطلب", "family": "Zones", "timeframes": ["1D", "4H"], "notes": "يُفعل لاحقاً."},
+    "Ichimoku": {"name_ar": "☁️ إشيموكو", "family": "Trend", "timeframes": ["1D", "4H"], "notes": "يُفعل لاحقاً.",
+        "enabled": False
+    },
+    "VSA": {"name_ar": "📊 VSA (حجم/سبريد)", "family": "Volume", "timeframes": ["1D", "1H"], "notes": "يُفعل لاحقاً.",
+        "enabled": False
+    },
+    "SMC": {"name_ar": "🏛️ SMC / هيكل السوق", "family": "Structure", "timeframes": ["1D", "4H"], "notes": "يُفعل لاحقاً.",
+        "enabled": False
+    },
+    "SupplyDemand": {"name_ar": "🧲 العرض والطلب", "family": "Zones", "timeframes": ["1D", "4H"], "notes": "يُفعل لاحقاً.",
+        "enabled": False
+    },
 }
 
 
