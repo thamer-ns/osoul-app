@@ -1,4 +1,3 @@
-# app.pyimport os
 import os
 import streamlit as st
 
@@ -6,7 +5,7 @@ from config import APP_NAME, APP_ICON
 from database import init_db
 from styles import apply_custom_css
 
-# ✅ (اختياري) إذا ضفت apply_ui_css داخل styles.py
+# ✅ (اختياري) إذا عندك apply_ui_css داخل styles.py
 try:
     from styles import apply_ui_css
 except Exception:
@@ -19,8 +18,8 @@ except Exception:
     inject_component_styles = None
 
 
-def _safe_image(path, width=None):
-    """عرض صورة إن وجدت بدون كسر التطبيق.""" 
+def _safe_image(path: str, width: int | None = None):
+    """عرض صورة إن وجدت بدون كسر التطبيق."""
     try:
         if path and os.path.exists(path):
             st.image(path, width=width)
@@ -28,17 +27,22 @@ def _safe_image(path, width=None):
         pass
 
 
-# ✅ page icon (Fail-safe)
-_icon = APP_ICON
-try:
-    if os.path.exists("assets/logo_mark.png"):
-        _icon = "assets/logo_mark.png"
-except Exception:
-    _icon = APP_ICON
+def _pick_page_icon() -> str:
+    """اختيار أيقونة الصفحة: شعار assets إن وجد وإلا APP_ICON."""
+    try:
+        if os.path.exists("assets/logo_mark.png"):
+            return "assets/logo_mark.png"
+    except Exception:
+        pass
+    return APP_ICON
 
+
+# =========================
+# Page Config
+# =========================
 st.set_page_config(
     page_title=APP_NAME,
-    page_icon=_icon,
+    page_icon=_pick_page_icon(),
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -46,13 +50,18 @@ st.set_page_config(
 # إخفاء عناصر Streamlit الافتراضية
 st.markdown(
     "<style>#MainMenu{visibility:hidden;} footer{visibility:hidden;} header{visibility:hidden;}</style>",
-    unsafe_allow_html=True
+    unsafe_allow_html=True,
 )
 
+
+# =========================
+# DB Init (Once)
+# =========================
 @st.cache_resource
 def _init_db_once():
     init_db()
     return True
+
 
 try:
     _init_db_once()
@@ -61,7 +70,10 @@ except Exception as e:
     st.exception(e)
     st.stop()
 
-# ✅ حقن ستايلات المكوّنات إن كانت موجودة
+
+# =========================
+# Inject Styles
+# =========================
 if inject_component_styles:
     try:
         inject_component_styles()
@@ -79,13 +91,21 @@ if apply_ui_css:
     except Exception:
         pass
 
-# ✅ هيدر الشعار (اختياري/Fail-safe)
-_safe_image("assets/logo_full.png", width=240)
 
-# ✅ سايدبار شعار صغير (اختياري/Fail-safe)
+# =========================
+# Branding (Fail-safe)
+# =========================
+# ✅ هيدر الشعار (اختياري)
+_safe_image("assets/logo_full.png", width=260)
+
+# ✅ سايدبار شعار صغير (اختياري)
 with st.sidebar:
     _safe_image("assets/logo_mark.png", width=120)
 
+
+# =========================
+# Routing
+# =========================
 if "page" not in st.session_state:
     st.session_state["page"] = "home"
 
