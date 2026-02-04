@@ -173,7 +173,7 @@ def view_portfolio(fin, key):
                     if "impact_pct" in df_sc.columns:
                         df_sc["impact_pct"] = pd.to_numeric(df_sc["impact_pct"], errors="coerce").fillna(0.0).astype(float)
                         df_sc["impact_pct"] = df_sc["impact_pct"].round(2)
-                    st.dataframe(df_sc, use_container_width=True)
+                    render_custom_table(df_sc, key="portfolio_stress_scenarios", use_container_width=True)
                 else:
                     st.info("لا توجد سيناريوهات متاحة حالياً.")
 
