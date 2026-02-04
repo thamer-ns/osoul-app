@@ -1,4 +1,5 @@
 # market_data.py
+
 import re
 import time
 import json
@@ -37,23 +38,27 @@ if requests:
     _SESSION.headers.update(HEADERS)
 
 
-def _http_get(url: str, timeout: int = 5, retries: int = 2, sleep: float = 0.5):
+def _http_get(url: str, timeout: int = 6, retries: int = 2, sleep: float = 0.6):
+    """
+    robust http get:
+    - exponential backoff on failures/429
+    """
     if not url or not requests or not _SESSION:
         return None
 
     for i in range(retries + 1):
         try:
-            # ✅ allow_redirects=True to handle 301/302
             r = _SESSION.get(url, timeout=timeout, allow_redirects=True)
             if r.status_code == 200 and r.text:
                 return r
-            if r.status_code == 429:
-                time.sleep(sleep * 2)
-        except Exception:
-            pass
 
-        if i < retries:
-            time.sleep(sleep)
+            # rate limit
+            if r.status_code == 429:
+                time.sleep(sleep * (2 ** i))
+            else:
+                time.sleep(sleep * (1 + i * 0.3))
+        except Exception:
+            time.sleep(sleep * (1 + i * 0.5))
 
     return None
 
@@ -126,17 +131,6 @@ def _is_reasonable_price(x: float) -> bool:
         return False
 
 
-def _safe_div(a, b, default=0.0):
-    try:
-        a = float(a)
-        b = float(b)
-        if b == 0:
-            return default
-        return a / b
-    except Exception:
-        return default
-
-
 # ============================================================
 # 🧼 Index Cleaner (مهم جداً لمنع "الخط العمودي" في الشارت)
 # ============================================================
@@ -179,6 +173,7 @@ def _normalize_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
 
     d = df.copy()
 
+    # MultiIndex fix
     if isinstance(d.columns, pd.MultiIndex):
         levels = list(range(d.columns.nlevels))
         ohlcv_keys = {"open", "high", "low", "close", "adj close", "volume", "adjclose"}
@@ -194,6 +189,7 @@ def _normalize_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
 
         d.columns = d.columns.get_level_values(best_level)
 
+    # Tuple columns fix
     d.columns = [str(c[0] if isinstance(c, (tuple, list)) and len(c) else c) for c in d.columns]
 
     canonical = {
@@ -227,8 +223,13 @@ def _normalize_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
     if not any(c in d.columns for c in needed):
         return pd.DataFrame()
 
-    d = d.dropna(subset=[c for c in needed if c in d.columns], how="all")
+    d = d.dropna(subset=[c for c in needed if c in d.columns], how="any")
     d = _ensure_datetime_index(d)
+
+    # remove invalid candles
+    if not d.empty and "Close" in d.columns:
+        d = d[pd.to_numeric(d["Close"], errors="coerce").fillna(0) > 0]
+
     return d
 
 
@@ -266,10 +267,8 @@ def _normalize_interval(interval: str) -> str:
 
 def _default_period_for_interval(interval: str, years: int = 5) -> str:
     itv = _normalize_interval(interval)
-
     if itv in _INTRADAY_LIMITS:
         return _INTRADAY_LIMITS[itv]
-
     if years and years >= 5:
         return "5y"
     if years and years >= 2:
@@ -327,7 +326,7 @@ def fetch_google_finance_snapshot(symbol: str) -> Dict[str, Any]:
     ticker = norm.replace(".SR", "").replace("^", "")
     url = f"https://www.google.com/finance/quote/{ticker}:TADAWUL"
 
-    r = _http_get(url, timeout=5, retries=1)
+    r = _http_get(url, timeout=6, retries=1)
     if not r:
         return {}
 
@@ -416,7 +415,7 @@ def fetch_price_from_argaam(symbol: str) -> float:
     ]
 
     for url in url_candidates:
-        r = _http_get(url, timeout=6, retries=1)
+        r = _http_get(url, timeout=7, retries=1)
         if not r:
             continue
         p = _extract_argaam_price_from_html(r.text)
@@ -525,16 +524,8 @@ def get_chart_history(symbol: str, period: str = None, interval: str = "1d", yea
             )
             df = _normalize_ohlcv_columns(df)
 
-            # ✅ Clean invalid rows (candles)
             if df is not None and not df.empty:
-                if "Close" in df.columns:
-                    df = df[pd.to_numeric(df["Close"], errors="coerce").fillna(0) > 0]
-                df = df.dropna(
-                    subset=[c for c in ["Open", "High", "Low", "Close"] if c in df.columns],
-                    how="any",
-                )
-
-            if df is not None and not df.empty:
+                df = df.dropna(subset=[c for c in ["Open", "High", "Low", "Close"] if c in df.columns], how="any")
                 df = _ensure_datetime_index(df)
                 if not df.empty and "Close" in df.columns:
                     return df
@@ -550,6 +541,17 @@ def get_chart_history(symbol: str, period: str = None, interval: str = "1d", yea
 @st.cache_data(ttl=900, show_spinner=False)
 def get_tasi_history(period: str = None, interval: str = "1d") -> pd.DataFrame:
     return get_chart_history("^TASI.SR", period=period, interval=interval, years=5)
+
+
+def get_multi_interval_history(symbol: str, intervals=("1d", "1wk"), years: int = 5) -> Dict[str, pd.DataFrame]:
+    """
+    ✅ إضافي (اختياري):
+    يرجع باكيت بيانات لعدة فريمات (مفيد للـ AI).
+    """
+    out = {}
+    for itv in intervals:
+        out[str(itv)] = get_chart_history(symbol, period=None, interval=str(itv), years=years)
+    return out
 
 
 def get_relative_strength_vs_tasi(symbol: str, period: str = None, interval: str = "1d") -> Dict[str, Any]:
@@ -618,6 +620,11 @@ def get_relative_strength_vs_tasi(symbol: str, period: str = None, interval: str
 
 @st.cache_data(ttl=120, show_spinner=False)
 def fetch_batch_data(symbols_list: list):
+    """
+    تحسينات:
+    - يقلل الضغط على yf.Tickers
+    - يضمن always mapping variants
+    """
     results = {}
     if not symbols_list:
         return results
@@ -628,6 +635,7 @@ def fetch_batch_data(symbols_list: list):
 
     yahoo_data_by_norm = {}
 
+    # ✅ best-effort batch
     try:
         if len(clean_syms) == 1:
             sym = clean_syms[0]
@@ -687,6 +695,7 @@ def fetch_batch_data(symbols_list: list):
             except Exception:
                 pass
 
+        # ✅ Argaam fallback
         if price <= 0:
             p2 = fetch_price_from_argaam(raw_sym)
             if _is_reasonable_price(p2):
@@ -707,6 +716,7 @@ def fetch_batch_data(symbols_list: list):
 
         results[raw_sym] = res_entry
 
+        # variants mapping
         for v in _symbol_variants(raw_sym):
             results.setdefault(v, res_entry)
 
