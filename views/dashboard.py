@@ -20,9 +20,15 @@ def view_dashboard(fin):
     total_assets = float(fin.get("market_val_open", 0)) + float(fin.get("cash", 0))
     cash_pct = (float(fin.get("cash", 0)) / total_assets * 100) if total_assets else 0
 
+    # قد يرجع None إذا كان محرك المخاطر غير جاهز/حدث خطأ
     risk_score = calculate_portfolio_risk_score(df, cash_pct)
-    risk_color = "success" if risk_score < 40 else "danger" if risk_score > 70 else "neutral"
-    risk_label = "منخفضة" if risk_score < 40 else "عالية" if risk_score > 70 else "متوسطة"
+    if risk_score is None:
+        risk_score = 0
+        risk_color = "neutral"
+        risk_label = "غير متاح"
+    else:
+        risk_color = "success" if risk_score < 40 else "danger" if risk_score > 70 else "neutral"
+        risk_label = "منخفضة" if risk_score < 40 else "عالية" if risk_score > 70 else "متوسطة"
 
     c_tasi, c_risk = st.columns([3, 1])
     with c_tasi:
@@ -43,27 +49,30 @@ def view_dashboard(fin):
     with c_risk:
         render_kpi(f"المخاطرة ({risk_label})", f"{risk_score}/100", risk_color, "🛡️")
 
-    c1, c2, c3, c4 = st.columns(4)
+    # -------------------------------
+    # نظرة عامة (أوضح وأقل ازدحام)
+    # -------------------------------
     total_pl = float(fin.get("unrealized_pl", 0)) + float(fin.get("realized_pl", 0))
-    with c1:
-        render_kpi(f"الكاش ({cash_pct:.1f}%)", safe_fmt(fin.get("cash", 0)), "blue", "💵")
-    with c2:
-        render_kpi("صافي الإيداعات", safe_fmt(fin.get("total_deposited", 0) - fin.get("total_withdrawn", 0)), "neutral", "🏗️")
-    with c3:
+    m1, m2, m3, m4 = st.columns(4)
+    with m1:
         render_kpi("إجمالي الأصول", safe_fmt(total_assets), "neutral", "🏦")
-    with c4:
+    with m2:
+        render_kpi("القيمة السوقية", safe_fmt(fin.get("market_val_open", 0)), "blue", "📊")
+    with m3:
+        render_kpi(f"الكاش ({cash_pct:.1f}%)", safe_fmt(fin.get("cash", 0)), "blue", "💵")
+    with m4:
         render_kpi("صافي الربح الكلي", safe_fmt(total_pl), "success" if total_pl >= 0 else "danger", "📈")
 
+    # تفاصيل إضافية داخل Expander بدل تشتيت الشاشة الرئيسية
+    with st.expander("تفاصيل المراكز المفتوحة", expanded=False):
+        open_pct = (float(fin.get("unrealized_pl", 0)) / float(fin.get("cost_open", 0)) * 100) if float(fin.get("cost_open", 0)) else 0
+        d1, d2, d3, d4 = st.columns(4)
+        with d1: render_kpi("التكلفة", safe_fmt(fin.get("cost_open", 0)), "neutral")
+        with d2: render_kpi("الربح الورقي", safe_fmt(fin.get("unrealized_pl", 0)), "success" if float(fin.get("unrealized_pl", 0)) >= 0 else "danger")
+        with d3: render_kpi("النمو", f"{open_pct:.2f}%", "success" if open_pct >= 0 else "danger")
+        with d4: render_kpi("صافي الإيداعات", safe_fmt(fin.get("total_deposited", 0) - fin.get("total_withdrawn", 0)), "neutral", "🏗️")
+
     st.markdown("---")
-
-    o1, o2, o3, o4 = st.columns(4)
-    open_pct = (float(fin.get("unrealized_pl", 0)) / float(fin.get("cost_open", 0)) * 100) if float(fin.get("cost_open", 0)) else 0
-    with o1: render_kpi("التكلفة", safe_fmt(fin.get("cost_open", 0)), "neutral")
-    with o2: render_kpi("القيمة السوقية", safe_fmt(fin.get("market_val_open", 0)), "blue")
-    with o3: render_kpi("الربح الورقي", safe_fmt(fin.get("unrealized_pl", 0)), "success" if float(fin.get("unrealized_pl", 0)) >= 0 else "danger")
-    with o4: render_kpi("النمو", f"{open_pct:.2f}%", "success" if open_pct >= 0 else "danger")
-
-    st.markdown("<div style='margin-bottom: 25px;'></div>", unsafe_allow_html=True)
 
     if not df.empty:
         status = _safe_status_series(df)
@@ -75,12 +84,12 @@ def view_dashboard(fin):
     else:
         closed_cost = closed_sales = closed_pl = closed_pct = 0
 
-    st.markdown("##### 📜 ملخص الصفقات المنفذة (Executed)")
-    x1, x2, x3, x4 = st.columns(4)
-    with x1: render_kpi("رأس المال المسترد", safe_fmt(closed_cost), "neutral", "↩️")
-    with x2: render_kpi("السيولة العائدة", safe_fmt(closed_sales), "blue", "📥")
-    with x3: render_kpi("الربح المحقق", safe_fmt(closed_pl), "success" if closed_pl >= 0 else "danger", "✅")
-    with x4: render_kpi("العائد المحقق", f"{closed_pct:.2f}%", "success" if closed_pct >= 0 else "danger", "٪")
+    with st.expander("📜 ملخص الصفقات المنفذة (Executed)", expanded=False):
+        x1, x2, x3, x4 = st.columns(4)
+        with x1: render_kpi("رأس المال المسترد", safe_fmt(closed_cost), "neutral", "↩️")
+        with x2: render_kpi("السيولة العائدة", safe_fmt(closed_sales), "blue", "📥")
+        with x3: render_kpi("الربح المحقق", safe_fmt(closed_pl), "success" if closed_pl >= 0 else "danger", "✅")
+        with x4: render_kpi("العائد المحقق", f"{closed_pct:.2f}%", "success" if closed_pct >= 0 else "danger", "٪")
 
     st.markdown("---")
 
