@@ -29,7 +29,8 @@ def render_app_header(
     subtitle: str = "منصة تحليل الأسهم — مالي، فني، كلاسيكي، وإدارة مخاطر",
     logo_full_path: str = "assets/logo_full.png",
     logo_mark_path: str = "assets/logo_mark.png",
-    show_in_sidebar: bool = True,
+    # ⚠️ السايدبار ملغي من التطبيق بالكامل
+    show_in_sidebar: bool = False,
 ):
     """Render a lightweight, professional header.
 
@@ -37,19 +38,8 @@ def render_app_header(
     - Never raises (fail-safe)
     """
     try:
-        # Sidebar mark
-        if show_in_sidebar:
-            b64m = _img_to_base64(logo_mark_path)
-            if b64m:
-                with st.sidebar:
-                    st.markdown(
-                        f"""
-                        <div style='display:flex;justify-content:center;padding:6px 0 12px 0;'>
-                          <img src='data:image/png;base64,{b64m}' style='width:110px;height:auto;'/>
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
-                    )
+        # Sidebar is removed: keep argument for backward compatibility, but do nothing.
+        _ = show_in_sidebar
 
         # Main header
         b64 = _img_to_base64(logo_full_path)
