@@ -159,8 +159,22 @@ def _render_quick_summary(sym: str, ai_data: dict, tf_label: str):
 
 
 def _render_evidence_risks(ai_data: dict, compact: bool = False):
-    ev = _as_list(ai_data.get("top_evidence", []))
-    rk = _as_list(ai_data.get("top_risks", []))
+    # Dedup مع الحفاظ على الترتيب لتقليل التكرارات وإظهار المعلومة بوضوح
+    def _dedup(xs: list) -> list:
+        out, seen = [], set()
+        for it in xs:
+            s = str(it).strip()
+            if not s:
+                continue
+            key = s.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(s)
+        return out
+
+    ev = _dedup(_as_list(ai_data.get("top_evidence", [])))
+    rk = _dedup(_as_list(ai_data.get("top_risks", [])))
     lim = 4 if compact else 10
 
     a, b = st.columns(2)
@@ -170,8 +184,7 @@ def _render_evidence_risks(ai_data: dict, compact: bool = False):
         if not ev:
             st.caption("لا توجد أدلة مسجلة.")
         else:
-            for x in ev[:lim]:
-                st.write(f"- ✅ {x}")
+            st.markdown("\n".join([f"- ✅ {x}" for x in ev[:lim]]))
         st.markdown("</div>", unsafe_allow_html=True)
 
     with b:
@@ -180,8 +193,7 @@ def _render_evidence_risks(ai_data: dict, compact: bool = False):
         if not rk:
             st.caption("لا توجد مخاطر مسجلة.")
         else:
-            for x in rk[:lim]:
-                st.write(f"- ⚠️ {x}")
+            st.markdown("\n".join([f"- ⚠️ {x}" for x in rk[:lim]]))
         st.markdown("</div>", unsafe_allow_html=True)
 
 
