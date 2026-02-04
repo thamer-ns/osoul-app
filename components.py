@@ -42,11 +42,9 @@ def render_app_header(
         _ = show_in_sidebar
 
         # Main header
-        b64 = _img_to_base64(logo_mark_path)
-        if b64:
-            logo_html = f"<img class='os-app-logo' src='data:image/png;base64,{b64}' alt='logo'/>"
-        else:
-            logo_html = ""
+        # ⚠️ بناءً على طلبك: إلغاء أيقونة (logo_mark) نهائيًا.
+        # نُبقي خيار تمرير المسار للتماسك الخلفي فقط.
+        logo_html = ""
 
         st.markdown(
             f"""
@@ -515,7 +513,15 @@ def render_ticker_card(symbol, name, price, change):
 # 📋 Custom Table
 # ============================================================
 
-def render_custom_table(df, columns_config, *args, **kwargs):
+def render_custom_table(
+    df,
+    columns_config=None,
+    *,
+    key=None,
+    use_container_width: bool = True,
+    height=None,
+    **_kwargs,
+):
     """
     columns_config يدعم شكلين:
     1) القديم: (col_key, label, col_type)
@@ -526,9 +532,17 @@ def render_custom_table(df, columns_config, *args, **kwargs):
       - money / percent / colorful / badge / date
       - text / number / bool / auto / link
     """
+    # NOTE:
+    # - بعض الصفحات تستدعي هذه الدالة بنفس بارامترات Streamlit مثل (key/use_container_width/height).
+    #   نحن نقبلها هنا حتى لا يتعطل التطبيق، لأنها لا تؤثر على HTML table الحالي.
+    # - columns_config لو لم يُمرر سنحاول توليده تلقائياً من أعمدة الـ DataFrame.
+
     if df is None or df.empty:
         st.info("📭 لا توجد بيانات متاحة")
         return
+
+    if columns_config is None:
+        columns_config = [(c, c, "auto") for c in df.columns]
 
     html_out = '<div style="overflow-x:auto;"><table class="finance-table"><thead><tr>'
 
