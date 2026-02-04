@@ -1,6 +1,18 @@
 # views/navbar.py
 import streamlit as st
 
+import base64
+from pathlib import Path
+
+
+def _logo_data_uri(rel_path: str = "assets/logo_mark.png") -> str:
+    """Inline logo as data URI (works on Streamlit Cloud)."""
+    p = Path(rel_path)
+    if not p.exists():
+        return ""
+    b64 = base64.b64encode(p.read_bytes()).decode("utf-8")
+    return f"data:image/png;base64,{b64}"
+
 # =========================================================
 # ✅ هذه المفاتيح MUST تطابق الراوتر في views/__init__.py
 # =========================================================
@@ -102,31 +114,29 @@ def render_navbar():
     # -------------------------------
     # Brand header (خفيف)
     # -------------------------------
-    st.markdown(
-        """
-        <div style="
-            position: sticky; top: 0; z-index: 999;
-            background: #ffffffcc;
-            backdrop-filter: blur(8px);
-            border-bottom: 1px solid rgba(15,23,42,0.10);
-            padding: 10px 0 12px 0;
-            margin: -10px 0 12px 0;
-        ">
-          <div style="max-width:1280px;margin:0 auto;padding:0 18px;display:flex;align-items:center;gap:10px;">
+    logo_uri = _logo_data_uri("assets/logo_mark.png")
+    # المطلوب: إظهار الشعار فقط (بدون أي نص إضافي فوق شريط الأيقونات)
+    if logo_uri:
+        st.markdown(
+            f"""
             <div style="
-                width:36px;height:36px;border-radius:12px;
-                background: linear-gradient(135deg,#0B57D0,#059669);
-                box-shadow: 0 10px 25px rgba(15,23,42,0.10);
-            "></div>
-            <div>
-              <div style="font-weight:900;font-size:16px;line-height:1;">أصولي</div>
-              <div style="font-size:12px;color:#64748B;font-weight:800;line-height:1.1;">لوحة التحليل والاستثمار</div>
+                position: sticky; top: 0; z-index: 999;
+                background: #ffffffcc;
+                backdrop-filter: blur(8px);
+                border-bottom: 1px solid rgba(15,23,42,0.10);
+                padding: 10px 0 12px 0;
+                margin: -10px 0 12px 0;
+            ">
+              <div style="max-width:1280px;margin:0 auto;padding:0 18px;display:flex;align-items:center;justify-content:flex-end;">
+                <img src="{logo_uri}" alt="OSOOLI" style="height:64px;width:auto;" />
+              </div>
             </div>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        # fallback: لا نعرض أي شيء لو الشعار غير موجود
+        pass
 
     # -------------------------------
     # Main nav row
