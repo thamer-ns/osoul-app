@@ -1,4 +1,4 @@
-#views/shared.py
+# views/shared.py
 import streamlit as st
 import pandas as pd
 import plotly.express as px  # موجود لأن views.py كان يستورده (حتى لو ما يُستخدم هنا)
@@ -79,7 +79,9 @@ ai_import_error = None
 AI_ENGINE_VERSION = "unknown"
 AI_ENGINE_NAME = "Osoli AI Engine"
 
+# ✅ هنا التعديل الرئيسي: import مرن + fallback للـ ai_engine_core/reporting.py
 try:
+    # المسار الطبيعي (مثل ملفك)
     from ai_engine import (
         AI_ENGINE_VERSION,
         AI_ENGINE_NAME,
@@ -93,18 +95,33 @@ try:
 except Exception:
     ai_import_error = traceback.format_exc()
 
-    def generate_ai_report(symbol, timeframe="1d"):
-        return {"__error__": "AI Engine import failed", "__trace__": ai_import_error}
+    # ✅ fallback: استخدم محركك الموجود داخل ai_engine_core/reporting.py مباشرة
+    try:
+        from ai_engine_core.config import AI_ENGINE_VERSION, AI_ENGINE_NAME
+    except Exception:
+        AI_ENGINE_VERSION = "unknown"
+        AI_ENGINE_NAME = "Osoli AI Engine"
 
+    try:
+        from ai_engine_core.reporting import generate_ai_report  # الدالة الموجودة في ملفك
+    except Exception:
+        def generate_ai_report(symbol, timeframe="1D"):
+            return {"__error__": "AI Engine import failed", "__trace__": ai_import_error}
+
+    # اختياريات: إذا ما كانت مصدّرة من ai_engine.py
     def calculate_portfolio_risk_score(df, c): return 50
     def run_stress_test(v, df): return {"scenarios": [], "insight": ""}
     def generate_rebalancing_suggestions(df, c): return []
 
-    def save_user_rule(rule_text: str, title: str = None, enabled: int = 1):
-        return {"ok": False, "reason": "AI Engine missing", "trace": ai_import_error}
+    # ✅ User rules fallback
+    try:
+        from ai_engine_core.user_rules import load_user_rules, save_user_rule
+    except Exception:
+        def save_user_rule(rule_text: str, title: str = None, enabled: int = 1):
+            return {"ok": False, "reason": "AI Engine missing", "trace": ai_import_error}
 
-    def load_user_rules(enabled_only=True, max_rows=50):
-        return []
+        def load_user_rules(enabled_only=True, max_rows=50):
+            return []
 
 # ========================================================
 # Helpers (كما في ملفك)
@@ -240,27 +257,35 @@ def _get_chart_history_flex(symbol: str, period: str, interval: str):
 # ✅ AI Helpers + Renderer (كما في ملفك)
 # ========================================================
 
+# ✅ تعديل: نخلي الـ timeframe بصيغة محركك (1D/1W/1M/1H..)
 def _ai_timeframe_normalize(tf: str) -> str:
     t = (tf or "").strip()
     if not t:
-        return "1d"
-    t_low = t.lower()
+        return "1D"
 
-    if t in ["1D", "D", "DAY"]:
-        return "1d"
-    if t in ["1W", "W", "WEEK"]:
-        return "1wk"
-    if t in ["1M", "M", "MONTH"]:
-        return "1mo"
+    u = t.strip().upper()
+    l = t.strip().lower()
 
-    if t_low in ["1d", "day", "daily"]:
-        return "1d"
-    if t_low in ["1wk", "1w", "week", "weekly"]:
-        return "1wk"
-    if t_low in ["1mo", "month", "monthly"]:
-        return "1mo"
+    # Daily/Weekly/Monthly
+    if u in ["1D", "D", "DAY", "DAILY"] or l in ["1d", "day", "daily"]:
+        return "1D"
+    if u in ["1W", "W", "WEEK", "WEEKLY"] or l in ["1wk", "1w", "week", "weekly"]:
+        return "1W"
+    if u in ["1M", "M", "MONTH", "MONTHLY"] or l in ["1mo", "month", "monthly"]:
+        return "1M"
 
-    return t_low
+    # Intraday (لو تبغاه)
+    if u in ["1H", "H", "60M", "60MIN"] or l in ["1h", "60m"]:
+        return "1H"
+    if u in ["30M", "30MIN"] or l in ["30m"]:
+        return "30M"
+    if u in ["15M", "15MIN"] or l in ["15m"]:
+        return "15M"
+    if u in ["5M", "5MIN"] or l in ["5m"]:
+        return "5M"
+
+    # fallback: لو المستخدم كتب شيء غريب، خلّه كما هو لكن Upper
+    return u
 
 def _generate_ai_report_flex(symbol: str, timeframe: str):
     tf = _ai_timeframe_normalize(timeframe)
