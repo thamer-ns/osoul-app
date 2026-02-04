@@ -38,11 +38,27 @@ def _safe_image(path: str, width: Optional[int] = None):
 def _pick_page_icon(default_icon):
     """اختيار أيقونة الصفحة مع fallback لو ما فيه assets."""
     try:
+        # ✅ Prefer user selection (from Settings)
+        chosen = st.session_state.get("ui_logo_mark")
+        if chosen and os.path.exists(chosen):
+            return chosen
+        # ✅ Default asset
         if os.path.exists("assets/logo_mark.png"):
             return "assets/logo_mark.png"
     except Exception:
         pass
     return default_icon
+
+
+def _get_selected_logo(path_default: str, session_key: str) -> str:
+    """Return selected logo path if set and exists; otherwise fallback."""
+    try:
+        chosen = st.session_state.get(session_key)
+        if chosen and os.path.exists(chosen):
+            return chosen
+    except Exception:
+        pass
+    return path_default
 
 st.set_page_config(
     page_title=APP_NAME,
@@ -81,20 +97,22 @@ apply_custom_css()
 # ✅ هيدر/شعار (Fail-safe)
 if render_app_header:
     try:
+        logo_full = st.session_state.get("ui_logo_full") or "assets/logo_full.png"
+        logo_mark = st.session_state.get("ui_logo_mark") or "assets/logo_mark.png"
         render_app_header(
             app_name=APP_NAME,
             subtitle="منصة التحليل الشامل: مالي + فني + كلاسيكي + مخاطر",
-            logo_full_path="assets/logo_full.png",
-            logo_mark_path="assets/logo_mark.png",
+            logo_full_path=logo_full,
+            logo_mark_path=logo_mark,
         )
     except Exception:
         # fallback بسيط
-        _safe_image("assets/logo_full.png", width=240)
+        _safe_image(st.session_state.get("ui_logo_full") or "assets/logo_full.png", width=240)
 else:
-    _safe_image("assets/logo_full.png", width=240)
+    _safe_image(st.session_state.get("ui_logo_full") or "assets/logo_full.png", width=240)
 
 with st.sidebar:
-    _safe_image("assets/logo_mark.png", width=120)
+    _safe_image(st.session_state.get("ui_logo_mark") or "assets/logo_mark.png", width=120)
 
 # ✅ CSS واجهة النتائج (بطاقات/أيقونات) لو موجود
 if apply_ui_css:
