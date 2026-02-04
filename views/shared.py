@@ -15,7 +15,7 @@ from components import (
     safe_fmt,
     inject_component_styles,
     inject_streamlit_ar_i18n,
-    render_osoli_report,
+    render_osoli_report as _render_osoli_report_base,
 )
 
 from analytics import (
@@ -574,7 +574,50 @@ def _render_scenarios(scenarios):
 
         st.markdown("</div>", unsafe_allow_html=True)
 
-def _render_ai_report_readable(rep: dict, show_debug=False, compact=False):
+
+# =========================
+# ✅ NEW UI (Chips/Cards)
+# =========================
+
+def _chip(text: str, tone: str = "neutral"):
+    # يستخدم CSS الموجود في styles.py (.os-chip ودرجات الألوان)
+    cls = {
+        "success": "os-chip-green",
+        "warning": "os-chip-amber",
+        "danger": "os-chip-red",
+        "blue": "os-chip-blue",
+        "neutral": "os-chip-gray",
+    }.get(tone, "os-chip-gray")
+    st.markdown(
+        f'<span class="os-chip {cls}"><span class="mi">insights</span>{text}</span>',
+        unsafe_allow_html=True,
+    )
+
+def _tone_score(score: int) -> str:
+    try:
+        s = int(score)
+    except Exception:
+        return "neutral"
+    return "success" if s >= 70 else "warning" if s >= 40 else "danger"
+
+def _tone_conf(conf: int) -> str:
+    try:
+        c = int(conf)
+    except Exception:
+        return "neutral"
+    return "success" if c >= 70 else "warning" if c >= 40 else "danger"
+
+def _looks_like_html(s: str) -> bool:
+    if not isinstance(s, str):
+        return False
+    t = s.lower()
+    return any(tag in t for tag in ["<div", "<span", "<p", "<br", "</", "style="])
+
+def _render_ai_report_readable(rep: dict, show_debug: bool = False, compact: bool = False):
+    """عرض تقرير المستشار بشكل أجمل/أوضح — بدون تغيير أي بيانات أو منطق.
+    - لا يحذف أي قسم (الأهداف/الأدلة/المخاطر/بوابات المخاطر/السيناريوهات/JSON)
+    - يحسن ترتيب العرض + يضيف بطاقات/Chips باستخدام CSS الموجود لديك.
+    """
     data = _extract_ai(rep)
     if not data.get("ok"):
         st.warning("⚠️ تقرير المستشار غير صالح.")
@@ -585,95 +628,165 @@ def _render_ai_report_readable(rep: dict, show_debug=False, compact=False):
         return
 
     meta = data.get("engine_meta") or {}
-    tf = meta.get("timeframe") or "—"
-    st.caption(f"🧩 {AI_ENGINE_NAME} v{AI_ENGINE_VERSION} • Base Interval: {tf}")
+    tf = meta.get("timeframe") or meta.get("tf") or "—"
 
-    col = data["color"]
+    # ==========================
+    # Hero Card (Recommendation)
+    # ==========================
+    col = data.get("color") or "#667085"
+    rec = str(data.get("recommendation", "—"))
+    strat = str(data.get("strategy", "—"))
+
     st.markdown(
         f"""
-        <div style="
-            border:2px solid {col};
-            border-radius:16px;
-            padding:16px;
-            text-align:center;
-            background: rgba(102,112,133,0.06);
-        ">
-            <div style="font-size:1.4rem; font-weight:900;">{data['recommendation']}</div>
-            <div style="opacity:0.9; margin-top:6px;">{data['strategy']}</div>
+        <div class="os-card" style="border:2px solid {col}; background: linear-gradient(135deg, rgba(102,112,133,0.06), rgba(37,99,235,0.05));">
+          <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;">
+            <div>
+              <div style="font-size:1.45rem;font-weight:950;line-height:1.2;">{rec}</div>
+              <div class="os-muted" style="margin-top:6px;">{strat}</div>
+              <div class="os-muted" style="margin-top:6px;">🧩 {AI_ENGINE_NAME} v{AI_ENGINE_VERSION} • Base Interval: {tf}</div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
+              <span class="os-chip os-chip-blue"><span class="mi">token</span>AI</span>
+              <span class="os-chip os-chip-gray"><span class="mi">timeline</span>{tf}</span>
+            </div>
+          </div>
         </div>
         """,
-        unsafe_allow_html=True
+        unsafe_allow_html=True,
     )
 
-    st.markdown("### 🧠 التقييم والثقة")
-    c1, c2, c3 = st.columns([1, 1, 2])
-    with c1:
-        _badge(
-            f"Score {data['score']}/100",
-            "success" if data["score"] >= 70 else "warning" if data["score"] >= 40 else "danger"
-        )
-    with c2:
-        conf = int(_to_float(data["confidence"], 0) or 0)
-        label = data["confidence_label"]
-        _badge(
-            f"{label} ({conf}%)",
-            "success" if conf >= 70 else "warning" if conf >= 40 else "danger"
-        )
-    with c3:
-        conf = max(0, min(100, int(_to_float(data["confidence"], 0) or 0)))
-        st.progress(conf)
+    # ==========================
+    # KPI Cards
+    # ==========================
+    score = int(_to_float(data.get("score"), 0) or 0)
+    conf = int(_to_float(data.get("confidence"), 0) or 0)
+    conf_label = str(data.get("confidence_label") or "—")
 
-    if data.get("summary_text"):
+    # Chips row
+    st.markdown("<div class='os-card' style='padding:12px;margin-top:10px;'>", unsafe_allow_html=True)
+    _chip(f"Score {score}/100", _tone_score(score))
+    _chip(f"{conf_label} ({conf}%)", _tone_conf(conf))
+    st.markdown(
+        "<span class='os-chip os-chip-gray'><span class='mi'>rule</span>اعتمد على الأدلة + بوابات المخاطر</span>",
+        unsafe_allow_html=True,
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # Progress
+    st.progress(max(0, min(100, conf)))
+
+    # ==========================
+    # Summary / Reason
+    # ==========================
+    summary_text = str(data.get("summary_text") or "").strip()
+    if summary_text:
         st.markdown("### 🧾 سبب التوصية")
-        _sum = str(data["summary_text"]).strip()
-
-        # ✅ إصلاح مهم: بعض المحركات ترجع HTML جاهز للعرض
-        # إذا عرضناه بـ st.code بيطلع كود/وسوم خام مثل ما ظهر عندك في الصور.
-        def _looks_like_html(s: str) -> bool:
-            if not isinstance(s, str):
-                return False
-            t = s.lower()
-            return any(tag in t for tag in ["<div", "<span", "<p", "<br", "</", "style="])
-
-        if _looks_like_html(_sum):
-            st.markdown(_sum, unsafe_allow_html=True)
+        st.markdown("<div class='os-card'>", unsafe_allow_html=True)
+        if _looks_like_html(summary_text):
+            st.markdown(summary_text, unsafe_allow_html=True)
         else:
-            st.code(_sum, language="text")
+            # عرض قابل للقراءة (بدون ما يظهر كود كبير)
+            st.markdown(
+                f"<div style='white-space:pre-wrap;line-height:1.8;font-weight:800;color:var(--txt);'>{summary_text}</div>",
+                unsafe_allow_html=True
+            )
+        st.markdown("</div>", unsafe_allow_html=True)
 
-    if any([data.get("entry"), data.get("risk"), data.get("levels"), data.get("targets")]):
+    # ==========================
+    # Entry / Risk / Levels / Targets
+    # ==========================
+    has_plan = any([data.get("entry"), data.get("risk"), data.get("levels"), data.get("targets")])
+    if has_plan:
+        st.markdown("### 🧭 خطة الدخول والمخاطر")
         _render_entry_risk_levels(
             data.get("entry") or {},
             data.get("risk") or {},
             data.get("levels") or {},
-            data.get("score") or 0
+            score,
         )
+
         st.markdown("### 🎯 الأهداف")
         _render_targets(data.get("targets") or [])
 
+    # ==========================
+    # Evidence & Risks
+    # ==========================
     st.markdown("---")
     a, b = st.columns(2)
     with a:
-        _render_bullets("✅ أقوى الأدلة", data["top_evidence"], icon="✅", limit=(3 if compact else 8))
-    with b:
-        _render_bullets("⚠️ أكبر المخاطر", data["top_risks"], icon="⚠️", limit=(3 if compact else 8))
+        st.markdown("<div class='os-card'>", unsafe_allow_html=True)
+        st.markdown("<div class='os-card-title'>✅ أقوى الأدلة</div>", unsafe_allow_html=True)
+        ev = _safe_list(data.get("top_evidence", []))
+        if not ev:
+            st.caption("لا يوجد")
+        else:
+            lim = 3 if compact else 10
+            for x in ev[:lim]:
+                st.write(f"- ✅ {x}")
+        st.markdown("</div>", unsafe_allow_html=True)
 
+    with b:
+        st.markdown("<div class='os-card'>", unsafe_allow_html=True)
+        st.markdown("<div class='os-card-title'>⚠️ أكبر المخاطر</div>", unsafe_allow_html=True)
+        rk = _safe_list(data.get("top_risks", []))
+        if not rk:
+            st.caption("لا يوجد")
+        else:
+            lim = 3 if compact else 10
+            for x in rk[:lim]:
+                st.write(f"- ⚠️ {x}")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    # ==========================
+    # Risk gates
+    # ==========================
     st.markdown("---")
     st.markdown("### 🛡️ بوابات المخاطر")
-    _render_risk_gates(data["risk_gates"])
+    _render_risk_gates(data.get("risk_gates") or {})
 
+    # ==========================
+    # Scenarios
+    # ==========================
     st.markdown("---")
     st.markdown("### 🧭 السيناريوهات المقترحة")
-    _render_scenarios(data["scenarios"])
+    _render_scenarios(data.get("scenarios") or [])
 
-    notes = data.get("notes", [])
-    if notes:
+    # Notes
+    notes = _safe_list(data.get("notes", []))
+    if notes and not compact:
         with st.expander("🧾 ملاحظات إضافية"):
-            for x in notes[:25]:
+            for x in notes[:30]:
                 st.write(f"- {x}")
 
+    # Raw JSON
     if show_debug:
         with st.expander("🧩 عرض التقرير الخام (JSON)"):
-            st.json(data["raw"])
+            st.json(data.get("raw", rep))
+
+
+def render_osoli_report(rep: dict, title: str = "🤖 تقرير أصولي", *args, **kwargs):
+    """واجهة بطاقات (Osoli) محسّنة — مع الحفاظ على العرض الأصلي الموجود في components.py.
+    - بشكل افتراضي: يعرض نسخة محسّنة (بطاقات + Chips)
+    - ثم يوفر Expander لعرض النسخة الأصلية (عدم فقد أي ميزة/تفصيل سابق)
+    """
+    st.markdown(f"### {title}")
+
+    # نسخة محسّنة تعتمد على نفس parse (_extract_ai) — لا تغيير في البيانات
+    try:
+        _render_ai_report_readable(rep, show_debug=False, compact=False)
+    except Exception as e:
+        st.warning("⚠️ تعذر عرض البطاقات المحسّنة، سيتم استخدام العرض الأصلي.")
+        st.code(str(e))
+
+    # النسخة الأصلية (كما هي) لضمان عدم فقد أي تفاصيل/مزايا
+    with st.expander("🧩 عرض أصولي (النسخة الأصلية)"):
+        try:
+            return _render_osoli_report_base(rep, title=title, *args, **kwargs)
+        except TypeError:
+            # بعض النسخ لا تدعم title كوسيط
+            return _render_osoli_report_base(rep, *args, **kwargs)
+
 
 # ========================================================
 # TradingView-like Plot (كما في ملفك)
