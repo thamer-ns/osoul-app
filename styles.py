@@ -22,7 +22,7 @@ def apply_custom_css():
         :root{
             --txt: #0F172A;
             --muted: #64748B;
-            --primary: #0B57D0;      /* أزرق أوضح */
+            --primary: #0B57D0;
             --primary2: #083A9B;
             --border: rgba(15,23,42,0.12);
             --border2: rgba(15,23,42,0.18);
@@ -33,11 +33,11 @@ def apply_custom_css():
             --green: #059669;
             --red: #DC2626;
             --blue: #2563EB;
+            --amber: #F59E0B;
         }
 
         /* =====================================================
-           Base RTL + Cairo
-           (بدون كسر الأيقونات)
+           Base RTL + Cairo (بدون كسر الأيقونات)
            ===================================================== */
         html, body, [class*="css"], p, div, label, input, button, textarea, h1,h2,h3,h4,h5,h6 {
             font-family: 'Cairo', sans-serif !important;
@@ -81,7 +81,7 @@ def apply_custom_css():
         .material-symbols-rounded,
         .material-symbols-sharp,
         [class*="material-symbols"] {
-            font-family: 'Material Symbols Outlined', 'Material Symbols Rounded', 'Material Symbols Sharp' !important;
+            font-family: 'Material Symbols Rounded', 'Material Symbols Outlined', 'Material Symbols Sharp' !important;
             direction: ltr !important;
             text-align: center !important;
             font-weight: normal !important;
@@ -128,7 +128,7 @@ def apply_custom_css():
         }
 
         /* =====================================================
-           KPI Cards (أقوى/أوضح مثل قبل)
+           KPI Cards
            ===================================================== */
         .kpi-card {
             background: var(--card-bg) !important;
@@ -151,7 +151,7 @@ def apply_custom_css():
             left: -10px;
             bottom: -18px;
             font-size: 5.2rem;
-            opacity: 0.10;              /* ✅ كان منخفض—رفعناه شوي */
+            opacity: 0.10;
             transform: rotate(12deg);
             transition: all 0.35s ease;
             color: var(--txt);
@@ -169,7 +169,7 @@ def apply_custom_css():
             margin-bottom: 6px !important;
         }
         .kpi-value{
-            font-size: 2.05rem !important;   /* ✅ أوضح */
+            font-size: 2.05rem !important;
             font-weight: 950 !important;
             color: var(--txt) !important;
             direction: ltr !important;
@@ -178,50 +178,7 @@ def apply_custom_css():
         }
 
         /* =====================================================
-           TASI Card (أوضح + Badge أجمل)
-           ===================================================== */
-        .tasi-card{
-            background: linear-gradient(135deg, var(--primary) 0%, var(--primary2) 100%) !important;
-            border-radius: 22px !important;
-            padding: 26px !important;
-            color: #fff !important;
-            display:flex;
-            justify-content:space-between;
-            align-items:center;
-            box-shadow: 0 16px 38px rgba(11,87,208,0.28) !important;
-            margin-bottom: 22px !important;
-            border: 1px solid rgba(255,255,255,0.14) !important;
-        }
-        .tasi-card *{
-            color:#fff !important;
-        }
-        /* لو عندك داخلها رقم كبير اعطه بروز */
-        .tasi-card .tasi-number{
-            font-size: 3.2rem !important;
-            font-weight: 950 !important;
-            direction:ltr !important;
-            text-align:left !important;
-            letter-spacing: 0.5px;
-            text-shadow: 0 2px 10px rgba(0,0,0,0.12);
-        }
-        .tasi-card .tasi-sub{
-            opacity: 0.92;
-            font-weight: 800;
-        }
-        .tasi-card .tasi-badge{
-            display:inline-flex;
-            align-items:center;
-            gap:8px;
-            padding: 6px 12px;
-            border-radius: 999px;
-            background: rgba(255,255,255,0.18);
-            border: 1px solid rgba(255,255,255,0.20);
-            font-weight: 900;
-            direction:ltr;
-        }
-
-        /* =====================================================
-           Tables (أوضح)
+           Tables (أوضح) - HTML Tables (مثل جدول الصفقات)
            ===================================================== */
         .finance-table{
             width: 100%;
@@ -259,26 +216,9 @@ def apply_custom_css():
         .txt-red   { color: var(--red) !important; font-weight: 900 !important; }
         .txt-blue  { color: var(--blue) !important; font-weight: 900 !important; }
 
-        .badge-open{
-            background: #DCFCE7;
-            color: #166534;
-            padding: 4px 12px;
-            border-radius: 999px;
-            font-size: 0.78rem;
-            font-weight: 900;
-            border: 1px solid rgba(5,150,105,0.20);
-        }
-        .badge-closed{
-            background: #F3F4F6;
-            color: #374151;
-            padding: 4px 12px;
-            border-radius: 999px;
-            font-size: 0.78rem;
-            font-weight: 900;
-            border: 1px solid rgba(55,65,81,0.14);
-        }
-
-        /* Buttons */
+        /* =====================================================
+           Buttons
+           ===================================================== */
         div.stButton > button{
             width: 100%;
             border-radius: 14px;
@@ -300,8 +240,6 @@ def apply_custom_css():
         /* =====================================================
            ✅ Report UI (Cards / Chips / Better JSON)
            ===================================================== */
-
-        /* Grid container لعرض بطاقات جنب بعض */
         .os-grid{
             display:grid;
             grid-template-columns: repeat(12, 1fr);
@@ -313,12 +251,10 @@ def apply_custom_css():
         .os-col-6{ grid-column: span 6; }
         .os-col-4{ grid-column: span 4; }
         .os-col-3{ grid-column: span 3; }
-
         @media (max-width: 900px){
             .os-col-6,.os-col-4,.os-col-3{ grid-column: span 12; }
         }
 
-        /* Card */
         .os-card{
             background: var(--card-bg);
             border: 1px solid var(--border2);
@@ -340,7 +276,6 @@ def apply_custom_css():
             font-size: 0.92rem;
         }
 
-        /* Chips / Badges */
         .os-chip{
             display:inline-flex;
             align-items:center;
@@ -359,14 +294,12 @@ def apply_custom_css():
             font-size: 18px;
             line-height: 1;
         }
-
         .os-chip-green{ background:#DCFCE7; border-color: rgba(5,150,105,0.25); color:#166534; }
         .os-chip-red{ background:#FEE2E2; border-color: rgba(220,38,38,0.25); color:#991B1B; }
         .os-chip-blue{ background:#DBEAFE; border-color: rgba(37,99,235,0.25); color:#1E40AF; }
         .os-chip-gray{ background:#F3F4F6; border-color: rgba(55,65,81,0.18); color:#374151; }
         .os-chip-amber{ background:#FEF3C7; border-color: rgba(245,158,11,0.28); color:#92400E; }
 
-        /* Key/Value rows */
         .os-kv{
             display:flex;
             justify-content:space-between;
@@ -401,60 +334,94 @@ def apply_custom_css():
         }
 
         /* =====================================================
-           Mobile tweaks (مثل صورك على الجوال)
+           ✅ GLOBAL TABLE THEME (الحل لمشكلتك)
+           كل جداول Streamlit الحالية + المستقبلية (st.dataframe / st.table)
+           بتصير مثل جدول الصفقات
+           ===================================================== */
+
+        /* الحاوية */
+        div[data-testid="stDataFrame"],
+        div[data-testid="stTable"]{
+            border: 1px solid var(--border2) !important;
+            border-radius: 14px !important;
+            overflow: hidden !important;
+            background: #fff !important;
+            box-shadow: 0 8px 18px rgba(15,23,42,0.06) !important;
+        }
+
+        /* رأس الجدول */
+        div[data-testid="stDataFrame"] thead tr th,
+        div[data-testid="stTable"] thead tr th{
+            background: #F1F5FF !important;
+            color: #1E40AF !important;
+            font-weight: 900 !important;
+            border-bottom: 2px solid rgba(37,99,235,0.18) !important;
+            text-align: right !important;
+            white-space: nowrap !important;
+        }
+
+        /* خلايا */
+        div[data-testid="stDataFrame"] tbody tr td,
+        div[data-testid="stTable"] tbody tr td{
+            color: #0F172A !important;
+            font-weight: 700 !important;
+            border-bottom: 1px solid rgba(15,23,42,0.08) !important;
+            text-align: right !important;
+            white-space: nowrap !important;
+        }
+
+        /* Hover */
+        div[data-testid="stDataFrame"] tbody tr:hover td,
+        div[data-testid="stTable"] tbody tr:hover td{
+            background: rgba(37,99,235,0.04) !important;
+        }
+
+        /* إزالة حدود داخلية مزعجة */
+        div[data-testid="stDataFrame"] *{ border-color: rgba(15,23,42,0.08) !important; }
+
+        /* =====================================================
+           ✅ Score Ring (دائري) - للاستخدام داخل shared.py
+           ===================================================== */
+        .os-ring{
+            width: 98px;
+            height: 98px;
+            border-radius: 50%;
+            display:grid;
+            place-items:center;
+            position:relative;
+            background: conic-gradient(var(--ring-color) calc(var(--p)*1%), rgba(15,23,42,0.10) 0);
+        }
+        .os-ring::before{
+            content:"";
+            width: 74px;
+            height: 74px;
+            border-radius: 50%;
+            background: #fff;
+            border: 1px solid rgba(15,23,42,0.10);
+            position:absolute;
+        }
+        .os-ring .os-ring-text{
+            position:relative;
+            font-weight: 950;
+            direction:ltr;
+            text-align:center;
+        }
+        .os-ring .os-ring-sub{
+            position:relative;
+            font-size: 0.78rem;
+            font-weight: 900;
+            color: var(--muted);
+            margin-top: 2px;
+        }
+
+        /* =====================================================
+           Mobile tweaks
            ===================================================== */
         @media (max-width: 900px){
             .kpi-card{ padding: 18px 16px !important; border-radius: 18px !important; }
             .kpi-value{ font-size: 1.85rem !important; }
-            .tasi-card{ padding: 20px !important; border-radius: 18px !important; }
-            .tasi-card .tasi-number{ font-size: 2.6rem !important; }
         }
         </style>
         """,
         unsafe_allow_html=True
     )
-
-
-# =====================================================
-# ✅ UI Polish (اختياري)
-# =====================================================
-# هذا CSS إضافي "فوق" شغلك الحالي بدون ما يغيّره.
-# تقدر تناديه من app.py كالتالي (اختياري):
-#   try:
-#       from styles import apply_ui_css
-#       apply_ui_css()
-#   except Exception:
-#       pass
-
-
-# ✅ UI Polish (اختياري) — إضافة فوق شغلك
-def apply_ui_css():
-    st.markdown(
-        """
-        <style>
-        /* تحديد عرض المحتوى في المنتصف + تقليل الفراغات */
-        section.main > div{
-            max-width: 1280px;
-            margin-left: auto;
-            margin-right: auto;
-            padding-left: 18px;
-            padding-right: 18px;
-        }
-        .block-container{
-            padding-top: 1.4rem !important;
-            padding-bottom: 2.0rem !important;
-        }
-        @media (max-width: 900px){
-            section.main > div{
-                padding-left: 12px;
-                padding-right: 12px;
-            }
-            .block-container{
-                padding-top: 1.0rem !important;
-            }
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
