@@ -50,15 +50,11 @@ def view_settings():
             # ---------------------------------
             # ✅ Logo preset selector (Try/Preview)
             # ---------------------------------
+            # ملاحظة: "logo_tile.png" لم يعد مستخدماً (كان يسبب تحذير بأن الأصول غير موجودة)
             presets = {
                 "افتراضي": {
                     "full": "assets/logo_full.png",
                     "mark": "assets/logo_mark.png",
-                    "app":  "assets/logo_app.png",
-                },
-                "دائري": {
-                    "full": "assets/logo_full.png",
-                    "mark": "assets/logo_tile.png",
                     "app":  "assets/logo_app.png",
                 },
                 "شفاف": {
@@ -108,10 +104,12 @@ def view_settings():
                         st.caption("logo_app.png")
                         st.image(LOGO_APP_PATH, use_container_width=True)
 
-                st.info(
-                    "ضع ملفات الشعار داخل مجلد assets/ بالأسماء التالية ليتم ربطها تلقائياً: "
-                    "logo_full.png و logo_mark.png و logo_app.png"
-                )
+                # تنبيه إرشادي فقط إذا كانت بعض الملفات ناقصة
+                if not (os.path.exists(LOGO_FULL_PATH) and os.path.exists(LOGO_MARK_PATH) and os.path.exists(LOGO_APP_PATH)):
+                    st.info(
+                        "ضع ملفات الشعار داخل مجلد assets/ بالأسماء التالية ليتم ربطها تلقائياً: "
+                        "logo_full.png و logo_mark.png و logo_app.png"
+                    )
             else:
                 st.warning(
                     "لا يوجد شعار داخل assets/ حالياً. "
