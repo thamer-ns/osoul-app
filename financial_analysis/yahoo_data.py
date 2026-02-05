@@ -34,6 +34,11 @@ _YF_SESSION = None
 # Last Yahoo fetch diagnostics (best-effort)
 _LAST_YAHOO_STATUS = None  # type: ignore
 _LAST_YAHOO_ERROR = None  # type: ignore
+# Last Yahoo fetch metadata (best-effort)
+_LAST_YAHOO_TS = None  # type: ignore
+_LAST_YAHOO_URL = None  # type: ignore
+_LAST_YAHOO_HEADERS = None  # type: ignore
+
 
 
 def _yf_session():
@@ -54,12 +59,19 @@ def _yf_session():
     return _YF_SESSION
 
 
-def _http_get_json(url: str, timeout: int = 8, retries: int = 2, sleep: float = 0.6) -> dict:
-    """Best-effort GET JSON with basic retry/backoff and diagnostics."""
-    global _LAST_YAHOO_STATUS, _LAST_YAHOO_ERROR
+def _http_get_json(url: str, timeout: int = 10, retries: int = 3, sleep: float = 0.8) -> dict:
+    """Best-effort GET JSON with retry/backoff + richer diagnostics.
+
+    This endpoint is unofficial; Yahoo may temporarily rate-limit (429),
+    block (401/403), or return HTML instead of JSON.
+    """
+    global _LAST_YAHOO_STATUS, _LAST_YAHOO_ERROR, _LAST_YAHOO_TS, _LAST_YAHOO_URL, _LAST_YAHOO_HEADERS
 
     _LAST_YAHOO_STATUS = None
     _LAST_YAHOO_ERROR = None
+    _LAST_YAHOO_URL = url
+    _LAST_YAHOO_HEADERS = None
+    _LAST_YAHOO_TS = datetime.now().isoformat(timespec="seconds")
 
     if not requests:
         _LAST_YAHOO_ERROR = "requests not available"
@@ -79,38 +91,57 @@ def _http_get_json(url: str, timeout: int = 8, retries: int = 2, sleep: float = 
         try:
             r = ses.get(url, timeout=timeout)
             last_status = r.status_code
+            _LAST_YAHOO_STATUS = r.status_code
+            _LAST_YAHOO_HEADERS = {
+                "content-type": r.headers.get("content-type"),
+                "retry-after": r.headers.get("retry-after"),
+                "server": r.headers.get("server"),
+            }
 
+            text_body = getattr(r, "text", "") or ""
+
+            # 200 but not JSON? (often an HTML block/challenge page)
             if r.status_code == 200:
+                ctype = (r.headers.get("content-type") or "").lower()
+                if "json" not in ctype and (text_body.lstrip().startswith("<") or "html" in ctype):
+                    snippet = _safe_snippet(text_body)
+                    last_err = f"Non-JSON response (possible block). content-type={ctype}. Snippet: {snippet}"
+                    _LAST_YAHOO_ERROR = last_err
+                    return {}
                 try:
                     data = r.json() or {}
-                    _LAST_YAHOO_STATUS = 200
                     return data
                 except Exception as e:
-                    last_err = f"Invalid JSON response: {e}"
-                    _LAST_YAHOO_STATUS = 200
+                    snippet = _safe_snippet(text_body)
+                    last_err = f"Invalid JSON response: {e}. Snippet: {snippet}"
                     _LAST_YAHOO_ERROR = last_err
                     return {}
 
             # Common blocking / auth statuses
             if r.status_code in (401, 403):
-                snippet = _safe_snippet(getattr(r, 'text', None))
+                snippet = _safe_snippet(text_body)
                 last_err = f"Access blocked by Yahoo (HTTP {r.status_code}). Snippet: {snippet}"
-                _LAST_YAHOO_STATUS = r.status_code
                 _LAST_YAHOO_ERROR = last_err
                 return {}
 
             # Transient / rate-limit statuses
-            if r.status_code in (429, 503):
-                snippet = _safe_snippet(getattr(r, 'text', None))
+            if r.status_code in (429, 503, 502, 504):
+                snippet = _safe_snippet(text_body)
                 last_err = f"Transient Yahoo error (HTTP {r.status_code}). Snippet: {snippet}"
-                _LAST_YAHOO_STATUS = r.status_code
                 _LAST_YAHOO_ERROR = last_err
-                time.sleep(sleep * (2 if r.status_code == 429 else 1))
+
+                # Respect Retry-After if present; otherwise exponential backoff
+                ra = r.headers.get("retry-after")
+                try:
+                    wait_s = float(ra) if ra else (sleep * (2 ** i))
+                except Exception:
+                    wait_s = sleep * (2 ** i)
+
+                time.sleep(min(wait_s, 12.0))
                 continue
 
-            snippet = _safe_snippet(getattr(r, 'text', None))
+            snippet = _safe_snippet(text_body)
             last_err = f"HTTP {r.status_code}. Snippet: {snippet}"
-            _LAST_YAHOO_STATUS = r.status_code
             _LAST_YAHOO_ERROR = last_err
             return {}
 
@@ -119,8 +150,10 @@ def _http_get_json(url: str, timeout: int = 8, retries: int = 2, sleep: float = 
             _LAST_YAHOO_ERROR = last_err
             log_exception(e, "Yahoo QuoteSummary request failed", level="WARNING")
 
-        if i < retries:
-            time.sleep(sleep)
+            # retry with backoff
+            if i < retries:
+                time.sleep(min(sleep * (2 ** i), 12.0))
+                continue
 
     _LAST_YAHOO_STATUS = last_status
     _LAST_YAHOO_ERROR = last_err
@@ -158,6 +191,17 @@ def _yf_date_str(v) -> str:
         return _safe_date_str(v)
     except Exception:
         return datetime.now().strftime("%Y-%m-%d")
+
+
+def get_last_yahoo_diagnostics() -> Dict[str, Any]:
+    """Return last Yahoo fetch diagnostics (status/error/url/time)."""
+    return {
+        "status": _LAST_YAHOO_STATUS,
+        "error": _LAST_YAHOO_ERROR,
+        "url": _LAST_YAHOO_URL,
+        "ts": _LAST_YAHOO_TS,
+        "headers": _LAST_YAHOO_HEADERS,
+    }
 
 
 def diagnose_quote_summary(symbol: str, modules: List[str] | None = None) -> Dict[str, Any]:
