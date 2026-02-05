@@ -1,5 +1,6 @@
 # financial_analysis/sync.py
 from typing import Tuple, List
+from datetime import datetime
 
 
 try:
@@ -37,7 +38,7 @@ def sync_auto_multi_sources(symbol: str, prefer: str = "yahoo") -> Tuple[bool, s
     try:
         d = fetch_financials_from_argaam(symbol) or {}
         if isinstance(d, dict) and d:
-            dt = d.get("date") or _safe_date_str(symbol)  # (كما هو best-effort)
+            dt = _safe_date_str(d.get("date") or datetime.now().strftime("%Y-12-31"))
             if save_financial_record(symbol, dt, d, "Annual", "Argaam"):
                 saved += 1
                 notes.append("تمت المحاولة من أرقام")
@@ -48,7 +49,7 @@ def sync_auto_multi_sources(symbol: str, prefer: str = "yahoo") -> Tuple[bool, s
         try:
             d2 = fetch_financials_from_google_finance(symbol) or {}
             if isinstance(d2, dict) and d2:
-                dt = d2.get("date") or _safe_date_str(symbol)
+                dt = _safe_date_str(d2.get("date") or datetime.now().strftime("%Y-12-31"))
                 if save_financial_record(symbol, dt, d2, "Annual", "GoogleFinance"):
                     saved += 1
                     notes.append("تمت المحاولة من Google Finance")
