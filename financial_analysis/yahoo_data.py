@@ -11,15 +11,21 @@ from .utils import HEADERS, _safe_date_str
 
 # Web (اختياري)
 try:
-    import requests
-except Exception:
+    import requests  # type: ignore
+except ImportError as e:
     requests = None
+    from osoli_logging import log_exception
+    log_exception(e, "Optional dependency missing: requests", level="WARNING")
 
 
 # ==============================================================
 # ✅ Yahoo QuoteSummary JSON (Most stable for statements)
 # ==============================================================
 _YF_SESSION = None
+
+# Last Yahoo fetch diagnostics (best-effort)
+_LAST_YAHOO_STATUS = None  # type: ignore
+_LAST_YAHOO_ERROR = None  # type: ignore
 
 
 def _yf_session():
@@ -40,50 +46,78 @@ def _yf_session():
     return _YF_SESSION
 
 
-def _http_get_json_ex(url: str, timeout: int = 10, retries: int = 2, sleep: float = 0.8):
-    """Return (json_dict, http_status, err_msg).
+def _http_get_json(url: str, timeout: int = 8, retries: int = 2, sleep: float = 0.6) -> dict:
+    """Best-effort GET JSON with basic retry/backoff and diagnostics."""
+    global _LAST_YAHOO_STATUS, _LAST_YAHOO_ERROR
 
-    We keep this separate so callers (like sync_full_yahoo) can surface meaningful errors
-    instead of a generic 'no data'.
-    """
+    _LAST_YAHOO_STATUS = None
+    _LAST_YAHOO_ERROR = None
+
     if not requests:
-        return {}, None, "Python package 'requests' is not available in the environment."
+        _LAST_YAHOO_ERROR = "requests not available"
+        return {}
+
     ses = _yf_session()
     if not ses:
-        return {}, None, "Could not initialize HTTP session."
+        _LAST_YAHOO_ERROR = "Yahoo session could not be initialized"
+        return {}
+
+    from osoli_logging import log_exception
+
     last_status = None
     last_err = None
+
     for i in range(retries + 1):
         try:
             r = ses.get(url, timeout=timeout)
             last_status = r.status_code
+
             if r.status_code == 200:
                 try:
-                    return (r.json() or {}), 200, None
+                    data = r.json() or {}
+                    _LAST_YAHOO_STATUS = 200
+                    return data
                 except Exception as e:
-                    return {}, 200, f"Invalid JSON response: {e}"
-            # Common transient / blocking statuses
+                    last_err = f"Invalid JSON response: {e}"
+                    _LAST_YAHOO_STATUS = 200
+                    _LAST_YAHOO_ERROR = last_err
+                    return {}
+
+            # Common blocking / auth statuses
             if r.status_code in (401, 403):
-                snippet = (r.text or "")[:200].replace("
-", " ")
-                return {}, r.status_code, f"Access blocked by Yahoo (HTTP {r.status_code}). Snippet: {snippet}"
+                snippet = (r.text or "")[:200].replace("\n", " ")
+                last_err = f"Access blocked by Yahoo (HTTP {r.status_code}). Snippet: {snippet}"
+                _LAST_YAHOO_STATUS = r.status_code
+                _LAST_YAHOO_ERROR = last_err
+                return {}
+
+            # Transient / rate-limit statuses
             if r.status_code in (429, 503):
+                snippet = (r.text or "")[:200].replace("\n", " ")
+                last_err = f"Transient Yahoo error (HTTP {r.status_code}). Snippet: {snippet}"
+                _LAST_YAHOO_STATUS = r.status_code
+                _LAST_YAHOO_ERROR = last_err
                 time.sleep(sleep * (2 if r.status_code == 429 else 1))
-            else:
-                snippet = (r.text or "")[:200].replace("
-", " ")
-                last_err = f"HTTP {r.status_code}. Snippet: {snippet}"
+                continue
+
+            snippet = (r.text or "")[:200].replace("\n", " ")
+            last_err = f"HTTP {r.status_code}. Snippet: {snippet}"
+            _LAST_YAHOO_STATUS = r.status_code
+            _LAST_YAHOO_ERROR = last_err
+            return {}
+
         except Exception as e:
-            last_err = str(e)
+            last_err = f"Request error: {e}"
+            _LAST_YAHOO_ERROR = last_err
+            log_exception(e, "Yahoo QuoteSummary request failed", level="WARNING")
+
         if i < retries:
             time.sleep(sleep)
-    return {}, last_status, (last_err or "Unknown HTTP error")
 
+    _LAST_YAHOO_STATUS = last_status
+    _LAST_YAHOO_ERROR = last_err
+    return {}
 
-def _http_get_json(url: str, timeout: int = 8, retries: int = 2, sleep: float = 0.6) -> dict:
-    """Backward-compatible helper (returns JSON dict only)."""
-    data, _, _ = _http_get_json_ex(url, timeout=timeout, retries=retries, sleep=sleep)
-    return data or {}
 
 
 def _yf_raw(v, default=0.0) -> float:
@@ -118,6 +152,35 @@ def _yf_date_str(v) -> str:
         return datetime.now().strftime("%Y-%m-%d")
 
 
+def diagnose_quote_summary(symbol: str, modules: List[str] | None = None) -> Dict[str, Any]:
+    """Return best-effort diagnostics for Yahoo QuoteSummary fetch."""
+    sym = get_ticker_symbol(symbol)
+    mods = modules or ["incomeStatementHistory", "balanceSheetHistory", "cashflowStatementHistory"]
+    url = (
+        "https://query2.finance.yahoo.com/v10/finance/quoteSummary/"
+        f"{sym}?modules=" + ",".join(mods)
+    )
+
+    # Perform a tiny fetch to populate diagnostics
+    _ = _http_get_json(url)
+    status = _LAST_YAHOO_STATUS
+    err = _LAST_YAHOO_ERROR
+
+    hint = None
+    if status in (401, 403):
+        hint = "Yahoo غالبًا حظر الطلب (403/401). جرّب VPN/تغيير IP أو انتظر ثم أعد المحاولة."
+    elif status == 429:
+        hint = "Rate limit (429). انتظر 1-2 دقيقة ثم أعد المحاولة."
+    elif status == 503:
+        hint = "خدمة Yahoo مؤقتًا غير متاحة (503). أعد المحاولة لاحقًا."
+    elif err == "requests not available":
+        hint = "مكتبة requests غير مثبتة. ثبّتها أو تأكد أنها ضمن requirements."
+    elif not status and err:
+        hint = "فشل اتصال/شبكة. تحقق من الإنترنت أو قيود السيرفر."
+
+    return {"symbol": sym, "url": url, "status": status, "error": err, "hint": hint}
+
+
 def _yahoo_quote_summary(symbol: str, modules: List[str]) -> dict:
     """
     Primary stable endpoint:
@@ -129,36 +192,8 @@ def _yahoo_quote_summary(symbol: str, modules: List[str]) -> dict:
     mods = ",".join([m.strip() for m in modules if m and str(m).strip()])
     if not mods:
         return {}
-    url = f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{sym}?modules={mods}&formatted=false&lang=en-US&region=US&corsDomain=finance.yahoo.com"
+    url = f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{sym}?modules={mods}"
     return _http_get_json(url)
-
-
-
-def diagnose_quote_summary(symbol: str, modules: List[str]) -> str:
-    """Return a human-readable diagnosis for QuoteSummary connectivity."""
-    sym = get_ticker_symbol(symbol)
-    mods = ",".join([m.strip() for m in (modules or []) if m and str(m).strip()])
-    if not sym:
-        return "Invalid/empty symbol after normalization."
-    if not mods:
-        return "No modules specified."
-    url = f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{sym}?modules={mods}&formatted=false&lang=en-US&region=US&corsDomain=finance.yahoo.com"
-    data, status, err = _http_get_json_ex(url)
-    if data and isinstance(data, dict):
-        # Yahoo sometimes returns quoteSummary.error
-        qerr = (data.get("quoteSummary") or {}).get("error")
-        if qerr:
-            code = qerr.get("code") or ""
-            desc = qerr.get("description") or ""
-            return f"Yahoo quoteSummary error: {code} {desc}".strip()
-        rs = (data.get("quoteSummary") or {}).get("result")
-        if rs:
-            return "OK: quoteSummary returned result."
-    if err:
-        return err
-    if status:
-        return f"HTTP {status} with empty/unsupported payload."
-    return "Empty response (unknown reason)."
 
 
 def _extract_stmt_list(root: dict, key: str) -> list:
