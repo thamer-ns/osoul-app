@@ -228,18 +228,17 @@ def render_financial_dashboard_ui(symbol):
         with st.expander("📋 عرض الجدول التفصيلي"):
             _render_table_like_trades(df, max_rows=600)
 
-        # ---- Full statements preview (from DB)
+    # =====================================================
+    # Data management
+    # =====================================================
+    
         st.markdown("---")
         with st.expander("📑 عرض القوائم المالية الكاملة (سنوي/ربع سنوي/TTM)", expanded=False):
             st.caption("هذه البيانات تُجلب من Yahoo QuoteSummary وتُحفظ في قاعدة البيانات بالأرقام (بالآلاف).")
             statement = st.selectbox(
                 "القائمة:",
                 ["income", "balance", "cashflow"],
-                format_func=lambda x: {
-                    "income": "بيان الدخل",
-                    "balance": "الميزانية العمومية",
-                    "cashflow": "التدفق النقدي",
-                }.get(x, x),
+                format_func=lambda x: {"income":"بيان الدخل","balance":"الميزانية العمومية","cashflow":"التدفق النقدي"}.get(x, x),
                 key=f"full_stmt_{_sym_key(symbol)}",
             )
             period = st.radio(
@@ -248,22 +247,15 @@ def render_financial_dashboard_ui(symbol):
                 horizontal=True,
                 key=f"full_period_{_sym_key(symbol)}",
             )
-
             if not has_full_statement(symbol, statement, period, scale="thousands"):
-                st.warning(
-                    "لا توجد بيانات كاملة محفوظة لهذا الرمز. "
-                    "استخدم زر (بدء مزامنة القوائم الكاملة) من تبويب إدارة البيانات."
-                )
+                st.warning("لا توجد بيانات كاملة محفوظة لهذا الرمز. استخدم زر (بدء مزامنة القوائم الكاملة) من تبويب إدارة البيانات.")
             else:
                 df_full = fetch_full_statement_records(symbol, statement, period, scale="thousands")
                 if df_full is None or df_full.empty:
                     st.warning("لا توجد بيانات قابلة للعرض.")
                 else:
+                    # عرض جدول كما هو (بنفس اتجاه الأعمدة: أحدث يسار)
                     st.dataframe(df_full, use_container_width=True, height=520)
-
-    # =====================================================
-    # Data management
-    # =====================================================
 
     with tab_data_mgmt:
         st.markdown("### ⚙️ إدارة البيانات")
