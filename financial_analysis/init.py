@@ -1,7 +1,7 @@
-# financial_analysis/init.py
 """Compatibility shim.
 
-If any code imports `financial_analysis.init`, forward to package exports.
+Some deployments or older code may reference `financial_analysis.init`.
+This file re-exports the public API from `financial_analysis` package.
 """
 
-from .__init__ import *  # noqa
+from .__init__ import *  # noqa: F401,F403
