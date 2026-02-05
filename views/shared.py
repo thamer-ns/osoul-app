@@ -44,6 +44,7 @@ except Exception as e:
     bt_import_error = repr(e)
 
 # 3) Financial Analysis
+fin_import_error = None
 try:
     from financial_analysis import (
         get_thesis, save_thesis,
@@ -53,7 +54,8 @@ try:
         get_financial_statements,
         fetch_full_statement_records, has_full_statement,
     )
-except Exception:
+except Exception as e:
+    fin_import_error = traceback.format_exc()
     def get_thesis(s): return None
     def save_thesis(s, t, tg, r): pass
     def get_stored_financials_df(s, p): return pd.DataFrame()
@@ -67,8 +69,8 @@ except Exception:
             return [], None, "FinancialParser غير متوفر"
 
     def save_financial_record(*args, **kwargs): return False
-    def sync_auto_yahoo(s): return False, "Module Missing"
-    def sync_full_yahoo(s, include_ttm=True): return False, "Module Missing"
+    def sync_auto_yahoo(s): return False, (fin_import_error or repr(e))
+    def sync_full_yahoo(s, include_ttm=True): return False, (fin_import_error or repr(e))
     def get_fundamental_ratios(s): return {}
 
 # 4) Classical Analysis
