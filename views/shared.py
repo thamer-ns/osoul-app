@@ -1339,3 +1339,42 @@ def _render_table_like_trades(df: pd.DataFrame, cols_spec=None, max_rows: int = 
             cols_spec.append((key, lbl, _guess_type(key)))
 
     render_custom_table(d, cols_spec)
+# ========================================================
+# 🔎 Import diagnostics (used by views/__init__.py and Tools page)
+# ========================================================
+
+def get_import_diagnostics():
+    """Return a safe diagnostics dict for optional modules.
+
+    Must NEVER raise because it's used during app boot.
+    """
+    try:
+        diag = {
+            "ai_engine": {
+                "ok": (globals().get("ai_import_error") is None),
+                "name": globals().get("AI_ENGINE_NAME", "Osoli AI Engine"),
+                "version": globals().get("AI_ENGINE_VERSION", "unknown"),
+                "error": globals().get("ai_import_error"),
+                "fallback_reporting": ("ai_engine_core.reporting" in (getattr(generate_ai_report, "__module__", "") or "")),
+            },
+            "backtester": {
+                "ok": (globals().get("bt_import_error") is None),
+                "error": globals().get("bt_import_error"),
+            },
+        }
+
+        # Best-effort checks for other optional modules (do not store as globals)
+        for mod in ("financial_analysis", "charts", "classical_analysis"):
+            try:
+                __import__(mod)
+                diag[mod] = {"ok": True, "error": None}
+            except Exception as e:
+                diag[mod] = {"ok": False, "error": repr(e)}
+
+        return diag
+    except Exception:
+        # Absolute last-resort: never crash startup
+        return {
+            "ai_engine": {"ok": False, "error": "diagnostics_failed"},
+            "backtester": {"ok": False, "error": "diagnostics_failed"},
+        }
