@@ -7,6 +7,7 @@ import bcrypt
 from contextlib import contextmanager
 import re
 import config  # تم ربط الملف بـ config
+from osoli_logging import get_logger, log_exception
 
 
 # =========================================================
@@ -18,8 +19,9 @@ def get_connection_pool():
     """
     Connection pool (cached) for Streamlit using PostgreSQL.
     """
-    if not getattr(config, "DB_CONNECTION_URL", None):
-        st.error("⚠️ لم يتم العثور على رابط قاعدة البيانات في secrets.toml")
+    db_url = getattr(config, 'DB_CONNECTION_URL', None) or getattr(config, 'get_db_url', lambda: None)()
+    if not db_url:
+        st.error("⚠️ لم يتم العثور على رابط قاعدة البيانات. ضع DATABASE_URL في Secrets أو Environment Variables")
         return None
 
     try:
@@ -28,10 +30,11 @@ def get_connection_pool():
         return psycopg2.pool.SimpleConnectionPool(
             minconn=1,
             maxconn=20,
-            dsn=config.DB_CONNECTION_URL,
+            dsn=db_url,
             sslmode="require",
         )
     except Exception as e:
+        log_exception(e, "DB pool init error")
         st.error(f"DB Error: {e}")
         return None
 
@@ -64,8 +67,8 @@ def get_db():
         if not _conn_is_healthy(conn):
             try:
                 pool_obj.putconn(conn, close=True)
-            except Exception:
-                pass
+            except Exception as e:
+                log_exception(e, "Ignored DB cleanup error", level="DEBUG")
             conn = pool_obj.getconn()
 
         yield conn
@@ -75,9 +78,9 @@ def get_db():
         try:
             if conn and _conn_is_healthy(conn):
                 conn.rollback()
-        except Exception:
-            pass
-        print(f"DB Connection/Block Error: {e}")
+        except Exception as e:
+                log_exception(e, "Ignored DB cleanup error", level="DEBUG")
+        log_exception(e, "DB Connection/Block Error")
         raise
 
     finally:
@@ -85,8 +88,8 @@ def get_db():
         try:
             if pool_obj and conn:
                 pool_obj.putconn(conn)
-        except Exception:
-            pass
+        except Exception as e:
+                log_exception(e, "Ignored DB cleanup error", level="DEBUG")
 
 
 # =========================================================
@@ -176,8 +179,8 @@ def execute_query(query, params=()):
         except Exception as e:
             try:
                 conn.rollback()
-            except Exception:
-                pass
+            except Exception as e:
+                log_exception(e, "Ignored DB cleanup error", level="DEBUG")
             print(f"Query Error: {e}")
             return False
 
@@ -211,14 +214,14 @@ def fetch_table(table_name):
         # 1) Quoted exactly as passed
         try:
             return pd.read_sql(f"SELECT * FROM {_quote_ident(name_raw)}", conn)
-        except Exception:
-            pass
+        except Exception as e:
+                log_exception(e, "Ignored DB cleanup error", level="DEBUG")
 
         # 2) Lowercase (common in Postgres)
         try:
             return pd.read_sql(f"SELECT * FROM {name_raw.lower()}", conn)
-        except Exception:
-            pass
+        except Exception as e:
+                log_exception(e, "Ignored DB cleanup error", level="DEBUG")
 
         # 3) Normalize from list
         try:
@@ -467,8 +470,8 @@ def _set_sequence_to_max_id(conn, table_lower: str, id_col: str = "id"):
     except Exception as e:
         try:
             conn.rollback()
-        except Exception:
-            pass
+        except Exception as e:
+                log_exception(e, "Ignored DB cleanup error", level="DEBUG")
         print(f"Sequence Fix Error ({table_lower}): {e}")
         return False
 
@@ -555,8 +558,8 @@ def migrate_fix_case_duplicate_tables(drop_old: bool = False) -> dict:
                     except Exception as e:
                         try:
                             conn.rollback()
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            log_exception(e, "Ignored DB cleanup error", level="DEBUG")
                         report["errors"].append(f"Merge failed for {src_cap}->{dst_low}: {e}")
                         continue
 
@@ -571,8 +574,8 @@ def migrate_fix_case_duplicate_tables(drop_old: bool = False) -> dict:
                         except Exception as e:
                             try:
                                 conn.rollback()
-                            except Exception:
-                                pass
+                            except Exception as e:
+                                log_exception(e, "Ignored DB cleanup error", level="DEBUG")
                             report["errors"].append(f"Drop failed for {src_table_sql}: {e}")
 
             report["ok"] = (len(report["errors"]) == 0)
@@ -581,8 +584,8 @@ def migrate_fix_case_duplicate_tables(drop_old: bool = False) -> dict:
         except Exception as e:
             try:
                 conn.rollback()
-            except Exception:
-                pass
+            except Exception as e:
+                log_exception(e, "Ignored DB cleanup error", level="DEBUG")
             report["errors"].append(str(e))
             report["ok"] = False
             return report
