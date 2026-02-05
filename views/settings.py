@@ -25,6 +25,41 @@ def view_tools():
     except Exception as e:
         st.error(f"تعذر تحميل التشخيص: {e}")
 
+
+# -------------------------
+# Diagnostics: AI Engine self-test
+# -------------------------
+st.subheader("🤖 فحص محرك المستشار (AI Engine)")
+st.caption("يفحص توفر الوحدات الأساسية، ثم يمكنك تشغيل تقرير تجريبي على أي رمز للتأكد من سلامة الحسابات.")
+try:
+    from ai_engine_core import self_test as _engine_self_test
+    if st.button("✅ تشغيل self_test", key="ai_self_test_btn"):
+        rep = _engine_self_test()
+        if rep.get("ok"):
+            st.success("✅ self_test: المحرك يبدو سليمًا.")
+        else:
+            st.warning("⚠️ self_test: توجد ملاحظات قد تؤثر على النتائج.")
+        st.json(rep)
+except Exception as e:
+    st.error(f"تعذر تشغيل self_test: {e}")
+
+with st.expander("🧪 تشغيل تقرير تجريبي (اختياري)", expanded=False):
+    sym = st.text_input("رمز للاختبار (مثال: 1120.SR)", value="1120.SR", key="ai_test_symbol")
+    tf = st.selectbox("الفاصل", ["1d", "1wk", "1mo"], index=0, key="ai_test_tf")
+    if st.button("🚀 توليد تقرير", key="ai_test_run"):
+        try:
+            from views.shared import _generate_ai_report_flex
+            with st.spinner("جاري التوليد..."):
+                rep = _generate_ai_report_flex(sym, timeframe=tf)
+            if isinstance(rep, dict) and rep.get("__error__"):
+                st.error("فشل توليد التقرير.")
+                st.code(rep.get("__trace__", ""))
+            else:
+                st.success("✅ تم توليد التقرير.")
+                st.json(rep)
+        except Exception as e:
+            st.error(f"فشل الاختبار: {e}")
+
     # -------------------------
     # Diagnostics: DB healthcheck
     # -------------------------
