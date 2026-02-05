@@ -9,18 +9,24 @@ from styles import apply_custom_css
 # ✅ (اختياري) إذا ضفت apply_ui_css داخل styles.py
 try:
     from styles import apply_ui_css
-except Exception:
+except ImportError as e:
+    from osoli_logging import log_exception
+    log_exception(e, "Optional import failed: styles.apply_ui_css", level="DEBUG")
     apply_ui_css = None
 
 try:
     from components import inject_component_styles
-except Exception:
+except ImportError as e:
+    from osoli_logging import log_exception
+    log_exception(e, "Optional import failed: components.inject_component_styles", level="DEBUG")
     inject_component_styles = None
 
 # ✅ (اختياري) هيدر احترافي (شعار + اسم + وصف + شريط حالة) بدون لمس منطق التحليل
 try:
     from components import render_app_header
-except Exception:
+except ImportError as e:
+    from osoli_logging import log_exception
+    log_exception(e, "Optional import failed: components.render_app_header", level="DEBUG")
     render_app_header = None
 
 
@@ -139,7 +145,8 @@ if render_app_header:
             logo_full_path=logo_full,
             logo_mark_path=logo_mark,
         )
-    except Exception:
+    except Exception as e:
+        log_exception(e, "render_app_header failed; falling back to simple image", level="WARNING")
         # fallback بسيط
         _safe_image(st.session_state.get("ui_logo_full") or "assets/logo_full.png", width=240)
 else:
