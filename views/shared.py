@@ -1,3 +1,4 @@
+from osoli_logging import log_exception
 # views/shared.py
 import streamlit as st
 import pandas as pd
@@ -28,9 +29,11 @@ from market_data import get_chart_history
 # ========================================================
 
 # 1) Charts
+chart_import_error = None
 try:
     from charts import render_technical_chart
-except Exception:
+except Exception as e:
+    chart_import_error = traceback.format_exc()
     def render_technical_chart(symbol, *args, **kwargs):
         st.warning("⚠️ ملف charts.py مفقود أو به خطأ.")
 
@@ -44,6 +47,7 @@ except Exception as e:
     bt_import_error = repr(e)
 
 # 3) Financial Analysis
+financial_import_error = None
 try:
     from financial_analysis import (
         get_thesis, save_thesis,
@@ -52,7 +56,8 @@ try:
         sync_auto_yahoo, get_fundamental_ratios,
         get_financial_statements,
     )
-except Exception:
+except Exception as e:
+    financial_import_error = traceback.format_exc()
     def get_thesis(s): return None
     def save_thesis(s, t, tg, r): pass
     def get_stored_financials_df(s, p): return pd.DataFrame()
@@ -68,9 +73,11 @@ except Exception:
     def get_fundamental_ratios(s): return {}
 
 # 4) Classical Analysis
+classical_import_error = None
 try:
     from classical_analysis import render_classical_analysis
-except Exception:
+except Exception as e:
+    classical_import_error = traceback.format_exc()
     def render_classical_analysis(s):
         st.warning("⚠️ ملف classical_analysis.py مفقود أو به خطأ.")
 
@@ -136,13 +143,12 @@ def _ensure_ui_once():
     st.session_state["_ui_injected_once"] = True
     try:
         inject_component_styles()
-    except Exception:
-        pass
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     try:
         inject_streamlit_ar_i18n(True)
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
 def _sym_key(sym: str) -> str:
     return (sym or "").replace(".", "_").replace("-", "_").replace(" ", "_")
 
@@ -169,8 +175,8 @@ def _clean_symbols_list(values) -> list:
             s = _normalize_symbol(str(x))
             if s and s != ".SR" and s.lower() != "nan":
                 out.append(s)
-    except Exception:
-        pass
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     return list(sorted(set(out)))
 
 def _to_float(x, default=None):
@@ -1134,8 +1140,8 @@ def _build_tv_like_plot(df: pd.DataFrame, title: str = "", show_rangeslider: boo
     else:
         try:
             d.index = pd.to_datetime(d.index, errors="coerce")
-        except Exception:
-            pass
+        except Exception as e:
+            log_exception(e, "Ignored exception", level="DEBUG")
         d = d[~pd.isna(d.index)]
         d = d.sort_index()
         x = d.index
@@ -1249,9 +1255,8 @@ def _render_tv_like_chart(symbol: str, period: str, interval: str, show_rangesli
         try:
             if isinstance(df.index, pd.DatetimeIndex):
                 df = df.reset_index().rename(columns={"index": "date"})
-        except Exception:
-            pass
-
+        except Exception as e:
+            log_exception(e, "Ignored exception", level="DEBUG")
     try:
         fig = _build_tv_like_plot(df, title=f"{symbol} | {period} | {interval}", show_rangeslider=show_rangeslider)
         st.plotly_chart(
@@ -1335,3 +1340,24 @@ def _render_table_like_trades(df: pd.DataFrame, cols_spec=None, max_rows: int = 
             cols_spec.append((key, lbl, _guess_type(key)))
 
     render_custom_table(d, cols_spec)
+
+
+def get_import_diagnostics() -> dict:
+    """Return import/feature availability diagnostics for the UI."""
+    issues = {}
+    if bt_import_error:
+        issues["backtester"] = bt_import_error
+    if ai_import_error:
+        issues["ai_engine"] = ai_import_error
+    if financial_import_error:
+        issues["financial_analysis"] = financial_import_error
+    if classical_import_error:
+        issues["classical_analysis"] = classical_import_error
+    if chart_import_error:
+        issues["charts"] = chart_import_error
+
+    return {
+        "has_issues": bool(issues),
+        "issues": issues,
+        "versions": {"ai_engine": AI_ENGINE_VERSION, "ai_engine_name": AI_ENGINE_NAME},
+    }
