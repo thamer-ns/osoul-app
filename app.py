@@ -1,3 +1,4 @@
+from osoli_logging import log_exception
 # app.py
 import os
 import streamlit as st
@@ -31,10 +32,8 @@ def _safe_image(path: str, width: Optional[int] = None):
     try:
         if path and os.path.exists(path):
             st.image(path, width=width)
-    except Exception:
-        pass
-
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
 def _pick_page_icon(default_icon):
     """اختيار أيقونة الصفحة مع fallback لو ما فيه assets."""
     try:
@@ -45,8 +44,8 @@ def _pick_page_icon(default_icon):
         # ✅ Default asset
         if os.path.exists("assets/logo_mark.png"):
             return "assets/logo_mark.png"
-    except Exception:
-        pass
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     return default_icon
 
 
@@ -56,8 +55,8 @@ def _get_selected_logo(path_default: str, session_key: str) -> str:
         chosen = st.session_state.get(session_key)
         if chosen and os.path.exists(chosen):
             return chosen
-    except Exception:
-        pass
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     return path_default
 
 st.set_page_config(
