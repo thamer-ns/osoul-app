@@ -4,17 +4,6 @@ from osoli_logging import log_exception
 import traceback
 import pandas as pd
 
-# Diagnostics helpers (to distinguish Yahoo blocks vs code/import issues)
-try:
-    from financial_analysis.yahoo_data import get_last_yahoo_diagnostics
-except Exception:
-    get_last_yahoo_diagnostics = None
-try:
-    from market_data import get_last_market_diagnostics
-except Exception:
-    get_last_market_diagnostics = None
-
-
 from .config import AI_ENGINE_NAME, AI_ENGINE_VERSION
 from .core import _normalize_symbol, _map_period_from_timeframe
 from .ohlcv import _ensure_ohlcv_columns
@@ -125,7 +114,7 @@ def generate_ai_report(symbol, timeframe="1D"):
     symbol = _normalize_symbol(symbol)
 
     try:
-        from market_data import get_chart_history, get_static_info
+        from market_data import get_chart_history, get_last_market_diagnostics, get_static_info
 
         # Optional import (won't break if missing)
         try:
@@ -143,11 +132,8 @@ def generate_ai_report(symbol, timeframe="1D"):
             df = get_chart_history(symbol, period)
 
         if df is None or (isinstance(df, pd.DataFrame) and df.empty):
-            # Build a helpful message instead of a generic 'no data'
-            y_diag = get_last_yahoo_diagnostics() if callable(get_last_yahoo_diagnostics) else None
-            m_diag = get_last_market_diagnostics() if callable(get_last_market_diagnostics) else None
-            details = {'symbol': symbol, 'timeframe': timeframe, 'period': period, 'interval': interval, 'yahoo': y_diag, 'market': m_diag}
-            raise ValueError('no data (price history). Diagnostics: ' + str(details))
+            details = {"market": get_last_market_diagnostics()}
+            raise ValueError("لا توجد بيانات سعرية كافية للسهم (Price History). " + str(details))
 
         df = _ensure_ohlcv_columns(df)
         if df is None or df.empty:
