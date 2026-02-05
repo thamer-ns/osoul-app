@@ -186,13 +186,15 @@ def execute_query(query, params=()):
 
 
 def fetch_table(table_or_query, params=None):
-    """جلب DataFrame بشكل آمن.
+    """
+    ✅ جلب بيانات كـ DataFrame.
+    يدعم حالتين:
+    1) اسم جدول: fetch_table("trades")
+    2) استعلام SQL مع باراميترات: fetch_table("SELECT ... WHERE x=%s", (..,))
 
-    يدعم وضعين:
-    1) اسم جدول: fetch_table("users")
-    2) Query parametrized: fetch_table("SELECT ... WHERE x=%s", (p1,))
-
-    ملاحظة: هذا مطلوب لميزة "القوائم المالية الكاملة" لأنها تعمل بـ SELECT مخصص.
+    ملاحظات:
+    - أسماء الجداول يتم التحقق منها لمنع SQL injection عبر identifiers.
+    - عند تمرير Query، يتم استخدام pandas.read_sql مع params.
     """
     if table_or_query is None:
         return pd.DataFrame()
@@ -201,32 +203,33 @@ def fetch_table(table_or_query, params=None):
     if not q:
         return pd.DataFrame()
 
+    # detect query mode
+    q_lower = q.lstrip().lower()
+    is_query = (
+        " " in q_lower or "\n" in q_lower
+        or q_lower.startswith("select")
+        or q_lower.startswith("with")
+        or q_lower.startswith("show")
+        or q_lower.startswith("pragma")
+    )
+
     with get_db() as conn:
         if not conn:
             return pd.DataFrame()
 
-        # -------------------------------------------------
-        # Mode A) Raw SQL query
-        # -------------------------------------------------
-        looks_like_query = (
-            params is not None
-            or q.lower().startswith("select ")
-            or q.lower().startswith("with ")
-        )
-        if looks_like_query:
+        if is_query:
             try:
-                fixed_query = normalize_sql_tables(q)
-                fixed_query = _fix_placeholders(fixed_query)
-                return pd.read_sql_query(fixed_query, conn, params=params or ())
+                return pd.read_sql(q, conn, params=params or ())
             except Exception as e:
-                log_exception(e, "fetch_table query failed", level="DEBUG")
+                log_exception(e, "fetch_table(query) failed", level="ERROR")
                 return pd.DataFrame()
 
-        # -------------------------------------------------
-        # Mode B) Table name (safe identifier)
-        # -------------------------------------------------
+        # table-name mode (legacy behavior)
         name_raw = q.replace('"', "")
+        if not name_raw:
+            return pd.DataFrame()
 
+        # 0) تحقق من سلامة اسم الجدول (لتجنب SQL injection عبر identifier)
         if not _is_safe_identifier(name_raw):
             maybe = normalize_sql_tables(name_raw).strip().replace('"', "")
             if not _is_safe_identifier(maybe):
@@ -237,13 +240,13 @@ def fetch_table(table_or_query, params=None):
         try:
             return pd.read_sql(f"SELECT * FROM {_quote_ident(name_raw)}", conn)
         except Exception as e:
-            log_exception(e, "fetch_table read quoted failed", level="DEBUG")
+            log_exception(e, "Ignored DB read error (quoted)", level="DEBUG")
 
         # 2) Lowercase (common in Postgres)
         try:
             return pd.read_sql(f"SELECT * FROM {name_raw.lower()}", conn)
         except Exception as e:
-            log_exception(e, "fetch_table read lowercase failed", level="DEBUG")
+            log_exception(e, "Ignored DB read error (lowercase)", level="DEBUG")
 
         # 3) Normalize from list
         try:
@@ -251,11 +254,8 @@ def fetch_table(table_or_query, params=None):
             if not _is_safe_identifier(t):
                 return pd.DataFrame()
             return pd.read_sql(f"SELECT * FROM {t}", conn)
-        except Exception as e:
-            log_exception(e, "fetch_table read normalized failed", level="DEBUG")
+        except Exception:
             return pd.DataFrame()
-
-
 # =========================================================
 # 4) التهيئة والمايجريشن (Init & Schema Migration)
 # =========================================================
