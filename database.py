@@ -185,57 +185,49 @@ def execute_query(query, params=()):
             return False
 
 
-def fetch_table(table_name, params=None):
+def fetch_table(table_or_query, params=None):
+    """جلب DataFrame بشكل آمن.
+
+    يدعم وضعين:
+    1) اسم جدول: fetch_table("users")
+    2) Query parametrized: fetch_table("SELECT ... WHERE x=%s", (p1,))
+
+    ملاحظة: هذا مطلوب لميزة "القوائم المالية الكاملة" لأنها تعمل بـ SELECT مخصص.
     """
-    ✅ جلب بيانات من قاعدة البيانات.
-
-    الاستخدامات المدعومة:
-    1) fetch_table("financialstatements")  -> يجلب كامل الجدول (آمن)
-    2) fetch_table("SELECT ... WHERE ...", (p1, p2)) -> يجلب نتيجة Query مع parameters
-
-    ملاحظة:
-    - عند تمرير params سيتم التعامل مع المدخل كـ SQL query (read_sql) مع تحويل placeholders إلى %s.
-    - عند عدم تمرير params يبقى السلوك القديم (جلب جدول بالاسم مع حماية من injection عبر identifier).
-    """
-    # -----------------------------------------------------
-    # 1) Query mode (safe parameters)
-    # -----------------------------------------------------
-    if params is not None:
-        q = str(table_name or "").strip()
-        if not q:
-            return pd.DataFrame()
-        with get_db() as conn:
-            if not conn:
-                return pd.DataFrame()
-            try:
-                fixed_q = normalize_sql_tables(q)
-                fixed_q = _fix_placeholders(fixed_q)
-                return pd.read_sql(fixed_q, conn, params=params)
-            except Exception as e:
-                try:
-                    log_exception(e, "Ignored fetch_table(query) error", level="DEBUG")
-                except Exception:
-                    pass
-                return pd.DataFrame()
-
-    # -----------------------------------------------------
-    # 2) Table mode (legacy)
-    # -----------------------------------------------------
-    if table_name is None:
+    if table_or_query is None:
         return pd.DataFrame()
 
-    name_raw = str(table_name).strip().replace('"', "")
-    if not name_raw:
+    q = str(table_or_query).strip()
+    if not q:
         return pd.DataFrame()
 
     with get_db() as conn:
         if not conn:
             return pd.DataFrame()
 
-        # 0) تحقق من سلامة اسم الجدول (لتجنب SQL injection عبر identifier)
-        # لو اسم الجدول عندك يحتوي أحرف غريبة — عطّني الاسم ونعدّل القاعدة.
+        # -------------------------------------------------
+        # Mode A) Raw SQL query
+        # -------------------------------------------------
+        looks_like_query = (
+            params is not None
+            or q.lower().startswith("select ")
+            or q.lower().startswith("with ")
+        )
+        if looks_like_query:
+            try:
+                fixed_query = normalize_sql_tables(q)
+                fixed_query = _fix_placeholders(fixed_query)
+                return pd.read_sql_query(fixed_query, conn, params=params or ())
+            except Exception as e:
+                log_exception(e, "fetch_table query failed", level="DEBUG")
+                return pd.DataFrame()
+
+        # -------------------------------------------------
+        # Mode B) Table name (safe identifier)
+        # -------------------------------------------------
+        name_raw = q.replace('"', "")
+
         if not _is_safe_identifier(name_raw):
-            # حاول على الأقل بالـ normalize لو كان من KNOWN_TABLES (Users/Trades...)
             maybe = normalize_sql_tables(name_raw).strip().replace('"', "")
             if not _is_safe_identifier(maybe):
                 return pd.DataFrame()
@@ -245,13 +237,13 @@ def fetch_table(table_name, params=None):
         try:
             return pd.read_sql(f"SELECT * FROM {_quote_ident(name_raw)}", conn)
         except Exception as e:
-            log_exception(e, "Ignored DB cleanup error", level="DEBUG")
+            log_exception(e, "fetch_table read quoted failed", level="DEBUG")
 
         # 2) Lowercase (common in Postgres)
         try:
             return pd.read_sql(f"SELECT * FROM {name_raw.lower()}", conn)
         except Exception as e:
-            log_exception(e, "Ignored DB cleanup error", level="DEBUG")
+            log_exception(e, "fetch_table read lowercase failed", level="DEBUG")
 
         # 3) Normalize from list
         try:
@@ -259,8 +251,11 @@ def fetch_table(table_name, params=None):
             if not _is_safe_identifier(t):
                 return pd.DataFrame()
             return pd.read_sql(f"SELECT * FROM {t}", conn)
-        except Exception:
+        except Exception as e:
+            log_exception(e, "fetch_table read normalized failed", level="DEBUG")
             return pd.DataFrame()
+
+
 # =========================================================
 # 4) التهيئة والمايجريشن (Init & Schema Migration)
 # =========================================================
