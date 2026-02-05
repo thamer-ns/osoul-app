@@ -2,6 +2,17 @@
 from typing import Tuple, List
 
 
+try:
+    import yfinance as yf
+except ImportError as e:
+    yf = None  # optional dependency
+    try:
+        from osoli_logging import log_exception
+        log_exception(e, 'yfinance not installed; Yahoo sync features will be unavailable')
+    except Exception:
+        pass
+
+
 from market_data import get_ticker_symbol
 from .store import save_financial_record
 from .utils import _safe_float, _safe_date_str
@@ -18,6 +29,8 @@ def sync_auto_multi_sources(symbol: str, prefer: str = "yahoo") -> Tuple[bool, s
     - يحفظ سجل Annual واحد على الأقل
     """
     symbol = get_ticker_symbol(symbol)
+    if yf is None:
+        return False, "❌ yfinance غير مثبت. ثبّت yfinance لتفعيل مزامنة Yahoo."
     saved = 0
     notes: List[str] = []
 
@@ -168,7 +181,7 @@ def sync_full_yahoo(symbol: str, *, include_ttm: bool = True) -> Tuple[bool, str
         data = fetch_full_financial_statements_yahoo_json(symbol, period_type="All", as_thousands=True, include_ttm=include_ttm) or {}
         if not data:
             from .yahoo_data import diagnose_quote_summary
-            diag = diagnose_quote_summary(symbol)
+            diag = diagnose_quote_summary(symbol) or {}
             details = ""
             if diag.get("status") or diag.get("error"):
                 details = f" التفاصيل: status={diag.get('status')}, error={diag.get('error')}"
