@@ -1,3 +1,4 @@
+from osoli_logging import log_exception
 # ai_engine_core/portfolio.py
 
 import math
@@ -171,8 +172,8 @@ def calculate_portfolio_risk_score(trades_df, cash_percent):
     except Exception as e:
         try:
             log.exception("calculate_portfolio_risk_score failed")
-        except Exception:
-            pass
+        except Exception as e:
+            log_exception(e, "Ignored exception", level="DEBUG")
         return None
 
 
@@ -296,8 +297,8 @@ def generate_rebalancing_suggestions(trades_df, cash_pct):
             try:
                 idx = int(w.idxmax())
                 sym = str(open_trades.loc[idx].get("symbol", "-"))
-            except Exception:
-                pass
+            except Exception as e:
+                log_exception(e, "Ignored exception", level="DEBUG")
             suggestions.append(("danger", f"🎯 تركّز عالي: أكبر مركز ≈ {max_w*100:.1f}% ({sym}) — خفف/وزّع"))
 
         # Loss control suggestions
@@ -321,9 +322,8 @@ def generate_rebalancing_suggestions(trades_df, cash_pct):
                     spec_ratio = spec_cnt / n
                     if spec_ratio >= 0.60:
                         suggestions.append(("warn", "⚡ نسبة المضاربة مرتفعة (>60%) — خفف تذبذب المحفظة أو ارفع كاش"))
-        except Exception:
-            pass
-
+        except Exception as e:
+            log_exception(e, "Ignored exception", level="DEBUG")
         # Sector balance (if sector exists)
         if any(c in open_trades.columns for c in ["sector", "Sector", "industry", "Industry"]):
             try:
@@ -335,12 +335,10 @@ def generate_rebalancing_suggestions(trades_df, cash_pct):
                     top_share = float(sector_mv.iloc[0]) / total_mv
                     if top_share >= 0.55 and top_sector != "Unknown":
                         suggestions.append(("warn", f"🏷️ تركّز قطاعي: {top_sector} ≈ {top_share*100:.1f}% — فكر بالتنويع"))
-            except Exception:
-                pass
-
-    except Exception:
-        pass
-
+            except Exception as e:
+                log_exception(e, "Ignored exception", level="DEBUG")
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     return suggestions
 
 
