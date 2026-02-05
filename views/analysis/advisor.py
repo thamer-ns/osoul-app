@@ -104,7 +104,7 @@ def _chip(text: str, tone: str = "neutral"):
     }.get(tone, "os-chip-gray")
 
     st.markdown(
-        f'<span class="os-chip {cls}"><span class="mi">check_circle</span>{text}</span>',
+        f'<span class="os-chip {cls}"><span class="mi material-symbols-rounded">check_circle</span>{text}</span>',
         unsafe_allow_html=True,
     )
 
@@ -152,7 +152,7 @@ def _render_quick_summary(sym: str, ai_data: dict, tf_label: str):
     _chip(f"Score {score}/100", _tone_for_score(score))
     _chip(f"Confidence {conf}%", _tone_for_conf(conf))
     st.markdown(
-        "<span class='os-chip os-chip-blue'><span class='mi'>insights</span>تأكد من الأدلة/المخاطر قبل القرار</span>",
+        "<span class='os-chip os-chip-blue'><span class='mi material-symbols-rounded'>insights</span>تأكد من الأدلة/المخاطر قبل القرار</span>",
         unsafe_allow_html=True,
     )
     st.markdown("</div>", unsafe_allow_html=True)
@@ -227,7 +227,7 @@ def _render_scenarios(ai_data: dict):
             <div style="border:1px solid rgba(15,23,42,0.10);border-radius:14px;padding:12px;margin:10px 0;background:#fff;">
               <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
                 <div style="font-weight:950">{name}</div>
-                <div class="os-chip os-chip-gray"><span class="mi">flag</span>{trigger}</div>
+                <div class="os-chip os-chip-gray"><span class="mi material-symbols-rounded">flag</span>{trigger}</div>
               </div>
               <div style="margin-top:8px;display:grid;grid-template-columns:repeat(4,1fr);gap:10px;">
                 <div class="os-card" style="padding:10px"><div class="os-muted">الدخول</div><div class="os-v">{entry}</div></div>
@@ -313,26 +313,7 @@ def render_advisor_tab(sym: str):
         rep = cache[cache_key]
     else:
         with st.spinner("جاري توليد تقرير المستشار..."):
-            try:
-                rep = _generate_ai_report_flex(sym, timeframe=ai_tf)
-            except Exception as e:
-                # لا نعرض Traceback للمستخدم — نعرض السبب بشكل واضح
-                msg = str(e)
-                st.error("فشل تشغيل المستشار: " + msg)
-                # إذا كان داخل الرسالة Diagnostics dict، نحاول عرضه بشكل منظم
-                try:
-                    if "Diagnostics" in msg or "market" in msg:
-                        st.caption("🧾 تشخيص (للمساعدة في معرفة هل المشكلة من Yahoo/البيانات):")
-                        # محاولة استخراج dict بعد آخر '{'
-                        import ast
-                        brace = msg.find("{")
-                        if brace != -1:
-                            d = ast.literal_eval(msg[brace:])
-                            st.json(d)
-                except Exception:
-                    pass
-                rep = None
-
+            rep = _generate_ai_report_flex(sym, timeframe=ai_tf)
         cache[cache_key] = rep
 
     st.session_state["_ai_last_update"] = datetime.now().strftime("%Y-%m-%d %H:%M")
