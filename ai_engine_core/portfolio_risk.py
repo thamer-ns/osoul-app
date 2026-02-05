@@ -1,3 +1,4 @@
+from osoli_logging import log_exception
 # ai_engine_core/portfolio_risk.py
 import pandas as pd
 
@@ -93,7 +94,6 @@ def portfolio_gates(trades_df: pd.DataFrame, symbol: str, cash_pct: float):
         if not row.empty:
             w = (_safe_float(row.iloc[0].get("market_value"), 0.0) / total_mv) * 100.0
             gates["symbol_weight_pct"] = round(w, 2)
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     return gates
