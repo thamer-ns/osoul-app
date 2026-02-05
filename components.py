@@ -963,27 +963,25 @@ def render_osoli_report(report: Dict[str, Any], *, title: str = "📌 تقرير
             f'<span class="os-chip {chip_cls}">{_mi("donut_large")} الدرجة: {html.escape(score_txt)}</span>'
         )
 
+    # Fundamental data quality chip (optional)
+    fqual = report.get("fundamental_quality")
+    if isinstance(fqual, dict) and (fqual.get("score") is not None):
+        try:
+            fq_score = _safe_number(fqual.get("score"), default=None)
+        except Exception:
+            fq_score = None
+        if fq_score is not None:
+            fq_cls = "os-chip-green" if fq_score >= 75 else ("os-chip-amber" if fq_score >= 55 else "os-chip-red")
+            fq_pass = fqual.get("pass")
+            fq_tag = "✅" if fq_pass else "⚠️"
+            chips.append(
+                f'<span class="os-chip {fq_cls}">{_mi("database")} جودة الأساسي: {fq_tag} {int(fq_score)}/100</span>'
+            )
+
     if confidence is not None:
         conf_txt = _safe_text(confidence)
         chips.append(
             f'<span class="os-chip os-chip-gray">{_mi("verified")} الثقة: {html.escape(conf_txt)}</span>'
-        )
-
-
-    # Data quality (optional)
-    dq = report.get("data_quality")
-    if not isinstance(dq, dict):
-        dq = (report.get("engine_meta") or {}).get("data_quality")
-    if isinstance(dq, dict) and dq:
-        try:
-            dqs = int(_safe_number(dq.get("score"), default=0) or 0)
-            dqs = max(0, min(100, dqs))
-        except Exception:
-            dqs = 0
-        dq_pass = bool(dq.get("pass", True))
-        badge_cls = "os-chip-green" if dq_pass and dqs >= 70 else "os-chip-amber" if dqs >= 50 else "os-chip-red"
-        chips.append(
-            f'<span class="os-chip {badge_cls}">{_mi("shield")} جودة البيانات: {dqs}/100</span>'
         )
 
     if recommendation:
@@ -995,19 +993,23 @@ def render_osoli_report(report: Dict[str, Any], *, title: str = "📌 تقرير
     if chips:
         st.markdown("".join(chips), unsafe_allow_html=True)
 
-    # تفاصيل جودة البيانات
-    if isinstance(dq, dict) and dq:
-        issues = dq.get("issues") or []
-        metrics = dq.get("metrics") or {}
-        if issues or metrics:
-            with st.expander("🛡️ تفاصيل جودة البيانات", expanded=False):
-                if issues:
-                    st.write("**ملاحظات:**")
-                    for it in issues[:12]:
-                        st.write(f"- {it}")
-                if isinstance(metrics, dict) and metrics:
-                    st.write("**مقاييس:**")
-                    st.json(metrics)
+
+    # Data quality details (optional)
+    fqual = report.get("fundamental_quality")
+    if isinstance(fqual, dict) and (fqual.get("score") is not None):
+        with st.expander("🧾 جودة البيانات الأساسية (Fundamentals)", expanded=False):
+            st.write(f"الدرجة: **{fqual.get('score')} / 100**")
+            if fqual.get("pass") is False:
+                st.warning("البيانات الأساسية قد تكون غير مكتملة/غير متسقة. تم تخفيف أو تحييد تأثيرها على التوصية.")
+            issues = fqual.get("issues") or []
+            if issues:
+                st.markdown("**ملاحظات:**")
+                for it in issues[:15]:
+                    st.write(f"- {it}")
+            metrics = fqual.get("metrics") or {}
+            if metrics:
+                st.markdown("**مقاييس (للتشخيص):**")
+                st.json(metrics)
 
     # Cards grid
     st.markdown('<div class="os-grid">', unsafe_allow_html=True)
