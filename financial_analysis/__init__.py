@@ -33,7 +33,17 @@ try:
 except Exception:
     render_financial_dashboard_ui = None
 
-# full statements store
-from .store_full import fetch_full_statement_records, has_full_statement
 # full statements fetch
 from .yahoo_data import fetch_full_financial_statements_yahoo_json
+
+# full statements (compatible)
+try:
+    from .store import fetch_full_statement_records, has_full_statement
+except Exception:
+    fetch_full_statement_records = None
+    has_full_statement = None
+
+try:
+    from .yahoo_data import fetch_full_financial_statements_yahoo_json
+except Exception:
+    fetch_full_financial_statements_yahoo_json = None
