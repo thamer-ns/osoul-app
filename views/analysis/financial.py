@@ -141,122 +141,122 @@ def render_financial_dashboard_ui(symbol):
         if df is None or df.empty:
             st.warning("⚠️ لا توجد بيانات مالية محفوظة لهذا السهم.")
             st.info("👈 انتقل لتبويب 'إدارة البيانات' لرفع ملف أو جلب المعلومات.")
-            return
-
-        # ---- Metrics
-        metrics = {}
-        try:
-            metrics = get_advanced_fundamental_ratios(symbol) or {}
-        except Exception:
+        # ملاحظة: لا نستخدم return هنا حتى لا يصبح تبويب "إدارة البيانات" فارغاً عند عدم توفر بيانات.
+        else:
+            # ---- Metrics
             metrics = {}
-
-        fscore = metrics.get("Piotroski_Score", 0)
-        health = metrics.get("Financial_Health", "-")
-        fv = metrics.get("Fair_Value_Graham", 0)
-        opinions = metrics.get("Opinions", "-")
-
-        c1, c2, c3, c4 = st.columns(4)
-        with c1:
-            st.metric("المتانة (F-Score)", f"{_to_num(fscore, 0):.0f}/9", str(health))
-        with c2:
-            st.metric("قيمة جراهام", f"{_to_num(fv, 0):,.2f}" if _to_num(fv, 0) > 0 else "N/A")
-        with c3:
-            st.metric("الرأي", "جاهز" if opinions and str(opinions).strip() != "-" else "—")
-        with c4:
-            st.metric("عدد الأعمدة", str(len(df.columns)))
-
-        st.markdown(
-            f"""
-            <div class="os-card" style="margin-top:10px;">
-              <div class="os-card-title">📝 ملاحظات مالية</div>
-              <div class="os-muted">{opinions}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        st.markdown("---")
-
-        # ---- Charts selector
-        st.markdown("### 📊 الرسوم البيانية")
-        cols_to_plot = []
-        try:
-            plot_df = df.copy()
-            if "date" in plot_df.columns:
-                try:
-                    plot_df["Year"] = pd.to_datetime(plot_df["date"], errors="coerce").dt.strftime("%Y-%m")
-                except Exception:
-                    plot_df["Year"] = plot_df["date"].astype(str)
-            else:
-                plot_df["Year"] = [str(i) for i in range(len(plot_df))]
-
-            candidates = [
-                ("revenue", "الإيرادات"),
-                ("net_income", "صافي الربح"),
-                ("operating_cash_flow", "التدفق النقدي التشغيلي"),
-                ("total_assets", "إجمالي الأصول"),
-                ("total_liabilities", "إجمالي المطلوبات"),
-                ("total_equity", "حقوق الملكية"),
-            ]
-
-            available = [(c, lbl) for c, lbl in candidates if c in plot_df.columns]
-            default = [c for c, _ in available[:3]]
-            pick = st.multiselect(
-                "اختر المؤشرات لعرضها",
-                options=[c for c, _ in available],
-                default=default,
-                key=f"fin_plot_pick_{_sym_key(symbol)}",
-            )
-            cols_to_plot = pick
-            if cols_to_plot:
-                import plotly.express as px
-
-                fig = px.bar(
-                    plot_df.sort_values("date") if "date" in plot_df.columns else plot_df,
-                    x="Year",
-                    y=cols_to_plot,
-                    barmode="group",
-                    title="الأداء المالي التاريخي",
-                )
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.info("اختر مؤشرًا واحدًا على الأقل لعرض الرسم.")
-        except Exception:
-            st.warning("تعذر رسم البيانات الآن (تحقق من وجود عمود التاريخ/القيم).")
-
-        st.markdown("---")
-        with st.expander("📋 عرض الجدول التفصيلي"):
-            _render_table_like_trades(df, max_rows=600)
-
-    # =====================================================
-    # Data management
-    # =====================================================
+            try:
+                metrics = get_advanced_fundamental_ratios(symbol) or {}
+            except Exception:
+                metrics = {}
     
-        st.markdown("---")
-        with st.expander("📑 عرض القوائم المالية الكاملة (سنوي/ربع سنوي/TTM)", expanded=False):
-            st.caption("هذه البيانات تُجلب من Yahoo QuoteSummary وتُحفظ في قاعدة البيانات بالأرقام (بالآلاف).")
-            statement = st.selectbox(
-                "القائمة:",
-                ["income", "balance", "cashflow"],
-                format_func=lambda x: {"income":"بيان الدخل","balance":"الميزانية العمومية","cashflow":"التدفق النقدي"}.get(x, x),
-                key=f"full_stmt_{_sym_key(symbol)}",
+            fscore = metrics.get("Piotroski_Score", 0)
+            health = metrics.get("Financial_Health", "-")
+            fv = metrics.get("Fair_Value_Graham", 0)
+            opinions = metrics.get("Opinions", "-")
+    
+            c1, c2, c3, c4 = st.columns(4)
+            with c1:
+                st.metric("المتانة (F-Score)", f"{_to_num(fscore, 0):.0f}/9", str(health))
+            with c2:
+                st.metric("قيمة جراهام", f"{_to_num(fv, 0):,.2f}" if _to_num(fv, 0) > 0 else "N/A")
+            with c3:
+                st.metric("الرأي", "جاهز" if opinions and str(opinions).strip() != "-" else "—")
+            with c4:
+                st.metric("عدد الأعمدة", str(len(df.columns)))
+    
+            st.markdown(
+                f"""
+                <div class="os-card" style="margin-top:10px;">
+                  <div class="os-card-title">📝 ملاحظات مالية</div>
+                  <div class="os-muted">{opinions}</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
             )
-            period = st.radio(
-                "الفترة:",
-                ["Annual", "Quarterly", "TTM"],
-                horizontal=True,
-                key=f"full_period_{_sym_key(symbol)}",
-            )
-            if not has_full_statement(symbol, statement, period, scale="thousands"):
-                st.warning("لا توجد بيانات كاملة محفوظة لهذا الرمز. استخدم زر (بدء مزامنة القوائم الكاملة) من تبويب إدارة البيانات.")
-            else:
-                df_full = fetch_full_statement_records(symbol, statement, period, scale="thousands")
-                if df_full is None or df_full.empty:
-                    st.warning("لا توجد بيانات قابلة للعرض.")
+    
+            st.markdown("---")
+    
+            # ---- Charts selector
+            st.markdown("### 📊 الرسوم البيانية")
+            cols_to_plot = []
+            try:
+                plot_df = df.copy()
+                if "date" in plot_df.columns:
+                    try:
+                        plot_df["Year"] = pd.to_datetime(plot_df["date"], errors="coerce").dt.strftime("%Y-%m")
+                    except Exception:
+                        plot_df["Year"] = plot_df["date"].astype(str)
                 else:
-                    # عرض جدول كما هو (بنفس اتجاه الأعمدة: أحدث يسار)
-                    st.dataframe(df_full, use_container_width=True, height=520)
-
+                    plot_df["Year"] = [str(i) for i in range(len(plot_df))]
+    
+                candidates = [
+                    ("revenue", "الإيرادات"),
+                    ("net_income", "صافي الربح"),
+                    ("operating_cash_flow", "التدفق النقدي التشغيلي"),
+                    ("total_assets", "إجمالي الأصول"),
+                    ("total_liabilities", "إجمالي المطلوبات"),
+                    ("total_equity", "حقوق الملكية"),
+                ]
+    
+                available = [(c, lbl) for c, lbl in candidates if c in plot_df.columns]
+                default = [c for c, _ in available[:3]]
+                pick = st.multiselect(
+                    "اختر المؤشرات لعرضها",
+                    options=[c for c, _ in available],
+                    default=default,
+                    key=f"fin_plot_pick_{_sym_key(symbol)}",
+                )
+                cols_to_plot = pick
+                if cols_to_plot:
+                    import plotly.express as px
+    
+                    fig = px.bar(
+                        plot_df.sort_values("date") if "date" in plot_df.columns else plot_df,
+                        x="Year",
+                        y=cols_to_plot,
+                        barmode="group",
+                        title="الأداء المالي التاريخي",
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("اختر مؤشرًا واحدًا على الأقل لعرض الرسم.")
+            except Exception:
+                st.warning("تعذر رسم البيانات الآن (تحقق من وجود عمود التاريخ/القيم).")
+    
+            st.markdown("---")
+            with st.expander("📋 عرض الجدول التفصيلي"):
+                _render_table_like_trades(df, max_rows=600)
+    
+        # =====================================================
+        # Data management
+        # =====================================================
+        
+            st.markdown("---")
+            with st.expander("📑 عرض القوائم المالية الكاملة (سنوي/ربع سنوي/TTM)", expanded=False):
+                st.caption("هذه البيانات تُجلب من Yahoo QuoteSummary وتُحفظ في قاعدة البيانات بالأرقام (بالآلاف).")
+                statement = st.selectbox(
+                    "القائمة:",
+                    ["income", "balance", "cashflow"],
+                    format_func=lambda x: {"income":"بيان الدخل","balance":"الميزانية العمومية","cashflow":"التدفق النقدي"}.get(x, x),
+                    key=f"full_stmt_{_sym_key(symbol)}",
+                )
+                period = st.radio(
+                    "الفترة:",
+                    ["Annual", "Quarterly", "TTM"],
+                    horizontal=True,
+                    key=f"full_period_{_sym_key(symbol)}",
+                )
+                if not has_full_statement(symbol, statement, period, scale="thousands"):
+                    st.warning("لا توجد بيانات كاملة محفوظة لهذا الرمز. استخدم زر (بدء مزامنة القوائم الكاملة) من تبويب إدارة البيانات.")
+                else:
+                    df_full = fetch_full_statement_records(symbol, statement, period, scale="thousands")
+                    if df_full is None or df_full.empty:
+                        st.warning("لا توجد بيانات قابلة للعرض.")
+                    else:
+                        # عرض جدول كما هو (بنفس اتجاه الأعمدة: أحدث يسار)
+                        st.dataframe(df_full, use_container_width=True, height=520)
+    
     with tab_data_mgmt:
         st.markdown("### ⚙️ إدارة البيانات")
         st.caption("هنا تستطيع تحديث البيانات تلقائيًا أو استيرادها أو إدخالها يدويًا بدون فقد أي ميزة.")
