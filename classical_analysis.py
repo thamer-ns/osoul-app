@@ -140,7 +140,7 @@ def _os_card(title: str, rows: list, icon: str = "insights"):
         st.markdown(
             f"""
             <div class="os-card">
-              <div class="os-card-title"><span class="mi">{icon}</span>{title}</div>
+              <div class="os-card-title"><span class="mi material-symbols-rounded">{icon}</span>{title}</div>
               {body}
             </div>
             """,
