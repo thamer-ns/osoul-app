@@ -1,3 +1,4 @@
+from osoli_logging import log_exception
 # financial_analysis/metrics.py
 
 from typing import Tuple, List, Dict, Any
@@ -62,8 +63,8 @@ def _compute_dupont(curr_row: pd.Series) -> dict:
         out["ROE"] = float(roe)
         out["ROA"] = float(roa)
         out["Asset_Turnover"] = float(at)
-    except Exception:
-        pass
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     return out
 
 
@@ -97,8 +98,8 @@ def _compute_liquidity_leverage(curr_row: pd.Series, prev_row: pd.Series = None)
             ltd_p = _safe_float(prev_row.get("long_term_debt", 0))
             if ltd_p != 0:
                 out["LT_Debt_Trend"] = float((ltd - ltd_p) / abs(ltd_p))
-    except Exception:
-        pass
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     return out
 
 
@@ -117,8 +118,8 @@ def _compute_earnings_quality(curr_row: pd.Series) -> dict:
         out["OCF_to_NetIncome"] = float(_safe_div(ocf, ni, 0.0)) if ni != 0 else (1.0 if ocf > 0 else 0.0)
         out["Accruals_to_Assets"] = float(_safe_div((ni - ocf), assets, 0.0))
         out["OCF_Margin"] = float(_safe_div(ocf, rev, 0.0))
-    except Exception:
-        pass
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     return out
 
 
@@ -145,8 +146,8 @@ def _compute_efficiency_pack(curr_row: pd.Series) -> dict:
         out["Gross_Margin"] = float(_safe_div(gp, rev, 0.0))
         out["Operating_Margin"] = float(_safe_div(op_inc, rev, 0.0))
         out["Net_Margin"] = float(_safe_div(ni, rev, 0.0))
-    except Exception:
-        pass
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     return out
 
 
@@ -173,8 +174,8 @@ def _compute_cashflow_pack(curr_row: pd.Series) -> dict:
         out["Free_Cash_Flow"] = float(fcf)
         out["FCF_Margin"] = float(_safe_div(fcf, rev, 0.0)) if rev > 0 else 0.0
         out["FCF_to_NetIncome"] = float(_safe_div(fcf, ni, 0.0)) if ni != 0 else (1.0 if fcf > 0 else 0.0)
-    except Exception:
-        pass
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     return out
 
 
@@ -193,8 +194,8 @@ def _compute_growth_pack(curr_row: pd.Series, prev_row: pd.Series) -> dict:
             out["Revenue_Growth_YoY"] = float((rev_c - rev_p) / abs(rev_p))
         if ni_p != 0:
             out["NetIncome_Growth_YoY"] = float((ni_c - ni_p) / abs(ni_p))
-    except Exception:
-        pass
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     return out
 
 
@@ -215,8 +216,8 @@ def _compute_interest_coverage_best_effort(curr_row: pd.Series, yahoo_info: dict
         if ie != 0:
             out["Interest_Coverage"] = float(_safe_div(ebit, abs(ie), 0.0))
             out["Interest_Coverage_Quality"] = "full"
-    except Exception:
-        pass
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     return out
 
 
@@ -255,8 +256,8 @@ def _compute_altman_z_best_effort(symbol: str, curr_row: pd.Series, yahoo_info: 
 
         out["Altman_Z"] = float(z)
         out["Altman_Z_Quality"] = "full" if (ebit > 0 and mve > 0 and sales > 0 and tl > 0) else "partial"
-    except Exception:
-        pass
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     return out
 
 
@@ -272,8 +273,8 @@ def _compute_sgr(roe: float, yahoo_info: dict) -> dict:
         out["Payout_Ratio"] = float(payout)
         out["Retention_Ratio"] = float(retention)
         out["SGR"] = float(_safe_float(roe) * retention)
-    except Exception:
-        pass
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     return out
 
 
@@ -297,8 +298,8 @@ def _compute_valuation_pack(yahoo_info: dict) -> dict:
         out["EV"] = float(_safe_float(yahoo_info.get("enterpriseValue")))
         out["EV_to_EBITDA"] = float(_safe_float(yahoo_info.get("enterpriseToEbitda")))
         out["Dividend_Yield"] = float(_safe_float(yahoo_info.get("dividendYield")))
-    except Exception:
-        pass
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     return out
 
 
@@ -345,8 +346,8 @@ def _build_fund_flags(metrics: dict) -> Dict[str, int]:
             flags["fund_overvalued"] = 1
         if (peg > 0 and peg <= 1.2) and (pe > 0 and pe <= 16):
             flags["fund_undervalued"] = 1
-    except Exception:
-        pass
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     return {k: int(v) for k, v in flags.items()}
 
 
@@ -448,9 +449,8 @@ def _score_fundamentals(metrics: dict) -> Tuple[int, str, List[str]]:
         elif pe >= 35:
             score -= 1
 
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     score = int(max(0, min(10, score)))
 
     if score >= 8:
@@ -605,9 +605,8 @@ def get_advanced_fundamental_ratios(symbol):
             bvps = _safe_float(info.get("bookValue"))
             if eps > 0 and bvps > 0:
                 metrics["Fair_Value_Graham"] = float((22.5 * eps * bvps) ** 0.5)
-        except Exception:
-            pass
-
+        except Exception as e:
+            log_exception(e, "Ignored exception", level="DEBUG")
         metrics.update(_compute_altman_z_best_effort(symbol, curr, info))
         metrics.update(_compute_interest_coverage_best_effort(curr, info))
         metrics.update(_compute_sgr(metrics.get("ROE", 0.0), info))
@@ -640,9 +639,8 @@ def get_advanced_fundamental_ratios(symbol):
         # ✅ Fund flags for AI gates later
         metrics["_fund_flags"] = _build_fund_flags(metrics)
 
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     return metrics
 
 
