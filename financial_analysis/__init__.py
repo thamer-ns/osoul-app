@@ -37,3 +37,7 @@ except Exception:
 from .store import fetch_full_statement_records, has_full_statement
 # full statements fetch
 from .yahoo_data import fetch_full_financial_statements_yahoo_json
+
+
+# data quality
+from .data_quality import assess_fundamental_quality
