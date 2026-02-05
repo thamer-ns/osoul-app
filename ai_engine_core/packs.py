@@ -1,3 +1,4 @@
+from osoli_logging import log_exception
 """
 ai_engine_core/packs.py
 
@@ -97,9 +98,8 @@ def build_technical_pack(
             features["sma200"] = float(ind["sma200"].iloc[-1])
         if isinstance(ind.get("atr14"), pd.Series) and not pd.isna(ind["atr14"].iloc[-1]):
             features["atr14"] = float(ind["atr14"].iloc[-1])
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     # Direction hint
     direction_hint = "neutral"
     try:
