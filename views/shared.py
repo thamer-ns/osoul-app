@@ -365,17 +365,15 @@ def _render_bullets(title, items, icon="•", limit=8, empty_text="لا يوجد
         st.write(f"{icon} {x}")
 
 def _score_from_new_engine(rep: dict) -> int:
-    """Map engine scores into UI 0..100.
-    Prefers total_score (includes VSA/structure/risk effects) when available.
-    """
+    """Fallback UI score mapping if engine didn't return score/osoli_score."""
     try:
-        if isinstance(rep, dict) and rep.get("total_score") is not None:
-            total = _to_float(rep.get("total_score"), 0) or 0
-        else:
+        total = rep.get("total_score", None)
+        if total is None:
             tech = _to_float(rep.get("tech_score"), 0) or 0
             fund = _to_float(rep.get("fund_score"), 0) or 0
             total = tech + fund
-        score = int(max(0, min(100, round(50 + (float(total) * 5)))))
+        total = _to_float(total, 0) or 0
+        score = int(max(0, min(100, round(50 + (total * 5)))))
         return score
     except Exception:
         return 0
