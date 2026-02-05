@@ -1,3 +1,4 @@
+from osoli_logging import log_exception
 # ai_engine_core/risk.py
 
 import pandas as pd
@@ -94,9 +95,8 @@ def _analyze_sr(df):
                 score -= 2
                 feats["broke_support_confirm"] = 1
                 obs.append("🧨 كسر دعم مؤكّد (إغلاق يومين تحت المنطقة)")
-        except Exception:
-            pass
-
+        except Exception as e:
+            log_exception(e, "Ignored exception", level="DEBUG")
     if highs:
         res = min(highs, key=lambda x: abs(close - x))
         if abs(close - res) / max(close, 1e-9) < near_th:
@@ -183,9 +183,8 @@ def _risk_gates(report: dict) -> dict:
             if rr > 0 and rr < 1.2:
                 gates["pass"] = False
                 gates["reasons"].append("R:R أقل من 1.2 — مخاطرة غير مناسبة")
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     feats = report.get("features") or {}
 
     # Gate 2: broke support confirm => يمنع الشراء
@@ -196,17 +195,15 @@ def _risk_gates(report: dict) -> dict:
         if broke == 1 and is_buy_like:
             gates["pass"] = False
             gates["reasons"].append("كسر دعم مؤكّد — يمنع الشراء")
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     # Gate 3: OCF negative
     try:
         if int(feats.get("fund_neg_ocf") or 0) == 1:
             gates["pass"] = False
             gates["reasons"].append("التدفق النقدي التشغيلي سالب — مخاطرة عالية للاستثمار")
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     return gates
 
 
