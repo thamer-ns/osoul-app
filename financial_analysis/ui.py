@@ -102,15 +102,7 @@ def render_financial_dashboard_ui(symbol):
                 except Exception:
                     st.info("لا يوجد تشخيص متاح بعد.")
 
-            if st.button("🚀 معالجة البيانات", key=f"fin_parse_{symbol}"):
-                with st.spinner("جاري التحليل..."):
-                    results, detected_symbol, err = parser.process_file_or_text(uploaded_file, pasted_text)
-
-            # (زر التشخيص المباشر لا يتطلب مزامنة)
-            if st.button('🔎 تشخيص Yahoo مباشر', key=f'fin_diag_{symbol}'):
-                st.json(diagnose_quote_summary(symbol))
-
-
+            st.markdown("**📥 استيراد من ملف / لصق**")
             if st.button("🚀 معالجة البيانات", key=f"fin_parse_{symbol}"):
                 with st.spinner("جاري التحليل..."):
                     results, detected_symbol, err = parser.process_file_or_text(uploaded_file, pasted_text)
