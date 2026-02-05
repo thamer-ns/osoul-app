@@ -66,6 +66,7 @@ try:
         sync_auto_yahoo, sync_full_yahoo, get_fundamental_ratios,
         get_financial_statements,
         fetch_full_statement_records, has_full_statement,
+        assess_fundamental_quality,
     )
 except Exception as e:
     from osoli_logging import log_exception
@@ -365,14 +366,10 @@ def _render_bullets(title, items, icon="•", limit=8, empty_text="لا يوجد
         st.write(f"{icon} {x}")
 
 def _score_from_new_engine(rep: dict) -> int:
-    """Fallback UI score mapping if engine didn't return score/osoli_score."""
     try:
-        total = rep.get("total_score", None)
-        if total is None:
-            tech = _to_float(rep.get("tech_score"), 0) or 0
-            fund = _to_float(rep.get("fund_score"), 0) or 0
-            total = tech + fund
-        total = _to_float(total, 0) or 0
+        tech = _to_float(rep.get("tech_score"), 0) or 0
+        fund = _to_float(rep.get("fund_score"), 0) or 0
+        total = tech + fund
         score = int(max(0, min(100, round(50 + (total * 5)))))
         return score
     except Exception:
