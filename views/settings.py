@@ -1,3 +1,4 @@
+from osoli_logging import log_exception
 #views/settings.py
 import streamlit as st
 from analytics import create_smart_backup
@@ -6,6 +7,44 @@ from database import db_healthcheck
 def view_tools():
     st.header("🛠️ أدوات")
     st.info("حاسبة الزكاة (قريباً)")
+
+    # -------------------------
+    # Diagnostics: imports
+    # -------------------------
+    st.subheader("🔎 التشخيص")
+    try:
+        from views.shared import get_import_diagnostics
+        diag = get_import_diagnostics()
+        if diag.get("has_issues"):
+            st.warning("تم رصد مشاكل في استيراد بعض الوحدات/الاعتمادات. هذا قد يمنع ظهور بعض الميزات.")
+            for k, v in diag.get("issues", {}).items():
+                with st.expander(f"تفاصيل: {k}", expanded=False):
+                    st.code(v)
+        else:
+            st.success("✅ لا توجد مشاكل استيراد ظاهرة.")
+    except Exception as e:
+        st.error(f"تعذر تحميل التشخيص: {e}")
+
+    # -------------------------
+    # Diagnostics: DB healthcheck
+    # -------------------------
+    st.subheader("🩺 فحص قاعدة البيانات")
+    try:
+        info = db_healthcheck()
+        if not info.get("connected"):
+            st.error("❌ لا يوجد اتصال بقاعدة البيانات. تأكد من DATABASE_URL في Secrets/Env.")
+        else:
+            st.success("✅ الاتصال بقاعدة البيانات يعمل.")
+            if info.get("db"):
+                st.json(info.get("db", {}))
+            with st.expander("Counts", expanded=False):
+                st.json(info.get("counts", {}))
+            if info.get("dup_tables"):
+                st.warning("تم العثور على جداول مكررة (قد تسبب لخبطة):")
+                st.json(info.get("dup_tables"))
+    except Exception as e:
+        st.error(f"فشل فحص DB: {e}")
+
 
 def view_settings():
     st.header("الإعدادات")
@@ -115,9 +154,8 @@ def view_settings():
                     "لا يوجد شعار داخل assets/ حالياً. "
                     "إذا رغبت، أنشئ مجلد assets/ وضع داخله: logo_full.png و logo_mark.png و logo_app.png"
                 )
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     if st.button("🔎 تشخيص قاعدة البيانات", key="db_diag"):
         rep = db_healthcheck()
         if not rep.get("connected"):
