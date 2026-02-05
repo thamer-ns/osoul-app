@@ -1,3 +1,4 @@
+from osoli_logging import log_exception
 # ai_engine_core/core.py
 
 from datetime import datetime
