@@ -1,3 +1,4 @@
+from osoli_logging import log_exception
 # ai_engine_core/__init__.py
 
 from .config import AI_ENGINE_VERSION, AI_ENGINE_NAME, AI_ENGINE_OK
