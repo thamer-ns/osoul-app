@@ -1,9 +1,17 @@
 # views/shared.py
 import streamlit as st
 import pandas as pd
-import plotly.express as px  # موجود لأن views.py كان يستورده (حتى لو ما يُستخدم هنا)
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+
+# Lazy plotly import to speed up app startup
+_PLOTLY = None
+
+def _lazy_plotly():
+    global _PLOTLY
+    if _PLOTLY is None:
+        import plotly.graph_objects as go  # type: ignore
+        from plotly.subplots import make_subplots  # type: ignore
+        _PLOTLY = (go, make_subplots)
+    return _PLOTLY
 from datetime import date
 import traceback
 
@@ -30,7 +38,9 @@ from market_data import get_chart_history
 # 1) Charts
 try:
     from charts import render_technical_chart
-except Exception:
+except Exception as e:
+    from osoli_logging import log_exception
+    log_exception(e, "Optional module failed to import: charts.render_technical_chart", level="WARNING")
     def render_technical_chart(symbol, *args, **kwargs):
         st.warning("⚠️ ملف charts.py مفقود أو به خطأ.")
 
@@ -39,6 +49,9 @@ bt_import_error = None
 try:
     from backtester import run_backtest, list_strategies
 except Exception as e:
+    from osoli_logging import log_exception
+    log_exception(e, "Optional module failed to import: backtester", level="WARNING")
+
     run_backtest = None
     list_strategies = lambda: []
     bt_import_error = repr(e)
@@ -55,6 +68,8 @@ try:
         fetch_full_statement_records, has_full_statement,
     )
 except Exception as e:
+    from osoli_logging import log_exception
+    log_exception(e, "Optional module failed to import: financial_analysis", level="WARNING")
     fin_import_error = traceback.format_exc()
     def get_thesis(s): return None
     def save_thesis(s, t, tg, r): pass
@@ -1130,7 +1145,8 @@ def render_osoli_report(rep: dict, title: str = "🤖 تقرير أصولي", *a
 # TradingView-like Plot (كما في ملفك)
 # ========================================================
 
-def _build_tv_like_plot(df: pd.DataFrame, title: str = "", show_rangeslider: bool = False) -> go.Figure:
+def _build_tv_like_plot(df: pd.DataFrame, title: str = "", show_rangeslider: bool = False) -> "object":
+    go, make_subplots = _lazy_plotly()
     d = df.copy()
 
     if "date" in d.columns:
