@@ -1,4 +1,3 @@
-from osoli_logging import log_exception
 # financial_analysis/yahoo_data.py
 import time
 from datetime import datetime
@@ -57,8 +56,8 @@ def _http_get_json(url: str, timeout: int = 8, retries: int = 2, sleep: float = 
                     return {}
             if r.status_code in (429, 503):
                 time.sleep(sleep * (2 if r.status_code == 429 else 1))
-        except Exception as e:
-            log_exception(e, "Ignored exception", level="DEBUG")
+        except Exception:
+            pass
         if i < retries:
             time.sleep(sleep)
     return {}
@@ -128,8 +127,8 @@ def _extract_stmt_list(root: dict, key: str) -> list:
         for _, v in obj.items():
             if isinstance(v, list) and v and isinstance(v[0], dict):
                 return v
-    except Exception as e:
-        log_exception(e, "Ignored exception", level="DEBUG")
+    except Exception:
+        pass
     return []
 
 
@@ -300,15 +299,17 @@ def get_financial_statements(symbol: str, period_type: str = "Annual", refresh: 
             d = fetch_financials_from_argaam(sym) or {}
             if d:
                 records = [{"date": d.get("date") or datetime.now().strftime("%Y-12-31"), "data": d}]
-        except Exception as e:
-            log_exception(e, "Ignored exception", level="DEBUG")
+        except Exception:
+            pass
+
     if not records and ptype == "Annual":
         try:
             d2 = fetch_financials_from_google_finance(sym) or {}
             if d2:
                 records = [{"date": d2.get("date") or datetime.now().strftime("%Y-12-31"), "data": d2}]
-        except Exception as e:
-            log_exception(e, "Ignored exception", level="DEBUG")
+        except Exception:
+            pass
+
     if records:
         for rec in records:
             d = rec.get("date")
@@ -323,6 +324,8 @@ def get_financial_statements(symbol: str, period_type: str = "Annual", refresh: 
         return get_stored_financials_df(sym, ptype)
 
     return stored if stored is not None else pd.DataFrame()
+
+
 
 # ==============================================================
 # ✅ Full Statements (All line-items) from Yahoo QuoteSummary JSON
@@ -353,8 +356,7 @@ def _extract_numeric_items(stmt: dict) -> Dict[str, float]:
         if isinstance(v, dict) and ("raw" in v or "fmt" in v):
             try:
                 out[str(k)] = float(v.get("raw") if v.get("raw") is not None else _yf_raw(v, default=0.0))
-            except Exception as e:
-                log_exception(e, 'FullStatements parse error', level='DEBUG')
+            except Exception:
                 continue
         elif isinstance(v, (int, float)):
             out[str(k)] = float(v)
