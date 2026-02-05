@@ -626,7 +626,7 @@ def _chip(text: str, tone: str = "neutral"):
         "neutral": "os-chip-gray",
     }.get(tone, "os-chip-gray")
     st.markdown(
-        f'<span class="os-chip {cls}"><span class="mi material-symbols-rounded">insights</span>{text}</span>',
+        f'<span class="os-chip {cls}"><span class="mi">insights</span>{text}</span>',
         unsafe_allow_html=True,
     )
 
@@ -914,8 +914,8 @@ def _render_ai_report_readable(rep: dict, show_debug: bool = False, compact: boo
               <div class="os-muted" style="margin-top:6px;">🧩 {AI_ENGINE_NAME} v{AI_ENGINE_VERSION} • Base Interval: {tf}</div>
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
-              <span class="os-chip os-chip-blue"><span class="mi material-symbols-rounded">token</span>AI</span>
-              <span class="os-chip os-chip-gray"><span class="mi material-symbols-rounded">timeline</span>{tf}</span>
+              <span class="os-chip os-chip-blue"><span class="mi">token</span>AI</span>
+              <span class="os-chip os-chip-gray"><span class="mi">timeline</span>{tf}</span>
             </div>
           </div>
         </div>
@@ -1397,3 +1397,67 @@ def get_import_diagnostics():
             "ai_engine": {"ok": False, "error": "diagnostics_failed"},
             "backtester": {"ok": False, "error": "diagnostics_failed"},
         }
+
+# --- Yahoo Diagnostics Wrappers (auto-added) ---
+# الهدف: تثبيت أسماء دوال تشخيص Yahoo بحيث لا تتسبب بأي ImportError بين الصفحات.
+# هذا القسم آمن حتى لو فشل استيراد financial_analysis.
+
+from typing import Optional, List, Dict, Any  # type: ignore
+import traceback  # type: ignore
+
+_yahoo_diag_fallback: Dict[str, Any] = {
+    "status": None,
+    "error": None,
+    "url": None,
+    "ts": None,
+    "headers": None,
+}
+
+def _safe_import_yahoo_diag():
+    try:
+        from financial_analysis.yahoo_data import (
+            diagnose_quote_summary as _dq,
+            get_last_yahoo_diagnostics as _gld,
+        )
+        return _dq, _gld, None
+    except Exception:
+        return None, None, traceback.format_exc()
+
+def get_last_yahoo_diagnostics() -> Dict[str, Any]:
+    """Return last Yahoo QuoteSummary diagnostics if available, else safe default."""
+    _dq, _gld, _err = _safe_import_yahoo_diag()
+    if _gld is None:
+        return dict(_yahoo_diag_fallback)
+    try:
+        d = _gld()
+        return d if isinstance(d, dict) else dict(_yahoo_diag_fallback)
+    except Exception:
+        return dict(_yahoo_diag_fallback)
+
+def diagnose_quote_summary(symbol: str, modules: Optional[List[str]] = None) -> Dict[str, Any]:
+    """Run live Yahoo QuoteSummary diagnostics if available."""
+    _dq, _gld, _err = _safe_import_yahoo_diag()
+    if _dq is None:
+        return {
+            "symbol": symbol,
+            "status": None,
+            "error": "financial_analysis.yahoo_data غير متاح (فشل الاستيراد).",
+            "hint": "غالباً مشكلة متطلبات/استيراد. راجع logs. تفاصيل الاستيراد في import_error.",
+            "import_error": _err,
+        }
+    try:
+        return _dq(symbol, modules=modules)
+    except Exception as e:
+        return {
+            "symbol": symbol,
+            "status": None,
+            "error": f"{type(e).__name__}: {e}",
+            "hint": "حدث استثناء أثناء تشخيص Yahoo.",
+        }
+
+# Aliases للتوافق مع نسخ سابقة من الواجهة:
+def diagnose_yahoo_quote_summary(symbol: str, modules: Optional[List[str]] = None) -> Dict[str, Any]:
+    return diagnose_quote_summary(symbol, modules=modules)
+
+def get_last_yahoo_diag() -> Dict[str, Any]:
+    return get_last_yahoo_diagnostics()
