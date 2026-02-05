@@ -1,3 +1,4 @@
+from osoli_logging import log_exception
 # ai_engine_core/vsa.py
 import numpy as np
 import pandas as pd
@@ -182,9 +183,8 @@ def analyze_vsa(df: pd.DataFrame, lookback: int = 60):
             reasons.append("🟠 VSA: Distribution (OBV يهبط والسعر متماسك/صاعد) → تصريف محتمل.")
             feats["vsa_distribution"] = 1
             signals.append("DISTRIBUTION")
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     # clamp
     out["score"] = float(max(min(score, 6.0), -6.0))
     out["reasons"] = reasons[:12]
