@@ -1,4 +1,3 @@
-from osoli_logging import log_exception
 # views/shared.py
 import streamlit as st
 import pandas as pd
@@ -29,11 +28,9 @@ from market_data import get_chart_history
 # ========================================================
 
 # 1) Charts
-chart_import_error = None
 try:
     from charts import render_technical_chart
-except Exception as e:
-    chart_import_error = traceback.format_exc()
+except Exception:
     def render_technical_chart(symbol, *args, **kwargs):
         st.warning("⚠️ ملف charts.py مفقود أو به خطأ.")
 
@@ -47,27 +44,23 @@ except Exception as e:
     bt_import_error = repr(e)
 
 # 3) Financial Analysis
-financial_import_error = None
 try:
     from financial_analysis import (
         get_thesis, save_thesis,
         FinancialParser, save_financial_record,
         get_stored_financials_df, get_advanced_fundamental_ratios,
-        sync_auto_yahoo, get_fundamental_ratios,
+        sync_auto_yahoo, sync_full_yahoo, get_fundamental_ratios,
         get_financial_statements,
+        fetch_full_statement_records, has_full_statement,
     )
-
-    # ✅ Full Statements (all line-items) + DB store
-    from financial_analysis.sync_full import sync_full_yahoo  # type: ignore
-    from financial_analysis.store_full import fetch_full_statement_records, has_full_statement  # type: ignore
-    from financial_analysis.yahoo_data import fetch_full_financial_statements_yahoo_json  # type: ignore
-except Exception as e:
-    financial_import_error = traceback.format_exc()
+except Exception:
     def get_thesis(s): return None
     def save_thesis(s, t, tg, r): pass
     def get_stored_financials_df(s, p): return pd.DataFrame()
     def get_advanced_fundamental_ratios(s): return {}
     def get_financial_statements(s, p="Annual", refresh=False): return pd.DataFrame()
+    def fetch_full_statement_records(s, statement="income", period_type="Annual", scale="thousands"): return pd.DataFrame()
+    def has_full_statement(s, statement="income", period_type="Annual", scale="thousands"): return False
 
     class FinancialParser:
         def process_file_or_text(self, uploaded_file=None, text_input=None):
@@ -76,17 +69,12 @@ except Exception as e:
     def save_financial_record(*args, **kwargs): return False
     def sync_auto_yahoo(s): return False, "Module Missing"
     def sync_full_yahoo(s, include_ttm=True): return False, "Module Missing"
-    def fetch_full_statement_records(s, statement="income", period_type="Annual", scale="thousands"): return pd.DataFrame()
-    def has_full_statement(s, statement="income", period_type="Annual", scale="thousands"): return False
-    def fetch_full_financial_statements_yahoo_json(s): return {}
     def get_fundamental_ratios(s): return {}
 
 # 4) Classical Analysis
-classical_import_error = None
 try:
     from classical_analysis import render_classical_analysis
-except Exception as e:
-    classical_import_error = traceback.format_exc()
+except Exception:
     def render_classical_analysis(s):
         st.warning("⚠️ ملف classical_analysis.py مفقود أو به خطأ.")
 
@@ -152,12 +140,13 @@ def _ensure_ui_once():
     st.session_state["_ui_injected_once"] = True
     try:
         inject_component_styles()
-    except Exception as e:
-        log_exception(e, "Ignored exception", level="DEBUG")
+    except Exception:
+        pass
     try:
         inject_streamlit_ar_i18n(True)
-    except Exception as e:
-        log_exception(e, "Ignored exception", level="DEBUG")
+    except Exception:
+        pass
+
 def _sym_key(sym: str) -> str:
     return (sym or "").replace(".", "_").replace("-", "_").replace(" ", "_")
 
@@ -184,8 +173,8 @@ def _clean_symbols_list(values) -> list:
             s = _normalize_symbol(str(x))
             if s and s != ".SR" and s.lower() != "nan":
                 out.append(s)
-    except Exception as e:
-        log_exception(e, "Ignored exception", level="DEBUG")
+    except Exception:
+        pass
     return list(sorted(set(out)))
 
 def _to_float(x, default=None):
@@ -1149,8 +1138,8 @@ def _build_tv_like_plot(df: pd.DataFrame, title: str = "", show_rangeslider: boo
     else:
         try:
             d.index = pd.to_datetime(d.index, errors="coerce")
-        except Exception as e:
-            log_exception(e, "Ignored exception", level="DEBUG")
+        except Exception:
+            pass
         d = d[~pd.isna(d.index)]
         d = d.sort_index()
         x = d.index
@@ -1264,8 +1253,9 @@ def _render_tv_like_chart(symbol: str, period: str, interval: str, show_rangesli
         try:
             if isinstance(df.index, pd.DatetimeIndex):
                 df = df.reset_index().rename(columns={"index": "date"})
-        except Exception as e:
-            log_exception(e, "Ignored exception", level="DEBUG")
+        except Exception:
+            pass
+
     try:
         fig = _build_tv_like_plot(df, title=f"{symbol} | {period} | {interval}", show_rangeslider=show_rangeslider)
         st.plotly_chart(
@@ -1349,24 +1339,3 @@ def _render_table_like_trades(df: pd.DataFrame, cols_spec=None, max_rows: int = 
             cols_spec.append((key, lbl, _guess_type(key)))
 
     render_custom_table(d, cols_spec)
-
-
-def get_import_diagnostics() -> dict:
-    """Return import/feature availability diagnostics for the UI."""
-    issues = {}
-    if bt_import_error:
-        issues["backtester"] = bt_import_error
-    if ai_import_error:
-        issues["ai_engine"] = ai_import_error
-    if financial_import_error:
-        issues["financial_analysis"] = financial_import_error
-    if classical_import_error:
-        issues["classical_analysis"] = classical_import_error
-    if chart_import_error:
-        issues["charts"] = chart_import_error
-
-    return {
-        "has_issues": bool(issues),
-        "issues": issues,
-        "versions": {"ai_engine": AI_ENGINE_VERSION, "ai_engine_name": AI_ENGINE_NAME},
-    }
