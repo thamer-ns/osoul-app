@@ -65,6 +65,19 @@ def analyze_vsa(df: pd.DataFrame, lookback: int = 60):
     low = low.tail(int(lookback))
     close = close.tail(int(lookback))
     vol = vol.tail(int(lookback))
+    # -------------------------
+    # Data quality gate (Volume)
+    # -------------------------
+    try:
+        vol_zero_ratio = float((vol <= 0).mean())
+        out["features"]["vsa_data_quality"] = 0 if vol_zero_ratio > 0.30 else 1
+        out["features"]["vsa_zero_ratio"] = round(vol_zero_ratio, 3)
+        if vol_zero_ratio > 0.30:
+            out["reasons"].append("⚠️ VSA: تم تعطيل الإشارات لأن بيانات الحجم ضعيفة/صفرية بشكل كبير.")
+            out["signals"].append("VSA_DISABLED_BAD_VOLUME")
+            return out
+    except Exception:
+        pass
 
     spread = _spread(high, low)
     body = _body(open_, close)
