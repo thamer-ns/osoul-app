@@ -40,27 +40,50 @@ def _yf_session():
     return _YF_SESSION
 
 
-def _http_get_json(url: str, timeout: int = 8, retries: int = 2, sleep: float = 0.6) -> dict:
+def _http_get_json_ex(url: str, timeout: int = 10, retries: int = 2, sleep: float = 0.8):
+    """Return (json_dict, http_status, err_msg).
+
+    We keep this separate so callers (like sync_full_yahoo) can surface meaningful errors
+    instead of a generic 'no data'.
+    """
     if not requests:
-        return {}
+        return {}, None, "Python package 'requests' is not available in the environment."
     ses = _yf_session()
     if not ses:
-        return {}
+        return {}, None, "Could not initialize HTTP session."
+    last_status = None
+    last_err = None
     for i in range(retries + 1):
         try:
             r = ses.get(url, timeout=timeout)
+            last_status = r.status_code
             if r.status_code == 200:
                 try:
-                    return r.json() or {}
-                except Exception:
-                    return {}
+                    return (r.json() or {}), 200, None
+                except Exception as e:
+                    return {}, 200, f"Invalid JSON response: {e}"
+            # Common transient / blocking statuses
+            if r.status_code in (401, 403):
+                snippet = (r.text or "")[:200].replace("
+", " ")
+                return {}, r.status_code, f"Access blocked by Yahoo (HTTP {r.status_code}). Snippet: {snippet}"
             if r.status_code in (429, 503):
                 time.sleep(sleep * (2 if r.status_code == 429 else 1))
-        except Exception:
-            pass
+            else:
+                snippet = (r.text or "")[:200].replace("
+", " ")
+                last_err = f"HTTP {r.status_code}. Snippet: {snippet}"
+        except Exception as e:
+            last_err = str(e)
         if i < retries:
             time.sleep(sleep)
-    return {}
+    return {}, last_status, (last_err or "Unknown HTTP error")
+
+
+def _http_get_json(url: str, timeout: int = 8, retries: int = 2, sleep: float = 0.6) -> dict:
+    """Backward-compatible helper (returns JSON dict only)."""
+    data, _, _ = _http_get_json_ex(url, timeout=timeout, retries=retries, sleep=sleep)
+    return data or {}
 
 
 def _yf_raw(v, default=0.0) -> float:
@@ -106,8 +129,36 @@ def _yahoo_quote_summary(symbol: str, modules: List[str]) -> dict:
     mods = ",".join([m.strip() for m in modules if m and str(m).strip()])
     if not mods:
         return {}
-    url = f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{sym}?modules={mods}"
+    url = f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{sym}?modules={mods}&formatted=false&lang=en-US&region=US&corsDomain=finance.yahoo.com"
     return _http_get_json(url)
+
+
+
+def diagnose_quote_summary(symbol: str, modules: List[str]) -> str:
+    """Return a human-readable diagnosis for QuoteSummary connectivity."""
+    sym = get_ticker_symbol(symbol)
+    mods = ",".join([m.strip() for m in (modules or []) if m and str(m).strip()])
+    if not sym:
+        return "Invalid/empty symbol after normalization."
+    if not mods:
+        return "No modules specified."
+    url = f"https://query2.finance.yahoo.com/v10/finance/quoteSummary/{sym}?modules={mods}&formatted=false&lang=en-US&region=US&corsDomain=finance.yahoo.com"
+    data, status, err = _http_get_json_ex(url)
+    if data and isinstance(data, dict):
+        # Yahoo sometimes returns quoteSummary.error
+        qerr = (data.get("quoteSummary") or {}).get("error")
+        if qerr:
+            code = qerr.get("code") or ""
+            desc = qerr.get("description") or ""
+            return f"Yahoo quoteSummary error: {code} {desc}".strip()
+        rs = (data.get("quoteSummary") or {}).get("result")
+        if rs:
+            return "OK: quoteSummary returned result."
+    if err:
+        return err
+    if status:
+        return f"HTTP {status} with empty/unsupported payload."
+    return "Empty response (unknown reason)."
 
 
 def _extract_stmt_list(root: dict, key: str) -> list:
