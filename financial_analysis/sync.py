@@ -168,7 +168,21 @@ def sync_full_yahoo(symbol: str, *, include_ttm: bool = True) -> Tuple[bool, str
     try:
         data = fetch_full_financial_statements_yahoo_json(symbol, period_type="All", as_thousands=True, include_ttm=include_ttm) or {}
         if not data:
-            return False, "❌ لم يتم جلب أي بيانات كاملة من Yahoo."
+            # Provide a helpful diagnosis instead of a generic message
+            from .yahoo_data import diagnose_quote_summary
+            diag = diagnose_quote_summary(
+                symbol,
+                [
+                    "incomeStatementHistory",
+                    "incomeStatementHistoryQuarterly",
+                    "balanceSheetHistory",
+                    "balanceSheetHistoryQuarterly",
+                    "cashflowStatementHistory",
+                    "cashflowStatementHistoryQuarterly",
+                ],
+            )
+            return False, f"❌ لم يتم جلب أي بيانات كاملة من Yahoo. التفاصيل: {diag}"
+
 
         saved = 0
         for period_type, bundle in data.items():
