@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 
 from market_data import get_chart_history
+from osoli_logging import log_exception
 
 
 # ============================================================
@@ -47,17 +48,15 @@ def _ensure_datetime_index(df: pd.DataFrame) -> pd.DataFrame:
     if not isinstance(d.index, pd.DatetimeIndex):
         try:
             d.index = pd.to_datetime(d.index, errors="coerce")
-        except Exception:
-            pass
-
+        except Exception as e:
+            log_exception(e, "Ignored exception", level="DEBUG")
     # تنظيف
     d = d[~pd.isna(d.index)]
     d = d[~d.index.duplicated(keep="last")]
     try:
         d = d.sort_index()
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     return d
 
 
@@ -235,25 +234,22 @@ def _fetch_history(symbol: str, period: str, interval: str):
         return get_chart_history(symbol, period=period, interval=interval)
     except TypeError:
         pass
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     # بعض النسخ: (symbol, period, interval)
     try:
         return get_chart_history(symbol, period, interval)
     except TypeError:
         pass
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     # بعض النسخ: (symbol, period)
     try:
         return get_chart_history(symbol, period)
     except TypeError:
         pass
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     # fallback أخير
     try:
         return get_chart_history(symbol)
