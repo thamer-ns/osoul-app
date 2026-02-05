@@ -85,19 +85,14 @@ def apply_custom_css():
             color: var(--txt);
         }
 
-        /* ✅ طبّق Cairo على span لكن استثنِ أيقونات Material */
-        span:not(.material-icons)
-            :not(.material-symbols-outlined)
-            :not(.material-symbols-rounded)
-            :not(.material-symbols-sharp)
-            :not([class*="material-symbols"])
-        {
+                /* ✅ طبّق Cairo على span لكن استثنِ أيقونات Material */
+        span:not(.material-icons):not(.material-symbols-outlined):not(.material-symbols-rounded):not(.material-symbols-sharp):not([class*="material-symbols"]) {
             font-family: 'Cairo', sans-serif !important;
             direction: rtl !important;
             text-align: right !important;
         }
 
-        /* =====================================================
+/* =====================================================
            Material Icons / Symbols fixes
            ===================================================== */
         .material-icons,
