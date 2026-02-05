@@ -1,4 +1,6 @@
 # security.py
+from osoli_logging import log_exception
+# security.py
 import streamlit as st
 import extra_streamlit_components as stx
 import datetime
@@ -111,9 +113,8 @@ def _bootstrap_auth_from_cookie():
             # كوكي قديمة/غير صالحة: احذفها
             try:
                 cookie_manager.delete("osoul_user")
-            except Exception:
-                pass
-
+            except Exception as e:
+                log_exception(e, "Ignored exception", level="DEBUG")
     # إذا ما فيه كوكي (أو ما جاهزة)
     # نعطي محاولة rerun واحدة فقط (لتهيئة الكوكي) ثم نوقف
     if cookie_user is None and tries < 1:
@@ -219,9 +220,8 @@ def login_system():
                             expires = datetime.datetime.now() + datetime.timedelta(days=30)
                             try:
                                 get_manager().set("osoul_user", u, expires_at=expires)
-                            except Exception:
-                                pass
-
+                            except Exception as e:
+                                log_exception(e, "Ignored exception", level="DEBUG")
                         st.success("تم الدخول")
                         st.rerun()
                     else:
@@ -269,9 +269,8 @@ def login_system():
 def logout():
     try:
         get_manager().delete("osoul_user")
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     # ✅ لا تمسح كل شيء، فقط مفاتيح الدخول
     for k in [
         "username",
