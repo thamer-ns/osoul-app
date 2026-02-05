@@ -132,8 +132,9 @@ if render_app_header:
     try:
         logo_full = st.session_state.get("ui_logo_full") or "assets/logo_full.png"
         logo_mark = st.session_state.get("ui_logo_mark") or "assets/logo_mark.png"
+        # components.render_app_header expects (title=...) not (app_name=...)
         render_app_header(
-            app_name=APP_NAME,
+            title=APP_NAME,
             subtitle="منصة التحليل الشامل: مالي + فني + كلاسيكي + مخاطر",
             logo_full_path=logo_full,
             logo_mark_path=logo_mark,
