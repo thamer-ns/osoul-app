@@ -1,3 +1,4 @@
+from osoli_logging import log_exception
 # backtester.py
 import json
 import uuid
@@ -196,9 +197,8 @@ def _ensure_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
     try:
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = [str(c[-1]) for c in df.columns]
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     lower = {str(c).lower(): c for c in df.columns}
 
     def pick(*names):
@@ -249,9 +249,8 @@ def _ensure_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
     try:
         if isinstance(df.index, pd.DatetimeIndex):
             df = df.sort_index()
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     return df
 
 
@@ -264,9 +263,8 @@ def calculate_indicators(df: pd.DataFrame) -> pd.DataFrame:
     try:
         if isinstance(df.index, pd.DatetimeIndex):
             df = df.sort_index()
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     for c in ["Open", "High", "Low", "Close", "Volume"]:
         if c not in df.columns:
             if c == "Open" and "Close" in df.columns:
@@ -606,10 +604,8 @@ def _link_latest_ai_decision_to_run(symbol: str, sector: str, run_id: str, outco
             (run_id, float(outcome_return_pct), "Linked with latest lab run", decision_id)
         )
 
-    except Exception:
-        pass
-
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
 def get_lab_runs(symbol: str = None, limit: int = 50) -> pd.DataFrame:
     if not fetch_table:
         return pd.DataFrame()
