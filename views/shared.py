@@ -89,6 +89,35 @@ except Exception as e:
     def sync_full_yahoo(s, include_ttm=True): return False, (fin_import_error or repr(e))
     def get_fundamental_ratios(s): return {}
 
+
+# Diagnostics helpers (Yahoo/Market) — keep UI imports stable
+try:
+    from financial_analysis.yahoo_data import get_last_yahoo_diagnostics as _get_last_yahoo_diagnostics  # type: ignore
+    from financial_analysis.yahoo_data import diagnose_quote_summary as _diagnose_quote_summary  # type: ignore
+except Exception:
+    _get_last_yahoo_diagnostics = None
+    _diagnose_quote_summary = None
+
+def get_last_yahoo_diagnostics():
+    """Return last Yahoo QuoteSummary diagnostics dict (or empty dict)."""
+    if _get_last_yahoo_diagnostics is None:
+        return {"status": None, "error": "diagnostics_unavailable", "url": None, "ts": None, "headers": None}
+    try:
+        d = _get_last_yahoo_diagnostics()
+        return d if isinstance(d, dict) else {"status": None, "error": "bad_diagnostics_type", "url": None, "ts": None, "headers": None}
+    except Exception as e:
+        return {"status": None, "error": f"diagnostics_error: {e}", "url": None, "ts": None, "headers": None}
+
+def diagnose_yahoo_quote_summary(symbol: str, modules=None):
+    """Run a live QuoteSummary diagnostics call (safe for UI)."""
+    if _diagnose_quote_summary is None:
+        return {"ok": False, "status": None, "error": "diagnose_unavailable", "symbol": symbol}
+    try:
+        return _diagnose_quote_summary(symbol, modules=modules)
+    except Exception as e:
+        return {"ok": False, "status": None, "error": str(e), "symbol": symbol}
+
+
 # 4) Classical Analysis
 try:
     from classical_analysis import render_classical_analysis
@@ -626,7 +655,7 @@ def _chip(text: str, tone: str = "neutral"):
         "neutral": "os-chip-gray",
     }.get(tone, "os-chip-gray")
     st.markdown(
-        f'<span class="os-chip {cls}"><span class="mi material-symbols-rounded">insights</span>{text}</span>',
+        f'<span class="os-chip {cls}"><span class="mi">insights</span>{text}</span>',
         unsafe_allow_html=True,
     )
 
@@ -914,8 +943,8 @@ def _render_ai_report_readable(rep: dict, show_debug: bool = False, compact: boo
               <div class="os-muted" style="margin-top:6px;">🧩 {AI_ENGINE_NAME} v{AI_ENGINE_VERSION} • Base Interval: {tf}</div>
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
-              <span class="os-chip os-chip-blue"><span class="mi material-symbols-rounded">token</span>AI</span>
-              <span class="os-chip os-chip-gray"><span class="mi material-symbols-rounded">timeline</span>{tf}</span>
+              <span class="os-chip os-chip-blue"><span class="mi">token</span>AI</span>
+              <span class="os-chip os-chip-gray"><span class="mi">timeline</span>{tf}</span>
             </div>
           </div>
         </div>
@@ -935,7 +964,7 @@ def _render_ai_report_readable(rep: dict, show_debug: bool = False, compact: boo
     _chip(f"Score {score}/100", _tone_score(score))
     _chip(f"{conf_label} ({conf}%)", _tone_conf(conf))
     st.markdown(
-        "<span class='os-chip os-chip-gray'><span class='mi material-symbols-rounded'>rule</span>اعتمد على الأدلة + بوابات المخاطر</span>",
+        "<span class='os-chip os-chip-gray'><span class='mi'>rule</span>اعتمد على الأدلة + بوابات المخاطر</span>",
         unsafe_allow_html=True,
     )
     st.markdown("</div>", unsafe_allow_html=True)
