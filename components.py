@@ -969,6 +969,23 @@ def render_osoli_report(report: Dict[str, Any], *, title: str = "📌 تقرير
             f'<span class="os-chip os-chip-gray">{_mi("verified")} الثقة: {html.escape(conf_txt)}</span>'
         )
 
+
+    # Data quality (optional)
+    dq = report.get("data_quality")
+    if not isinstance(dq, dict):
+        dq = (report.get("engine_meta") or {}).get("data_quality")
+    if isinstance(dq, dict) and dq:
+        try:
+            dqs = int(_safe_number(dq.get("score"), default=0) or 0)
+            dqs = max(0, min(100, dqs))
+        except Exception:
+            dqs = 0
+        dq_pass = bool(dq.get("pass", True))
+        badge_cls = "os-chip-green" if dq_pass and dqs >= 70 else "os-chip-amber" if dqs >= 50 else "os-chip-red"
+        chips.append(
+            f'<span class="os-chip {badge_cls}">{_mi("shield")} جودة البيانات: {dqs}/100</span>'
+        )
+
     if recommendation:
         rec_txt = _safe_text(recommendation)
         chips.append(
@@ -977,6 +994,20 @@ def render_osoli_report(report: Dict[str, Any], *, title: str = "📌 تقرير
 
     if chips:
         st.markdown("".join(chips), unsafe_allow_html=True)
+
+    # تفاصيل جودة البيانات
+    if isinstance(dq, dict) and dq:
+        issues = dq.get("issues") or []
+        metrics = dq.get("metrics") or {}
+        if issues or metrics:
+            with st.expander("🛡️ تفاصيل جودة البيانات", expanded=False):
+                if issues:
+                    st.write("**ملاحظات:**")
+                    for it in issues[:12]:
+                        st.write(f"- {it}")
+                if isinstance(metrics, dict) and metrics:
+                    st.write("**مقاييس:**")
+                    st.json(metrics)
 
     # Cards grid
     st.markdown('<div class="os-grid">', unsafe_allow_html=True)
