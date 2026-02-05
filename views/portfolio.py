@@ -1,3 +1,4 @@
+from osoli_logging import log_exception
 # views/portfolio.py
 import streamlit as st
 import pandas as pd
@@ -42,9 +43,8 @@ def _safe_cash_pct(fin: dict, open_market_val: float) -> float:
     try:
         if isinstance(fin, dict) and "cash_pct" in fin:
             return float(_sf(fin.get("cash_pct", 0.0), 0.0))
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     cash = _sf((fin or {}).get("cash", 0.0), 0.0) if isinstance(fin, dict) else 0.0
     pv = float(max(0.0, cash + _sf(open_market_val, 0.0)))
     return float((cash / pv) * 100.0) if pv > 0 else 0.0
