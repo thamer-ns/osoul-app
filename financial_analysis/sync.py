@@ -1,7 +1,6 @@
 # financial_analysis/sync.py
 from typing import Tuple, List
 
-import yfinance as yf
 
 from market_data import get_ticker_symbol
 from .store import save_financial_record
@@ -168,21 +167,14 @@ def sync_full_yahoo(symbol: str, *, include_ttm: bool = True) -> Tuple[bool, str
     try:
         data = fetch_full_financial_statements_yahoo_json(symbol, period_type="All", as_thousands=True, include_ttm=include_ttm) or {}
         if not data:
-            # Provide a helpful diagnosis instead of a generic message
             from .yahoo_data import diagnose_quote_summary
-            diag = diagnose_quote_summary(
-                symbol,
-                [
-                    "incomeStatementHistory",
-                    "incomeStatementHistoryQuarterly",
-                    "balanceSheetHistory",
-                    "balanceSheetHistoryQuarterly",
-                    "cashflowStatementHistory",
-                    "cashflowStatementHistoryQuarterly",
-                ],
-            )
-            return False, f"❌ لم يتم جلب أي بيانات كاملة من Yahoo. التفاصيل: {diag}"
-
+            diag = diagnose_quote_summary(symbol)
+            details = ""
+            if diag.get("status") or diag.get("error"):
+                details = f" التفاصيل: status={diag.get('status')}, error={diag.get('error')}"
+                if diag.get("hint"):
+                    details += f" | hint={diag.get('hint')}"
+            return False, "❌ لم يتم جلب أي بيانات كاملة من Yahoo." + details + "\n"
 
         saved = 0
         for period_type, bundle in data.items():
@@ -211,4 +203,6 @@ def sync_full_yahoo(symbol: str, *, include_ttm: bool = True) -> Tuple[bool, str
         return True, f"✅ تم حفظ {saved} سجلات (قوائم كاملة) لـ {symbol}."
 
     except Exception as e:
+        from osoli_logging import log_exception
+        log_exception(e, "sync_full_yahoo failed")
         return False, f"❌ خطأ أثناء مزامنة القوائم الكاملة: {e}"
