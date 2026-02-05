@@ -1,3 +1,4 @@
+from osoli_logging import log_exception
 # ai_engine_core/indicators.py
 
 import pandas as pd
@@ -67,9 +68,8 @@ def _compute_indicators(df: pd.DataFrame):
         out["macd"] = macd
         out["macd_signal"] = signal
         out["macd_hist"] = hist
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     # =========================================================
     # ATR (Wilder)
     # =========================================================
@@ -82,9 +82,8 @@ def _compute_indicators(df: pd.DataFrame):
 
         atr14 = tr.ewm(alpha=1/14, adjust=False, min_periods=14).mean()
         out["atr14"] = atr14
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     # =========================================================
     # ADX (14) + DI
     # =========================================================
@@ -118,9 +117,8 @@ def _compute_indicators(df: pd.DataFrame):
         out["adx14"] = adx.bfill()
         out["plus_di14"] = plus_di.bfill()
         out["minus_di14"] = minus_di.bfill()
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     # =========================================================
     # Stochastic (14,3)
     # =========================================================
@@ -131,9 +129,8 @@ def _compute_indicators(df: pd.DataFrame):
         d = k.rolling(3).mean()
         out["stoch_k"] = k.bfill()
         out["stoch_d"] = d.bfill()
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     # =========================================================
     # OBV
     # =========================================================
@@ -141,18 +138,16 @@ def _compute_indicators(df: pd.DataFrame):
         direction = np.sign(close.diff()).fillna(0.0)
         obv = (direction * vol).fillna(0.0).cumsum()
         out["obv"] = obv
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     # =========================================================
     # Volatility (20)
     # =========================================================
     try:
         ret = close.pct_change().replace([np.inf, -np.inf], 0).fillna(0)
         out["vol20"] = ret.rolling(20).std().bfill()
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     # =========================================================
     # Fib + Range (120 lookback)
     # =========================================================
@@ -165,7 +160,6 @@ def _compute_indicators(df: pd.DataFrame):
             out["fib382"] = ll + 0.382 * rng
             out["range_high"] = hh
             out["range_low"] = ll
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     return out
