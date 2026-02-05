@@ -1,3 +1,4 @@
+from osoli_logging import log_exception
 # market_data.py
 
 import re
@@ -151,16 +152,14 @@ def _ensure_datetime_index(df: pd.DataFrame) -> pd.DataFrame:
     if not isinstance(d.index, pd.DatetimeIndex):
         try:
             d.index = pd.to_datetime(d.index, errors="coerce")
-        except Exception:
-            pass
-
+        except Exception as e:
+            log_exception(e, "Ignored exception", level="DEBUG")
     d = d[~pd.isna(d.index)]
     d = d[~d.index.duplicated(keep="last")]
     try:
         d = d.sort_index()
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     return d
 
 
@@ -459,9 +458,8 @@ def fetch_price_from_yahoo(symbol: str) -> Dict[str, float]:
                         last_price = _safe_float(h["Close"].iloc[-1])
                     if prev_close <= 0 and len(h) >= 2:
                         prev_close = _safe_float(h["Close"].iloc[-2])
-            except Exception:
-                pass
-
+            except Exception as e:
+                log_exception(e, "Ignored exception", level="DEBUG")
         return {
             "price": float(last_price) if _is_reasonable_price(last_price) else 0.0,
             "prev_close": float(prev_close) if _is_reasonable_price(prev_close) else 0.0,
@@ -493,9 +491,8 @@ def get_tasi_data():
         if _is_reasonable_price(curr):
             chg = ((curr - prev) / prev) * 100.0 if prev > 0 else 0.0
             return float(curr), round(_safe_float(chg), 2)
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     return 0.0, 0.0
 
 
@@ -529,8 +526,8 @@ def get_chart_history(symbol: str, period: str = None, interval: str = "1d", yea
                 df = _ensure_datetime_index(df)
                 if not df.empty and "Close" in df.columns:
                     return df
-        except Exception:
-            pass
+        except Exception as e:
+            log_exception(e, "Ignored exception", level="DEBUG")
         finally:
             # ✅ Gentle backoff to reduce rate-limit pressure
             time.sleep(0.25)
@@ -692,9 +689,8 @@ def fetch_batch_data(symbols_list: list):
                     if prev_close <= 0 and len(h) >= 2:
                         prev_close = float(_safe_float(h["Close"].iloc[-2]))
                     source = "yahoo_history"
-            except Exception:
-                pass
-
+            except Exception as e:
+                log_exception(e, "Ignored exception", level="DEBUG")
         # ✅ Argaam fallback
         if price <= 0:
             p2 = fetch_price_from_argaam(raw_sym)
@@ -742,9 +738,8 @@ def get_static_info(symbol: str) -> Dict[str, Any]:
                 name = nm
             if sec:
                 sector = sec
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     return {
         "symbol": sym,
         "name": name,
