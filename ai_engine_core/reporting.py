@@ -6,7 +6,7 @@ import pandas as pd
 
 from .config import AI_ENGINE_NAME, AI_ENGINE_VERSION
 from .core import _normalize_symbol, _map_period_from_timeframe
-from .ohlcv import _ensure_ohlcv_columns
+from .ohlcv import _ensure_ohlcv_columns, assess_ohlcv_quality
 from .indicators import _compute_indicators
 
 from .technicals import (
@@ -75,80 +75,6 @@ def _timeframe_to_interval(timeframe: str) -> str:
     return "1d"
 
 
-def _mtf_confirmation(symbol: str, base_timeframe: str, get_chart_history):
-    """Minimal multi-timeframe confirmation.
-    - If base is 1D: also check 1W trend alignment.
-    - If base is 1W: also check 1D momentum.
-    Returns dict with 'bias' (-1..+1) and 'notes'.
-    Safe: never raises.
-    """
-    out = {"bias": 0.0, "notes": []}
-    try:
-        base_tf = (base_timeframe or "1D").strip().upper()
-    except Exception:
-        base_tf = "1D"
-
-    try:
-        if base_tf in ("1D", "D", "1DAY", "1DAY "):
-            # Weekly confirmation
-            try:
-                w = get_chart_history(symbol, period="5y", interval="1wk")
-            except TypeError:
-                w = get_chart_history(symbol, "5y")
-            if w is not None and hasattr(w, "empty") and (not w.empty) and len(w) >= 60:
-                try:
-                    import pandas as pd
-                    ww = w.copy()
-                    if "Close" in ww.columns:
-                        c = pd.to_numeric(ww["Close"], errors="coerce").fillna(method="ffill")
-                        sma50 = c.rolling(50).mean()
-                        sma200 = c.rolling(200).mean()
-                        if len(sma200.dropna()) > 0:
-                            if float(sma50.iloc[-1]) > float(sma200.iloc[-1]):
-                                out["bias"] += 0.5
-                                out["notes"].append("MTF: الأسبوعي يدعم الاتجاه الصاعد (SMA50 > SMA200).")
-                            elif float(sma50.iloc[-1]) < float(sma200.iloc[-1]):
-                                out["bias"] -= 0.5
-                                out["notes"].append("MTF: الأسبوعي يضغط على الصعود (SMA50 < SMA200).")
-                except Exception:
-                    pass
-
-        elif base_tf in ("1W", "W", "1WK", "WEEK"):
-            # Daily momentum confirmation
-            try:
-                d = get_chart_history(symbol, period="1y", interval="1d")
-            except TypeError:
-                d = get_chart_history(symbol, "1y")
-            if d is not None and hasattr(d, "empty") and (not d.empty) and len(d) >= 80:
-                try:
-                    import pandas as pd
-                    dd = d.copy()
-                    if "Close" in dd.columns:
-                        c = pd.to_numeric(dd["Close"], errors="coerce").fillna(method="ffill")
-                        rsi = 100 - (100 / (1 + (c.diff().clip(lower=0).ewm(alpha=1/14, adjust=False).mean() /
-                                             (c.diff().clip(upper=0).abs().ewm(alpha=1/14, adjust=False).mean().replace(0, 1e-9)))))
-                        if not rsi.empty:
-                            v = float(rsi.iloc[-1])
-                            if v >= 55:
-                                out["bias"] += 0.3
-                                out["notes"].append("MTF: الزخم اليومي داعم (RSI>55).")
-                            elif v <= 45:
-                                out["bias"] -= 0.3
-                                out["notes"].append("MTF: الزخم اليومي ضعيف (RSI<45).")
-                except Exception:
-                    pass
-
-    except Exception:
-        return out
-
-    # clamp
-    try:
-        out["bias"] = float(max(min(out["bias"], 1.0), -1.0))
-    except Exception:
-        out["bias"] = 0.0
-    return out
-
-
 def _dedup_limit(items, limit=12):
     out, seen = [], set()
     for x in (items or []):
@@ -172,6 +98,16 @@ def _safe_float(x, default=0.0):
         return float(x)
     except Exception:
         return default
+
+
+def _score_from_total(total_score: float) -> int:
+    """Map engine total_score (approx -10..+10) into 0..100 UI score."""
+    try:
+        t = float(total_score)
+    except Exception:
+        t = 0.0
+    s = int(round(50 + (t * 5)))
+    return max(0, min(100, s))
 
 
 def generate_ai_report(symbol, timeframe="1D"):
@@ -209,15 +145,18 @@ def generate_ai_report(symbol, timeframe="1D"):
             raise ValueError("no data")
 
         df = _ensure_ohlcv_columns(df)
-        # Multi-timeframe confirmation (safe, optional)
-        mtf = {}
-        try:
-            mtf = _mtf_confirmation(symbol, timeframe, get_chart_history)
-        except Exception:
-            mtf = {}
-
         if df is None or df.empty:
             raise ValueError("no ohlcv")
+
+        # =========================
+        # Data Quality Gate (OHLCV)
+        # =========================
+        dq = {}
+        try:
+            dq = assess_ohlcv_quality(df, interval=interval) or {}
+        except Exception as e:
+            log_exception(e, "Ignored exception", level="DEBUG")
+            dq = {"score": 0, "pass": False, "issues": ["فشل فحص جودة البيانات"], "metrics": {}}
 
         # Minimum candles based on interval
         min_rows = 60 if interval in ("1d", "1wk", "1mo") else 120
@@ -272,6 +211,22 @@ def generate_ai_report(symbol, timeframe="1D"):
 
         s_vsa, o_vsa, f_vsa = 0, [], {}
         if callable(_vsa_lite):
+            # إذا جودة Volume ضعيفة، لا نعتمد VSA-lite
+            try:
+                zvr = float(((dq or {}).get('metrics') or {}).get('zero_volume_ratio', 0.0) or 0.0)
+            except Exception:
+                zvr = 0.0
+            if zvr > 0.35:
+                o_vsa = ["⚠️ تم تخفيف/تعطيل VSA: بيانات الحجم ضعيفة (Volume=0) بنسبة عالية."]
+                f_vsa = {"vsa_disabled": 1, "vsa_zero_ratio": round(zvr, 4), "vsa_data_quality": 0}
+            else:
+                try:
+                    s_vsa, o_vsa, f_vsa = _vsa_lite(df)
+                    if isinstance(f_vsa, dict) and 'vsa_data_quality' not in f_vsa:
+                        f_vsa['vsa_data_quality'] = 1
+                except Exception:
+                    s_vsa, o_vsa, f_vsa = 0, [], {}
+
             try:
                 s_vsa, o_vsa, f_vsa = _vsa_lite(df)
             except Exception:
@@ -438,6 +393,21 @@ def generate_ai_report(symbol, timeframe="1D"):
         fund_reasons = _dedup_limit(fund_reasons, limit=8) or ["المؤشرات المالية طبيعية"]
 
         confidence, confidence_label = _calc_confidence(tech_score, fund_score, df)
+
+        # -------------------------
+        # Data quality adjustments
+        # -------------------------
+        dq_pass = bool((dq or {}).get('pass', True))
+        dq_score = int((dq or {}).get('score', 0) or 0)
+        if not dq_pass:
+            # Cap confidence and neutralize recommendation to avoid misleading output
+            try:
+                confidence = min(float(confidence), 0.35)  # if returned 0..1
+            except Exception:
+                pass
+            tech_reasons = list(tech_reasons or [])
+            tech_reasons.insert(0, f"⚠️ جودة البيانات منخفضة (DQ={dq_score}/100): سيتم تعطيل التوصية والاكتفاء بالمراقبة")
+
         try:
             confidence = float(confidence)
             if 0 <= confidence <= 1:
@@ -471,8 +441,8 @@ def generate_ai_report(symbol, timeframe="1D"):
             "tech_score": round(float(tech_score), 2),
             "fund_score": round(float(fund_score), 2),
             "total_score": round(float(total_score), 2),
-            "score": int(max(0, min(100, round(50 + (float(total_score) * 5))))),
-            "osoli_score": int(max(0, min(100, round(50 + (float(total_score) * 5))))),
+            "score": _score_from_total(total_score),
+            "osoli_score": _score_from_total(total_score),
             "tech_reasons": tech_reasons,
             "fund_reasons": fund_reasons,
             "trend": "صاعد" if float(tech_score) >= 0 else "هابط",
@@ -492,11 +462,24 @@ def generate_ai_report(symbol, timeframe="1D"):
                 "interval_used": str(interval),
                 "rows": int(len(df)),
                 "last_bar": last_bar,
-                "mtf": mtf,
+                "data_quality": dq,
             },
         }
+
         report["risk_gates"] = _risk_gates(report)
         report["scenarios"] = _build_scenarios(df, report)
+
+        # quality override (after scenarios/gates)
+        try:
+            dq_meta = (report.get('engine_meta') or {}).get('data_quality') or {}
+            if isinstance(dq_meta, dict) and not bool(dq_meta.get('pass', True)):
+                report["recommendation"] = "⚠️ جودة بيانات منخفضة — مراقبة فقط"
+                report["color"] = "#ffc107"
+                report["strategy"] = "تم تعطيل التوصية بسبب جودة البيانات. راجع المصدر/الفاصل الزمني أو انتظر بيانات أحدث."
+                # confidence cap in 0..100
+                report["confidence"] = min(int(report.get('confidence') or 0), 35)
+        except Exception as e:
+            log_exception(e, "Ignored exception", level="DEBUG")
 
         try:
             if (not report["risk_gates"]["pass"]) and ("شراء" in str(report["recommendation"]) or "Buy" in str(report["recommendation"])):
