@@ -1,3 +1,4 @@
+from osoli_logging import log_exception
 # ai_engine_core/ohlcv.py
 
 import pandas as pd
@@ -14,9 +15,8 @@ def _ensure_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
     try:
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = [str(c[-1]) for c in df.columns]
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     cols = {c: c for c in df.columns}
     lower = {str(c).lower(): c for c in df.columns}
 
@@ -62,8 +62,7 @@ def _ensure_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
     for c in ["Open", "High", "Low", "Close", "Volume"]:
         try:
             df[c] = pd.to_numeric(df[c], errors="coerce")
-        except Exception:
-            pass
-
+        except Exception as e:
+            log_exception(e, "Ignored exception", level="DEBUG")
     df = df.dropna(subset=["Open", "High", "Low", "Close"]).copy()
     return df
