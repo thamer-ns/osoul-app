@@ -7,6 +7,7 @@ from typing import List, Tuple, Optional, Dict, Any
 
 from database import fetch_table, execute_query
 from market_data import fetch_batch_data
+from osoli_logging import log_exception
 
 
 # ============================================================
@@ -80,8 +81,8 @@ def get_portfolio_cache_key() -> str:
                 s = pd.to_datetime(df[c], errors="coerce", utc=True)
                 try:
                     s = s.dt.tz_convert(None)
-                except Exception:
-                    pass
+                except Exception as e:
+                    log_exception(e, "tz_convert(None) failed in cache_key", level="DEBUG")
                 v = s.max()
                 if pd.isna(v):
                     continue
@@ -596,3 +597,14 @@ def create_smart_backup():
     except Exception as e:
         st.error(f"فشل النسخ الاحتياطي: {e}")
         return None, None
+
+
+
+@st.cache_data(show_spinner=False)
+def cached_portfolio_metrics(cache_key: str, include_xirr: bool = True) -> Dict[str, Any]:
+    """نسخة cached من calculate_portfolio_metrics.
+
+    cache_key: استخدم get_portfolio_cache_key() لكسر الكاش عند أي تغيير بالبيانات.
+    """
+    return calculate_portfolio_metrics(include_xirr=include_xirr, cache_key=cache_key)
+
