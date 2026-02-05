@@ -1,3 +1,4 @@
+from osoli_logging import log_exception
 # financial_analysis/ui.py
 import streamlit as st
 import pandas as pd
@@ -46,9 +47,8 @@ def render_financial_dashboard_ui(symbol):
                 if cols:
                     fig = px.bar(plot_df.sort_values("date"), x="Year", y=cols, barmode="group")
                     st.plotly_chart(fig, use_container_width=True)
-            except Exception:
-                pass
-
+            except Exception as e:
+                log_exception(e, "Ignored exception", level="DEBUG")
             with st.expander("البيانات التفصيلية"):
                 st.dataframe(df, use_container_width=True)
 
@@ -69,9 +69,8 @@ def render_financial_dashboard_ui(symbol):
                         "P/B": metrics.get("PB", 0),
                     }
                     st.json(adv)
-                except Exception:
-                    pass
-
+                except Exception as e:
+                    log_exception(e, "Ignored exception", level="DEBUG")
     with tab_data_mgmt:
         st.info("يدعم: PDF تداول / Excel/CSV / Copy-Paste من المتصفح (TradingView/أرقام/Investing/Google Finance)")
         parser = FinancialParser()
