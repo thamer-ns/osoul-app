@@ -1,3 +1,4 @@
+from osoli_logging import log_exception
 # classical_analysis.py
 import streamlit as st
 import pandas as pd
@@ -116,9 +117,8 @@ def _ensure_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
         if not isinstance(out.index, pd.DatetimeIndex):
             out.index = pd.to_datetime(out.index, errors="coerce")
         out = out.sort_index()
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     # Cast numeric
     for col in ["Open", "High", "Low", "Close", "Volume"]:
         out[col] = pd.to_numeric(out[col], errors="coerce")
@@ -708,9 +708,8 @@ def render_classical_analysis(symbol: str, interval: str = "1d"):
         if lvl_rows:
             with st.expander("📋 جدول المستويات (موحّد)"):
                 _render_levels_table(lvl_rows)
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     # --------------------------------------------------------
     # Summary Cards
 
