@@ -43,21 +43,32 @@ def render_app_header(
         _ = show_in_sidebar
 
         # Main header
-        # ⚠️ بناءً على طلبك: إلغاء أيقونة (logo_mark) نهائيًا.
-        # نُبقي خيار تمرير المسار للتماسك الخلفي فقط.
+        # ✅ عرض الشعار داخل الهيدر (ولو تغيّر من الإعدادات يتغيّر فوراً)
+        # الأولوية: logo_full ثم logo_mark
+        logo_src_b64 = _img_to_base64(logo_full_path) or _img_to_base64(logo_mark_path)
         logo_html = ""
+        if logo_src_b64:
+            logo_html = (
+                "<img class='os-app-logo' "
+                f"src='data:image/png;base64,{logo_src_b64}' "
+                "alt='logo' />"
+            )
+
+        # ملاحظة: classes هنا متوافقة مع CSS داخل styles.py
+        if logo_html:
+            logo_html = f"<div class='os-h-logo'>{logo_html}</div>"
 
         st.markdown(
             f"""
             <div class='os-app-header'>
-              <div class='os-app-left'>
+              <div class='os-h-left'>
                 {logo_html}
                 <div>
-                  <div class='os-app-title'>{html.escape(title)}</div>
-                  <div class='os-app-sub'>{html.escape(subtitle)}</div>
+                  <div class='os-h-title'>{html.escape(title)}</div>
+                  <div class='os-h-sub'>{html.escape(subtitle)}</div>
                 </div>
               </div>
-              <div class='os-app-right'>
+              <div class='os-h-right'>
                 <span class='os-chip os-chip-blue'><span class='mi'>insights</span>تحليل</span>
                 <span class='os-chip os-chip-gray'><span class='mi'>shield</span>مخاطر</span>
               </div>
