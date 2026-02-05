@@ -85,7 +85,7 @@ def _http_get_json(url: str, timeout: int = 8, retries: int = 2, sleep: float = 
 
             # Common blocking / auth statuses
             if r.status_code in (401, 403):
-                snippet = (r.text or "")[:200].replace("\n", " ")
+                snippet = _safe_snippet(getattr(r, "text", ""))
                 last_err = f"Access blocked by Yahoo (HTTP {r.status_code}). Snippet: {snippet}"
                 _LAST_YAHOO_STATUS = r.status_code
                 _LAST_YAHOO_ERROR = last_err
@@ -93,14 +93,14 @@ def _http_get_json(url: str, timeout: int = 8, retries: int = 2, sleep: float = 
 
             # Transient / rate-limit statuses
             if r.status_code in (429, 503):
-                snippet = (r.text or "")[:200].replace("\n", " ")
+                snippet = _safe_snippet(getattr(r, "text", ""))
                 last_err = f"Transient Yahoo error (HTTP {r.status_code}). Snippet: {snippet}"
                 _LAST_YAHOO_STATUS = r.status_code
                 _LAST_YAHOO_ERROR = last_err
                 time.sleep(sleep * (2 if r.status_code == 429 else 1))
                 continue
 
-            snippet = (r.text or "")[:200].replace("\n", " ")
+            snippet = _safe_snippet(getattr(r, "text", ""))
             last_err = f"HTTP {r.status_code}. Snippet: {snippet}"
             _LAST_YAHOO_STATUS = r.status_code
             _LAST_YAHOO_ERROR = last_err
@@ -165,6 +165,13 @@ def diagnose_quote_summary(symbol: str, modules: List[str] | None = None) -> Dic
     _ = _http_get_json(url)
     status = _LAST_YAHOO_STATUS
     err = _LAST_YAHOO_ERROR
+
+def _safe_snippet(text: str, limit: int = 200) -> str:
+    try:
+        return (text or "")[:limit].replace("\n", " ").replace("\r", " ")
+    except Exception:
+        return ""
+
 
     hint = None
     if status in (401, 403):
