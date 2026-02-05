@@ -1,147 +1,108 @@
-# financial_analysis/sync.py
-from typing import Tuple, List
+# financial_analysis/sync_full.py
+from __future__ import annotations
 
-import yfinance as yf
+from typing import Dict, Any, Tuple, List
+from datetime import datetime
+
+import pandas as pd
 
 from market_data import get_ticker_symbol
-from .store import save_financial_record
-from .utils import _safe_float, _safe_date_str
-from .parsers import fetch_financials_from_argaam, fetch_financials_from_google_finance
+from osoli_logging import log_exception
+
+from .yahoo_data import fetch_full_financial_statements_yahoo_json
+from .store_full import save_full_statement_record
 
 
-# ==============================================================
-# 🧩 Fallback Sync (بديل آمن لـ sync_auto_multi_sources)
-# ==============================================================
-def sync_auto_multi_sources(symbol: str, prefer: str = "yahoo") -> Tuple[bool, str]:
+def _to_thousands(d: Dict[str, Any]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    for k, v in (d or {}).items():
+        if isinstance(v, (int, float)) and v is not None:
+            out[k] = float(v) / 1000.0
+        else:
+            out[k] = v
+    return out
+
+
+def _calc_ttm_from_quarters(q_records: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Sum last 4 quarters numeric keys."""
+    if not q_records:
+        return {}
+    # assume q_records sorted desc by date
+    last4 = q_records[:4]
+    sums: Dict[str, float] = {}
+    for rec in last4:
+        for k, v in rec.items():
+            if isinstance(v, (int, float)):
+                sums[k] = sums.get(k, 0.0) + float(v)
+    return sums
+
+
+def sync_full_yahoo(symbol: str, include_ttm: bool = True) -> Tuple[bool, str]:
+    """Fetch full statements (all line-items) annual+quarterly from Yahoo JSON and store them in DB.
+
+    - Stores numbers in **thousands** to match Yahoo UI label 'جميع الأرقام بالآلاف'
+    - Computes TTM:
+        * income/cashflow: sum last 4 quarters per line-item
+        * balance: latest quarter snapshot
     """
-    بديل آمن إذا فشل Yahoo:
-    - يحاول Argaam ثم Google Finance (إن توفر requests/bs4)
-    - يحفظ سجل Annual واحد على الأقل
-    """
-    symbol = get_ticker_symbol(symbol)
+    sym = get_ticker_symbol(symbol)
+    try:
+        payload = fetch_full_financial_statements_yahoo_json(sym) or {}
+    except Exception as e:
+        log_exception(e, f"FullStatements fetch failed: {sym}", level="ERROR")
+        return False, "فشل جلب القوائم الكاملة من Yahoo."
+
     saved = 0
     notes: List[str] = []
 
-    try:
-        d = fetch_financials_from_argaam(symbol) or {}
-        if isinstance(d, dict) and d:
-            dt = d.get("date") or _safe_date_str(symbol)  # (كما هو best-effort)
-            if save_financial_record(symbol, dt, d, "Annual", "Argaam"):
-                saved += 1
-                notes.append("تمت المحاولة من أرقام")
-    except Exception as e:
-        notes.append(f"أرقام فشل: {e}")
+    def _save(statement: str, period_type: str, as_of: str, data: Dict[str, Any]):
+        nonlocal saved
+        ok = save_full_statement_record(
+            sym,
+            statement=statement,
+            period_type=period_type,
+            as_of=as_of,
+            data=_to_thousands(data),
+            scale="thousands",
+            source="YahooJSON",
+        )
+        if ok:
+            saved += 1
+
+    # payload format: {statement: {Annual:[{date,data}], Quarterly:[...]} }
+    for statement in ("income", "balance", "cashflow"):
+        obj = payload.get(statement) or {}
+        for ptype in ("Annual", "Quarterly"):
+            rows = obj.get(ptype) or []
+            for row in rows:
+                as_of = str(row.get("date") or "")
+                data = row.get("data") or {}
+                if as_of and isinstance(data, dict) and data:
+                    _save(statement, ptype, as_of, data)
+
+        # TTM
+        if include_ttm:
+            qrows = obj.get("Quarterly") or []
+            # ensure desc sort by date
+            try:
+                qrows_sorted = sorted(qrows, key=lambda r: r.get("date") or "", reverse=True)
+            except Exception:
+                qrows_sorted = qrows
+
+            if statement in ("income", "cashflow"):
+                ttm_data = _calc_ttm_from_quarters([r.get("data") or {} for r in qrows_sorted if isinstance(r, dict)])
+                if ttm_data:
+                    as_of = (qrows_sorted[0].get("date") if qrows_sorted else None) or datetime.now().strftime("%Y-%m-%d")
+                    _save(statement, "TTM", str(as_of), ttm_data)
+            else:
+                # balance: latest quarter snapshot
+                if qrows_sorted:
+                    latest = qrows_sorted[0]
+                    as_of = str(latest.get("date") or datetime.now().strftime("%Y-%m-%d"))
+                    data = latest.get("data") or {}
+                    if isinstance(data, dict) and data:
+                        _save(statement, "TTM", as_of, data)
 
     if saved == 0:
-        try:
-            d2 = fetch_financials_from_google_finance(symbol) or {}
-            if isinstance(d2, dict) and d2:
-                dt = d2.get("date") or _safe_date_str(symbol)
-                if save_financial_record(symbol, dt, d2, "Annual", "GoogleFinance"):
-                    saved += 1
-                    notes.append("تمت المحاولة من Google Finance")
-        except Exception as e:
-            notes.append(f"Google Finance فشل: {e}")
-
-    if saved > 0:
-        return True, f"تم حفظ {saved} سجل من بدائل Yahoo. " + " | ".join(notes)
-    return False, "لم تنجح البدائل. " + " | ".join(notes)
-
-
-# ==============================================================
-# ⚡ Yahoo Sync (used by views.py)
-# ==============================================================
-def sync_auto_yahoo(symbol):
-    """
-    ✅ نفس اسم الدالة لتوافق views.py
-    - يحفظ Annual + Quarterly (آخر 6 تواريخ) من yfinance
-    - إذا فشل: يستخدم sync_auto_multi_sources
-    """
-    symbol = get_ticker_symbol(symbol)
-    try:
-        t = yf.Ticker(symbol)
-
-        def _process(fin, bs, cf, p_type: str):
-            if fin is None:
-                fin = {}
-            if bs is None:
-                bs = {}
-            if cf is None:
-                cf = {}
-
-            # yfinance objects may be DataFrames; keep same best-effort logic
-            try:
-                fin_empty = getattr(fin, "empty", True)
-                bs_empty = getattr(bs, "empty", True)
-                cf_empty = getattr(cf, "empty", True)
-            except Exception:
-                fin_empty, bs_empty, cf_empty = True, True, True
-
-            if fin_empty and bs_empty and cf_empty:
-                return 0
-
-            try:
-                fin_cols = set(getattr(fin, "columns", []) or [])
-                bs_cols = set(getattr(bs, "columns", []) or [])
-                cf_cols = set(getattr(cf, "columns", []) or [])
-                dates = sorted(list(set(fin_cols) | set(bs_cols) | set(cf_cols)), reverse=True)[:6]
-            except Exception:
-                dates = []
-
-            if not dates:
-                return 0
-
-            def g(df, k, d):
-                try:
-                    if df is None or getattr(df, "empty", True):
-                        return 0.0
-                    if k in df.index and d in df.columns:
-                        return _safe_float(df.loc[k, d])
-                except Exception:
-                    return 0.0
-                return 0.0
-
-            c = 0
-            for d in dates:
-                d_str = _safe_date_str(d)
-
-                data = {
-                    "revenue": g(fin, "Total Revenue", d) or g(fin, "Operating Revenue", d),
-                    "net_income": g(fin, "Net Income", d),
-                    "total_assets": g(bs, "Total Assets", d),
-                    "total_liabilities": (
-                        g(bs, "Total Liabilities Net Minority Interest", d) or g(bs, "Total Liabilities", d)
-                    ),
-                    "total_equity": (
-                        g(bs, "Total Equity Gross Minority Interest", d)
-                        or g(bs, "Total Stockholder Equity", d)
-                        or g(bs, "Stockholders Equity", d)
-                    ),
-                    "operating_cash_flow": g(cf, "Operating Cash Flow", d),
-                    "current_assets": g(bs, "Current Assets", d),
-                    "current_liabilities": g(bs, "Current Liabilities", d),
-                    "long_term_debt": g(bs, "Long Term Debt", d),
-                }
-
-                if save_financial_record(symbol, d_str, data, p_type, "Auto_Yahoo"):
-                    c += 1
-
-            return c
-
-        count = 0
-        count += _process(t.financials, t.balance_sheet, t.cashflow, "Annual")
-        count += _process(t.quarterly_financials, t.quarterly_balance_sheet, t.quarterly_cashflow, "Quarterly")
-
-        if count == 0:
-            ok2, msg2 = sync_auto_multi_sources(symbol, prefer="yahoo")
-            if ok2:
-                return True, f"Yahoo لم يعطِ بيانات كافية. {msg2}"
-            return False, "Yahoo لم يعطِ بيانات، ولم تنجح البدائل."
-
-        return True, f"تم تحديث {count} سجلات من Yahoo"
-
-    except Exception as e:
-        ok2, msg2 = sync_auto_multi_sources(symbol, prefer="yahoo")
-        if ok2:
-            return True, f"تعذر Yahoo. {msg2}"
-        return False, str(e)
+        return False, "تم الجلب لكن لم يتم حفظ أي سجل (قد تكون البيانات غير متاحة لهذا الرمز)."
+    return True, f"تم حفظ {saved} سجل للقوائم الكاملة (سنوي/ربع سنوي/TTM) بوحدة الآلاف."
