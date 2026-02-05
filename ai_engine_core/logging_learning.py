@@ -1,3 +1,4 @@
+from osoli_logging import log_exception
 # ai_engine_core/logging_learning.py
 
 import json
@@ -137,9 +138,8 @@ def learn_from_history(max_rows=400):
                         stats.setdefault(k, {"wins": 0, "n": 0})
                         stats[k]["wins"] += win
                         stats[k]["n"] += 1
-            except Exception:
-                pass
-
+            except Exception as e:
+                log_exception(e, "Ignored exception", level="DEBUG")
         updated = 0
         for k, s in stats.items():
             if s["n"] < 20:
