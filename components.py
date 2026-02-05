@@ -1,3 +1,4 @@
+from osoli_logging import log_exception
 # components.py
 import streamlit as st
 import pandas as pd
@@ -68,9 +69,8 @@ def render_app_header(
         # Absolute fallback
         try:
             st.markdown(f"### {title}")
-        except Exception:
-            pass
-
+        except Exception as e:
+            log_exception(e, "Ignored exception", level="DEBUG")
 # ============================================================
 # 🧼 Helpers: Safe parsing/formatting
 # ============================================================
@@ -98,17 +98,15 @@ def _safe_number(val, default=None):
     try:
         if hasattr(pd, "isna") and pd.isna(val):
             return default
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     try:
         if isinstance(val, (int, float)) and not _is_nan(val):
             if isinstance(val, float) and (math.isinf(val)):
                 return default
             return float(val)
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     s = str(val).strip()
     if not s:
         return default
@@ -161,8 +159,8 @@ def _safe_text(val) -> str:
     try:
         if hasattr(pd, "isna") and pd.isna(val):
             return "-"
-    except Exception:
-        pass
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     s = str(val)
     if not s.strip():
         return "-"
@@ -571,9 +569,8 @@ def render_custom_table(
                     else:
                         html_out += f'<td><span class="{html.escape(_safe_text(cls))}">{html.escape(_safe_text(disp))}</span></td>'
                     continue
-                except Exception:
-                    pass
-
+                except Exception as e:
+                    log_exception(e, "Ignored exception", level="DEBUG")
             display = _safe_text(val)
             cls = ""
             td_cls = ""
@@ -778,8 +775,8 @@ def _apply_search(df: pd.DataFrame, q: str, cols: Optional[List[str]] = None) ->
     for c in cols:
         try:
             mask = mask | df[c].astype(str).str.contains(q, case=False, na=False)
-        except Exception:
-            pass
+        except Exception as e:
+            log_exception(e, "Ignored exception", level="DEBUG")
     return df[mask].copy()
 
 
@@ -792,8 +789,8 @@ def _apply_filters(df: pd.DataFrame, filters: Dict[str, List[str]]) -> pd.DataFr
             continue
         try:
             out = out[out[col].astype(str).isin([str(x) for x in selected])]
-        except Exception:
-            pass
+        except Exception as e:
+            log_exception(e, "Ignored exception", level="DEBUG")
     return out
 
 
@@ -949,9 +946,8 @@ def render_osoli_report(report: Dict[str, Any], *, title: str = "📌 تقرير
             s2 = _safe_number(score, default=None)
             if s2 is not None:
                 chip_cls = "os-chip-green" if s2 >= 70 else ("os-chip-amber" if s2 >= 50 else "os-chip-red")
-        except Exception:
-            pass
-
+        except Exception as e:
+            log_exception(e, "Ignored exception", level="DEBUG")
         chips.append(
             f'<span class="os-chip {chip_cls}">{_mi("donut_large")} الدرجة: {html.escape(score_txt)}</span>'
         )
