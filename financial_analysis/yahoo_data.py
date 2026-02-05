@@ -431,12 +431,14 @@ def get_financial_statements(symbol: str, period_type: str = "Annual", refresh: 
         return stored
 
     records = fetch_financial_statements_yahoo_json(sym, ptype)
+    origin = "YahooJSON" if records else None
 
     if not records and ptype == "Annual":
         try:
             d = fetch_financials_from_argaam(sym) or {}
             if d:
                 records = [{"date": d.get("date") or datetime.now().strftime("%Y-12-31"), "data": d}]
+                origin = "Argaam"
         except Exception:
             pass
 
@@ -445,6 +447,7 @@ def get_financial_statements(symbol: str, period_type: str = "Annual", refresh: 
             d2 = fetch_financials_from_google_finance(sym) or {}
             if d2:
                 records = [{"date": d2.get("date") or datetime.now().strftime("%Y-12-31"), "data": d2}]
+                origin = "GoogleFinance"
         except Exception:
             pass
 
@@ -457,7 +460,7 @@ def get_financial_statements(symbol: str, period_type: str = "Annual", refresh: 
                 d,
                 data,
                 period_type=ptype,
-                source="YahooJSON" if isinstance(data, dict) and "revenue" in data else "External",
+                source=str(origin or "External"),
             )
         return get_stored_financials_df(sym, ptype)
 
