@@ -1,8 +1,7 @@
-# financial_analysis/store_full.py
-"""Compatibility wrapper.
+"""Compatibility wrapper for full-statement storage.
 
-Some older versions referenced `financial_analysis.store_full`.
-In the current codebase, full-statement storage/retrieval lives in `financial_analysis.store`.
+Some code versions import `financial_analysis.store_full`.
+The canonical implementation lives in `financial_analysis.store`.
 """
 
 from .store import (
