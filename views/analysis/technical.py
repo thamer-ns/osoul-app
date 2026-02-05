@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 
 from market_data import get_chart_history
-from views.shared import _sym_key, _render_tv_like_chart, _render_technical_chart_flex
+from views.shared import _sym_key, _render_technical_chart_flex
 
 
 def _safe_to_df(x):
@@ -93,12 +93,9 @@ def render_technical_tab(sym: str):
     p_label = c_p.selectbox("الفترة (Period)", list(period_opts.keys()), index=2, key=f"tech_p_{symk}")
     i_label = c_i.selectbox("الفاصل (Interval)", list(interval_opts.keys()), index=0, key=f"tech_i_{symk}")
 
-    mode = c_mode.radio(
-        "وضع الشارت",
-        ["احترافي", "قديم (Fallback)"],
-        horizontal=True,
-        key=f"tech_mode_{symk}",
-    )
+    # بناءً على طلبك: إزالة "الشارت الاحترافي" نهائيًا لأنه لا يعمل بالشكل الصحيح.
+    # سيتم عرض وضع واحد ثابت (Fallback) فقط.
+    c_mode.markdown("**وضع الشارت:** قديم (ثابت)")
 
     # Snapshot (KPIs)
     snap = _price_snapshot(sym, period=period_opts[p_label], interval=interval_opts[i_label])
@@ -120,10 +117,7 @@ def render_technical_tab(sym: str):
 
     # Chart
     try:
-        if mode == "احترافي":
-            _render_tv_like_chart(sym, period_opts[p_label], interval_opts[i_label])
-        else:
-            _render_technical_chart_flex(sym, period=period_opts[p_label], interval=interval_opts[i_label])
+        _render_technical_chart_flex(sym, period=period_opts[p_label], interval=interval_opts[i_label])
     except Exception as e:
         st.error("❌ حصل خطأ أثناء عرض الشارت.")
         st.code(str(e))
