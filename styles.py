@@ -54,30 +54,6 @@ def apply_custom_css():
 
     css = """
         <style>
-@import url("https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,200..700,0..1,-50..200");
-
-        /* Force Material Symbols to render as icons (avoid ligature text like 'shield') */
-        .material-symbols-rounded,
-        .material-symbols-outlined,
-        .material-symbols-sharp,
-        [class*="material-symbols"]{
-            font-family: "Material Symbols Rounded" !important;
-            font-weight: 400 !important;
-            font-style: normal !important;
-            font-size: 20px;
-            line-height: 1;
-            letter-spacing: normal;
-            text-transform: none;
-            display: inline-block;
-            white-space: nowrap;
-            word-wrap: normal;
-            direction: ltr;
-            -webkit-font-feature-settings: "liga";
-            -webkit-font-smoothing: antialiased;
-            font-variation-settings: "FILL" 1, "wght" 400, "GRAD" 0, "opsz" 24;
-        }
-        .mi{ vertical-align: -3px; }
-    
         /* =====================================================
            Fonts
            ===================================================== */
@@ -110,7 +86,12 @@ def apply_custom_css():
         }
 
         /* ✅ طبّق Cairo على span لكن استثنِ أيقونات Material */
-        span:not(.material-icons):not(.material-symbols-outlined):not(.material-symbols-rounded):not(.material-symbols-sharp):not([class*="material-symbols"]) {
+        span:not(.material-icons)
+            :not(.material-symbols-outlined)
+            :not(.material-symbols-rounded)
+            :not(.material-symbols-sharp)
+            :not([class*="material-symbols"])
+        {
             font-family: 'Cairo', sans-serif !important;
             direction: rtl !important;
             text-align: right !important;
