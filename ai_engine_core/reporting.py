@@ -1,3 +1,4 @@
+from osoli_logging import log_exception
 # ai_engine_core/reporting.py
 
 import traceback
@@ -221,9 +222,8 @@ def generate_ai_report(symbol, timeframe="1D"):
                 for k, v in (d or {}).items():
                     if isinstance(v, (bool, int)):
                         features[str(k)] = int(v)
-            except Exception:
-                pass
-
+            except Exception as e:
+                log_exception(e, "Ignored exception", level="DEBUG")
         # Numeric features (safe)
         try:
             features["close"] = float(df["Close"].iloc[-1])
@@ -248,9 +248,8 @@ def generate_ai_report(symbol, timeframe="1D"):
 
             if ind.get("fib382") is not None:
                 features["fib382"] = float(ind["fib382"])
-        except Exception:
-            pass
-
+        except Exception as e:
+            log_exception(e, "Ignored exception", level="DEBUG")
         # Relative strength vs TASI (optional)
         if get_relative_strength_vs_tasi is not None:
             try:
@@ -261,9 +260,8 @@ def generate_ai_report(symbol, timeframe="1D"):
                     features["rs_label"] = str(rs.get("label") or "")
                     if str(rs.get("label") or "").strip():
                         tech_reasons.append(f"📌 Relative Strength vs TASI: {rs.get('label')}")
-            except Exception:
-                pass
-
+            except Exception as e:
+                log_exception(e, "Ignored exception", level="DEBUG")
         # Weighted bonus on boolean flags only
         weighted_bonus = 0.0
         for k, v in features.items():
@@ -294,9 +292,8 @@ def generate_ai_report(symbol, timeframe="1D"):
                     for kk, vv in (f_user or {}).items():
                         try:
                             features[str(kk)] = int(vv)
-                        except Exception:
-                            pass
-
+                        except Exception as e:
+                            log_exception(e, "Ignored exception", level="DEBUG")
         if abs(user_delta) > 0:
             tech_score = float(tech_score + user_delta)
             total_score = float(tech_score + fund_score)
@@ -423,9 +420,8 @@ def generate_ai_report(symbol, timeframe="1D"):
                 report["recommendation"] = "⚠️ إشارة موجودة لكن بوابات المخاطر رفضت"
                 report["color"] = "#ffc107"
                 report["strategy"] = "تم رفض التوصية بسبب: " + " | ".join(report["risk_gates"]["reasons"])
-        except Exception:
-            pass
-
+        except Exception as e:
+            log_exception(e, "Ignored exception", level="DEBUG")
         signal_id = log_ai_signal(
             symbol,
             timeframe,
