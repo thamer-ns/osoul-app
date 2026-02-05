@@ -257,7 +257,7 @@ def render_financial_dashboard_ui(symbol):
                     # عرض جدول كما هو (بنفس اتجاه الأعمدة: أحدث يسار)
                     st.dataframe(df_full, use_container_width=True, height=520)
 
-with tab_data_mgmt:
+    with tab_data_mgmt:
         st.markdown("### ⚙️ إدارة البيانات")
         st.caption("هنا تستطيع تحديث البيانات تلقائيًا أو استيرادها أو إدخالها يدويًا بدون فقد أي ميزة.")
 
