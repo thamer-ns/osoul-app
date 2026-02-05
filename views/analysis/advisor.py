@@ -313,7 +313,26 @@ def render_advisor_tab(sym: str):
         rep = cache[cache_key]
     else:
         with st.spinner("جاري توليد تقرير المستشار..."):
-            rep = _generate_ai_report_flex(sym, timeframe=ai_tf)
+            try:
+                rep = _generate_ai_report_flex(sym, timeframe=ai_tf)
+            except Exception as e:
+                # لا نعرض Traceback للمستخدم — نعرض السبب بشكل واضح
+                msg = str(e)
+                st.error("فشل تشغيل المستشار: " + msg)
+                # إذا كان داخل الرسالة Diagnostics dict، نحاول عرضه بشكل منظم
+                try:
+                    if "Diagnostics" in msg or "market" in msg:
+                        st.caption("🧾 تشخيص (للمساعدة في معرفة هل المشكلة من Yahoo/البيانات):")
+                        # محاولة استخراج dict بعد آخر '{'
+                        import ast
+                        brace = msg.find("{")
+                        if brace != -1:
+                            d = ast.literal_eval(msg[brace:])
+                            st.json(d)
+                except Exception:
+                    pass
+                rep = None
+
         cache[cache_key] = rep
 
     st.session_state["_ai_last_update"] = datetime.now().strftime("%Y-%m-%d %H:%M")
