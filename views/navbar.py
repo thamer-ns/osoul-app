@@ -1,3 +1,4 @@
+from osoli_logging import log_exception
 # views/navbar.py
 import streamlit as st
 
@@ -61,10 +62,8 @@ def _safe_set_query_page(page: str):
     """Set query param if supported."""
     try:
         st.query_params["page"] = page
-    except Exception:
-        pass
-
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
 def sync_page_from_query_params_once():
     """
     ✅ مهم:
