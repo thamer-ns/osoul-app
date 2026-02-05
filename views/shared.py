@@ -56,6 +56,11 @@ try:
         sync_auto_yahoo, get_fundamental_ratios,
         get_financial_statements,
     )
+
+    # ✅ Full Statements (all line-items) + DB store
+    from financial_analysis.sync_full import sync_full_yahoo  # type: ignore
+    from financial_analysis.store_full import fetch_full_statement_records, has_full_statement  # type: ignore
+    from financial_analysis.yahoo_data import fetch_full_financial_statements_yahoo_json  # type: ignore
 except Exception as e:
     financial_import_error = traceback.format_exc()
     def get_thesis(s): return None
@@ -70,6 +75,10 @@ except Exception as e:
 
     def save_financial_record(*args, **kwargs): return False
     def sync_auto_yahoo(s): return False, "Module Missing"
+    def sync_full_yahoo(s, include_ttm=True): return False, "Module Missing"
+    def fetch_full_statement_records(s, statement="income", period_type="Annual", scale="thousands"): return pd.DataFrame()
+    def has_full_statement(s, statement="income", period_type="Annual", scale="thousands"): return False
+    def fetch_full_financial_statements_yahoo_json(s): return {}
     def get_fundamental_ratios(s): return {}
 
 # 4) Classical Analysis
