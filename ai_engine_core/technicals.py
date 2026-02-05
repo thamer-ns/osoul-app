@@ -1,3 +1,4 @@
+from osoli_logging import log_exception
 # ai_engine_core/technicals.py
 
 import numpy as np
@@ -197,9 +198,8 @@ def _analyze_market_structure(df):
                 if abs(curr - fib50) / max(curr, 1e-9) < near_th:
                     score -= 1
                     obs.append("🎯 OTE: السعر قريب 50% فيبو (منطقة بيع أفضل)")
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     return score, obs
 
 
@@ -382,9 +382,8 @@ def _analyze_ichimoku(df):
             score -= 1
             feats["ichi_tk_cross_dn"] = 1
             obs.append("🔀 تقاطع تنكن تحت كيجن (إشارة دعم للبيع)")
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     # Strong Ichimoku
     try:
         if (c > cloud_top) and (float(span_a.iloc[-1]) > float(span_b.iloc[-1])) and (chik is not None) and (price_26 is not None) and (chik > price_26):
@@ -396,9 +395,8 @@ def _analyze_ichimoku(df):
             score -= 2
             feats["ichi_bear"] = 1
             obs.append("⛔ Ichimoku هابط قوي (شينكو+سحابة+سعر)")
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     return score, obs, feats
 
 
@@ -457,12 +455,10 @@ def _analyze_financial_golden_rules(symbol):
                 obs.append("⛔ Altman Z منخفض (مخاطر أعلى)")
             if int(fflags.get("fund_low_liquidity") or 0) == 1:
                 obs.append("⚠️ سيولة ضعيفة (Current Ratio منخفض)")
-        except Exception:
-            pass
-
-    except Exception:
-        pass
-
+        except Exception as e:
+            log_exception(e, "Ignored exception", level="DEBUG")
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     metrics["_fund_features"] = feats
     return score, obs, metrics
 
@@ -584,9 +580,8 @@ def _detect_rsi_divergence(df, ind: dict, lookback=80):
                 feats["rsi_bear_div"] = 1
                 score -= 2
                 obs.append("🔴 Divergence RSI سلبي (قمة أعلى بالسعر + RSI أقل)")
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     return score, obs, feats
 
 
@@ -756,9 +751,8 @@ def _analyze_ma_trend(ind: dict):
                 feats["death_cross"] = 1
                 score -= 2
                 obs.append("☠️ Death Cross (MA50 كسر MA200 للأسفل)")
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     return score, obs, feats
 
 
@@ -811,9 +805,8 @@ def _analyze_momentum_signals(ind: dict):
                 feats["macd_cross_dn"] = 1
                 score -= 1
                 obs.append("🔀 MACD تقاطع هابط (إشارة دعم للبيع)")
-        except Exception:
-            pass
-
+        except Exception as e:
+            log_exception(e, "Ignored exception", level="DEBUG")
     # Stoch cross
     k = ind.get("stoch_k")
     d = ind.get("stoch_d")
@@ -829,9 +822,8 @@ def _analyze_momentum_signals(ind: dict):
                 feats["stoch_cross_dn"] = 1
                 score -= 1
                 obs.append("🎛️ Stochastic تقاطع هابط")
-        except Exception:
-            pass
-
+        except Exception as e:
+            log_exception(e, "Ignored exception", level="DEBUG")
     return score, obs, feats
 
 
@@ -900,9 +892,8 @@ def _detect_double_top_bottom(df, lookback=180, tol=0.015):
                     feats["double_top"] = 1
                     score -= 2
                     obs.append("⛰️ Double Top (قمتين متقاربتين) — احتمال انعكاس سلبي")
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     # Double Bottom
     try:
         if len(pl) >= 2 and c is not None:
@@ -913,9 +904,8 @@ def _detect_double_top_bottom(df, lookback=180, tol=0.015):
                     feats["double_bottom"] = 1
                     score += 2
                     obs.append("🏞️ Double Bottom (قاعين متقاربين) — احتمال انعكاس إيجابي")
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     return score, obs, feats
 
 
@@ -952,7 +942,6 @@ def _analyze_relative_strength_vs_tasi(symbol: str):
         else:
             obs.append("📌 Relative Strength محايد مقابل تاسي")
 
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     return score, obs, feats
