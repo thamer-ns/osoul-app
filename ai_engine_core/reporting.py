@@ -6,7 +6,7 @@ import pandas as pd
 
 from .config import AI_ENGINE_NAME, AI_ENGINE_VERSION
 from .core import _normalize_symbol, _map_period_from_timeframe
-from .ohlcv import _ensure_ohlcv_columns, assess_ohlcv_quality
+from .ohlcv import _ensure_ohlcv_columns
 from .indicators import _compute_indicators
 
 from .technicals import (
@@ -100,16 +100,6 @@ def _safe_float(x, default=0.0):
         return default
 
 
-def _score_from_total(total_score: float) -> int:
-    """Map engine total_score (approx -10..+10) into 0..100 UI score."""
-    try:
-        t = float(total_score)
-    except Exception:
-        t = 0.0
-    s = int(round(50 + (t * 5)))
-    return max(0, min(100, s))
-
-
 def generate_ai_report(symbol, timeframe="1D"):
     """Main public API used by views/shared.py
 
@@ -147,16 +137,6 @@ def generate_ai_report(symbol, timeframe="1D"):
         df = _ensure_ohlcv_columns(df)
         if df is None or df.empty:
             raise ValueError("no ohlcv")
-
-        # =========================
-        # Data Quality Gate (OHLCV)
-        # =========================
-        dq = {}
-        try:
-            dq = assess_ohlcv_quality(df, interval=interval) or {}
-        except Exception as e:
-            log_exception(e, "Ignored exception", level="DEBUG")
-            dq = {"score": 0, "pass": False, "issues": ["فشل فحص جودة البيانات"], "metrics": {}}
 
         # Minimum candles based on interval
         min_rows = 60 if interval in ("1d", "1wk", "1mo") else 120
@@ -211,22 +191,6 @@ def generate_ai_report(symbol, timeframe="1D"):
 
         s_vsa, o_vsa, f_vsa = 0, [], {}
         if callable(_vsa_lite):
-            # إذا جودة Volume ضعيفة، لا نعتمد VSA-lite
-            try:
-                zvr = float(((dq or {}).get('metrics') or {}).get('zero_volume_ratio', 0.0) or 0.0)
-            except Exception:
-                zvr = 0.0
-            if zvr > 0.35:
-                o_vsa = ["⚠️ تم تخفيف/تعطيل VSA: بيانات الحجم ضعيفة (Volume=0) بنسبة عالية."]
-                f_vsa = {"vsa_disabled": 1, "vsa_zero_ratio": round(zvr, 4), "vsa_data_quality": 0}
-            else:
-                try:
-                    s_vsa, o_vsa, f_vsa = _vsa_lite(df)
-                    if isinstance(f_vsa, dict) and 'vsa_data_quality' not in f_vsa:
-                        f_vsa['vsa_data_quality'] = 1
-                except Exception:
-                    s_vsa, o_vsa, f_vsa = 0, [], {}
-
             try:
                 s_vsa, o_vsa, f_vsa = _vsa_lite(df)
             except Exception:
@@ -393,21 +357,6 @@ def generate_ai_report(symbol, timeframe="1D"):
         fund_reasons = _dedup_limit(fund_reasons, limit=8) or ["المؤشرات المالية طبيعية"]
 
         confidence, confidence_label = _calc_confidence(tech_score, fund_score, df)
-
-        # -------------------------
-        # Data quality adjustments
-        # -------------------------
-        dq_pass = bool((dq or {}).get('pass', True))
-        dq_score = int((dq or {}).get('score', 0) or 0)
-        if not dq_pass:
-            # Cap confidence and neutralize recommendation to avoid misleading output
-            try:
-                confidence = min(float(confidence), 0.35)  # if returned 0..1
-            except Exception:
-                pass
-            tech_reasons = list(tech_reasons or [])
-            tech_reasons.insert(0, f"⚠️ جودة البيانات منخفضة (DQ={dq_score}/100): سيتم تعطيل التوصية والاكتفاء بالمراقبة")
-
         try:
             confidence = float(confidence)
             if 0 <= confidence <= 1:
@@ -433,6 +382,25 @@ def generate_ai_report(symbol, timeframe="1D"):
         except Exception:
             last_bar = None
 
+        # =============================
+        # Fundamental Data Quality Gate (Financial Statements)
+        # =============================
+        fundamental_quality = None
+        try:
+            from financial_analysis import assess_fundamental_quality  # type: ignore
+            fundamental_quality = assess_fundamental_quality(symbol, period_type="Annual")
+        except Exception:
+            fundamental_quality = None
+
+        # If fundamental data quality is low, neutralize recommendation slightly to avoid misleading signals
+        try:
+            if isinstance(fundamental_quality, dict) and (fundamental_quality.get("pass") is False):
+                rec = "⚠️ مراقبة — جودة البيانات الأساسية منخفضة"
+                clr = "gray"
+                confidence = min(int(confidence), 35)
+        except Exception:
+            pass
+
         report = {
             "status": "ok",
             "recommendation": rec,
@@ -441,8 +409,6 @@ def generate_ai_report(symbol, timeframe="1D"):
             "tech_score": round(float(tech_score), 2),
             "fund_score": round(float(fund_score), 2),
             "total_score": round(float(total_score), 2),
-            "score": _score_from_total(total_score),
-            "osoli_score": _score_from_total(total_score),
             "tech_reasons": tech_reasons,
             "fund_reasons": fund_reasons,
             "trend": "صاعد" if float(tech_score) >= 0 else "هابط",
@@ -454,6 +420,7 @@ def generate_ai_report(symbol, timeframe="1D"):
             "strategy_name": strategy_name,
             "sector": sector,
             "risk_plan": risk_plan,
+            "fundamental_quality": fundamental_quality,
             "engine_meta": {
                 "engine": AI_ENGINE_NAME,
                 "version": AI_ENGINE_VERSION,
@@ -462,24 +429,11 @@ def generate_ai_report(symbol, timeframe="1D"):
                 "interval_used": str(interval),
                 "rows": int(len(df)),
                 "last_bar": last_bar,
-                "data_quality": dq,
             },
         }
 
         report["risk_gates"] = _risk_gates(report)
         report["scenarios"] = _build_scenarios(df, report)
-
-        # quality override (after scenarios/gates)
-        try:
-            dq_meta = (report.get('engine_meta') or {}).get('data_quality') or {}
-            if isinstance(dq_meta, dict) and not bool(dq_meta.get('pass', True)):
-                report["recommendation"] = "⚠️ جودة بيانات منخفضة — مراقبة فقط"
-                report["color"] = "#ffc107"
-                report["strategy"] = "تم تعطيل التوصية بسبب جودة البيانات. راجع المصدر/الفاصل الزمني أو انتظر بيانات أحدث."
-                # confidence cap in 0..100
-                report["confidence"] = min(int(report.get('confidence') or 0), 35)
-        except Exception as e:
-            log_exception(e, "Ignored exception", level="DEBUG")
 
         try:
             if (not report["risk_gates"]["pass"]) and ("شراء" in str(report["recommendation"]) or "Buy" in str(report["recommendation"])):
