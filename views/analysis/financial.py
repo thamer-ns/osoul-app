@@ -4,7 +4,8 @@ import pandas as pd
 from datetime import date
 
 from views.shared import (
-    fin_import_error,
+    get_last_yahoo_diagnostics,
+    diagnose_quote_summary,
     FinancialParser,
     save_financial_record,
     sync_auto_yahoo,
@@ -16,14 +17,6 @@ from views.shared import (
     _sym_key,
     _render_table_like_trades,
 )
-
-# Optional Yahoo diagnostics helpers (to distinguish code issues vs Yahoo blocking)
-try:
-    from financial_analysis.yahoo_data import diagnose_quote_summary, get_last_yahoo_diagnostics
-except Exception:
-    diagnose_quote_summary = None
-    get_last_yahoo_diagnostics = None
-
 
 
 def _to_num(x, default=0.0):
@@ -124,11 +117,6 @@ def render_financial_dashboard_ui(symbol):
     # Dashboard
     # =====================================================
     with tab_dashboard:
-        # If financial_analysis failed to import, surface the root cause clearly
-        if fin_import_error:
-            st.error("❌ تعذر تحميل وحدة التحليل المالي (ImportError). هذا عادةً مشكلة مكتبات/مسارات وليس حظر Yahoo.")
-            st.code(fin_import_error)
-
         df_annual = get_financial_statements(symbol, "Annual")
         df_quarter = get_financial_statements(symbol, "Quarterly")
 
@@ -152,28 +140,9 @@ def render_financial_dashboard_ui(symbol):
             ],
         )
 
-        # ---- Yahoo fetch diagnostics (best-effort)
-        with st.expander("🧾 تشخيص مصدر Yahoo (لتمييز الحظر/الحد عن مشكلة الكود)", expanded=False):
-            if get_last_yahoo_diagnostics:
-                st.caption("يعرض آخر حالة طلب Yahoo تم تنفيذها داخل الجلسة الحالية")
-                st.json(get_last_yahoo_diagnostics())
-            else:
-                st.info("تشخيص Yahoo غير متاح (فشل استيراد yahoo_data).")
-
-            if diagnose_quote_summary and st.button("تشخيص مباشر الآن", key=f"yahoo_diag_{_sym_key(symbol)}"):
-                st.json(diagnose_quote_summary(symbol))
-
-
         if df is None or df.empty:
             st.warning("⚠️ لا توجد بيانات مالية محفوظة لهذا السهم.")
-            # Helpful hint: show last Yahoo status/error if available
-            if get_last_yahoo_diagnostics:
-                yd = get_last_yahoo_diagnostics() or {}
-                st.caption(f"آخر تشخيص Yahoo: status={yd.get('status')} | error={yd.get('error')}")
-                if yd.get("status") in (401, 403, 429, 503, 502, 504):
-                    st.info("قد يكون السبب حظر/حد طلبات من Yahoo أو تعطل مؤقت. جرّب لاحقًا أو قلل تكرار التحديث.")
             st.info("👈 انتقل لتبويب 'إدارة البيانات' لرفع ملف أو جلب المعلومات.")
-
         # ملاحظة: لا نستخدم return هنا حتى لا يصبح تبويب "إدارة البيانات" فارغاً عند عدم توفر بيانات.
         else:
             # ---- Metrics
