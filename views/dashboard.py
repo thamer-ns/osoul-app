@@ -1,3 +1,4 @@
+from osoli_logging import log_exception
 #views/dashboard.py
 import streamlit as st
 import pandas as pd
@@ -104,9 +105,8 @@ def view_dashboard(fin):
             if "strategy" in open_trades.columns and "market_value" in open_trades.columns:
                 invest_val = open_trades[open_trades["strategy"].astype(str).str.contains("استثمار", na=False)]["market_value"].sum()
                 spec_val = open_trades[open_trades["strategy"].astype(str).str.contains("مضاربة", na=False)]["market_value"].sum()
-        except Exception:
-            pass
-
+        except Exception as e:
+            log_exception(e, "Ignored exception", level="DEBUG")
         if "asset_type" in open_trades.columns and "market_value" in open_trades.columns:
             sukuk_val = open_trades[open_trades["asset_type"].astype(str).str.lower() == "sukuk"]["market_value"].sum()
 
