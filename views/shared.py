@@ -89,35 +89,6 @@ except Exception as e:
     def sync_full_yahoo(s, include_ttm=True): return False, (fin_import_error or repr(e))
     def get_fundamental_ratios(s): return {}
 
-
-# Diagnostics helpers (Yahoo/Market) — keep UI imports stable
-try:
-    from financial_analysis.yahoo_data import get_last_yahoo_diagnostics as _get_last_yahoo_diagnostics  # type: ignore
-    from financial_analysis.yahoo_data import diagnose_quote_summary as _diagnose_quote_summary  # type: ignore
-except Exception:
-    _get_last_yahoo_diagnostics = None
-    _diagnose_quote_summary = None
-
-def get_last_yahoo_diagnostics():
-    """Return last Yahoo QuoteSummary diagnostics dict (or empty dict)."""
-    if _get_last_yahoo_diagnostics is None:
-        return {"status": None, "error": "diagnostics_unavailable", "url": None, "ts": None, "headers": None}
-    try:
-        d = _get_last_yahoo_diagnostics()
-        return d if isinstance(d, dict) else {"status": None, "error": "bad_diagnostics_type", "url": None, "ts": None, "headers": None}
-    except Exception as e:
-        return {"status": None, "error": f"diagnostics_error: {e}", "url": None, "ts": None, "headers": None}
-
-def diagnose_yahoo_quote_summary(symbol: str, modules=None):
-    """Run a live QuoteSummary diagnostics call (safe for UI)."""
-    if _diagnose_quote_summary is None:
-        return {"ok": False, "status": None, "error": "diagnose_unavailable", "symbol": symbol}
-    try:
-        return _diagnose_quote_summary(symbol, modules=modules)
-    except Exception as e:
-        return {"ok": False, "status": None, "error": str(e), "symbol": symbol}
-
-
 # 4) Classical Analysis
 try:
     from classical_analysis import render_classical_analysis
@@ -1426,3 +1397,49 @@ def get_import_diagnostics():
             "ai_engine": {"ok": False, "error": "diagnostics_failed"},
             "backtester": {"ok": False, "error": "diagnostics_failed"},
         }
+# ========================================================
+# 🧾 Yahoo QuoteSummary Diagnostics (Stable wrappers)
+# ========================================================
+# These wrapper functions exist so UI pages can safely import them from views.shared
+# without breaking app startup if financial_analysis (or its deps) fail to import.
+
+_LAST_YAHOO_DIAG_FALLBACK = {
+    "status": None,
+    "error": None,
+    "url": None,
+    "ts": None,
+    "headers": None,
+}
+
+def get_fin_import_error():
+    """Return the last financial_analysis import error (stacktrace) if any."""
+    return fin_import_error
+
+def get_last_yahoo_diagnostics():
+    """Return last Yahoo diagnostics dict if available; otherwise a safe default."""
+    try:
+        from financial_analysis.yahoo_data import get_last_yahoo_diagnostics as _gld  # type: ignore
+        d = _gld()
+        return d if isinstance(d, dict) else dict(_LAST_YAHOO_DIAG_FALLBACK)
+    except Exception:
+        return dict(_LAST_YAHOO_DIAG_FALLBACK)
+
+def diagnose_quote_summary(symbol: str, modules=None):
+    """Run a live Yahoo QuoteSummary diagnostics call if available."""
+    try:
+        from financial_analysis.yahoo_data import diagnose_quote_summary as _dq  # type: ignore
+        return _dq(symbol, modules=modules)
+    except Exception as e:
+        return {
+            "symbol": symbol,
+            "status": None,
+            "error": f"{type(e).__name__}: {e}",
+            "hint": "تعذر تشغيل تشخيص Yahoo. قد تكون مكتبات/استيراد financial_analysis غير جاهزة.",
+        }
+
+# Backward-compatible alias (some pages may import this name)
+def diagnose_yahoo_quote_summary(symbol: str, modules=None):
+    return diagnose_quote_summary(symbol, modules=modules)
+
+def get_last_yahoo_diag():
+    return get_last_yahoo_diagnostics()
