@@ -185,12 +185,42 @@ def execute_query(query, params=()):
             return False
 
 
-def fetch_table(table_name):
+def fetch_table(table_name, params=None):
     """
-    ✅ جلب جدول بشكل آمن.
-    - يمنع إدخال أسماء غير آمنة
-    - يجرب: quoted -> lowercase -> normalized
+    ✅ جلب بيانات من قاعدة البيانات.
+
+    الاستخدامات المدعومة:
+    1) fetch_table("financialstatements")  -> يجلب كامل الجدول (آمن)
+    2) fetch_table("SELECT ... WHERE ...", (p1, p2)) -> يجلب نتيجة Query مع parameters
+
+    ملاحظة:
+    - عند تمرير params سيتم التعامل مع المدخل كـ SQL query (read_sql) مع تحويل placeholders إلى %s.
+    - عند عدم تمرير params يبقى السلوك القديم (جلب جدول بالاسم مع حماية من injection عبر identifier).
     """
+    # -----------------------------------------------------
+    # 1) Query mode (safe parameters)
+    # -----------------------------------------------------
+    if params is not None:
+        q = str(table_name or "").strip()
+        if not q:
+            return pd.DataFrame()
+        with get_db() as conn:
+            if not conn:
+                return pd.DataFrame()
+            try:
+                fixed_q = normalize_sql_tables(q)
+                fixed_q = _fix_placeholders(fixed_q)
+                return pd.read_sql(fixed_q, conn, params=params)
+            except Exception as e:
+                try:
+                    log_exception(e, "Ignored fetch_table(query) error", level="DEBUG")
+                except Exception:
+                    pass
+                return pd.DataFrame()
+
+    # -----------------------------------------------------
+    # 2) Table mode (legacy)
+    # -----------------------------------------------------
     if table_name is None:
         return pd.DataFrame()
 
@@ -215,13 +245,13 @@ def fetch_table(table_name):
         try:
             return pd.read_sql(f"SELECT * FROM {_quote_ident(name_raw)}", conn)
         except Exception as e:
-                log_exception(e, "Ignored DB cleanup error", level="DEBUG")
+            log_exception(e, "Ignored DB cleanup error", level="DEBUG")
 
         # 2) Lowercase (common in Postgres)
         try:
             return pd.read_sql(f"SELECT * FROM {name_raw.lower()}", conn)
         except Exception as e:
-                log_exception(e, "Ignored DB cleanup error", level="DEBUG")
+            log_exception(e, "Ignored DB cleanup error", level="DEBUG")
 
         # 3) Normalize from list
         try:
@@ -231,8 +261,6 @@ def fetch_table(table_name):
             return pd.read_sql(f"SELECT * FROM {t}", conn)
         except Exception:
             return pd.DataFrame()
-
-
 # =========================================================
 # 4) التهيئة والمايجريشن (Init & Schema Migration)
 # =========================================================
