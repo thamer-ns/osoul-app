@@ -8,6 +8,16 @@ from typing import List, Dict, Any, Optional
 
 import streamlit as st
 import yfinance as yf
+
+# ============================================================
+# 📌 Market data diagnostics (helps distinguish Yahoo blocks vs code bugs)
+# ============================================================
+_LAST_MARKET_DIAG = {'ok': True, 'when': None, 'symbol': None, 'interval': None, 'period': None, 'attempts': [], 'error': None}
+
+def get_last_market_diagnostics() -> dict:
+    """Return last market-data fetch diagnostics (yfinance/download path)."""
+    return dict(_LAST_MARKET_DIAG) if isinstance(_LAST_MARKET_DIAG, dict) else {'ok': False, 'error': 'diag_unavailable'}
+
 import pandas as pd
 import numpy as np
 
@@ -137,7 +147,8 @@ def _is_reasonable_price(x: float) -> bool:
 # ============================================================
 def _ensure_datetime_index(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
-        return pd.DataFrame()
+        _LAST_MARKET_DIAG.update({'ok': False, 'error': _LAST_MARKET_DIAG.get('error') or 'no_data'})
+    return pd.DataFrame()
 
     d = df.copy()
 
@@ -153,6 +164,7 @@ def _ensure_datetime_index(df: pd.DataFrame) -> pd.DataFrame:
         try:
             d.index = pd.to_datetime(d.index, errors="coerce")
         except Exception as e:
+            _LAST_MARKET_DIAG.update({'ok': False, 'error': repr(e)})
             log_exception(e, "Ignored exception", level="DEBUG")
     d = d[~pd.isna(d.index)]
     d = d[~d.index.duplicated(keep="last")]
@@ -168,7 +180,8 @@ def _ensure_datetime_index(df: pd.DataFrame) -> pd.DataFrame:
 # ============================================================
 def _normalize_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
-        return pd.DataFrame()
+        _LAST_MARKET_DIAG.update({'ok': False, 'error': _LAST_MARKET_DIAG.get('error') or 'no_data'})
+    return pd.DataFrame()
 
     d = df.copy()
 
@@ -220,7 +233,8 @@ def _normalize_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
 
     needed = ["Open", "High", "Low", "Close"]
     if not any(c in d.columns for c in needed):
-        return pd.DataFrame()
+        _LAST_MARKET_DIAG.update({'ok': False, 'error': _LAST_MARKET_DIAG.get('error') or 'no_data'})
+    return pd.DataFrame()
 
     d = d.dropna(subset=[c for c in needed if c in d.columns], how="any")
     d = _ensure_datetime_index(d)
@@ -503,12 +517,16 @@ def get_tasi_data():
 def get_chart_history(symbol: str, period: str = None, interval: str = "1d", years: int = 5) -> pd.DataFrame:
     sym = get_ticker_symbol(symbol)
     if not sym:
-        return pd.DataFrame()
+        _LAST_MARKET_DIAG.update({'ok': False, 'error': _LAST_MARKET_DIAG.get('error') or 'no_data'})
+    return pd.DataFrame()
 
     itv = _normalize_interval(interval)
     tries = _build_period_fallbacks(itv, period=period, years=years)
+    # reset diagnostics for this call
+    _LAST_MARKET_DIAG.update({'ok': False, 'when': time.strftime('%Y-%m-%d %H:%M:%S'), 'symbol': sym, 'interval': itv, 'period': period, 'attempts': [], 'error': None})
 
     for p in tries:
+        _LAST_MARKET_DIAG['attempts'].append(str(p))
         try:
             df = yf.download(
                 sym,
@@ -525,13 +543,16 @@ def get_chart_history(symbol: str, period: str = None, interval: str = "1d", yea
                 df = df.dropna(subset=[c for c in ["Open", "High", "Low", "Close"] if c in df.columns], how="any")
                 df = _ensure_datetime_index(df)
                 if not df.empty and "Close" in df.columns:
+                    _LAST_MARKET_DIAG.update({'ok': True, 'error': None})
                     return df
         except Exception as e:
+            _LAST_MARKET_DIAG.update({'ok': False, 'error': repr(e)})
             log_exception(e, "Ignored exception", level="DEBUG")
         finally:
             # ✅ Gentle backoff to reduce rate-limit pressure
             time.sleep(0.25)
 
+    _LAST_MARKET_DIAG.update({'ok': False, 'error': _LAST_MARKET_DIAG.get('error') or 'no_data'})
     return pd.DataFrame()
 
 
