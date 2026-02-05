@@ -7,7 +7,10 @@ from views.shared import (
     FinancialParser,
     save_financial_record,
     sync_auto_yahoo,
+    sync_full_yahoo,
     get_financial_statements,
+    fetch_full_statement_records,
+    has_full_statement,
     get_advanced_fundamental_ratios,
     _sym_key,
     _render_table_like_trades,
@@ -228,7 +231,33 @@ def render_financial_dashboard_ui(symbol):
     # =====================================================
     # Data management
     # =====================================================
-    with tab_data_mgmt:
+    
+        st.markdown("---")
+        with st.expander("📑 عرض القوائم المالية الكاملة (سنوي/ربع سنوي/TTM)", expanded=False):
+            st.caption("هذه البيانات تُجلب من Yahoo QuoteSummary وتُحفظ في قاعدة البيانات بالأرقام (بالآلاف).")
+            statement = st.selectbox(
+                "القائمة:",
+                ["income", "balance", "cashflow"],
+                format_func=lambda x: {"income":"بيان الدخل","balance":"الميزانية العمومية","cashflow":"التدفق النقدي"}.get(x, x),
+                key=f"full_stmt_{_sym_key(symbol)}",
+            )
+            period = st.radio(
+                "الفترة:",
+                ["Annual", "Quarterly", "TTM"],
+                horizontal=True,
+                key=f"full_period_{_sym_key(symbol)}",
+            )
+            if not has_full_statement(symbol, statement, period, scale="thousands"):
+                st.warning("لا توجد بيانات كاملة محفوظة لهذا الرمز. استخدم زر (بدء مزامنة القوائم الكاملة) من تبويب إدارة البيانات.")
+            else:
+                df_full = fetch_full_statement_records(symbol, statement, period, scale="thousands")
+                if df_full is None or df_full.empty:
+                    st.warning("لا توجد بيانات قابلة للعرض.")
+                else:
+                    # عرض جدول كما هو (بنفس اتجاه الأعمدة: أحدث يسار)
+                    st.dataframe(df_full, use_container_width=True, height=520)
+
+with tab_data_mgmt:
         st.markdown("### ⚙️ إدارة البيانات")
         st.caption("هنا تستطيع تحديث البيانات تلقائيًا أو استيرادها أو إدخالها يدويًا بدون فقد أي ميزة.")
 
@@ -252,6 +281,25 @@ def render_financial_dashboard_ui(symbol):
                     st.rerun()
                 else:
                     st.error(msg)
+
+            st.markdown("---")
+            st.markdown(
+                "<div class='os-card'><div class='os-card-title'>📥 مزامنة القوائم الكاملة</div>"
+                "<div class='os-muted'>يجلب (بيان الدخل/الميزانية/التدفق النقدي) سنوي + ربع سنوي + TTM (محسوب) "
+                "ويحفظها في قاعدة البيانات بالأرقام بالآلاف.</div></div>",
+                unsafe_allow_html=True,
+            )
+
+            col_a, col_b = st.columns([1, 2])
+            include_ttm = col_a.toggle("حساب TTM", value=True, key=f"full_ttm_{_sym_key(symbol)}")
+            if col_b.button("بدء مزامنة القوائم الكاملة", key=f"sync_full_{_sym_key(symbol)}", type="primary"):
+                with st.spinner("جاري جلب القوائم الكاملة من Yahoo..."):
+                    ok2, msg2 = sync_full_yahoo(symbol, include_ttm=include_ttm)
+                if ok2:
+                    st.success(msg2)
+                    st.rerun()
+                else:
+                    st.error(msg2)
 
         with t2:
             render_data_import_ui_content(symbol)
