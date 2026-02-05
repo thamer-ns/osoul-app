@@ -1,3 +1,4 @@
+from osoli_logging import log_exception
 # ai_engine_core/user_rules.py
 
 import json
