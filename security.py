@@ -1,4 +1,3 @@
-# security.py
 from osoli_logging import log_exception
 # security.py
 import streamlit as st
