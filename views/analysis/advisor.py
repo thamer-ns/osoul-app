@@ -1,3 +1,4 @@
+from osoli_logging import log_exception
 #views/analysis/advisor.py
 import streamlit as st
 from datetime import datetime
@@ -34,9 +35,8 @@ def _ai_quick_parse(rep) -> dict:
     if _extract_ai:
         try:
             return _extract_ai(rep) or {}
-        except Exception:
-            pass
-
+        except Exception as e:
+            log_exception(e, "Ignored exception", level="DEBUG")
     # fallback بسيط
     if not isinstance(rep, dict):
         return {"ok": False, "raw": rep, "error": "AI report not dict"}
