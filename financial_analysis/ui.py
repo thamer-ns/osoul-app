@@ -7,7 +7,8 @@ import plotly.express as px
 from market_data import get_ticker_symbol
 from .store import get_stored_financials_df, save_financial_record
 from .metrics import get_advanced_fundamental_ratios
-from .sync import sync_auto_yahoo
+from .sync import sync_auto_yahoo, sync_full_yahoo
+from .yahoo_data import diagnose_quote_summary, get_last_yahoo_diagnostics
 from .parsers import FinancialParser
 
 
@@ -87,7 +88,29 @@ def render_financial_dashboard_ui(symbol):
                 ok, msg = sync_auto_yahoo(symbol)
                 (st.success(msg) if ok else st.error(msg))
 
+            if st.button("🚀 مزامنة كاملة (Full Yahoo Statements)", key=f"fin_full_{symbol}"):
+                okf, msgf = sync_full_yahoo(symbol)
+                (st.success(msgf) if okf else st.error(msgf))
+
         with cbtn2:
+            with st.expander("🧾 تشخيص Yahoo", expanded=False):
+                if st.button("🔎 تشخيص مباشر الآن", key=f"fin_diag_{symbol}"):
+                    st.json(diagnose_quote_summary(symbol))
+                try:
+                    st.caption("آخر تشخيص مسجل (بعد آخر عملية جلب/مزامنة)")
+                    st.json(get_last_yahoo_diagnostics())
+                except Exception:
+                    st.info("لا يوجد تشخيص متاح بعد.")
+
+            if st.button("🚀 معالجة البيانات", key=f"fin_parse_{symbol}"):
+                with st.spinner("جاري التحليل..."):
+                    results, detected_symbol, err = parser.process_file_or_text(uploaded_file, pasted_text)
+
+            # (زر التشخيص المباشر لا يتطلب مزامنة)
+            if st.button('🔎 تشخيص Yahoo مباشر', key=f'fin_diag_{symbol}'):
+                st.json(diagnose_quote_summary(symbol))
+
+
             if st.button("🚀 معالجة البيانات", key=f"fin_parse_{symbol}"):
                 with st.spinner("جاري التحليل..."):
                     results, detected_symbol, err = parser.process_file_or_text(uploaded_file, pasted_text)
