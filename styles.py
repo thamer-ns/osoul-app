@@ -85,19 +85,14 @@ def apply_custom_css():
             color: var(--txt);
         }
 
-        /* ✅ طبّق Cairo على span لكن استثنِ أيقونات Material */
-        span:not(.material-icons)
-            :not(.material-symbols-outlined)
-            :not(.material-symbols-rounded)
-            :not(.material-symbols-sharp)
-            :not([class*="material-symbols"])
-        {
-            font-family: 'Cairo', sans-serif !important;
-            direction: rtl !important;
-            text-align: right !important;
-        }
+        /* ✅ طبّق Cairo على /* span: طبّق خط Cairo على النصوص فقط (واستثنِ أيقونات Material) */
+span:not(.material-icons):not(.mi):not(.material-symbols-outlined):not(.material-symbols-rounded):not(.material-symbols-sharp):not([class*="material-symbols"]) {
+    font-family: 'Cairo', sans-serif !important;
+    direction: rtl !important;
+    text-align: right !important;
+}
 
-        /* =====================================================
+/* =====================================================
            Material Icons / Symbols fixes
            ===================================================== */
         .material-icons,
@@ -332,11 +327,42 @@ def apply_custom_css():
             margin: 4px 4px 0 0;
             white-space: nowrap;
         }
-        .os-chip .mi{
-            font-family: 'Material Symbols Rounded' !important;
-            font-size: 18px;
-            line-height: 1;
-        }
+        .os-chip /* Material Symbols (Rounded) */
+.mi, .material-symbols-rounded, .material-symbols-outlined, .material-symbols-sharp {
+    font-family: 'Material Symbols Rounded' !important;
+    font-weight: normal !important;
+    font-style: normal !important;
+    font-size: 18px;
+    line-height: 1;
+    letter-spacing: normal !important;
+    text-transform: none !important;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    white-space: nowrap !important;
+
+    /* ضروري لتحويل "insights" إلى أيقونة (ligatures) */
+    -webkit-font-feature-settings: "liga" 1 !important;
+    font-feature-settings: "liga" 1 !important;
+
+    /* إعدادات Material Symbols المتغيرة */
+    font-variation-settings: "FILL" 0, "wght" 500, "GRAD" 0, "opsz" 24;
+
+    /* عشان ما يتأثر بالـ RTL */
+    direction: ltr !important;
+    unicode-bidi: isolate !important;
+}
+
+/* محاذاة RTL للأيقونة داخل chips/buttons */
+.os-chip .mi { margin-inline-start: 8px; margin-inline-end: 0; }
+.os-btn .mi, .os-tab .mi { margin-inline-start: 8px; margin-inline-end: 0; }
+.os-card .mi { margin-inline-start: 6px; }
+
+/* أحجام موحدة حسب السياق */
+.mi.mi-sm { font-size: 16px; }
+.mi.mi-md { font-size: 18px; }
+.mi.mi-lg { font-size: 20px; }
+
         .os-chip-green{ background:#DCFCE7; border-color: rgba(5,150,105,0.25); color:#166534; }
         .os-chip-red{ background:#FEE2E2; border-color: rgba(220,38,38,0.25); color:#991B1B; }
         .os-chip-blue{ background:#DBEAFE; border-color: rgba(37,99,235,0.25); color:#1E40AF; }
