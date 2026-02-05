@@ -1,6 +1,12 @@
 # database.py
-import psycopg2
-from psycopg2 import pool
+# NOTE: psycopg2 قد لا يكون متاحًا في بعض البيئات (أو قد تفشل عملية التثبيت).
+# لا نريد أن ينهار التطبيق بالكامل بسبب ذلك؛ لذلك نجعل الاستيراد مرنًا.
+try:
+    import psycopg2  # type: ignore
+    from psycopg2 import pool  # type: ignore
+except ModuleNotFoundError:
+    psycopg2 = None  # type: ignore
+    pool = None  # type: ignore
 import pandas as pd
 import streamlit as st
 import bcrypt
@@ -19,6 +25,11 @@ def get_connection_pool():
     """
     Connection pool (cached) for Streamlit using PostgreSQL.
     """
+    if psycopg2 is None:
+        # لا نُسقط التطبيق بسبب Driver مفقود
+        st.error("⚠️ مكتبة psycopg2 غير مثبتة. ثبّت psycopg2-binary داخل requirements.txt أو فعّل بيئة Postgres.")
+        return None
+
     db_url = getattr(config, 'DB_CONNECTION_URL', None) or getattr(config, 'get_db_url', lambda: None)()
     if not db_url:
         st.error("⚠️ لم يتم العثور على رابط قاعدة البيانات. ضع DATABASE_URL في Secrets أو Environment Variables")
