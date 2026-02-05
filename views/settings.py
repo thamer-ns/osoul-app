@@ -78,11 +78,22 @@ def view_settings():
     try:
         from config import LOGO_FULL_PATH, LOGO_MARK_PATH, LOGO_APP_PATH
         import os
+        from pathlib import Path
+
+        def _p(x) -> str:
+            # دعم Path و str
+            if isinstance(x, Path):
+                return str(x)
+            return str(x) if isinstance(x, str) else ""
+
+        logo_full_p = _p(LOGO_FULL_PATH)
+        logo_mark_p = _p(LOGO_MARK_PATH)
+        logo_app_p = _p(LOGO_APP_PATH)
 
         any_logo = any([
-            isinstance(LOGO_FULL_PATH, str) and os.path.exists(LOGO_FULL_PATH),
-            isinstance(LOGO_MARK_PATH, str) and os.path.exists(LOGO_MARK_PATH),
-            isinstance(LOGO_APP_PATH, str) and os.path.exists(LOGO_APP_PATH),
+            bool(logo_full_p) and os.path.exists(logo_full_p),
+            bool(logo_mark_p) and os.path.exists(logo_mark_p),
+            bool(logo_app_p) and os.path.exists(logo_app_p),
         ])
 
         with st.expander("🎨 الهوية والشعار", expanded=False):
@@ -131,20 +142,20 @@ def view_settings():
             if any_logo:
                 cols = st.columns(3)
                 with cols[0]:
-                    if isinstance(LOGO_FULL_PATH, str) and os.path.exists(LOGO_FULL_PATH):
+                    if logo_full_p and os.path.exists(logo_full_p):
                         st.caption("logo_full.png")
-                        st.image(LOGO_FULL_PATH, use_container_width=True)
+                        st.image(logo_full_p, use_container_width=True)
                 with cols[1]:
-                    if isinstance(LOGO_MARK_PATH, str) and os.path.exists(LOGO_MARK_PATH):
+                    if logo_mark_p and os.path.exists(logo_mark_p):
                         st.caption("logo_mark.png")
-                        st.image(LOGO_MARK_PATH, use_container_width=True)
+                        st.image(logo_mark_p, use_container_width=True)
                 with cols[2]:
-                    if isinstance(LOGO_APP_PATH, str) and os.path.exists(LOGO_APP_PATH):
+                    if logo_app_p and os.path.exists(logo_app_p):
                         st.caption("logo_app.png")
-                        st.image(LOGO_APP_PATH, use_container_width=True)
+                        st.image(logo_app_p, use_container_width=True)
 
                 # تنبيه إرشادي فقط إذا كانت بعض الملفات ناقصة
-                if not (os.path.exists(LOGO_FULL_PATH) and os.path.exists(LOGO_MARK_PATH) and os.path.exists(LOGO_APP_PATH)):
+                if not (os.path.exists(logo_full_p) and os.path.exists(logo_mark_p) and os.path.exists(logo_app_p)):
                     st.info(
                         "ضع ملفات الشعار داخل مجلد assets/ بالأسماء التالية ليتم ربطها تلقائياً: "
                         "logo_full.png و logo_mark.png و logo_app.png"
