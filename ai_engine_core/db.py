@@ -1,3 +1,4 @@
+from osoli_logging import log_exception
 # ai_engine_core/db.py
 
 import pandas as pd
