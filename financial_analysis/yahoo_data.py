@@ -18,6 +18,14 @@ except ImportError as e:
     log_exception(e, "Optional dependency missing: requests", level="WARNING")
 
 
+def _safe_snippet(text: str | None, n: int = 200) -> str:
+    """Return a short one-line snippet for diagnostics without risking SyntaxErrors."""
+    try:
+        return ((text or "")[:n]).replace("\n", " ").replace("\r", " ")
+    except Exception:
+        return ""
+
+
 # ==============================================================
 # ✅ Yahoo QuoteSummary JSON (Most stable for statements)
 # ==============================================================
@@ -32,7 +40,7 @@ def _yf_session():
     global _YF_SESSION
     if _YF_SESSION is None:
         if not requests:
-            return None
+            return {}
         s = requests.Session()
         s.headers.update(
             {
@@ -85,7 +93,7 @@ def _http_get_json(url: str, timeout: int = 8, retries: int = 2, sleep: float = 
 
             # Common blocking / auth statuses
             if r.status_code in (401, 403):
-                snippet = _safe_snippet(getattr(r, "text", ""))
+                snippet = _safe_snippet(getattr(r, 'text', None))
                 last_err = f"Access blocked by Yahoo (HTTP {r.status_code}). Snippet: {snippet}"
                 _LAST_YAHOO_STATUS = r.status_code
                 _LAST_YAHOO_ERROR = last_err
@@ -93,14 +101,14 @@ def _http_get_json(url: str, timeout: int = 8, retries: int = 2, sleep: float = 
 
             # Transient / rate-limit statuses
             if r.status_code in (429, 503):
-                snippet = _safe_snippet(getattr(r, "text", ""))
+                snippet = _safe_snippet(getattr(r, 'text', None))
                 last_err = f"Transient Yahoo error (HTTP {r.status_code}). Snippet: {snippet}"
                 _LAST_YAHOO_STATUS = r.status_code
                 _LAST_YAHOO_ERROR = last_err
                 time.sleep(sleep * (2 if r.status_code == 429 else 1))
                 continue
 
-            snippet = _safe_snippet(getattr(r, "text", ""))
+            snippet = _safe_snippet(getattr(r, 'text', None))
             last_err = f"HTTP {r.status_code}. Snippet: {snippet}"
             _LAST_YAHOO_STATUS = r.status_code
             _LAST_YAHOO_ERROR = last_err
@@ -165,13 +173,6 @@ def diagnose_quote_summary(symbol: str, modules: List[str] | None = None) -> Dic
     _ = _http_get_json(url)
     status = _LAST_YAHOO_STATUS
     err = _LAST_YAHOO_ERROR
-
-def _safe_snippet(text: str, limit: int = 200) -> str:
-    try:
-        return (text or "")[:limit].replace("\n", " ").replace("\r", " ")
-    except Exception:
-        return ""
-
 
     hint = None
     if status in (401, 403):
@@ -540,7 +541,7 @@ def fetch_full_financial_statements_yahoo_json(
 
         def ttm_sum(records: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
             if not records or len(records) < 1:
-                return None
+                return {}
             # use last 4 quarters if possible, else whatever available
             recent = records[:4]
             # union of keys
@@ -557,7 +558,7 @@ def fetch_full_financial_statements_yahoo_json(
 
         def latest_snapshot(records: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
             if not records:
-                return None
+                return {}
             return {"date": records[0].get("date"), "data": (records[0].get("data") or {})}
 
         ttm_income = ttm_sum(q_income)
