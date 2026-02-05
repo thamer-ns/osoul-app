@@ -57,8 +57,8 @@ def _http_get_json(url: str, timeout: int = 8, retries: int = 2, sleep: float = 
                     return {}
             if r.status_code in (429, 503):
                 time.sleep(sleep * (2 if r.status_code == 429 else 1))
-        except Exception as e:
-            log_exception(e, "Ignored exception", level="DEBUG")
+        except Exception:
+            pass
         if i < retries:
             time.sleep(sleep)
     return {}
@@ -128,8 +128,8 @@ def _extract_stmt_list(root: dict, key: str) -> list:
         for _, v in obj.items():
             if isinstance(v, list) and v and isinstance(v[0], dict):
                 return v
-    except Exception as e:
-        log_exception(e, "Ignored exception", level="DEBUG")
+    except Exception:
+        pass
     return []
 
 
@@ -300,15 +300,17 @@ def get_financial_statements(symbol: str, period_type: str = "Annual", refresh: 
             d = fetch_financials_from_argaam(sym) or {}
             if d:
                 records = [{"date": d.get("date") or datetime.now().strftime("%Y-12-31"), "data": d}]
-        except Exception as e:
-            log_exception(e, "Ignored exception", level="DEBUG")
+        except Exception:
+            pass
+
     if not records and ptype == "Annual":
         try:
             d2 = fetch_financials_from_google_finance(sym) or {}
             if d2:
                 records = [{"date": d2.get("date") or datetime.now().strftime("%Y-12-31"), "data": d2}]
-        except Exception as e:
-            log_exception(e, "Ignored exception", level="DEBUG")
+        except Exception:
+            pass
+
     if records:
         for rec in records:
             d = rec.get("date")
@@ -323,3 +325,165 @@ def get_financial_statements(symbol: str, period_type: str = "Annual", refresh: 
         return get_stored_financials_df(sym, ptype)
 
     return stored if stored is not None else pd.DataFrame()
+
+
+
+# ==============================================================
+# ✅ Full Statements (All line-items) from Yahoo QuoteSummary JSON
+# ==============================================================
+def _extract_numeric_items(stmt: dict) -> Dict[str, float]:
+    """Extract all numeric fields from a Yahoo statement record."""
+    out: Dict[str, float] = {}
+    if not isinstance(stmt, dict):
+        return out
+
+    # keys to skip: metadata / non-numeric
+    skip = {
+        "maxAge",
+        "endDate",
+        "asOfDate",
+        "periodEndDate",
+        "currencyCode",
+        "periodType",
+        "type",
+        "reportedCurrency",
+        "exchangeRate",
+    }
+
+    for k, v in stmt.items():
+        if k in skip:
+            continue
+        # Yahoo numbers usually: {"raw":..., "fmt":...}
+        if isinstance(v, dict) and ("raw" in v or "fmt" in v):
+            try:
+                out[str(k)] = float(v.get("raw") if v.get("raw") is not None else _yf_raw(v, default=0.0))
+            except Exception:
+                continue
+        elif isinstance(v, (int, float)):
+            out[str(k)] = float(v)
+        # ignore nested dicts/lists
+    return out
+
+
+def fetch_full_financial_statements_yahoo_json(
+    symbol: str,
+    period_type: str = "Annual",
+    *,
+    as_thousands: bool = True,
+    include_ttm: bool = True,
+) -> Dict[str, Any]:
+    """
+    Fetch full Income/Balance/Cashflow statements (all available line-items)
+    from Yahoo QuoteSummary JSON.
+
+    Returns:
+      {
+        "Annual": {"income": [{"date":..., "data": {...}},...], "balance":[...], "cashflow":[...]},
+        "Quarterly": {...},
+        "TTM": {...}  # derived (income/cashflow sum last 4 quarters; balance = latest quarter)
+      }
+
+    Notes:
+      - Yahoo raw values are typically in *currency units*. If as_thousands=True,
+        we divide by 1000 to match Yahoo Finance table display ("all numbers in thousands").
+      - TTM is *computed* from Quarterly data.
+    """
+    sym = get_ticker_symbol(symbol)
+    freq = str(period_type or "Annual").strip().title()
+    if freq not in ("Annual", "Quarterly", "All"):
+        freq = "Annual"
+
+    # Always fetch both annual + quarterly once for stability
+    modules = [
+        "incomeStatementHistory",
+        "incomeStatementHistoryQuarterly",
+        "balanceSheetHistory",
+        "balanceSheetHistoryQuarterly",
+        "cashflowStatementHistory",
+        "cashflowStatementHistoryQuarterly",
+    ]
+    root = _yahoo_quote_summary(sym, modules)
+    if not root:
+        return {}
+
+    def get_list(key: str) -> List[dict]:
+        return _extract_stmt_list(root, key)
+
+    annual = {
+        "income": get_list("incomeStatementHistory"),
+        "balance": get_list("balanceSheetHistory"),
+        "cashflow": get_list("cashflowStatementHistory"),
+    }
+    quarterly = {
+        "income": get_list("incomeStatementHistoryQuarterly"),
+        "balance": get_list("balanceSheetHistoryQuarterly"),
+        "cashflow": get_list("cashflowStatementHistoryQuarterly"),
+    }
+
+    def normalize(lst: List[dict]) -> List[Dict[str, Any]]:
+        out = []
+        for rec in lst or []:
+            if not isinstance(rec, dict):
+                continue
+            d = _yf_date_str(rec.get("endDate") or rec.get("asOfDate") or rec.get("periodEndDate"))
+            data = _extract_numeric_items(rec)
+            if not data:
+                continue
+            if as_thousands:
+                data = {k: (float(v) / 1000.0) for k, v in data.items()}
+            out.append({"date": d, "data": data})
+        out = sorted(out, key=lambda x: x.get("date", ""), reverse=True)
+        return out
+
+    out = {
+        "Annual": {k: normalize(v) for k, v in annual.items()},
+        "Quarterly": {k: normalize(v) for k, v in quarterly.items()},
+    }
+
+    if include_ttm:
+        # derive from quarterly (if available)
+        q_income = out["Quarterly"].get("income") or []
+        q_cash = out["Quarterly"].get("cashflow") or []
+        q_balance = out["Quarterly"].get("balance") or []
+
+        def ttm_sum(records: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+            if not records or len(records) < 1:
+                return None
+            # use last 4 quarters if possible, else whatever available
+            recent = records[:4]
+            # union of keys
+            keys = set()
+            for r in recent:
+                keys |= set((r.get("data") or {}).keys())
+            sums = {}
+            for k in keys:
+                s = 0.0
+                for r in recent:
+                    s += float((r.get("data") or {}).get(k, 0.0) or 0.0)
+                sums[k] = s
+            return {"date": recent[0].get("date"), "data": sums}
+
+        def latest_snapshot(records: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+            if not records:
+                return None
+            return {"date": records[0].get("date"), "data": (records[0].get("data") or {})}
+
+        ttm_income = ttm_sum(q_income)
+        ttm_cash = ttm_sum(q_cash)
+        ttm_balance = latest_snapshot(q_balance)
+
+        ttm = {"income": [], "balance": [], "cashflow": []}
+        if ttm_income:
+            ttm["income"] = [ttm_income]
+        if ttm_balance:
+            ttm["balance"] = [ttm_balance]
+        if ttm_cash:
+            ttm["cashflow"] = [ttm_cash]
+        out["TTM"] = ttm
+
+    if freq == "Annual":
+        return {"Annual": out["Annual"], "TTM": out.get("TTM", {})}
+    if freq == "Quarterly":
+        return {"Quarterly": out["Quarterly"], "TTM": out.get("TTM", {})}
+    return out
+
