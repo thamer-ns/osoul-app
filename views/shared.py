@@ -60,14 +60,16 @@ except Exception as e:
 fin_import_error = None
 try:
     from financial_analysis import (
-        get_thesis, save_thesis,
-        FinancialParser, save_financial_record,
-        get_stored_financials_df, get_advanced_fundamental_ratios,
-        sync_auto_yahoo, sync_full_yahoo, get_fundamental_ratios,
-        get_financial_statements,
-        fetch_full_statement_records, has_full_statement,
-        assess_fundamental_quality,
-    )
+    get_thesis, save_thesis,
+    FinancialParser, save_financial_record,
+    get_stored_financials_df, get_advanced_fundamental_ratios,
+    sync_auto_yahoo, sync_full_yahoo,
+    get_fundamental_ratios,
+    diagnose_quote_summary, get_last_yahoo_diagnostics,
+    get_financial_statements,
+    fetch_full_statement_records, has_full_statement,
+    assess_fundamental_quality,
+)
 except Exception as e:
     from osoli_logging import log_exception
     log_exception(e, "Optional module failed to import: financial_analysis", level="WARNING")
@@ -88,6 +90,11 @@ except Exception as e:
     def sync_auto_yahoo(s): return False, (fin_import_error or repr(e))
     def sync_full_yahoo(s, include_ttm=True): return False, (fin_import_error or repr(e))
     def get_fundamental_ratios(s): return {}
+    def diagnose_quote_summary(*args, **kwargs):
+        return {'ok': False, 'status': None, 'error': (fin_import_error or 'financial_analysis import failed')}
+
+    def get_last_yahoo_diagnostics():
+        return {'ok': False, 'status': None, 'error': (fin_import_error or 'financial_analysis import failed')}
 
 # 4) Classical Analysis
 try:
