@@ -626,7 +626,7 @@ def _chip(text: str, tone: str = "neutral"):
         "neutral": "os-chip-gray",
     }.get(tone, "os-chip-gray")
     st.markdown(
-        f'<span class="os-chip {cls}"><span class="mi material-symbols-rounded">insights</span>{text}</span>',
+        f'<span class="os-chip {cls}"><span class="mi">insights</span>{text}</span>',
         unsafe_allow_html=True,
     )
 
@@ -914,8 +914,8 @@ def _render_ai_report_readable(rep: dict, show_debug: bool = False, compact: boo
               <div class="os-muted" style="margin-top:6px;">🧩 {AI_ENGINE_NAME} v{AI_ENGINE_VERSION} • Base Interval: {tf}</div>
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
-              <span class="os-chip os-chip-blue"><span class="mi material-symbols-rounded">token</span>AI</span>
-              <span class="os-chip os-chip-gray"><span class="mi material-symbols-rounded">timeline</span>{tf}</span>
+              <span class="os-chip os-chip-blue"><span class="mi">token</span>AI</span>
+              <span class="os-chip os-chip-gray"><span class="mi">timeline</span>{tf}</span>
             </div>
           </div>
         </div>
@@ -1397,3 +1397,49 @@ def get_import_diagnostics():
             "ai_engine": {"ok": False, "error": "diagnostics_failed"},
             "backtester": {"ok": False, "error": "diagnostics_failed"},
         }
+# ========================================================
+# 🧾 Yahoo QuoteSummary Diagnostics (Stable wrappers)
+# ========================================================
+# These wrapper functions exist so UI pages can safely import them from views.shared
+# without breaking app startup if financial_analysis (or its deps) fail to import.
+
+_LAST_YAHOO_DIAG_FALLBACK = {
+    "status": None,
+    "error": None,
+    "url": None,
+    "ts": None,
+    "headers": None,
+}
+
+def get_fin_import_error():
+    """Return the last financial_analysis import error (stacktrace) if any."""
+    return fin_import_error
+
+def get_last_yahoo_diagnostics():
+    """Return last Yahoo diagnostics dict if available; otherwise a safe default."""
+    try:
+        from financial_analysis.yahoo_data import get_last_yahoo_diagnostics as _gld  # type: ignore
+        d = _gld()
+        return d if isinstance(d, dict) else dict(_LAST_YAHOO_DIAG_FALLBACK)
+    except Exception:
+        return dict(_LAST_YAHOO_DIAG_FALLBACK)
+
+def diagnose_quote_summary(symbol: str, modules=None):
+    """Run a live Yahoo QuoteSummary diagnostics call if available."""
+    try:
+        from financial_analysis.yahoo_data import diagnose_quote_summary as _dq  # type: ignore
+        return _dq(symbol, modules=modules)
+    except Exception as e:
+        return {
+            "symbol": symbol,
+            "status": None,
+            "error": f"{type(e).__name__}: {e}",
+            "hint": "تعذر تشغيل تشخيص Yahoo. قد تكون مكتبات/استيراد financial_analysis غير جاهزة.",
+        }
+
+# Backward-compatible alias (some pages may import this name)
+def diagnose_yahoo_quote_summary(symbol: str, modules=None):
+    return diagnose_quote_summary(symbol, modules=modules)
+
+def get_last_yahoo_diag():
+    return get_last_yahoo_diagnostics()
