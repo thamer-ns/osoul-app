@@ -85,14 +85,19 @@ def apply_custom_css():
             color: var(--txt);
         }
 
-        /* ✅ طبّق Cairo على /* span: طبّق خط Cairo على النصوص فقط (واستثنِ أيقونات Material) */
-span:not(.material-icons):not(.mi):not(.material-symbols-outlined):not(.material-symbols-rounded):not(.material-symbols-sharp):not([class*="material-symbols"]) {
-    font-family: 'Cairo', sans-serif !important;
-    direction: rtl !important;
-    text-align: right !important;
-}
+        /* ✅ طبّق Cairo على span لكن استثنِ أيقونات Material */
+        span:not(.material-icons)
+            :not(.material-symbols-outlined)
+            :not(.material-symbols-rounded)
+            :not(.material-symbols-sharp)
+            :not([class*="material-symbols"])
+        {
+            font-family: 'Cairo', sans-serif !important;
+            direction: rtl !important;
+            text-align: right !important;
+        }
 
-/* =====================================================
+        /* =====================================================
            Material Icons / Symbols fixes
            ===================================================== */
         .material-icons,
@@ -146,7 +151,40 @@ span:not(.material-icons):not(.mi):not(.material-symbols-outlined):not(.material
             box-shadow: none !important;
         }
 
-        /* =====================================================
+        
+/* =====================================================
+   ✅ Expander toggle icon (منع ظهور النص الإنجليزي)
+   - أحياناً Streamlit يعرض ligature كنص (expand_more/chevron...) إذا الخط ما حمل.
+   - هنا نجبر الخط للأيقونة داخل summary، ومع fallback سهم CSS حتى لو الخط مُنع.
+   ===================================================== */
+div[data-testid="stExpander"] details summary span[class*="material-symbols"],
+div[data-testid="stExpander"] details summary i.material-icons,
+div[data-testid="stExpander"] details summary span.material-icons{
+    font-family: 'Material Symbols Rounded','Material Symbols Outlined','Material Symbols Sharp','Material Icons' !important;
+    -webkit-font-feature-settings: "liga" 1 !important;
+    font-feature-settings: "liga" 1 !important;
+    direction: ltr !important;
+    unicode-bidi: isolate !important;
+    text-align: center !important;
+    line-height: 1 !important;
+    white-space: nowrap !important;
+}
+
+/* Fallback مضمون: أخفِ نص ligature داخل expander واستخدم سهم CSS */
+div[data-testid="stExpander"] details summary span[class*="material-symbols"]{
+    font-size: 0 !important;
+}
+div[data-testid="stExpander"] details summary span[class*="material-symbols"]::before{
+    content: "▾";
+    font-size: 20px !important;
+    display:inline-block;
+    transform: translateY(1px);
+}
+div[data-testid="stExpander"] details[open] summary span[class*="material-symbols"]::before{
+    content: "▴";
+}
+
+/* =====================================================
            Expander (رفع التباين)
            ===================================================== */
         div[data-testid="stExpander"]{
@@ -327,42 +365,11 @@ span:not(.material-icons):not(.mi):not(.material-symbols-outlined):not(.material
             margin: 4px 4px 0 0;
             white-space: nowrap;
         }
-        .os-chip /* Material Symbols (Rounded) */
-.mi, .material-symbols-rounded, .material-symbols-outlined, .material-symbols-sharp {
-    font-family: 'Material Symbols Rounded' !important;
-    font-weight: normal !important;
-    font-style: normal !important;
-    font-size: 18px;
-    line-height: 1;
-    letter-spacing: normal !important;
-    text-transform: none !important;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    white-space: nowrap !important;
-
-    /* ضروري لتحويل "insights" إلى أيقونة (ligatures) */
-    -webkit-font-feature-settings: "liga" 1 !important;
-    font-feature-settings: "liga" 1 !important;
-
-    /* إعدادات Material Symbols المتغيرة */
-    font-variation-settings: "FILL" 0, "wght" 500, "GRAD" 0, "opsz" 24;
-
-    /* عشان ما يتأثر بالـ RTL */
-    direction: ltr !important;
-    unicode-bidi: isolate !important;
-}
-
-/* محاذاة RTL للأيقونة داخل chips/buttons */
-.os-chip .mi { margin-inline-start: 8px; margin-inline-end: 0; }
-.os-btn .mi, .os-tab .mi { margin-inline-start: 8px; margin-inline-end: 0; }
-.os-card .mi { margin-inline-start: 6px; }
-
-/* أحجام موحدة حسب السياق */
-.mi.mi-sm { font-size: 16px; }
-.mi.mi-md { font-size: 18px; }
-.mi.mi-lg { font-size: 20px; }
-
+        .os-chip .mi{
+            font-family: 'Material Symbols Rounded' !important;
+            font-size: 18px;
+            line-height: 1;
+        }
         .os-chip-green{ background:#DCFCE7; border-color: rgba(5,150,105,0.25); color:#166534; }
         .os-chip-red{ background:#FEE2E2; border-color: rgba(220,38,38,0.25); color:#991B1B; }
         .os-chip-blue{ background:#DBEAFE; border-color: rgba(37,99,235,0.25); color:#1E40AF; }
