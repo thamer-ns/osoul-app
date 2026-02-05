@@ -8,14 +8,9 @@ _PLOTLY = None
 def _lazy_plotly():
     global _PLOTLY
     if _PLOTLY is None:
-        try:
-            import plotly.graph_objects as go  # type: ignore
-            from plotly.subplots import make_subplots  # type: ignore
-            _PLOTLY = (go, make_subplots)
-        except ImportError as e:
-            from osoli_logging import log_exception
-            log_exception(e, "Plotly not available (optional dependency).", level="WARNING")
-            raise
+        import plotly.graph_objects as go  # type: ignore
+        from plotly.subplots import make_subplots  # type: ignore
+        _PLOTLY = (go, make_subplots)
     return _PLOTLY
 from datetime import date
 import traceback
@@ -96,9 +91,7 @@ except Exception as e:
 # 4) Classical Analysis
 try:
     from classical_analysis import render_classical_analysis
-except Exception as e:
-    from osoli_logging import log_exception
-    log_exception(e, "Optional module failed to import: classical_analysis", level="WARNING")
+except Exception:
     def render_classical_analysis(s):
         st.warning("⚠️ ملف classical_analysis.py مفقود أو به خطأ.")
 
