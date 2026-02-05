@@ -152,7 +152,7 @@ def _render_quick_summary(sym: str, ai_data: dict, tf_label: str):
     _chip(f"Score {score}/100", _tone_for_score(score))
     _chip(f"Confidence {conf}%", _tone_for_conf(conf))
     st.markdown(
-        "<span class='os-chip os-chip-blue'><span class='mi material-symbols-rounded'>insights</span>تأكد من الأدلة/المخاطر قبل القرار</span>",
+        "<span class='os-chip os-chip-blue'><span class='mi'>insights</span>تأكد من الأدلة/المخاطر قبل القرار</span>",
         unsafe_allow_html=True,
     )
     st.markdown("</div>", unsafe_allow_html=True)
