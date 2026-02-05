@@ -128,11 +128,10 @@ def build_vsa_pack(
     يبني vsa_pack باستخدام analyze_vsa الموجود عندك.
     """
     df = _ensure_ohlcv_columns(df)
-    vsa_out = analyze_vsa(df)
-    # analyze_vsa returns dict in this project
-    score = float((vsa_out or {}).get('score', 0.0) or 0.0)
-    reasons = (vsa_out or {}).get('reasons', [])
-    features = (vsa_out or {}).get('features', {})
+    out = analyze_vsa(df)
+    score = (out or {}).get('score', 0.0)
+    reasons = (out or {}).get('reasons', [])
+    features = (out or {}).get('features', {})
     return {
         "score": round(float(score), 2),
         "reasons": (reasons or [])[:20],
