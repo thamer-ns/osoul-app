@@ -1,9 +1,9 @@
 #views/__init__.py
 import streamlit as st
 
-from analytics import calculate_portfolio_metrics, update_prices
+from analytics import cached_portfolio_metrics, get_portfolio_cache_key, update_prices
 
-from views.shared import _ensure_ui_once
+from views.shared import _ensure_ui_once, get_import_diagnostics
 from views.navbar import render_navbar
 from views.dashboard import view_dashboard
 from views.portfolio import view_portfolio, render_pulse_dashboard, view_add_trade
@@ -22,7 +22,12 @@ def router():
     render_navbar()
     pg = st.session_state.page
 
-    fin = calculate_portfolio_metrics()
+    # Diagnostics banner (shown once per session)
+    diag = get_import_diagnostics()
+    if diag.get('has_issues') and not st.session_state.get('_diag_banner_shown'):
+        st.session_state['_diag_banner_shown'] = True
+        st.warning("⚠️ بعض الميزات غير متاحة بسبب أخطاء استيراد/اعتمادات. افتح أدوات > التشخيص لرؤية التفاصيل.")
+    fin = cached_portfolio_metrics(cache_key=get_portfolio_cache_key(), include_xirr=True)
 
     if pg == "home":
         view_dashboard(fin)
