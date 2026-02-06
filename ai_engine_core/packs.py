@@ -35,6 +35,13 @@ from .technicals import (
     _detect_order_block,
     _analyze_ichimoku,
     _analyze_financial_golden_rules,
+
+    # NEW
+    _analyze_fibonacci_smc,
+    _detect_swing_failure_pattern,
+    _detect_amd_cycle,
+    _detect_chart_patterns,
+    _scalping_profile,
 )
 
 from .vsa import analyze_vsa
@@ -79,9 +86,22 @@ def build_technical_pack(
     s_ob, o_ob, f_ob = _detect_order_block(df)
     s_ichi, o_ichi, f_ichi = _analyze_ichimoku(df)
 
+    # NEW: Fibonacci (retracement + extension)
+    s_fib, o_fib, f_fib = _analyze_fibonacci_smc(df)
+    # NEW: SFP/SMS
+    s_sfp, o_sfp, f_sfp = _detect_swing_failure_pattern(df)
+    # NEW: AMD cycle
+    s_amd, o_amd, f_amd = _detect_amd_cycle(df)
+    # NEW: Chart patterns
+    s_pat, o_pat, f_pat = _detect_chart_patterns(df)
+    # NEW: Scalping profile (hints)
+    s_sclp, o_sclp, f_sclp = _scalping_profile(df, ind)
+
     score += float(s_candle or 0) + float(s_struct or 0) + float(s_liq or 0) + float(s_ob or 0) + float(s_ichi or 0)
+    score += float(s_fib or 0) + float(s_sfp or 0) + float(s_amd or 0) + float(s_pat or 0) + float(s_sclp or 0)
     reasons += (o_struct or []) + (o_candle or []) + (o_liq or []) + (o_ob or []) + (o_ichi or [])
-    features = _safe_merge_features(features, f_liq or {}, f_ob or {}, f_ichi or {})
+    reasons += (o_fib or []) + (o_sfp or []) + (o_amd or []) + (o_pat or []) + (o_sclp or [])
+    features = _safe_merge_features(features, f_liq or {}, f_ob or {}, f_ichi or {}, f_fib or {}, f_sfp or {}, f_amd or {}, f_pat or {}, f_sclp or {})
 
     # Add a few numeric features (safe)
     try:
