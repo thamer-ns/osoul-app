@@ -12,12 +12,8 @@ from .utils import HEADERS, _safe_date_str
 # Web (اختياري)
 try:
     import requests  # type: ignore
-except ImportError as e:
+except Exception:
     requests = None
-    from osoli_logging import log_exception
-    log_exception(e, "Optional dependency missing: requests", level="WARNING")
-
-
 def _safe_snippet(text: str | None, n: int = 200) -> str:
     """Return a short one-line snippet for diagnostics without risking SyntaxErrors."""
     try:
@@ -59,11 +55,11 @@ def _yf_session():
     return _YF_SESSION
 
 
-def _http_get_json(url: str, timeout: int = 10, retries: int = 3, sleep: float = 0.8) -> dict:
-    """Best-effort GET JSON with retry/backoff + richer diagnostics.
+def _http_get_json(url: str, timeout: int = 8, retries: int = 2, sleep: float = 0.6) -> dict:
+    """Best-effort GET JSON with retry/backoff + diagnostics.
 
-    This endpoint is unofficial; Yahoo may temporarily rate-limit (429),
-    block (401/403), or return HTML instead of JSON.
+    Yahoo QuoteSummary is an unofficial endpoint; it may rate-limit (429) or return HTML.
+    This helper keeps the behavior conservative to avoid breaking the app.
     """
     global _LAST_YAHOO_STATUS, _LAST_YAHOO_ERROR, _LAST_YAHOO_TS, _LAST_YAHOO_URL, _LAST_YAHOO_HEADERS
 
@@ -79,10 +75,8 @@ def _http_get_json(url: str, timeout: int = 10, retries: int = 3, sleep: float =
 
     ses = _yf_session()
     if not ses:
-        _LAST_YAHOO_ERROR = "Yahoo session could not be initialized"
+        _LAST_YAHOO_ERROR = "session not initialized"
         return {}
-
-    from osoli_logging import log_exception
 
     last_status = None
     last_err = None
@@ -90,76 +84,34 @@ def _http_get_json(url: str, timeout: int = 10, retries: int = 3, sleep: float =
     for i in range(retries + 1):
         try:
             r = ses.get(url, timeout=timeout)
-            last_status = r.status_code
-            _LAST_YAHOO_STATUS = r.status_code
-            _LAST_YAHOO_HEADERS = {
-                "content-type": r.headers.get("content-type"),
-                "retry-after": r.headers.get("retry-after"),
-                "server": r.headers.get("server"),
-            }
+            last_status = getattr(r, "status_code", None)
+            _LAST_YAHOO_STATUS = last_status
+            try:
+                _LAST_YAHOO_HEADERS = dict(getattr(r, "headers", {}) or {})
+            except Exception:
+                _LAST_YAHOO_HEADERS = None
 
-            text_body = getattr(r, "text", "") or ""
-
-            # 200 but not JSON? (often an HTML block/challenge page)
-            if r.status_code == 200:
-                ctype = (r.headers.get("content-type") or "").lower()
-                if "json" not in ctype and (text_body.lstrip().startswith("<") or "html" in ctype):
-                    snippet = _safe_snippet(text_body)
-                    last_err = f"Non-JSON response (possible block). content-type={ctype}. Snippet: {snippet}"
-                    _LAST_YAHOO_ERROR = last_err
-                    return {}
+            if last_status == 200:
                 try:
-                    data = r.json() or {}
-                    return data
-                except Exception as e:
-                    snippet = _safe_snippet(text_body)
-                    last_err = f"Invalid JSON response: {e}. Snippet: {snippet}"
-                    _LAST_YAHOO_ERROR = last_err
-                    return {}
-
-            # Common blocking / auth statuses
-            if r.status_code in (401, 403):
-                snippet = _safe_snippet(text_body)
-                last_err = f"Access blocked by Yahoo (HTTP {r.status_code}). Snippet: {snippet}"
-                _LAST_YAHOO_ERROR = last_err
-                return {}
-
-            # Transient / rate-limit statuses
-            if r.status_code in (429, 503, 502, 504):
-                snippet = _safe_snippet(text_body)
-                last_err = f"Transient Yahoo error (HTTP {r.status_code}). Snippet: {snippet}"
-                _LAST_YAHOO_ERROR = last_err
-
-                # Respect Retry-After if present; otherwise exponential backoff
-                ra = r.headers.get("retry-after")
-                try:
-                    wait_s = float(ra) if ra else (sleep * (2 ** i))
+                    return r.json() or {}
                 except Exception:
-                    wait_s = sleep * (2 ** i)
-
-                time.sleep(min(wait_s, 12.0))
-                continue
-
-            snippet = _safe_snippet(text_body)
-            last_err = f"HTTP {r.status_code}. Snippet: {snippet}"
-            _LAST_YAHOO_ERROR = last_err
-            return {}
-
+                    # Sometimes returns HTML/empty: keep safe
+                    last_err = f"Non-JSON response: {_safe_snippet(getattr(r, 'text', None))}"
+            elif last_status in (429, 503):
+                last_err = f"Transient Yahoo error (HTTP {last_status})"
+                # backoff a bit (429 usually needs longer)
+                time.sleep(sleep * (2 if last_status == 429 else 1))
+            else:
+                # 401/403/404/etc
+                last_err = f"Yahoo HTTP {last_status}: {_safe_snippet(getattr(r, 'text', None))}"
         except Exception as e:
-            last_err = f"Request error: {e}"
-            _LAST_YAHOO_ERROR = last_err
-            log_exception(e, "Yahoo QuoteSummary request failed", level="WARNING")
+            last_err = f"Exception: {type(e).__name__}: {e}"
 
-            # retry with backoff
-            if i < retries:
-                time.sleep(min(sleep * (2 ** i), 12.0))
-                continue
+        if i < retries:
+            time.sleep(sleep)
 
-    _LAST_YAHOO_STATUS = last_status
     _LAST_YAHOO_ERROR = last_err
     return {}
-
-
 
 def _yf_raw(v, default=0.0) -> float:
     """
