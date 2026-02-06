@@ -945,3 +945,414 @@ def _analyze_relative_strength_vs_tasi(symbol: str):
     except Exception as e:
         log_exception(e, "Ignored exception", level="DEBUG")
     return score, obs, feats
+
+# =========================================================
+# 🧠 Smart Money / Fibonacci / Patterns / Scalping (NEW)
+# =========================================================
+
+def _linreg_slope(y: np.ndarray) -> float:
+    """Simple slope for pattern detection (safe)."""
+    try:
+        if y is None or len(y) < 5:
+            return 0.0
+        x = np.arange(len(y), dtype=float)
+        y = np.asarray(y, dtype=float)
+        x = x - x.mean()
+        y = y - y.mean()
+        den = float((x * x).sum())
+        if den <= 0:
+            return 0.0
+        return float((x * y).sum() / den)
+    except Exception:
+        return 0.0
+
+
+def _last_swing_from_pivots(df: pd.DataFrame, lookback: int = 220):
+    """Return (low_i, low, high_i, high, direction) where direction in {'up','down','unknown'}.
+
+    Uses pivots on High/Low for better SMC consistency.
+    """
+    if df is None or df.empty or len(df) < 80 or not _has_ohlcv(df):
+        return None
+
+    d = df.tail(lookback).copy()
+    high = _col(d, "High")
+    low = _col(d, "Low")
+    if high is None or low is None:
+        return None
+
+    ph = _pivot_points(high, 3, 3, "high")
+    pl = _pivot_points(low, 3, 3, "low")
+    if not ph or not pl:
+        return None
+
+    # pick last swing pair by last pivot ordering
+    hi_i, hi = ph[-1]
+    lo_i, lo = pl[-1]
+    direction = "unknown"
+
+    # If last low happened before last high => last impulse up
+    if lo_i < hi_i:
+        direction = "up"
+        low_i, low_v = lo_i, float(lo)
+        high_i, high_v = hi_i, float(hi)
+    else:
+        direction = "down"
+        # in down impulse, last high pivot is before last low pivot (often)
+        low_i, low_v = lo_i, float(lo)
+        high_i, high_v = hi_i, float(hi)
+
+    # sanity
+    if low_v <= 0 or high_v <= 0 or abs(high_v - low_v) <= 0:
+        return None
+
+    return {
+        "low_i": int(low_i),
+        "low": float(low_v),
+        "high_i": int(high_i),
+        "high": float(high_v),
+        "direction": direction,
+        "lookback": int(lookback),
+    }
+
+
+def _analyze_fibonacci_smc(df: pd.DataFrame, lookback: int = 220, near_th: float = 0.012):
+    """Fibonacci retracement + extensions (127/161/261...) based on last swing.
+
+    - Retracement: 0.382/0.5/0.618/0.786
+    - Extensions: 1.272/1.618/2.618 (targets after break)
+    """
+    feats = {
+        "fib_near_382": 0,
+        "fib_near_500": 0,
+        "fib_near_618": 0,
+        "fib_near_786": 0,
+        "fib_ext_127": 0,
+        "fib_ext_161": 0,
+        "fib_ext_261": 0,
+    }
+    if df is None or df.empty or len(df) < 90 or not _has_ohlcv(df):
+        return 0, [], feats
+
+    close = _col(df, "Close")
+    if close is None or pd.isna(close.iloc[-1]):
+        return 0, [], feats
+
+    swing = _last_swing_from_pivots(df, lookback=lookback)
+    if not swing:
+        return 0, [], feats
+
+    c = float(close.iloc[-1])
+    hi = float(swing["high"])
+    lo = float(swing["low"])
+    rng = hi - lo
+    if rng <= 0:
+        return 0, [], feats
+
+    score = 0
+    obs = []
+
+    # retracements relative to impulse direction
+    if swing["direction"] == "up":
+        r382 = hi - 0.382 * rng
+        r500 = hi - 0.5 * rng
+        r618 = hi - 0.618 * rng
+        r786 = hi - 0.786 * rng
+
+        levels = [("38.2%", r382, "fib_near_382"), ("50%", r500, "fib_near_500"),
+                  ("61.8%", r618, "fib_near_618"), ("78.6%", r786, "fib_near_786")]
+
+        for name, lvl, fkey in levels:
+            if abs(c - lvl) / max(c, 1e-9) <= near_th:
+                feats[fkey] = 1
+                score += 1
+                obs.append(f"🧬 فيبو Retracement {name} قريب ({lvl:.2f}) — منطقة قرار/دخول أفضل")
+
+        # OTE zone (0.618-0.786) gets extra weight
+        if (min(r618, r786) - (near_th * c)) <= c <= (max(r618, r786) + (near_th * c)):
+            score += 1
+            obs.append("🎯 OTE (61.8%→78.6%) — منطقة دخول ذكية محتملة")
+
+        # extensions (targets after breakout)
+        ext127 = hi + 0.272 * rng
+        ext161 = hi + 0.618 * rng
+        ext261 = hi + 1.618 * rng
+        ext_levels = [("127%", ext127, "fib_ext_127"), ("161.8%", ext161, "fib_ext_161"), ("261.8%", ext261, "fib_ext_261")]
+
+        if c > hi * (1 + 0.002):
+            # breakout context: mention nearest target
+            for name, lvl, fkey in ext_levels:
+                if abs(c - lvl) / max(c, 1e-9) <= near_th * 1.3:
+                    feats[fkey] = 1
+                    score += 1
+                    obs.append(f"🎯 هدف فيبو Extension {name} قريب ({lvl:.2f}) بعد الاختراق")
+                    break
+            else:
+                obs.append(f"🚀 بعد اختراق القمة: أهداف فيبو (127%={ext127:.2f} / 161.8%={ext161:.2f} / 261.8%={ext261:.2f})")
+
+    else:
+        # down impulse
+        r382 = lo + 0.382 * rng
+        r500 = lo + 0.5 * rng
+        r618 = lo + 0.618 * rng
+        r786 = lo + 0.786 * rng
+
+        levels = [("38.2%", r382, "fib_near_382"), ("50%", r500, "fib_near_500"),
+                  ("61.8%", r618, "fib_near_618"), ("78.6%", r786, "fib_near_786")]
+
+        for name, lvl, fkey in levels:
+            if abs(c - lvl) / max(c, 1e-9) <= near_th:
+                feats[fkey] = 1
+                score -= 1
+                obs.append(f"🧬 فيبو Retracement {name} قريب ({lvl:.2f}) — منطقة قرار/بيع أفضل")
+
+        if (min(r618, r786) - (near_th * c)) <= c <= (max(r618, r786) + (near_th * c)):
+            score -= 1
+            obs.append("🎯 OTE (61.8%→78.6%) — منطقة بيع ذكية محتملة")
+
+        ext127 = lo - 0.272 * rng
+        ext161 = lo - 0.618 * rng
+        ext261 = lo - 1.618 * rng
+        ext_levels = [("127%", ext127, "fib_ext_127"), ("161.8%", ext161, "fib_ext_161"), ("261.8%", ext261, "fib_ext_261")]
+
+        if c < lo * (1 - 0.002):
+            for name, lvl, fkey in ext_levels:
+                if abs(c - lvl) / max(c, 1e-9) <= near_th * 1.3:
+                    feats[fkey] = 1
+                    score -= 1
+                    obs.append(f"🎯 هدف فيبو Extension {name} قريب ({lvl:.2f}) بعد الكسر")
+                    break
+            else:
+                obs.append(f"📉 بعد كسر القاع: أهداف فيبو (127%={ext127:.2f} / 161.8%={ext161:.2f} / 261.8%={ext261:.2f})")
+
+    return score, obs, feats
+
+
+def _detect_swing_failure_pattern(df: pd.DataFrame, lookback: int = 60, wick_th: float = 0.002):
+    """Swing Failure Pattern (SFP/SMS-like) as a dedicated signal.
+
+    - Bearish SFP: price takes previous swing high (wick), then closes back below that high.
+    - Bullish SFP: price takes previous swing low (wick), then closes back above that low.
+    """
+    feats = {"sfp_bear": 0, "sfp_bull": 0}
+    if df is None or df.empty or len(df) < max(lookback, 60) or not _has_ohlcv(df):
+        return 0, [], feats
+
+    d = df.tail(lookback).copy()
+    high = _col(d, "High")
+    low = _col(d, "Low")
+    close = _col(d, "Close")
+    open_ = _col(d, "Open")
+    if any(x is None for x in [high, low, close, open_]):
+        return 0, [], feats
+
+    score = 0
+    obs = []
+
+    ph = _pivot_points(high, 3, 3, "high")
+    pl = _pivot_points(low, 3, 3, "low")
+    if not ph or not pl:
+        return 0, [], feats
+
+    last = d.iloc[-1]
+    h = float(last["High"])
+    l = float(last["Low"])
+    c = float(last["Close"])
+    o = float(last["Open"])
+
+    swing_high = float(ph[-1][1])
+    swing_low = float(pl[-1][1])
+
+    # Bearish SFP: wick above swing high then close below it
+    if swing_high > 0 and (h > swing_high * (1 + wick_th)) and (c < swing_high) and (c < o):
+        feats["sfp_bear"] = 1
+        score -= 2
+        obs.append(f"🧨 SFP/SMS سلبي: سحب سيولة فوق ({swing_high:.2f}) ثم إغلاق تحته (انعكاس محتمل)")
+
+    # Bullish SFP: wick below swing low then close above it
+    if swing_low > 0 and (l < swing_low * (1 - wick_th)) and (c > swing_low) and (c > o):
+        feats["sfp_bull"] = 1
+        score += 2
+        obs.append(f"🧨 SFP/SMS إيجابي: سحب سيولة تحت ({swing_low:.2f}) ثم إغلاق فوقه (انعكاس محتمل)")
+
+    return score, obs, feats
+
+
+def _detect_amd_cycle(df: pd.DataFrame, lookback: int = 120):
+    """AMD (Accumulation → Manipulation → Distribution) heuristic.
+
+    This is intentionally conservative to avoid overfitting:
+    - Accumulation: tight range + low volatility for a window
+    - Manipulation: recent liquidity sweep
+    - Distribution: break of structure with volume confirmation
+    """
+    feats = {"amd_accum": 0, "amd_manip": 0, "amd_dist": 0}
+    if df is None or df.empty or len(df) < max(lookback, 90) or not _has_ohlcv(df):
+        return 0, [], feats
+
+    if "Volume" not in df.columns:
+        # still can detect accumulation/manip loosely
+        pass
+
+    d = df.tail(lookback).copy()
+    high = _col(d, "High")
+    low = _col(d, "Low")
+    close = _col(d, "Close")
+    if any(x is None for x in [high, low, close]):
+        return 0, [], feats
+
+    score = 0
+    obs = []
+
+    # Accumulation: narrow range + low std returns
+    rng = float((high.tail(50).max() - low.tail(50).min()) / max(float(close.iloc[-1]), 1e-9))
+    rets = close.pct_change().tail(50).replace([np.inf, -np.inf], np.nan).dropna()
+    volat = float(rets.std()) if len(rets) >= 10 else 0.0
+
+    if rng <= 0.06 and volat <= 0.012:
+        feats["amd_accum"] = 1
+        score += 1
+        obs.append("📦 AMD: Accumulation محتملة (نطاق ضيق + تذبذب منخفض)")
+
+    # Manipulation: liquidity sweep in last candle(s)
+    s_liq, o_liq, f_liq = _detect_liquidity_sweep(d, lookback=30)
+    if int((f_liq or {}).get("liq_sweep_high") or 0) == 1 or int((f_liq or {}).get("liq_sweep_low") or 0) == 1:
+        feats["amd_manip"] = 1
+        score += (1 if s_liq > 0 else -1)  # align with sweep direction
+        obs += (o_liq or [])
+
+    # Distribution: structure break + volume spike
+    try:
+        # quick volume spike
+        v = pd.to_numeric(d.get("Volume", pd.Series(index=d.index, data=np.nan)), errors="coerce").fillna(0).astype(float)
+        v_avg = float(v.tail(40).mean()) if len(v) >= 40 else float(v.mean() or 0)
+        v_last = float(v.iloc[-1]) if len(v) else 0.0
+        vol_spike = (v_avg > 0 and v_last > v_avg * 1.8)
+
+        s_struct, o_struct = _analyze_market_structure(d)
+        # distribution: after manipulation, BOS opposite with volume
+        if feats["amd_manip"] == 1 and vol_spike and abs(s_struct) >= 2:
+            feats["amd_dist"] = 1
+            score += (1 if s_struct > 0 else -1)
+            obs.append("📤 AMD: Distribution/Expansion (كسر هيكل + فوليوم عالي بعد سحب سيولة)")
+            obs += (o_struct or [])[:2]
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
+
+    return score, obs, feats
+
+
+def _detect_chart_patterns(df: pd.DataFrame, lookback: int = 90):
+    """Basic chart patterns (triangle/flag/wedge) — minimal but useful.
+
+    الهدف: إضافة تغطية من ملف (نماذج وأنماط الشارت) بدون مبالغة في false positives.
+    """
+    feats = {"pat_triangle": 0, "pat_flag_bull": 0, "pat_flag_bear": 0, "pat_wedge": 0}
+    if df is None or df.empty or len(df) < max(lookback, 70) or not _has_ohlcv(df):
+        return 0, [], feats
+
+    d = df.tail(lookback).copy()
+    high = _col(d, "High")
+    low = _col(d, "Low")
+    close = _col(d, "Close")
+    if any(x is None for x in [high, low, close]):
+        return 0, [], feats
+
+    score = 0
+    obs = []
+
+    # Triangle / Wedge via slopes
+    hh = np.asarray(high.tail(60).values, dtype=float)
+    ll = np.asarray(low.tail(60).values, dtype=float)
+    sh = _linreg_slope(hh)
+    sl = _linreg_slope(ll)
+
+    # Converging: highs down + lows up => triangle
+    if sh < 0 and sl > 0 and abs(sh) > 0 and abs(sl) > 0:
+        feats["pat_triangle"] = 1
+        score += 1
+        obs.append("🔺 نموذج مثلث (Consolidation) — راقب الكسر مع الحجم")
+
+    # Wedge: both slopes same direction but converging magnitude (bullish falling wedge / bearish rising wedge)
+    if sh < 0 and sl < 0 and abs(sh) < abs(sl) * 0.9:
+        feats["pat_wedge"] = 1
+        score += 1
+        obs.append("🪓 Wedge هابط (Falling Wedge) — ارتداد/اختراق محتمل")
+    if sh > 0 and sl > 0 and abs(sl) < abs(sh) * 0.9:
+        feats["pat_wedge"] = 1
+        score -= 1
+        obs.append("🪓 Wedge صاعد (Rising Wedge) — ضعف/كسر محتمل")
+
+    # Flags: impulse then consolidation
+    try:
+        c = close.astype(float)
+        move = float((c.iloc[-1] - c.iloc[-25]) / max(c.iloc[-25], 1e-9))
+        cons_rng = float((high.tail(12).max() - low.tail(12).min()) / max(float(c.iloc[-1]), 1e-9))
+        if move > 0.08 and cons_rng < 0.03:
+            feats["pat_flag_bull"] = 1
+            score += 1
+            obs.append("🏁 Bull Flag محتمل (اندفاع ثم تجميع ضيق) — اختراق متوقع")
+        if move < -0.08 and cons_rng < 0.03:
+            feats["pat_flag_bear"] = 1
+            score -= 1
+            obs.append("🏁 Bear Flag محتمل (هبوط قوي ثم تجميع ضيق) — كسر متوقع")
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
+
+    return score, obs, feats
+
+
+def _scalping_profile(df: pd.DataFrame, indicators: dict, ema_fast: int = 9, ema_slow: int = 21):
+    """Scalping profile (ruleset) — independent from timeframe, works best on intraday.
+
+    Signals are conservative and return hints, not absolute orders.
+    """
+    feats = {"scalp_long": 0, "scalp_short": 0}
+    if df is None or df.empty or len(df) < 60 or not _has_ohlcv(df):
+        return 0, [], feats
+
+    close = _col(df, "Close")
+    if close is None or close.isna().all():
+        return 0, [], feats
+
+    score = 0
+    obs = []
+
+    c = close.astype(float)
+    ema_f = c.ewm(span=ema_fast, adjust=False).mean()
+    ema_s = c.ewm(span=ema_slow, adjust=False).mean()
+
+    rsi = indicators.get("rsi14") if isinstance(indicators, dict) else None
+    adx = indicators.get("adx14") if isinstance(indicators, dict) else None
+
+    try:
+        cf = float(c.iloc[-1])
+        ef = float(ema_f.iloc[-1])
+        es = float(ema_s.iloc[-1])
+    except Exception:
+        return 0, [], feats
+
+    rsi_v = None
+    if isinstance(rsi, pd.Series) and len(rsi) >= 1 and not pd.isna(rsi.iloc[-1]):
+        rsi_v = float(rsi.iloc[-1])
+
+    adx_v = None
+    if isinstance(adx, pd.Series) and len(adx) >= 1 and not pd.isna(adx.iloc[-1]):
+        adx_v = float(adx.iloc[-1])
+
+    trend_ok = (adx_v is None) or (adx_v >= 18)
+
+    # pullback proximity
+    near_fast = abs(cf - ef) / max(cf, 1e-9) <= 0.006
+
+    if ef > es and trend_ok and near_fast and (rsi_v is None or 48 <= rsi_v <= 72):
+        feats["scalp_long"] = 1
+        score += 1
+        obs.append("⚡ سكالبينج: Bias شراء (EMA9 فوق EMA21 + ارتداد قرب EMA9)")
+
+    if ef < es and trend_ok and near_fast and (rsi_v is None or 28 <= rsi_v <= 52):
+        feats["scalp_short"] = 1
+        score -= 1
+        obs.append("⚡ سكالبينج: Bias بيع (EMA9 تحت EMA21 + ارتداد قرب EMA9)")
+
+    return score, obs, feats
