@@ -152,183 +152,168 @@ def _is_reasonable_price(x: float) -> bool:
 
 
 # ============================================================
-# 🧼 Index Cleaner (مهم جداً لمنع "الخط العمودي" في الشارت)
+# 💹 Live Price (Google Finance first)
 # ============================================================
-def _ensure_datetime_index(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or df.empty:
-        return pd.DataFrame()
+@st.cache_data(ttl=30, show_spinner=False)
+def fetch_live_price_snapshot(symbol: str) -> Dict[str, Any]:
+    """Fetch a lightweight live price snapshot.
 
-    d = df.copy()
+    Priority (to reduce Yahoo requests):
+      1) Google Finance (TADAWUL)
+      2) Argaam (أرقام) fallback
+      3) Yahoo fast_info / history fallback
+    """
+    sym = str(symbol or "").strip().upper()
+    if not sym:
+        return {"ok": False, "price": 0.0, "source": "none"}
 
-    for c in ["date", "Date", "datetime", "Datetime", "time", "Time", "timestamp", "Timestamp"]:
-        if c in d.columns:
-            d[c] = pd.to_datetime(d[c], errors="coerce")
-            d = d.dropna(subset=[c])
-            d = d.sort_values(c)
-            d = d.set_index(c)
-            break
+    # 1) Google Finance
+    gf = fetch_google_finance_snapshot(sym) or {}
+    price = _safe_float(gf.get("price", 0.0))
+    if gf.get("ok") and _is_reasonable_price(price):
+        return {
+            "ok": True,
+            "price": float(price),
+            "prev_close": float(_safe_float(gf.get("prev_close", 0.0))) if _is_reasonable_price(_safe_float(gf.get("prev_close", 0.0))) else 0.0,
+            "year_high": 0.0,
+            "year_low": 0.0,
+            "source": "google_finance",
+            "url": gf.get("url", ""),
+        }
 
-    if not isinstance(d.index, pd.DatetimeIndex):
-        try:
-            d.index = pd.to_datetime(d.index, errors="coerce")
-        except Exception as e:
-            try:
-                att['error'] = repr(e)
-                _LAST_MARKET_DIAGNOSTICS['attempts'].append(att)
-                _set_market_diag(ok=False, when=time.strftime('%Y-%m-%d %H:%M:%S'), symbol=sym, interval=itv, period=p, error=repr(e))
-            except Exception:
-                pass
-            log_exception(e, "Ignored exception", level="DEBUG")
-    d = d[~pd.isna(d.index)]
-    d = d[~d.index.duplicated(keep="last")]
+    # 2) Argaam (price only)
+    p2 = fetch_price_from_argaam(sym)
+    if _is_reasonable_price(p2):
+        return {
+            "ok": True,
+            "price": float(p2),
+            "prev_close": float(p2),
+            "year_high": 0.0,
+            "year_low": 0.0,
+            "source": "argaam",
+        }
+
+    # 3) Yahoo (best-effort)
+    yd = fetch_price_from_yahoo(sym) or {}
+    price = _safe_float(yd.get("price", 0.0))
+    if _is_reasonable_price(price):
+        return {
+            "ok": True,
+            "price": float(price),
+            "prev_close": float(_safe_float(yd.get("prev_close", 0.0))),
+            "year_high": float(_safe_float(yd.get("year_high", 0.0))),
+            "year_low": float(_safe_float(yd.get("year_low", 0.0))),
+            "source": "yahoo",
+        }
+
+    # Yahoo history as last attempt (kept very light)
     try:
-        d = d.sort_index()
+        norm = get_ticker_symbol(sym)
+        h = yf.download(
+            norm,
+            period="5d",
+            interval="1d",
+            progress=False,
+            threads=False,
+            group_by="column",
+        )
+        h = _normalize_ohlcv_columns(h)
+        if not h.empty and "Close" in h.columns:
+            price = float(_safe_float(h["Close"].iloc[-1]))
+            prev = float(_safe_float(h["Close"].iloc[-2])) if len(h) >= 2 else 0.0
+            if _is_reasonable_price(price):
+                return {"ok": True, "price": price, "prev_close": prev, "source": "yahoo_history"}
     except Exception as e:
         log_exception(e, "Ignored exception", level="DEBUG")
-    return d
+
+    return {"ok": False, "price": 0.0, "source": "failed"}
 
 
 # ============================================================
-# 🧱 OHLCV Normalizer (Fix MultiIndex/Tuple Columns)
+# 🧼 Index Cleaner (مهم 
 # ============================================================
+def _ensure_datetime_index(df: pd.DataFrame) -> pd.DataFrame:
+    try:
+        if df is None or df.empty:
+            return df
+        if not isinstance(df.index, pd.DatetimeIndex):
+            df.index = pd.to_datetime(df.index, errors="coerce")
+        df = df[~df.index.isna()]
+        return df
+    except Exception:
+        return df
+
+
 def _normalize_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame()
 
-    d = df.copy()
+    df = df.copy()
 
-    # MultiIndex fix
-    if isinstance(d.columns, pd.MultiIndex):
-        levels = list(range(d.columns.nlevels))
-        ohlcv_keys = {"open", "high", "low", "close", "adj close", "volume", "adjclose"}
+    # Handle yfinance multi-index columns
+    if isinstance(df.columns, pd.MultiIndex):
+        # Often: (Price, 'Open'), etc. We'll flatten.
+        df.columns = [c[-1] if isinstance(c, tuple) else c for c in df.columns]
 
-        best_level = 0
-        best_hit = -1
-        for lv in levels:
-            vals = [str(x).strip().lower() for x in d.columns.get_level_values(lv)]
-            hit = sum(1 for v in vals if v in ohlcv_keys)
-            if hit > best_hit:
-                best_hit = hit
-                best_level = lv
-
-        d.columns = d.columns.get_level_values(best_level)
-
-    # Tuple columns fix
-    d.columns = [str(c[0] if isinstance(c, (tuple, list)) and len(c) else c) for c in d.columns]
-
-    canonical = {
+    rename_map = {
         "open": "Open",
         "high": "High",
         "low": "Low",
         "close": "Close",
         "adj close": "Adj Close",
-        "adjclose": "Adj Close",
         "volume": "Volume",
     }
+    new_cols = {}
+    for c in df.columns:
+        lc = str(c).strip().lower()
+        if lc in rename_map:
+            new_cols[c] = rename_map[lc]
+        else:
+            # keep original for unknown
+            new_cols[c] = c
 
-    rename_map = {}
-    for col in d.columns:
-        key = str(col).strip().lower()
-        if key in canonical:
-            rename_map[col] = canonical[key]
-
-    d.rename(columns=rename_map, inplace=True)
-
-    if "Close" not in d.columns and "Adj Close" in d.columns:
-        d["Close"] = d["Adj Close"]
-    if "Open" not in d.columns and "Close" in d.columns:
-        d["Open"] = d["Close"]
-
-    for c in ["Open", "High", "Low", "Close", "Volume"]:
-        if c in d.columns:
-            d[c] = pd.to_numeric(d[c], errors="coerce")
-
-    needed = ["Open", "High", "Low", "Close"]
-    if not any(c in d.columns for c in needed):
-        return pd.DataFrame()
-
-    d = d.dropna(subset=[c for c in needed if c in d.columns], how="any")
-    d = _ensure_datetime_index(d)
-
-    # remove invalid candles
-    if not d.empty and "Close" in d.columns:
-        d = d[pd.to_numeric(d["Close"], errors="coerce").fillna(0) > 0]
-
-    return d
-
-
-# ============================================================
-# ⏱️ Interval Helpers (Smart defaults + Yahoo limits friendly)
-# ============================================================
-_INTRADAY_LIMITS = {
-    "1m": "7d",
-    "2m": "60d",
-    "5m": "60d",
-    "15m": "60d",
-    "30m": "60d",
-    "60m": "60d",
-    "90m": "60d",
-}
+    df.rename(columns=new_cols, inplace=True)
+    df = _ensure_datetime_index(df)
+    return df
 
 
 def _normalize_interval(interval: str) -> str:
-    itv = str(interval or "").strip().lower()
+    it = str(interval or "1d").strip().lower()
+    ok = {"1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h", "1d", "5d", "1wk", "1mo", "3mo"}
+    if it == "1h":
+        it = "60m"
+    if it in ok:
+        return it
+    return "1d"
 
-    if itv in ["1h", "1hour", "hour", "ساعة"]:
-        return "60m"
-    if itv in ["day", "daily", "يوم", "1d"]:
-        return "1d"
-    if itv in ["week", "weekly", "اسبوع", "أسبوع", "1w", "1wk"]:
-        return "1wk"
-    if itv in ["month", "monthly", "شهر", "1mo"]:
+
+def _default_period_for_interval(interval: str) -> str:
+    it = _normalize_interval(interval)
+    # Keep periods small for intraday
+    if it in {"1m", "2m", "5m"}:
+        return "5d"
+    if it in {"15m", "30m"}:
         return "1mo"
-
-    if itv == "1w":
-        return "1wk"
-
-    return itv or "1d"
-
-
-def _default_period_for_interval(interval: str, years: int = 5) -> str:
-    itv = _normalize_interval(interval)
-    if itv in _INTRADAY_LIMITS:
-        return _INTRADAY_LIMITS[itv]
-    if years and years >= 5:
-        return "5y"
-    if years and years >= 2:
+    if it in {"60m", "90m"}:
+        return "3mo"
+    if it in {"1wk"}:
         return "2y"
-    return "1y"
+    if it in {"1mo", "3mo"}:
+        return "10y"
+    return "2y"
 
 
-def _build_period_fallbacks(interval: str, period: str, years: int) -> List[str]:
-    itv = _normalize_interval(interval)
-    prd = (period or "").strip().lower()
-
-    if not prd:
-        prd = _default_period_for_interval(itv, years=years)
-
-    if itv in _INTRADAY_LIMITS:
-        lim = _INTRADAY_LIMITS.get(itv, "60d")
-        tries = []
-        if prd:
-            tries.append(prd)
-        if lim not in tries:
-            tries.append(lim)
-        tries += ["60d", "30d", "14d", "7d"]
-        out, seen = [], set()
-        for x in tries:
-            if x and x not in seen:
-                out.append(x)
-                seen.add(x)
-        return out
-
-    tries = [prd, "5y", "2y", "1y", "6mo", "3mo", "max"]
-    out, seen = [], set()
-    for x in tries:
-        if x and x not in seen:
-            out.append(x)
-            seen.add(x)
-    return out
+def _build_period_fallbacks(period: str) -> List[str]:
+    p = str(period or "").strip()
+    if not p:
+        return ["1y", "2y", "5y", "10y"]
+    fallbacks = [p]
+    # heuristic fallback chain
+    chain = ["5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "max"]
+    if p not in chain:
+        return fallbacks + ["1y", "2y", "5y"]
+    i = chain.index(p)
+    return fallbacks + chain[i+1:]
 
 
 # ============================================================
@@ -394,270 +379,165 @@ def _extract_argaam_price_from_html(html: str) -> float:
         ("meta", {"property": "og:price:amount"}),
         ("meta", {"itemprop": "price"}),
     ]
+
     for tag, attrs in meta_selectors:
         m = soup.find(tag, attrs=attrs)
         if m and m.get("content"):
-            p = _safe_float(m.get("content"))
-            if _is_reasonable_price(p):
-                return p
+            return _safe_float(m["content"])
 
-    text = html
-    json_patterns = [
-        r'"lastPrice"\s*:\s*([0-9]+(?:\.[0-9]+)?)',
-        r'"price"\s*:\s*([0-9]+(?:\.[0-9]+)?)',
-        r'"Close"\s*:\s*([0-9]+(?:\.[0-9]+)?)',
-    ]
-    for pat in json_patterns:
-        m = re.search(pat, text, flags=re.IGNORECASE)
-        if m:
-            p = _safe_float(m.group(1))
-            if _is_reasonable_price(p):
-                return p
-
-    price_spans = soup.find_all("span", class_=re.compile("price|value|last", re.I))
-    for span in price_spans:
-        p = _safe_float(span.text)
-        if _is_reasonable_price(p):
-            return p
+    # fallback: try common spans
+    try:
+        # Sometimes price appears in elements with class 'price' etc.
+        for cls in ["price", "LastPrice", "stockPrice", "market-price"]:
+            el = soup.find(class_=cls)
+            if el and el.text:
+                p = _safe_float(el.text)
+                if _is_reasonable_price(p):
+                    return p
+    except Exception:
+        pass
 
     return 0.0
 
 
 def fetch_price_from_argaam(symbol: str) -> float:
-    s = str(symbol or "").strip().upper()
-    if not s:
+    """
+    Fetch current price from Argaam (أرقام) website (best-effort).
+    """
+    if not requests or not BeautifulSoup:
         return 0.0
 
-    code = s.replace(".SR", "").replace("^", "")
-    if not code.isdigit():
+    sym = str(symbol or "").strip().upper()
+    if not sym:
         return 0.0
 
-    url_candidates = [
-        f"https://www.argaam.com/ar/company/stock/overview/{code}",
-        f"https://www.argaam.com/en/company/stock/overview/{code}",
-        f"https://www.argaam.com/ar/company/stock/quote/{code}",
-    ]
+    ticker = get_ticker_symbol(sym).replace(".SR", "").replace("^", "")
 
-    for url in url_candidates:
-        r = _http_get(url, timeout=7, retries=1)
-        if not r:
-            continue
+    url = f"https://www.argaam.com/ar/company/profile/stock/{ticker}"
+
+    r = _http_get(url, timeout=6, retries=1)
+    if not r:
+        return 0.0
+
+    try:
         p = _extract_argaam_price_from_html(r.text)
-        if _is_reasonable_price(p):
-            return float(p)
+        return float(p) if _is_reasonable_price(p) else 0.0
+    except Exception:
+        return 0.0
 
-    return 0.0
 
-
-# ============================================================
-# 🟨 Yahoo Finance - المصدر الأساسي
-# ============================================================
 def fetch_price_from_yahoo(symbol: str) -> Dict[str, float]:
     sym = get_ticker_symbol(symbol)
     default_res = {"price": 0.0, "prev_close": 0.0, "year_high": 0.0, "year_low": 0.0}
 
-    if not sym:
-        return default_res
-
     try:
         t = yf.Ticker(sym)
         fi = getattr(t, "fast_info", None)
+        price = _safe_float(getattr(fi, "last_price", 0.0)) if fi else 0.0
+        prev_close = _safe_float(getattr(fi, "previous_close", 0.0)) if fi else 0.0
 
-        last_price = 0.0
-        prev_close = 0.0
-        year_high = 0.0
-        year_low = 0.0
+        # Reasonable fallbacks
+        if not _is_reasonable_price(price):
+            price = 0.0
+        if not _is_reasonable_price(prev_close):
+            prev_close = 0.0
 
-        if fi:
-            last_price = _safe_float(getattr(fi, "last_price", None))
-            prev_close = _safe_float(getattr(fi, "previous_close", None))
-            year_high = _safe_float(getattr(fi, "year_high", None))
-            year_low = _safe_float(getattr(fi, "year_low", None))
+        year_high = _safe_float(getattr(fi, "year_high", 0.0)) if fi else 0.0
+        year_low = _safe_float(getattr(fi, "year_low", 0.0)) if fi else 0.0
 
-        if last_price <= 0 or prev_close <= 0:
-            try:
-                h = t.history(period="5d", interval="1d")
-                h = _normalize_ohlcv_columns(h)
-                if not h.empty and "Close" in h.columns:
-                    if last_price <= 0:
-                        last_price = _safe_float(h["Close"].iloc[-1])
-                    if prev_close <= 0 and len(h) >= 2:
-                        prev_close = _safe_float(h["Close"].iloc[-2])
-            except Exception as e:
-                log_exception(e, "Ignored exception", level="DEBUG")
         return {
-            "price": float(last_price) if _is_reasonable_price(last_price) else 0.0,
-            "prev_close": float(prev_close) if _is_reasonable_price(prev_close) else 0.0,
-            "year_high": float(year_high) if _is_reasonable_price(year_high) else 0.0,
-            "year_low": float(year_low) if _is_reasonable_price(year_low) else 0.0,
+            "price": float(price),
+            "prev_close": float(prev_close),
+            "year_high": float(year_high),
+            "year_low": float(year_low),
         }
     except Exception:
         return default_res
 
 
-# ============================================================
-# 📌 TASI Data (المؤشر العام)
-# ============================================================
-@st.cache_data(ttl=300, show_spinner=False)
 def get_tasi_data():
+    """
+    Return a stable dict for TASI snapshot.
+    """
+    return fetch_price_from_yahoo("^TASI.SR")
+
+
+def get_chart_history(symbol: str, interval: str = "1d", period: Optional[str] = None) -> pd.DataFrame:
+    """
+    Robust price history fetch using yfinance (cached).
+    """
+    symbol = get_ticker_symbol(symbol)
+    interval = _normalize_interval(interval)
+    period = str(period).strip() if period else _default_period_for_interval(interval)
+
+    # diagnostics
+    attempts = []
+    err = None
+
     try:
-        tick = yf.Ticker("^TASI.SR")
-        fi = getattr(tick, "fast_info", None)
-        curr = _safe_float(getattr(fi, "last_price", None)) if fi else 0.0
-        prev = _safe_float(getattr(fi, "previous_close", None)) if fi else 0.0
-
-        if curr <= 0:
-            hist = tick.history(period="5d", interval="1d")
-            hist = _normalize_ohlcv_columns(hist)
-            if not hist.empty and "Close" in hist.columns:
-                curr = _safe_float(hist["Close"].iloc[-1])
-                prev = _safe_float(hist["Close"].iloc[-2]) if len(hist) > 1 else curr
-
-        if _is_reasonable_price(curr):
-            chg = ((curr - prev) / prev) * 100.0 if prev > 0 else 0.0
-            return float(curr), round(_safe_float(chg), 2)
-    except Exception as e:
-        log_exception(e, "Ignored exception", level="DEBUG")
-    return 0.0, 0.0
-
-
-# ============================================================
-# 📉 Chart History (للرسم البياني والذكاء الاصطناعي)
-# ============================================================
-@st.cache_data(ttl=900, show_spinner=False)
-def get_chart_history(symbol: str, period: str = None, interval: str = "1d", years: int = 5) -> pd.DataFrame:
-    sym = get_ticker_symbol(symbol)
-    if not sym:
-        return pd.DataFrame()
-
-    itv = _normalize_interval(interval)
-    tries = _build_period_fallbacks(itv, period=period, years=years)
-
-    # diagnostics init
-    _set_market_diag(ok=None, when=time.strftime('%Y-%m-%d %H:%M:%S'), symbol=sym, interval=itv, period=period or f'{years}y', attempts=[], error=None)
-
-    for p in tries:
-        try:
-            att = {'period': p, 'interval': itv, 'rows': 0, 'error': None}
-            df = yf.download(
-                sym,
-                period=p,
-                interval=itv,
-                auto_adjust=False,
-                progress=False,
-                threads=False,
-                group_by="column",
-            )
-            df = _normalize_ohlcv_columns(df)
-
+        for p in _build_period_fallbacks(period):
             try:
-                att['rows'] = int(len(df)) if df is not None else 0
-            except Exception:
-                pass
-
-            if df is not None and not df.empty:
-                df = df.dropna(subset=[c for c in ["Open", "High", "Low", "Close"] if c in df.columns], how="any")
-                df = _ensure_datetime_index(df)
-                if not df.empty and "Close" in df.columns:
-                    try:
-                        _LAST_MARKET_DIAGNOSTICS['attempts'].append(att)
-                    except Exception:
-                        pass
-                    _set_market_diag(ok=True, when=time.strftime('%Y-%m-%d %H:%M:%S'), symbol=sym, interval=itv, period=p)
+                attempts.append({"period": p, "interval": interval})
+                df = yf.download(symbol, period=p, interval=interval, progress=False, threads=False, group_by="column")
+                df = _normalize_ohlcv_columns(df)
+                if df is not None and not df.empty:
+                    _set_market_diag(ok=True, when=time.time(), symbol=symbol, interval=interval, period=p, attempts=attempts, error=None)
                     return df
-        except Exception as e:
-            log_exception(e, "Ignored exception", level="DEBUG")
-        finally:
-            try:
-                if att not in _LAST_MARKET_DIAGNOSTICS.get('attempts', []):
-                    _LAST_MARKET_DIAGNOSTICS['attempts'].append(att)
-            except Exception:
-                pass
-            # ✅ Gentle backoff to reduce rate-limit pressure
-            time.sleep(0.25)
+            except Exception as e:
+                err = str(e)
+                log_exception(e, "Ignored exception", level="DEBUG")
+                continue
+    except Exception as e:
+        err = str(e)
+        log_exception(e, "Ignored exception", level="DEBUG")
 
-    _set_market_diag(ok=False, when=time.strftime('%Y-%m-%d %H:%M:%S'), symbol=sym, interval=itv, period=period or f'{years}y')
+    _set_market_diag(ok=False, when=time.time(), symbol=symbol, interval=interval, period=period, attempts=attempts, error=err)
     return pd.DataFrame()
 
 
-@st.cache_data(ttl=900, show_spinner=False)
-def get_tasi_history(period: str = None, interval: str = "1d") -> pd.DataFrame:
-    return get_chart_history("^TASI.SR", period=period, interval=interval, years=5)
+def get_tasi_history(interval: str = "1d", period: Optional[str] = None) -> pd.DataFrame:
+    return get_chart_history("^TASI.SR", interval=interval, period=period)
 
 
-def get_multi_interval_history(symbol: str, intervals=("1d", "1wk"), years: int = 5) -> Dict[str, pd.DataFrame]:
-    """
-    ✅ إضافي (اختياري):
-    يرجع باكيت بيانات لعدة فريمات (مفيد للـ AI).
-    """
+def get_multi_interval_history(symbol: str, intervals: List[str] = None) -> Dict[str, pd.DataFrame]:
+    intervals = intervals or ["1d", "1wk", "1mo"]
     out = {}
-    for itv in intervals:
-        out[str(itv)] = get_chart_history(symbol, period=None, interval=str(itv), years=years)
+    for it in intervals:
+        out[it] = get_chart_history(symbol, interval=it)
     return out
 
 
-def get_relative_strength_vs_tasi(symbol: str, period: str = None, interval: str = "1d") -> Dict[str, Any]:
-    sym = get_ticker_symbol(symbol)
+def get_relative_strength_vs_tasi(symbol: str, period: str = "6mo") -> float:
+    """
+    Compute relative strength: (symbol return - TASI return) over period.
+    """
+    try:
+        s = get_ticker_symbol(symbol)
+        df_s = yf.download(s, period=period, interval="1d", progress=False, threads=False)
+        df_i = yf.download("^TASI.SR", period=period, interval="1d", progress=False, threads=False)
 
-    stock = get_chart_history(sym, period=period, interval=interval, years=5)
-    tasi = get_tasi_history(period=period, interval=interval)
+        df_s = _normalize_ohlcv_columns(df_s)
+        df_i = _normalize_ohlcv_columns(df_i)
 
-    if stock is None or stock.empty or "Close" not in stock.columns:
-        return {"ok": False, "symbol": sym, "reason": "no_stock_history"}
-    if tasi is None or tasi.empty or "Close" not in tasi.columns:
-        return {"ok": False, "symbol": sym, "reason": "no_tasi_history"}
-
-    df = pd.DataFrame(
-        {
-            "stock": pd.to_numeric(stock["Close"], errors="coerce"),
-            "tasi": pd.to_numeric(tasi["Close"], errors="coerce"),
-        }
-    ).dropna()
-
-    df = _ensure_datetime_index(df)
-
-    if df.empty or len(df) < 30:
-        return {"ok": False, "symbol": sym, "reason": "insufficient_overlap"}
-
-    df["rs"] = df["stock"] / df["tasi"]
-    df["stock_ret"] = df["stock"].pct_change()
-    df["tasi_ret"] = df["tasi"].pct_change()
-    df["rel_ret"] = (1 + df["stock_ret"]) / (1 + df["tasi_ret"]) - 1
-
-    def _window_outperf(n):
-        if len(df) <= n:
+        if df_s.empty or df_i.empty:
             return 0.0
-        s = df["stock"].iloc[-1] / df["stock"].iloc[-(n + 1)] - 1
-        i = df["tasi"].iloc[-1] / df["tasi"].iloc[-(n + 1)] - 1
-        return float(s - i)
 
-    out_1m = _window_outperf(21)
-    out_3m = _window_outperf(63)
-    out_6m = _window_outperf(126)
-    out_1y = _window_outperf(252)
+        rs = _window_outperf(df_s["Close"], df_i["Close"])
+        return float(rs)
+    except Exception:
+        return 0.0
 
-    rs_now = float(df["rs"].iloc[-1])
-    rs_chg_3m = float(df["rs"].iloc[-1] / df["rs"].iloc[-64] - 1) if len(df) > 64 else 0.0
 
-    label = "محايد"
-    if out_3m > 0.05 and out_1m > 0:
-        label = "أقوى من تاسي"
-    elif out_3m < -0.05 and out_1m < 0:
-        label = "أضعف من تاسي"
+def _window_outperf(s_close: pd.Series, i_close: pd.Series) -> float:
+    s_close = pd.to_numeric(s_close, errors="coerce").dropna()
+    i_close = pd.to_numeric(i_close, errors="coerce").dropna()
 
-    return {
-        "ok": True,
-        "symbol": sym,
-        "rs_now": rs_now,
-        "rs_change_3m": rs_chg_3m,
-        "outperf_1m": out_1m,
-        "outperf_3m": out_3m,
-        "outperf_6m": out_6m,
-        "outperf_1y": out_1y,
-        "label": label,
-        "rs_series": df["rs"].tail(260).to_dict(),
-        "asof": str(df.index[-1].date()) if isinstance(df.index, pd.DatetimeIndex) and len(df.index) else "",
-    }
+    if len(s_close) < 2 or len(i_close) < 2:
+        return 0.0
+
+    s_ret = (s_close.iloc[-1] / s_close.iloc[0]) - 1.0
+    i_ret = (i_close.iloc[-1] / i_close.iloc[0]) - 1.0
+    return float(s_ret - i_ret)
 
 
 @st.cache_data(ttl=120, show_spinner=False)
@@ -675,16 +555,39 @@ def fetch_batch_data(symbols_list: list):
     norm_map = {s: get_ticker_symbol(s) for s in input_symbols}
     clean_syms = sorted(list(set([v for v in norm_map.values() if v])))
 
+    # ----------------------------------------------------------------
+    # Live price snapshots (Google Finance first) to reduce Yahoo usage
+    # ----------------------------------------------------------------
     yahoo_data_by_norm = {}
+    google_data_by_raw = {}
 
-    # ✅ best-effort batch
+    # 1) Try Google Finance per symbol (cached, very light)
+    for raw_sym in input_symbols:
+        try:
+            snap = fetch_live_price_snapshot(raw_sym) or {}
+            google_data_by_raw[raw_sym] = snap
+        except Exception:
+            google_data_by_raw[raw_sym] = {"ok": False}
+
+    # 2) Batch Yahoo only for symbols that still need it
+    need_yahoo_norm = []
+    for raw_sym in input_symbols:
+        snap = google_data_by_raw.get(raw_sym, {}) or {}
+        if not snap.get("ok"):
+            norm = norm_map.get(raw_sym) or get_ticker_symbol(raw_sym)
+            if norm:
+                need_yahoo_norm.append(norm)
+
+    need_yahoo_norm = sorted(list(set(need_yahoo_norm)))
+
+    # ✅ best-effort Yahoo batch (ONLY if needed)
     try:
-        if len(clean_syms) == 1:
-            sym = clean_syms[0]
+        if len(need_yahoo_norm) == 1:
+            sym = need_yahoo_norm[0]
             yahoo_data_by_norm[sym] = fetch_price_from_yahoo(sym)
-        else:
-            tickers = yf.Tickers(" ".join(clean_syms))
-            for sym in clean_syms:
+        elif len(need_yahoo_norm) > 1:
+            tickers = yf.Tickers(" ".join(need_yahoo_norm))
+            for sym in need_yahoo_norm:
                 try:
                     sub_ticker = tickers.tickers.get(sym)
                     if not sub_ticker:
@@ -704,18 +607,19 @@ def fetch_batch_data(symbols_list: list):
                 except Exception:
                     yahoo_data_by_norm[sym] = {"price": 0.0, "prev_close": 0.0, "year_high": 0.0, "year_low": 0.0}
     except Exception:
-        for sym in clean_syms:
+        for sym in need_yahoo_norm:
             yahoo_data_by_norm[sym] = fetch_price_from_yahoo(sym)
 
     for raw_sym in input_symbols:
         norm = norm_map.get(raw_sym) or get_ticker_symbol(raw_sym)
+        snap = google_data_by_raw.get(raw_sym, {}) or {}
         d = yahoo_data_by_norm.get(norm, {"price": 0.0, "prev_close": 0.0, "year_high": 0.0, "year_low": 0.0})
 
-        price = _safe_float(d.get("price", 0.0))
-        prev_close = _safe_float(d.get("prev_close", 0.0))
+        price = _safe_float(snap.get("price", 0.0)) if snap.get("ok") else _safe_float(d.get("price", 0.0))
+        prev_close = _safe_float(snap.get("prev_close", 0.0)) if snap.get("ok") else _safe_float(d.get("prev_close", 0.0))
         year_high = _safe_float(d.get("year_high", 0.0))
         year_low = _safe_float(d.get("year_low", 0.0))
-        source = "yahoo"
+        source = snap.get("source", "yahoo") if snap.get("ok") else "yahoo"
 
         # ✅ Yahoo history fallback before Argaam
         if price <= 0:
@@ -783,28 +687,22 @@ def get_static_info(symbol: str) -> Dict[str, Any]:
                 name = nm
             if sec:
                 sector = sec
-    except Exception as e:
-        log_exception(e, "Ignored exception", level="DEBUG")
+    except Exception:
+        pass
+
     return {
         "symbol": sym,
         "name": name,
         "sector": sector,
-        "source": "data_source",
     }
 
 
-def get_analysis_sources(symbol: str) -> Dict[str, Any]:
-    sym = get_ticker_symbol(symbol)
-    out = {"symbol": sym, "sources": {}}
-
-    out["sources"]["yahoo"] = {"price_pack": fetch_price_from_yahoo(sym), "ok": True}
-    out["sources"]["google_finance"] = fetch_google_finance_snapshot(sym)
-    out["sources"]["tradingview"] = fetch_tradingview_snapshot(sym)
-    out["sources"]["investing"] = fetch_investing_snapshot(sym)
-
-    p_argaam = fetch_price_from_argaam(sym)
-    out["sources"]["argaam"] = {"price": p_argaam, "ok": _is_reasonable_price(p_argaam)}
-
-    out["sources"]["vs_tasi"] = get_relative_strength_vs_tasi(sym, period=None, interval="1d")
-
-    return out
+def get_analysis_sources() -> Dict[str, str]:
+    return {
+        "price_live_primary": "Google Finance (TADAWUL)",
+        "price_live_fallback_1": "Argaam (أرقام)",
+        "price_live_fallback_2": "Yahoo Finance (fast_info/history)",
+        "financials_primary": "Yahoo Finance",
+        "financials_fallbacks": "Argaam / Google Finance (via parsers/sync)",
+        "charts_primary": "Yahoo Finance (history)",
+    }
