@@ -1,6 +1,5 @@
 # financial_analysis/yahoo_data.py
 import time
-import random
 from datetime import datetime
 from typing import Dict, List, Any
 
@@ -36,45 +35,6 @@ _LAST_YAHOO_TS = None  # type: ignore
 _LAST_YAHOO_URL = None  # type: ignore
 _LAST_YAHOO_HEADERS = None  # type: ignore
 
-# ==============================================================
-# ✅ Rate-limit guard + session cache (prevents Streamlit rerun spam)
-# ==============================================================
-# TTLs (seconds)
-_YAHOO_QS_TTL = 6 * 60 * 60          # 6 hours for financial statements
-_YAHOO_ERR_TTL = 60                 # 60s for transient errors (avoid hammering)
-_YAHOO_THROTTLE_429 = 15            # 15s hard throttle after a 429 on same URL
-
-def _yahoo_cache_get(url: str):
-    """Session-level cache (safe, avoids caching empty/429 into st.cache_data)."""
-    try:
-        cache = st.session_state.setdefault("_yahoo_qs_cache", {})
-        item = cache.get(url)
-        if not item:
-            return None
-        ts = float(item.get("ts", 0))
-        ttl = float(item.get("ttl", 0))
-        if (time.time() - ts) <= ttl:
-            return item.get("data")
-        # expired
-        cache.pop(url, None)
-    except Exception:
-        return None
-    return None
-
-def _yahoo_cache_set(url: str, data: dict, ttl: float):
-    try:
-        cache = st.session_state.setdefault("_yahoo_qs_cache", {})
-        cache[url] = {"ts": time.time(), "ttl": float(ttl), "data": data}
-    except Exception:
-        pass
-
-def _yahoo_meta():
-    try:
-        return st.session_state.setdefault("_yahoo_qs_meta", {})
-    except Exception:
-        return {}
-
-
 
 
 def _yf_session():
@@ -94,17 +54,12 @@ def _yf_session():
         _YF_SESSION = s
     return _YF_SESSION
 
-def _http_get_json(url: str, timeout: int = 10, retries: int = 4, sleep: float = 0.8) -> dict:
-    """Best-effort GET JSON with retry/backoff + diagnostics + session cache.
 
-    Why this exists:
-    - Streamlit reruns frequently; without guards it can spam Yahoo and trigger HTTP 429.
-    - Yahoo QuoteSummary is unofficial and rate-limits aggressively.
+def _http_get_json(url: str, timeout: int = 8, retries: int = 2, sleep: float = 0.6) -> dict:
+    """Best-effort GET JSON with retry/backoff + diagnostics.
 
-    Behavior:
-    - Returns cached successful payloads for a few hours (session-level).
-    - On 429: throttles and uses exponential backoff with jitter.
-    - Never raises; returns {} on failure.
+    Yahoo QuoteSummary is an unofficial endpoint; it may rate-limit (429) or return HTML.
+    This helper keeps the behavior conservative to avoid breaking the app.
     """
     global _LAST_YAHOO_STATUS, _LAST_YAHOO_ERROR, _LAST_YAHOO_TS, _LAST_YAHOO_URL, _LAST_YAHOO_HEADERS
 
@@ -113,13 +68,6 @@ def _http_get_json(url: str, timeout: int = 10, retries: int = 4, sleep: float =
     _LAST_YAHOO_URL = url
     _LAST_YAHOO_HEADERS = None
     _LAST_YAHOO_TS = datetime.now().isoformat(timespec="seconds")
-
-    # 1) Session cache (success only)
-    cached = _yahoo_cache_get(url)
-    if isinstance(cached, dict) and cached:
-        _LAST_YAHOO_STATUS = 200
-        _LAST_YAHOO_ERROR = None
-        return cached
 
     if not requests:
         _LAST_YAHOO_ERROR = "requests not available"
@@ -130,19 +78,10 @@ def _http_get_json(url: str, timeout: int = 10, retries: int = 4, sleep: float =
         _LAST_YAHOO_ERROR = "session not initialized"
         return {}
 
-    meta = _yahoo_meta()
-    now = time.time()
-    m = meta.get(url, {}) if isinstance(meta, dict) else {}
-    last_429_ts = float(m.get("last_429_ts", 0) or 0)
-    if last_429_ts and (now - last_429_ts) < _YAHOO_THROTTLE_429:
-        _LAST_YAHOO_STATUS = 429
-        _LAST_YAHOO_ERROR = "Rate limit (429) throttled"
-        return {}
-
     last_status = None
     last_err = None
 
-    for i in range(int(retries) + 1):
+    for i in range(retries + 1):
         try:
             r = ses.get(url, timeout=timeout)
             last_status = getattr(r, "status_code", None)
@@ -154,47 +93,25 @@ def _http_get_json(url: str, timeout: int = 10, retries: int = 4, sleep: float =
 
             if last_status == 200:
                 try:
-                    data = r.json() or {}
-                    if isinstance(data, dict) and data:
-                        _yahoo_cache_set(url, data, ttl=_YAHOO_QS_TTL)
-                    meta[url] = {"last_status": 200, "last_ok_ts": time.time()}
-                    return data if isinstance(data, dict) else {}
+                    return r.json() or {}
                 except Exception:
+                    # Sometimes returns HTML/empty: keep safe
                     last_err = f"Non-JSON response: {_safe_snippet(getattr(r, 'text', None))}"
-
             elif last_status in (429, 503):
                 last_err = f"Transient Yahoo error (HTTP {last_status})"
-                if last_status == 429:
-                    meta[url] = {"last_status": 429, "last_429_ts": time.time()}
-                # exponential backoff with jitter; 429 needs longer
-                base = sleep * (2 ** i)
-                if last_status == 429:
-                    base = max(base * 2.5, 2.0)
-                jitter = random.uniform(0, sleep)
-                time.sleep(base + jitter)
-
+                # backoff a bit (429 usually needs longer)
+                time.sleep(sleep * (2 if last_status == 429 else 1))
             else:
+                # 401/403/404/etc
                 last_err = f"Yahoo HTTP {last_status}: {_safe_snippet(getattr(r, 'text', None))}"
-                # small delay for non-transient errors (avoid hammering)
-                time.sleep(min(sleep, 1.0))
-
         except Exception as e:
             last_err = f"Exception: {type(e).__name__}: {e}"
-            time.sleep(min(sleep, 1.0))
 
-        # between retries (if not already slept)
         if i < retries:
-            continue
+            time.sleep(sleep)
 
     _LAST_YAHOO_ERROR = last_err
-    # cache transient failures briefly to prevent immediate rerun hammering
-    try:
-        if last_status in (429, 503) and isinstance(last_err, str):
-            _yahoo_cache_set(url, {}, ttl=_YAHOO_ERR_TTL)
-    except Exception:
-        pass
     return {}
-
 
 def _yf_raw(v, default=0.0) -> float:
     """
@@ -462,9 +379,15 @@ def get_financial_statements(symbol: str, period_type: str = "Annual", refresh: 
 
     stored = get_stored_financials_df(sym, ptype)
 
-    if (not refresh) and (stored is not None) and (not stored.empty):
+    # ✅ Manual-only mode by default:
+    # إذا refresh=False لا نقوم بأي طلبات شبكة (Yahoo/بدائل) حتى لا يحدث 429 بسبب Rerun في Streamlit.
+    # يتم الجلب/المزامنة فقط عبر أزرار "مزامنة" من الواجهة (refresh=True أو sync_*).
+    if not refresh:
+        if stored is None:
+            return pd.DataFrame()
         return stored
 
+    # refresh=True: يسمح بمحاولة الجلب من المصادر الخارجية ثم الحفظ
     records = fetch_financial_statements_yahoo_json(sym, ptype)
     origin = "YahooJSON" if records else None
 
