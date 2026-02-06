@@ -120,6 +120,10 @@ def render_financial_dashboard_ui(symbol):
         df_annual = get_financial_statements(symbol, "Annual")
         df_quarter = get_financial_statements(symbol, "Quarterly")
 
+        # ✅ لا يتم الجلب من الإنترنت تلقائياً هنا (تجنّب 429). إذا كانت البيانات فارغة، اطلب من المستخدم المزامنة من تبويب إدارة البيانات.
+        if (df_annual is None or df_annual.empty) and (df_quarter is None or df_quarter.empty):
+            st.warning("لا توجد بيانات مالية مخزّنة لهذا الرمز بعد. استخدم تبويب (⚙️ إدارة البيانات) ثم زر (بدء مزامنة القوائم الكاملة) أو (بدء المزامنة الآلية).")
+
         st.markdown("### 💰 لوحة التحليل المالي")
         ptype = st.radio(
             "نطاق التحليل:",
