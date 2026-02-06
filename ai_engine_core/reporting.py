@@ -44,6 +44,32 @@ try:
 except Exception:
     _vsa_lite = None
 
+# NEW optional modules (Smart Money / Fib / Patterns / Scalping)
+try:
+    from .technicals import _analyze_fibonacci_smc
+except Exception:
+    _analyze_fibonacci_smc = None
+
+try:
+    from .technicals import _detect_swing_failure_pattern
+except Exception:
+    _detect_swing_failure_pattern = None
+
+try:
+    from .technicals import _detect_amd_cycle
+except Exception:
+    _detect_amd_cycle = None
+
+try:
+    from .technicals import _detect_chart_patterns
+except Exception:
+    _detect_chart_patterns = None
+
+try:
+    from .technicals import _scalping_profile
+except Exception:
+    _scalping_profile = None
+
 from .risk import (
     _analyze_sr,
     _risk_plan_from_atr_sr,
@@ -198,17 +224,57 @@ def generate_ai_report(symbol, timeframe="1D"):
                 s_vsa, o_vsa, f_vsa = 0, [], {}
 
         # =========================
+        # NEW: Smart Money / Fib / Patterns / Scalping
+        # =========================
+        s_fib, o_fib, f_fib = 0, [], {}
+        if callable(_analyze_fibonacci_smc):
+            try:
+                s_fib, o_fib, f_fib = _analyze_fibonacci_smc(df)
+            except Exception:
+                s_fib, o_fib, f_fib = 0, [], {}
+
+        s_sfp, o_sfp, f_sfp = 0, [], {}
+        if callable(_detect_swing_failure_pattern):
+            try:
+                s_sfp, o_sfp, f_sfp = _detect_swing_failure_pattern(df)
+            except Exception:
+                s_sfp, o_sfp, f_sfp = 0, [], {}
+
+        s_amd, o_amd, f_amd = 0, [], {}
+        if callable(_detect_amd_cycle):
+            try:
+                s_amd, o_amd, f_amd = _detect_amd_cycle(df)
+            except Exception:
+                s_amd, o_amd, f_amd = 0, [], {}
+
+        s_pat, o_pat, f_pat = 0, [], {}
+        if callable(_detect_chart_patterns):
+            try:
+                s_pat, o_pat, f_pat = _detect_chart_patterns(df)
+            except Exception:
+                s_pat, o_pat, f_pat = 0, [], {}
+
+        s_sclp, o_sclp, f_sclp = 0, [], {}
+        if callable(_scalping_profile):
+            try:
+                s_sclp, o_sclp, f_sclp = _scalping_profile(df, ind)
+            except Exception:
+                s_sclp, o_sclp, f_sclp = 0, [], {}
+
+        # =========================
         # Base score (tech)
         # =========================
         base_tech = (
             s_candle + s_struct + s_sr + s_liq + s_ob + s_ichi
             + s_inside + s_gaps + s_div + s_reg + s_vsa
+            + s_fib + s_sfp + s_amd + s_pat + s_sclp
         )
 
         tech_reasons = (
             (o_struct or []) + (o_candle or []) + (o_sr or [])
             + (o_liq or []) + (o_ob or []) + (o_ichi or [])
             + (o_inside or []) + (o_gaps or []) + (o_div or []) + (o_reg or []) + (o_vsa or [])
+            + (o_fib or []) + (o_sfp or []) + (o_amd or []) + (o_pat or []) + (o_sclp or [])
         )
         fund_reasons = o_fund or []
 
@@ -218,7 +284,7 @@ def generate_ai_report(symbol, timeframe="1D"):
         features = {}
 
         fund_feats = (m_fund or {}).get("_fund_features", {}) if isinstance(m_fund, dict) else {}
-        for d in [f_sr, fund_feats, f_liq, f_ob, f_ichi, f_inside, f_gaps, f_div, f_reg, f_vsa]:
+        for d in [f_sr, fund_feats, f_liq, f_ob, f_ichi, f_inside, f_gaps, f_div, f_reg, f_vsa, f_fib, f_sfp, f_amd, f_pat, f_sclp]:
             try:
                 for k, v in (d or {}).items():
                     if isinstance(v, (bool, int)):
