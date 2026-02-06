@@ -163,9 +163,9 @@ if "page" not in st.session_state:
 
 try:
     from security import login_system
-    from views import router
-
+    # IMPORTANT: لا نستورد views/router قبل نجاح تسجيل الدخول لتجنب وميض عناصر الواجهة أثناء rerun
     if login_system():
+        from views import router  # import after auth gate
         router()
 except Exception as e:
     st.error("حدث خطأ غير متوقع في التطبيق.")
