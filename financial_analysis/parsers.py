@@ -119,57 +119,57 @@ class FinancialParser:
                 return f"{m}.SR"
         return None
 
-        def _detect_format_and_parse(self, text):
-            lines = (text or "").split("\n")
+    def _detect_format_and_parse(self, text):
+        lines = (text or "").split("\n")
 
-            # Yahoo Finance pasted table (plain text)
-            try:
-                if isinstance(text, str) and (
-                    "All numbers in thousands" in text
-                    or "BreakdownTTM" in text
-                    or "Breakdown TTM" in text
-                    or ("Income Statement" in text and "Breakdown" in text)
-                ):
-                    y = parse_yahoo_finance_paste(text)
-                    if y and y.get("records"):
-                        # Return as table-style records but also attach full statement payload
-                        results = []
-                        for rec in y["records"]:
-                            # Keep minimal mapping for legacy summary fields (Revenue/NI/Assets/Liab/Equity/OCF)
-                            data = rec.get("data") or {}
-                            mapped = {
-                                "revenue": data.get("total_revenue", data.get("operating_revenue", 0.0)),
-                                "net_income": data.get("net_income", data.get("net_income_common_stockholders", 0.0)),
-                                "operating_cash_flow": data.get("operating_cash_flow", 0.0),
-                                "total_assets": data.get("total_assets", 0.0),
-                                "total_liabilities": data.get("total_liabilities_net_minority_interest", data.get("total_liabilities", 0.0)),
-                                "total_equity": data.get("total_equity_gross_minority_interest", data.get("total_equity", 0.0)),
-                                "gross_profit": data.get("gross_profit", 0.0),
-                                "operating_income": data.get("operating_income", data.get("total_operating_income_as_reported", 0.0)),
-                                "ebit": data.get("ebit", 0.0),
-                                "ebitda": data.get("ebitda", 0.0),
-                                "basic_eps": data.get("basic_eps", 0.0),
-                                "diluted_eps": data.get("diluted_eps", 0.0),
-                                "interest_expense": data.get("interest_expense", data.get("interest_expense_non_operating", 0.0)),
-                            }
-                            results.append({
-                                "date": rec.get("date"),
-                                "data": mapped,
-                                "_full_statement": {
-                                    "statement": y.get("statement"),
-                                    "scale": y.get("scale"),
-                                    "data": data,
-                                },
-                            })
-                        return results
-            except Exception:
-                pass
+        # Yahoo Finance pasted table (plain text)
+        try:
+            if isinstance(text, str) and (
+                "All numbers in thousands" in text
+                or "BreakdownTTM" in text
+                or "Breakdown TTM" in text
+                or ("Income Statement" in text and "Breakdown" in text)
+            ):
+                y = parse_yahoo_finance_paste(text)
+                if y and y.get("records"):
+                    # Return as table-style records but also attach full statement payload
+                    results = []
+                    for rec in y["records"]:
+                        # Keep minimal mapping for legacy summary fields (Revenue/NI/Assets/Liab/Equity/OCF)
+                        data = rec.get("data") or {}
+                        mapped = {
+                            "revenue": data.get("total_revenue", data.get("operating_revenue", 0.0)),
+                            "net_income": data.get("net_income", data.get("net_income_common_stockholders", 0.0)),
+                            "operating_cash_flow": data.get("operating_cash_flow", 0.0),
+                            "total_assets": data.get("total_assets", 0.0),
+                            "total_liabilities": data.get("total_liabilities_net_minority_interest", data.get("total_liabilities", 0.0)),
+                            "total_equity": data.get("total_equity_gross_minority_interest", data.get("total_equity", 0.0)),
+                            "gross_profit": data.get("gross_profit", 0.0),
+                            "operating_income": data.get("operating_income", data.get("total_operating_income_as_reported", 0.0)),
+                            "ebit": data.get("ebit", 0.0),
+                            "ebitda": data.get("ebitda", 0.0),
+                            "basic_eps": data.get("basic_eps", 0.0),
+                            "diluted_eps": data.get("diluted_eps", 0.0),
+                            "interest_expense": data.get("interest_expense", data.get("interest_expense_non_operating", 0.0)),
+                        }
+                        results.append({
+                            "date": rec.get("date"),
+                            "data": mapped,
+                            "_full_statement": {
+                                "statement": y.get("statement"),
+                                "scale": y.get("scale"),
+                                "data": data,
+                            },
+                        })
+                    return results
+        except Exception:
+            pass
 
-            # Tadawul style (legacy)
-            if any(re.search(r"\[\d{6}\]", line) for line in lines):
-                return self._parse_tadawul_style(lines)
+        # Tadawul style (legacy)
+        if any(re.search(r"\[\d{6}\]", line) for line in lines):
+            return self._parse_tadawul_style(lines)
 
-            return self._parse_table_style(lines)
+        return self._parse_table_style(lines)
 
 
     def _parse_tadawul_style(self, lines):
@@ -501,63 +501,3 @@ def parse_yahoo_finance_paste(text: str) -> Dict[str, Any]:
         records.append({"date": per, "data": data})
 
     return {"statement": statement, "periods": periods, "rows": rows_map, "records": records, "scale": scale}
-
-# ============================================================
-# 🇸🇦 Tadawul (Saudi Exchange) - Best-effort lightweight fetch
-# ============================================================
-def fetch_financials_from_tadawul(symbol: str) -> dict:
-    """Best-effort financials fetch from Saudi Exchange (Tadawul).
-
-    NOTE:
-    - Saudi Exchange does not provide a stable, public, unauthenticated JSON API for
-      full financial statements across all tickers in a way we can rely on long-term.
-    - This function is intentionally conservative: it tries a couple of lightweight
-      endpoints/pages when possible, and otherwise returns an empty dict so the
-      multi-source sync can fall back to other sources (Yahoo/Google/Argaam).
-
-    Returns:
-        dict: A *lightweight* statement-like dict compatible with save_financial_record()
-              or {} if not available.
-    """
-    sym = str(symbol or "").strip().upper()
-    if not sym:
-        return {}
-
-    # Keep it safe: avoid hard failures on environments without requests.
-    try:
-        import requests  # type: ignore
-    except Exception:
-        return {}
-
-    # Normalize 7202.SR -> 7202
-    try:
-        base = sym.replace(".SR", "").replace("^", "")
-    except Exception:
-        base = sym
-
-    # Best-effort: attempt to read key figures from the Saudi Exchange "Company Profile" pages
-    # (HTML structure may change; any parsing failure should just return {}).
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept-Language": "ar,en-US;q=0.9,en;q=0.8",
-    }
-
-    candidates = [
-        # Public company profile pages often route through saudiexchange.sa
-        f"https://www.saudiexchange.sa/wps/portal/saudiexchange/ourmarkets/equities-market-watch/market-watch?symbol={base}",
-    ]
-
-    for url in candidates:
-        try:
-            r = requests.get(url, headers=headers, timeout=8, allow_redirects=True)
-            if r.status_code != 200 or not (r.text or "").strip():
-                continue
-
-            # We intentionally do not rely on brittle HTML parsing here.
-            # If in the future you add a stable JSON endpoint, parse it here and map to keys:
-            # revenue, net_income, total_assets, total_liabilities, total_equity, operating_cash_flow, ...
-            return {}
-        except Exception:
-            continue
-
-    return {}
