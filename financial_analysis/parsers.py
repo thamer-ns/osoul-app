@@ -356,3 +356,53 @@ def fetch_financials_from_argaam(symbol: str) -> dict:
             continue
 
     return {}
+
+
+def fetch_financials_from_tadawul(symbol: str) -> dict:
+    """Best-effort snapshot from Tadawul (Saudi Exchange).
+
+    الهدف هنا تقليل اعتمادنا على Yahoo عند تعذرها (429/Timeout) عبر
+    محاولة استخراج أرقام أساسية من صفحة تداول إن توفرت.
+
+    ⚠️ هذا مسار احتياطي فقط، وإذا تغيرت الصفحة/تعذر التحميل يعيد {}.
+    """
+    if not requests or not BeautifulSoup:
+        return {}
+
+    s = get_ticker_symbol(symbol).replace(".SR", "")
+    if not s.isdigit():
+        return {}
+
+    # صفحات تداول تتغير، لذا نجرّب أكثر من نمط URL بشكل محافظ.
+    urls = [
+        f"https://www.saudiexchange.sa/wps/portal/tadawul/markets/equities/quote/{s}",
+        f"https://www.saudiexchange.sa/wps/portal/tadawul/markets/quotedetails/quote/{s}",
+    ]
+
+    for url in urls:
+        try:
+            html = _fetch_html(url, timeout=8)
+            if not html:
+                continue
+            soup = BeautifulSoup(html, "html.parser")
+            txt = soup.get_text("\n", strip=True)
+            if not txt:
+                continue
+
+            # نستخدم نفس FinancialParser الذي يستخدمه أرقام/قوقل
+            parser = FinancialParser()
+            results, _ = parser._detect_format_and_parse(txt)
+            if not results:
+                continue
+
+            results = sorted(results, key=lambda x: x.get("date", ""), reverse=True)
+            rec = results[0]
+            data = rec.get("data", {}) or {}
+            data["date"] = rec.get("date")
+            data["_source_url"] = url
+            data["source"] = "Tadawul"
+            return data
+        except Exception:
+            continue
+
+    return {}
