@@ -119,7 +119,12 @@ _TABLE_NAME = "financialstatements_raw"
 
 
 def ensure_financialstatements_raw_table() -> None:
-    """Create table if it doesn't exist (Postgres/Supabase friendly)."""
+    """Create table if it doesn't exist (Postgres/Supabase friendly).
+
+    ✅ مهم: بعض المستخدمين لديهم نسخة قديمة من الجدول بدون UNIQUE/Index مناسب،
+    وبالتالي جملة ON CONFLICT تفشل (no unique constraint).
+    لذلك ننشئ Unique Index بشكل آمن (IF NOT EXISTS) حتى لو كان الجدول موجود مسبقًا.
+    """
     ddl = f"""
     CREATE TABLE IF NOT EXISTS {_TABLE_NAME} (
         id BIGSERIAL PRIMARY KEY,
@@ -132,14 +137,22 @@ def ensure_financialstatements_raw_table() -> None:
         source TEXT,
         data_json JSONB NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        UNIQUE(symbol, statement, period_type, as_of, scale)
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
     """
     execute_query(ddl)
 
-    # Update trigger is optional; we just set updated_at in UPSERT.
+    # ✅ Ensure unique index exists for UPSERT (even if table existed before)
+    try:
+        execute_query(
+            f"""CREATE UNIQUE INDEX IF NOT EXISTS {_TABLE_NAME}_uq
+            ON {_TABLE_NAME} (symbol, statement, period_type, as_of, scale);"""
+        )
+    except Exception:
+        pass
+
     return
+
 
 
 def save_full_statement_record(
