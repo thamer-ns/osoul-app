@@ -20,7 +20,6 @@ from osoli_logging import get_logger, log_exception
 # =========================================================
 # 1) إعداد الاتصال (Connection Setup)
 # =========================================================
-
 @st.cache_resource
 def get_connection_pool():
     """
@@ -38,331 +37,112 @@ def get_connection_pool():
 
     try:
         # إنشاء مسبح اتصالات بحد أدنى 1 وحد أقصى 20
-        # ملاحظة: sslmode يمرر إلى psycopg2.connect عبر kwargs (صحيح)
-        return psycopg2.pool.SimpleConnectionPool(
-            minconn=1,
-            maxconn=20,
-            dsn=db_url,
-            sslmode="require",
-        )
+        return pool.SimpleConnectionPool(1, 20, db_url)
     except Exception as e:
-        log_exception(e, "DB pool init error")
-        st.error(f"DB Error: {e}")
+        st.error(f"❌ فشل إنشاء Connection Pool: {e}")
         return None
-
-
-def _conn_is_healthy(conn) -> bool:
-    """
-    بعض البيئات تقفل الاتصال القديم داخل Pool.
-    """
-    try:
-        return conn is not None and getattr(conn, "closed", 1) == 0
-    except Exception:
-        return False
 
 
 @contextmanager
 def get_db():
     """
-    Context Manager لإدارة الاتصال وإرجاعه للـ Pool بأمان.
+    Yield a db connection from pool and return it back to pool.
     """
-    pool_obj = get_connection_pool()
-    if not pool_obj:
+    p = get_connection_pool()
+    if p is None:
         yield None
         return
 
     conn = None
     try:
-        conn = pool_obj.getconn()
-
-        # ✅ إصلاح: لو الاتصال قديم/مقفول — اغلقه وخذ غيره
-        if not _conn_is_healthy(conn):
-            try:
-                pool_obj.putconn(conn, close=True)
-            except Exception as e:
-                log_exception(e, "Ignored DB cleanup error", level="DEBUG")
-            conn = pool_obj.getconn()
-
-        # ✅ ضبط tenant schema (search_path) حسب المستخدم الحالي
-        _ensure_search_path(conn)
-
+        conn = p.getconn()
         yield conn
-
-    except Exception as e:
-        # rollback آمن
-        try:
-            if conn and _conn_is_healthy(conn):
-                conn.rollback()
-        except Exception as e:
-                log_exception(e, "Ignored DB cleanup error", level="DEBUG")
-        log_exception(e, "DB Connection/Block Error")
-        raise
-
     finally:
-        # ارجاع الاتصال للمسبح
         try:
-            if pool_obj and conn:
-                pool_obj.putconn(conn)
-        except Exception as e:
-                log_exception(e, "Ignored DB cleanup error", level="DEBUG")
-
-
-
-# =========================================================
-# ✅ 1.5) Tenant Schema (قاعدة مستقلة لكل مستخدم عبر Schema)
-# =========================================================
-
-_SCHEMA_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-
-def _safe_schema_name(username: str) -> str:
-    """Generate deterministic schema name for a user."""
-    u = str(username or "").strip().lower()
-    if not u:
-        return "public"
-    import hashlib
-    h = hashlib.sha1(u.encode("utf-8")).hexdigest()[:10]
-    return f"u_{h}"
-
-def _ensure_search_path(conn):
-    """Set search_path to current tenant schema if available."""
-    try:
-        schema = st.session_state.get("db_schema") or "public"
-        schema = str(schema).strip()
-        if not schema or not _SCHEMA_RE.match(schema):
-            schema = "public"
-        with conn.cursor() as cur:
-            cur.execute(f"SET search_path TO {schema}, public;")
-        conn.commit()
-    except Exception as e:
-        log_exception(e, "Ignored search_path error", level="DEBUG")
-
-def db_get_user_schema(username: str) -> str:
-    """Return schema_name for a given username (stored in public.users)."""
-    u = (username or "").strip()
-    if not u:
-        return "public"
-    with get_db() as conn:
-        if not conn:
-            return "public"
-        try:
-            with conn.cursor() as cur:
-                cur.execute("SELECT schema_name FROM public.users WHERE username = %s", (u,))
-                r = cur.fetchone()
-                sch = (r[0] if r and r[0] else None)
-                sch = str(sch).strip() if sch else "public"
-                if not _SCHEMA_RE.match(sch):
-                    return "public"
-                return sch
-        except Exception as e:
-            log_exception(e, "db_get_user_schema failed", level="DEBUG")
-            return "public"
-
-def db_user_exists(username: str) -> bool:
-    u = (username or "").strip()
-    if not u:
-        return False
-    with get_db() as conn:
-        if not conn:
-            return False
-        try:
-            with conn.cursor() as cur:
-                cur.execute("SELECT 1 FROM public.users WHERE username = %s LIMIT 1", (u,))
-                return cur.fetchone() is not None
+            if conn is not None:
+                p.putconn(conn)
         except Exception:
-            return False
-
-def init_tenant_schema(schema: str):
-    """Create tenant schema + tables (excluding users)."""
-    schema = str(schema or "").strip()
-    if not schema or not _SCHEMA_RE.match(schema) or schema == "public":
-        return
-
-    tables = [
-        f"""CREATE TABLE IF NOT EXISTS {schema}.trades (
-            id SERIAL PRIMARY KEY, symbol VARCHAR(20), company_name TEXT, sector TEXT,
-            asset_type VARCHAR(20), date DATE, quantity DOUBLE PRECISION, entry_price DOUBLE PRECISION,
-            exit_price DOUBLE PRECISION DEFAULT 0, current_price DOUBLE PRECISION DEFAULT 0,
-            strategy VARCHAR(20), status VARCHAR(10) DEFAULT 'Open', exit_date DATE, notes TEXT
-        )""",
-        f"CREATE TABLE IF NOT EXISTS {schema}.deposits (id SERIAL PRIMARY KEY, date DATE, amount DOUBLE PRECISION, note TEXT)",
-        f"CREATE TABLE IF NOT EXISTS {schema}.withdrawals (id SERIAL PRIMARY KEY, date DATE, amount DOUBLE PRECISION, note TEXT)",
-        f"CREATE TABLE IF NOT EXISTS {schema}.returnsgrants (id SERIAL PRIMARY KEY, date DATE, symbol VARCHAR(20), company_name TEXT, amount DOUBLE PRECISION, note TEXT)",
-        f"CREATE TABLE IF NOT EXISTS {schema}.watchlist (symbol VARCHAR(20) PRIMARY KEY, target_price DOUBLE PRECISION, note TEXT)",
-        f"CREATE TABLE IF NOT EXISTS {schema}.investmentthesis (symbol VARCHAR(20) PRIMARY KEY, thesis_text TEXT, target_price DOUBLE PRECISION, recommendation VARCHAR(20), last_updated DATE)",
-        f"""CREATE TABLE IF NOT EXISTS {schema}.financialstatements (
-            symbol VARCHAR(20), date DATE,
-            revenue DOUBLE PRECISION, net_income DOUBLE PRECISION,
-            period_type VARCHAR(20) DEFAULT 'Annual',
-            source VARCHAR(20) DEFAULT 'Auto',
-            PRIMARY KEY(symbol, date, period_type)
-        )""",
-    ]
-
-    with get_db() as conn:
-        if not conn:
-            return
-        try:
-            with conn.cursor() as cur:
-                cur.execute(f"CREATE SCHEMA IF NOT EXISTS {schema};")
-                for t in tables:
-                    cur.execute(t)
-            conn.commit()
-        except Exception as e:
-            log_exception(e, "init_tenant_schema failed")
-
-# =========================================================
-# 2) أدوات التعامل مع الأسماء (Table Name Normalizer)
-# =========================================================
-KNOWN_TABLES = [
-    # Core
-    "Users",
-    "Trades",
-    "Deposits",
-    "Withdrawals",
-    "ReturnsGrants",
-    "Watchlist",
-    "InvestmentThesis",
-    "FinancialStatements",
-    # AI / Lab
-    "ai_signals",
-    "ai_weights",
-    "ai_user_rules",
-    "lab_runs",
-    "lab_trades",
-    "lab_equity",
-    "ai_decisions",
-]
-
-
-def normalize_sql_tables(query: str) -> str:
-    """
-    يحول أسماء الجداول المعروفة إلى lowercase إذا كانت غير مقتبسة "Quoted".
-    """
-    if not query:
-        return query
-    fixed = query
-    for t in KNOWN_TABLES:
-        fixed = re.sub(rf'(?<!")\b{re.escape(t)}\b(?!")', str(t).lower(), fixed)
-    return fixed
-
-
-def _fix_placeholders(query: str) -> str:
-    """
-    تحويل ? إلى %s للتوافق مع مكتبة psycopg2
-    """
-    if not query:
-        return query
-    return query.replace("?", "%s")
-
-
-def _quote_ident(name: str) -> str:
-    """
-    quoting identifiers safely: "name"
-    """
-    return '"' + str(name).replace('"', '""') + '"'
+            pass
 
 
 def _is_safe_identifier(name: str) -> bool:
     """
-    يسمح فقط بأسماء جداول/أعمدة آمنة (حروف/أرقام/underscore) لتجنب أي حقن.
+    Ensure identifier is safe: letters, numbers, underscore only.
     """
-    if name is None:
+    try:
+        n = (name or "").strip()
+        if not n:
+            return False
+        return bool(re.fullmatch(r"[A-Za-z0-9_]+", n))
+    except Exception:
         return False
-    s = str(name).strip()
-    # يسمح بحالة وجود نقاط؟ عادة لا نحتاج schema.table داخل public
-    return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", s))
+
+
+def normalize_sql_tables(name: str) -> str:
+    """
+    Normalize input to safe lowercase table names.
+    """
+    n = (name or "").strip().replace('"', "")
+    if not n:
+        return ""
+    # Lowercase + keep only safe chars/_.
+    n = re.sub(r"[^A-Za-z0-9_]", "", n)
+    n = n.lower()
+    return n
 
 
 # =========================================================
-# 3) التنفيذ والجلب (Execute / Fetch)
+# 2) واجهة تنفيذ الاستعلامات (Execute helpers)
 # =========================================================
-def execute_query(query, params=()):
+def execute_query(query: str, params: tuple = ()):
     """
-    Execute SQL with safe normalization and placeholder fix.
-    Returns True/False.
+    Execute a single query (INSERT/UPDATE/DELETE/DDL).
     """
-    if not query:
-        return False
-
     with get_db() as conn:
         if not conn:
             return False
         try:
             with conn.cursor() as cur:
-                fixed_query = normalize_sql_tables(str(query))
-                fixed_query = _fix_placeholders(fixed_query)
-                cur.execute(fixed_query, params or ())
-                conn.commit()
+                cur.execute(query, params)
+            conn.commit()
             return True
         except Exception as e:
             try:
                 conn.rollback()
-            except Exception as e:
-                log_exception(e, "Ignored DB cleanup error", level="DEBUG")
-            print(f"Query Error: {e}")
+            except Exception:
+                pass
+            log_exception(e, "DB execute_query failed", level="ERROR")
             return False
 
 
-def fetch_table(table_or_query, params=None):
+def fetch_table(table_name: str) -> pd.DataFrame:
     """
-    ✅ جلب بيانات كـ DataFrame.
-    يدعم حالتين:
-    1) اسم جدول: fetch_table("trades")
-    2) استعلام SQL مع باراميترات: fetch_table("SELECT ... WHERE x=%s", (..,))
-
-    ملاحظات:
-    - أسماء الجداول يتم التحقق منها لمنع SQL injection عبر identifiers.
-    - عند تمرير Query، يتم استخدام pandas.read_sql مع params.
+    Read whole table as DataFrame. Tries:
+      1) exact
+      2) lowercase
+      3) normalized
     """
-    if table_or_query is None:
+    name_raw = str(table_name or "").strip()
+    if not name_raw:
         return pd.DataFrame()
-
-    q = str(table_or_query).strip()
-    if not q:
-        return pd.DataFrame()
-
-    # detect query mode
-    q_lower = q.lstrip().lower()
-    is_query = (
-        " " in q_lower or "\n" in q_lower
-        or q_lower.startswith("select")
-        or q_lower.startswith("with")
-        or q_lower.startswith("show")
-        or q_lower.startswith("pragma")
-    )
 
     with get_db() as conn:
         if not conn:
             return pd.DataFrame()
 
-        if is_query:
-            try:
-                return pd.read_sql(q, conn, params=params or ())
-            except Exception as e:
-                log_exception(e, "fetch_table(query) failed", level="ERROR")
-                return pd.DataFrame()
-
-        # table-name mode (legacy behavior)
-        name_raw = q.replace('"', "")
-        if not name_raw:
-            return pd.DataFrame()
-
-        # 0) تحقق من سلامة اسم الجدول (لتجنب SQL injection عبر identifier)
-        if not _is_safe_identifier(name_raw):
-            maybe = normalize_sql_tables(name_raw).strip().replace('"', "")
-            if not _is_safe_identifier(maybe):
-                return pd.DataFrame()
-            name_raw = maybe
-
-        # 1) Quoted exactly as passed
+        # 1) Try exact (safe-ish)
         try:
-            return pd.read_sql(f"SELECT * FROM {_quote_ident(name_raw)}", conn)
+            t = name_raw.strip().replace('"', "")
+            if _is_safe_identifier(t):
+                return pd.read_sql(f"SELECT * FROM {t}", conn)
         except Exception as e:
-            log_exception(e, "Ignored DB read error (quoted)", level="DEBUG")
+            log_exception(e, "Ignored DB read error (exact)", level="DEBUG")
 
-        # 2) Lowercase (common in Postgres)
+        # 2) Try lowercase
         try:
-            return pd.read_sql(f"SELECT * FROM {name_raw.lower()}", conn)
+            t = name_raw.strip().replace('"', "").lower()
+            if _is_safe_identifier(t):
+                return pd.read_sql(f"SELECT * FROM {t}", conn)
         except Exception as e:
             log_exception(e, "Ignored DB read error (lowercase)", level="DEBUG")
 
@@ -374,6 +154,8 @@ def fetch_table(table_or_query, params=None):
             return pd.read_sql(f"SELECT * FROM {t}", conn)
         except Exception:
             return pd.DataFrame()
+
+
 # =========================================================
 # 4) التهيئة والمايجريشن (Init & Schema Migration)
 # =========================================================
@@ -400,12 +182,40 @@ def migrate_financial_schema():
         )
 
 
+def _fix_create_table_primary_key_syntax(sql: str) -> str:
+    """Fix common Postgres syntax error: `...) PRIMARY KEY (...)` must be inside parentheses.
+
+    Example (bad):
+        CREATE TABLE x (a INT) PRIMARY KEY (a)
+    Example (fixed):
+        CREATE TABLE x (a INT, PRIMARY KEY (a))
+    """
+    try:
+        s = str(sql or "").strip()
+        if not s:
+            return s
+        # Only target CREATE TABLE statements
+        if not re.match(r"^CREATE\s+TABLE", s, flags=re.IGNORECASE):
+            return s
+        # If PRIMARY KEY comes after the closing paren, move it inside
+        if re.search(r"\)\s*PRIMARY\s+KEY\s*\(", s, flags=re.IGNORECASE):
+            s = re.sub(
+                r"\)\s*(PRIMARY\s+KEY\s*\([^\)]*\))",
+                r", \1)",
+                s,
+                flags=re.IGNORECASE,
+            )
+        return s
+    except Exception:
+        return sql
+
+
 def init_db():
     """
     إنشاء جميع الجداول الأساسية. يتم استخدام lowercase لتفادي مشاكل Postgres.
     """
     tables = [
-        "CREATE TABLE IF NOT EXISTS users (username VARCHAR(50) PRIMARY KEY, password TEXT, email TEXT, schema_name VARCHAR(64) DEFAULT 'public') PRIMARY KEY, password TEXT, email TEXT)",
+        "CREATE TABLE IF NOT EXISTS users (username VARCHAR(50) PRIMARY KEY, password TEXT, email TEXT)",
         """CREATE TABLE IF NOT EXISTS trades (
             id SERIAL PRIMARY KEY, symbol VARCHAR(20), company_name TEXT, sector TEXT,
             asset_type VARCHAR(20), date DATE, quantity DOUBLE PRECISION, entry_price DOUBLE PRECISION,
@@ -430,16 +240,8 @@ def init_db():
         if conn:
             with conn.cursor() as cur:
                 for t in tables:
-                    cur.execute(t)
+                    cur.execute(_fix_create_table_primary_key_syntax(t))
             conn.commit()
-
-
-    # ✅ ترقية جدول المستخدمين (للتوافق مع النسخ القديمة)
-    try:
-        execute_query("ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT", ())
-        execute_query("ALTER TABLE users ADD COLUMN IF NOT EXISTS schema_name VARCHAR(64) DEFAULT 'public'", ())
-    except Exception as e:
-        log_exception(e, "Ignored users migration", level="DEBUG")
 
     migrate_financial_schema()
 
@@ -447,75 +249,48 @@ def init_db():
 # =========================================================
 # 5) المصادقة والأمان (Auth)
 # =========================================================
-def db_create_user(username: str, code: str, email: str = "", *, force_public: bool = False) -> bool:
-    """Create user in public.users.
-
-    - `code` is the login code (stored as bcrypt hash in `password` column for backward compatibility)
-    - For existing deployments, keeping data safe:
-        * current/legacy users remain on `public` schema (no migration)
-        * new users get their own schema (tenant) unless `force_public=True`
-    """
-    u = str(username or "").strip()
-    c = str(code or "").strip()
-    em = str(email or "").strip()
-    if not u or not c:
-        return False
-
-    # منع تكرار المستخدم
-    if db_user_exists(u):
-        return False
-
-    schema = "public" if force_public else _safe_schema_name(u)
-
+def db_create_user(u, p):
     try:
-        h = bcrypt.hashpw(c.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-        ok = execute_query(
-            "INSERT INTO public.users (username, password, email, schema_name) VALUES (%s, %s, %s, %s)",
-            (u, h, em, schema),
-        )
-        if ok and schema != "public":
-            init_tenant_schema(schema)
-        return bool(ok)
+        h = bcrypt.hashpw(p.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+        return execute_query("INSERT INTO Users (username, password) VALUES (%s, %s)", (u, h))
     except Exception as e:
-        log_exception(e, "Create User Error")
+        log_exception(e, "Ignored DB create user error", level="DEBUG")
         return False
 
 
-def db_verify_user(u, p):
-    """
-    التحقق من المستخدم.
-    """
-    with get_db() as conn:
-        if not conn:
+def db_check_login(u, p):
+    try:
+        df = fetch_table("users")
+        if df.empty:
             return False
-        try:
-            with conn.cursor() as cur:
-                cur.execute("SELECT password FROM public.users WHERE username = %s", (u,))
-                res = cur.fetchone()
-                if res and res[0]:
-                    return bcrypt.checkpw(p.encode("utf-8"), res[0].encode("utf-8"))
-        except Exception as e:
-            print(f"Verify User Error: {e}")
+        row = df[df["username"] == u]
+        if row.empty:
             return False
-    return False
+        stored = row.iloc[0]["password"]
+        return bcrypt.checkpw(p.encode("utf-8"), stored.encode("utf-8"))
+    except Exception as e:
+        log_exception(e, "Ignored DB auth error", level="DEBUG")
+        return False
 
 
 # =========================================================
-# 6) فحص الصحة والتشخيص (Healthcheck)
+# 6) تشخيص قاعدة البيانات (Diagnostics)
 # =========================================================
-def db_healthcheck():
-    """
-    تشخيص سريع: يعرض معلومات الاتصال + عداد سجلات الجداول + كشف ازدواج الجداول.
-    لا يغير أي بيانات.
-    """
-    info = {"connected": False, "db": {}, "counts": {}, "dup_tables": []}
+def get_db_diagnostics() -> dict:
+    info = {
+        "ok": False,
+        "db": {},
+        "counts": {},
+        "dup_tables": [],
+    }
 
     with get_db() as conn:
         if not conn:
+            info["db"]["error"] = "No connection"
             return info
 
-        info["connected"] = True
         try:
+            info["ok"] = True
             with conn.cursor() as cur:
                 cur.execute("SELECT current_database(), current_user, inet_server_addr()::text, inet_server_port();")
                 res = cur.fetchone()
@@ -645,7 +420,7 @@ def _set_sequence_to_max_id(conn, table_lower: str, id_col: str = "id"):
         try:
             conn.rollback()
         except Exception as e:
-                log_exception(e, "Ignored DB cleanup error", level="DEBUG")
+            log_exception(e, "Ignored DB cleanup error", level="DEBUG")
         print(f"Sequence Fix Error ({table_lower}): {e}")
         return False
 
@@ -667,99 +442,42 @@ def migrate_fix_case_duplicate_tables(drop_old: bool = False) -> dict:
         ("FinancialStatements", "financialstatements"),
     ]
 
-    serial_id_tables = {"trades", "deposits", "withdrawals", "returnsgrants"}
-
     with get_db() as conn:
         if not conn:
-            report["errors"].append("No DB connection")
+            report["errors"].append("No connection")
             return report
 
         try:
-            with conn.cursor() as cur:
-                for src_cap, dst_low in pairs:
-                    src_exists = _table_exists(conn, src_cap)
-                    dst_exists = _table_exists(conn, dst_low)
-                    if not (src_exists and dst_exists):
-                        continue
+            for old, new in pairs:
+                # check existence
+                old_exists = _table_exists(conn, old)
+                new_exists = _table_exists(conn, new)
 
-                    src_cols = _get_columns(conn, src_cap)
-                    dst_cols = _get_columns(conn, dst_low)
+                if old_exists and not new_exists:
+                    # rename old -> new (lowercase)
+                    with conn.cursor() as cur:
+                        cur.execute(f'ALTER TABLE "{old}" RENAME TO {new};')
+                    conn.commit()
+                    report["actions"].append(f"renamed {old} -> {new}")
 
-                    common = [c for c in dst_cols if c in src_cols]
-                    if not common:
-                        report["errors"].append(f"No common columns between {src_cap} and {dst_low}")
-                        continue
+                if old_exists and new_exists and drop_old:
+                    # drop old if duplicate exists
+                    with conn.cursor() as cur:
+                        cur.execute(f'DROP TABLE IF EXISTS "{old}" CASCADE;')
+                    conn.commit()
+                    report["actions"].append(f"dropped duplicate {old}")
 
-                    pk_cols = _get_primary_key_cols(conn, dst_low)
+                # fix sequence if table has serial id
+                cols = _get_columns(conn, new)
+                if "id" in cols:
+                    _set_sequence_to_max_id(conn, new, "id")
 
-                    cols_csv = ", ".join([_quote_ident(c) for c in common])
-                    src_table_sql = _quote_ident(src_cap)
-
-                    if pk_cols and all(pk in common for pk in pk_cols):
-                        pk_csv = ", ".join([_quote_ident(c) for c in pk_cols])
-
-                        if dst_low in ("watchlist", "investmentthesis", "financialstatements"):
-                            set_cols = [c for c in common if c not in pk_cols]
-                            if set_cols:
-                                set_sql = ", ".join([f"{_quote_ident(c)} = EXCLUDED.{_quote_ident(c)}" for c in set_cols])
-                                sql = f"""
-                                    INSERT INTO {dst_low} ({cols_csv})
-                                    SELECT {cols_csv} FROM {src_table_sql}
-                                    ON CONFLICT ({pk_csv}) DO UPDATE SET {set_sql};
-                                """
-                            else:
-                                sql = f"""
-                                    INSERT INTO {dst_low} ({cols_csv})
-                                    SELECT {cols_csv} FROM {src_table_sql}
-                                    ON CONFLICT ({pk_csv}) DO NOTHING;
-                                """
-                        else:
-                            sql = f"""
-                                INSERT INTO {dst_low} ({cols_csv})
-                                SELECT {cols_csv} FROM {src_table_sql}
-                                ON CONFLICT ({pk_csv}) DO NOTHING;
-                            """
-                    else:
-                        sql = f"""
-                            INSERT INTO {dst_low} ({cols_csv})
-                            SELECT {cols_csv} FROM {src_table_sql};
-                        """
-
-                    try:
-                        cur.execute(sql)
-                        report["actions"].append(f"Merged {src_table_sql} -> {dst_low} (cols={len(common)})")
-                        conn.commit()
-                    except Exception as e:
-                        try:
-                            conn.rollback()
-                        except Exception as e:
-                            log_exception(e, "Ignored DB cleanup error", level="DEBUG")
-                        report["errors"].append(f"Merge failed for {src_cap}->{dst_low}: {e}")
-                        continue
-
-                    if dst_low in serial_id_tables:
-                        _set_sequence_to_max_id(conn, dst_low, "id")
-
-                    if drop_old:
-                        try:
-                            cur.execute(f"DROP TABLE IF EXISTS {src_table_sql} CASCADE;")
-                            conn.commit()
-                            report["actions"].append(f"Dropped old table {src_table_sql}")
-                        except Exception as e:
-                            try:
-                                conn.rollback()
-                            except Exception as e:
-                                log_exception(e, "Ignored DB cleanup error", level="DEBUG")
-                            report["errors"].append(f"Drop failed for {src_table_sql}: {e}")
-
-            report["ok"] = (len(report["errors"]) == 0)
-            return report
-
+            report["ok"] = True
         except Exception as e:
             try:
                 conn.rollback()
-            except Exception as e:
-                log_exception(e, "Ignored DB cleanup error", level="DEBUG")
+            except Exception:
+                pass
             report["errors"].append(str(e))
-            report["ok"] = False
-            return report
+
+    return report
