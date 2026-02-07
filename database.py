@@ -482,7 +482,6 @@ def db_create_user(username: str, code: str, email: str = "", *, force_public: b
 
 
 def db_verify_user(u, p):
-(u, p):
     """
     التحقق من المستخدم.
     """
