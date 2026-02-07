@@ -150,71 +150,6 @@ def _is_reasonable_price(x: float) -> bool:
     except Exception:
         return False
 
-# ============================================================
-# 💹 Live Price Snapshot (Google Finance first)
-# ============================================================
-@st.cache_data(ttl=30, show_spinner=False)
-def fetch_live_price_snapshot(symbol: str) -> Dict[str, Any]:
-    """Fetch a lightweight live price snapshot.
-
-    Priority (to reduce Yahoo requests / 429):
-      1) Google Finance (TADAWUL) for stocks
-      2) Argaam (أرقام) fallback
-      3) Yahoo Finance (fast_info) + tiny history fallback
-    """
-    sym = str(symbol or "").strip().upper()
-    if not sym:
-        return {"ok": False, "price": 0.0, "source": "none"}
-
-    # 1) Google Finance (stocks only)
-    gf = fetch_google_finance_snapshot(sym) or {}
-    p = _safe_float(gf.get("price", 0.0))
-    if gf.get("ok") and _is_reasonable_price(p):
-        return {
-            "ok": True,
-            "price": float(p),
-            "prev_close": float(_safe_float(gf.get("prev_close", 0.0))),
-            "year_high": 0.0,
-            "year_low": 0.0,
-            "source": "google_finance",
-            "url": gf.get("url", ""),
-        }
-
-    # 2) Argaam
-    p2 = fetch_price_from_argaam(sym)
-    if _is_reasonable_price(p2):
-        return {"ok": True, "price": float(p2), "prev_close": float(p2), "year_high": 0.0, "year_low": 0.0, "source": "argaam"}
-
-    # 3) Yahoo (fast_info)
-    yd = fetch_price_from_yahoo(sym) or {}
-    p3 = _safe_float(yd.get("price", 0.0))
-    if _is_reasonable_price(p3):
-        return {
-            "ok": True,
-            "price": float(p3),
-            "prev_close": float(_safe_float(yd.get("prev_close", 0.0))),
-            "year_high": float(_safe_float(yd.get("year_high", 0.0))),
-            "year_low": float(_safe_float(yd.get("year_low", 0.0))),
-            "source": "yahoo",
-        }
-
-    # tiny history (last resort)
-    try:
-        norm = get_ticker_symbol(sym)
-        h = yf.download(norm, period="5d", interval="1d", auto_adjust=False, progress=False, threads=False, group_by="column")
-        h = _normalize_ohlcv_columns(h)
-        if not h.empty and "Close" in h.columns:
-            last = float(_safe_float(h["Close"].iloc[-1]))
-            prev = float(_safe_float(h["Close"].iloc[-2])) if len(h) >= 2 else 0.0
-            if _is_reasonable_price(last):
-                return {"ok": True, "price": last, "prev_close": prev, "year_high": 0.0, "year_low": 0.0, "source": "yahoo_history"}
-    except Exception as e:
-        log_exception(e, "Ignored exception", level="DEBUG")
-
-    return {"ok": False, "price": 0.0, "source": "failed"}
-
-
-
 
 # ============================================================
 # 🧼 Index Cleaner (مهم جداً لمنع "الخط العمودي" في الشارت)
@@ -256,53 +191,30 @@ def _ensure_datetime_index(df: pd.DataFrame) -> pd.DataFrame:
 # ============================================================
 # 🧱 OHLCV Normalizer (Fix MultiIndex/Tuple Columns)
 # ============================================================
-def _ensure_datetime_index(df: pd.DataFrame) -> pd.DataFrame:
-    try:
-        if df is None or df.empty:
-            return df
-        if not isinstance(df.index, pd.DatetimeIndex):
-            df.index = pd.to_datetime(df.index, errors="coerce")
-        df = df[~df.index.isna()]
-        return df
-    except Exception:
-        return df
-
-
 def _normalize_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Normalize OHLCV columns to: Open, High, Low, Close, Adj Close, Volume.
-
-    yfinance sometimes returns:
-      - MultiIndex columns
-      - tuple-like column names
-      - different casing (open/high/...)
-    This normalizer makes downstream AI/indicator code stable.
-    """
-    if df is None or (isinstance(df, pd.DataFrame) and df.empty):
+    if df is None or df.empty:
         return pd.DataFrame()
 
     d = df.copy()
 
-    # MultiIndex -> choose level that contains OHLCV keys (best hit)
-    try:
-        if isinstance(d.columns, pd.MultiIndex):
-            ohlcv_keys = {"open", "high", "low", "close", "adj close", "adjclose", "volume"}
-            best_level = 0
-            best_hit = -1
-            for lv in range(d.columns.nlevels):
-                vals = [str(x).strip().lower() for x in d.columns.get_level_values(lv)]
-                hit = sum(1 for v in vals if v in ohlcv_keys)
-                if hit > best_hit:
-                    best_hit = hit
-                    best_level = lv
-            d.columns = d.columns.get_level_values(best_level)
-    except Exception as e:
-        log_exception(e, "Ignored exception", level="DEBUG")
+    # MultiIndex fix
+    if isinstance(d.columns, pd.MultiIndex):
+        levels = list(range(d.columns.nlevels))
+        ohlcv_keys = {"open", "high", "low", "close", "adj close", "volume", "adjclose"}
 
-    # Tuple/list columns -> pick first token
-    try:
-        d.columns = [str(c[0]) if isinstance(c, (tuple, list)) and len(c) else str(c) for c in d.columns]
-    except Exception:
-        d.columns = [str(c) for c in d.columns]
+        best_level = 0
+        best_hit = -1
+        for lv in levels:
+            vals = [str(x).strip().lower() for x in d.columns.get_level_values(lv)]
+            hit = sum(1 for v in vals if v in ohlcv_keys)
+            if hit > best_hit:
+                best_hit = hit
+                best_level = lv
+
+        d.columns = d.columns.get_level_values(best_level)
+
+    # Tuple columns fix
+    d.columns = [str(c[0] if isinstance(c, (tuple, list)) and len(c) else c) for c in d.columns]
 
     canonical = {
         "open": "Open",
@@ -311,22 +223,59 @@ def _normalize_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
         "close": "Close",
         "adj close": "Adj Close",
         "adjclose": "Adj Close",
-        "adj_close": "Adj Close",
         "volume": "Volume",
     }
 
-    ren = {}
-    for col in list(d.columns):
+    rename_map = {}
+    for col in d.columns:
         key = str(col).strip().lower()
         if key in canonical:
-            ren[col] = canonical[key]
+            rename_map[col] = canonical[key]
 
-    if ren:
-        d = d.rename(columns=ren)
+    d.rename(columns=rename_map, inplace=True)
 
+    if "Close" not in d.columns and "Adj Close" in d.columns:
+        d["Close"] = d["Adj Close"]
+    if "Open" not in d.columns and "Close" in d.columns:
+        d["Open"] = d["Close"]
+
+    # بعض الجداول (أو مصادر بديلة) قد لا تحتوي High/Low.
+    # لمحرك المستشار نُولّدها من Close كـ fallback آمن.
+    if "High" not in d.columns and "Close" in d.columns:
+        d["High"] = d["Close"]
+    if "Low" not in d.columns and "Close" in d.columns:
+        d["Low"] = d["Close"]
+
+    for c in ["Open", "High", "Low", "Close", "Volume"]:
+        if c in d.columns:
+            d[c] = pd.to_numeric(d[c], errors="coerce")
+
+    needed = ["Open", "High", "Low", "Close"]
+    if not any(c in d.columns for c in needed):
+        return pd.DataFrame()
+
+    d = d.dropna(subset=[c for c in needed if c in d.columns], how="any")
     d = _ensure_datetime_index(d)
+
+    # remove invalid candles
+    if not d.empty and "Close" in d.columns:
+        d = d[pd.to_numeric(d["Close"], errors="coerce").fillna(0) > 0]
+
     return d
 
+
+# ============================================================
+# ⏱️ Interval Helpers (Smart defaults + Yahoo limits friendly)
+# ============================================================
+_INTRADAY_LIMITS = {
+    "1m": "7d",
+    "2m": "60d",
+    "5m": "60d",
+    "15m": "60d",
+    "30m": "60d",
+    "60m": "60d",
+    "90m": "60d",
+}
 
 
 def _normalize_interval(interval: str) -> str:
@@ -722,8 +671,7 @@ def get_relative_strength_vs_tasi(symbol: str, period: str = None, interval: str
 def fetch_batch_data(symbols_list: list):
     """
     تحسينات:
-    - يقلل الضغط على Yahoo (429) عبر استخدام Google Finance للسعر المباشر أولاً
-    - يبقي نفس مخرجات الدالة كما هي (price/prev_close/year_high/year_low/source)
+    - يقلل الضغط على yf.Tickers
     - يضمن always mapping variants
     """
     results = {}
@@ -732,34 +680,18 @@ def fetch_batch_data(symbols_list: list):
 
     input_symbols = [str(s).strip().upper() for s in symbols_list if str(s).strip()]
     norm_map = {s: get_ticker_symbol(s) for s in input_symbols}
+    clean_syms = sorted(list(set([v for v in norm_map.values() if v])))
 
-    # 1) Live snapshot per symbol (Google Finance -> Argaam -> Yahoo fast_info)
-    live_by_raw = {}
-    need_yahoo_norm = []
-
-    for raw_sym in input_symbols:
-        try:
-            snap = fetch_live_price_snapshot(raw_sym) or {}
-        except Exception:
-            snap = {}
-        live_by_raw[raw_sym] = snap
-
-        if not snap.get("ok"):
-            norm = norm_map.get(raw_sym) or get_ticker_symbol(raw_sym)
-            if norm:
-                need_yahoo_norm.append(norm)
-
-    need_yahoo_norm = sorted(list(set(need_yahoo_norm)))
-
-    # 2) Yahoo batch ONLY for symbols that still need it
     yahoo_data_by_norm = {}
+
+    # ✅ best-effort batch
     try:
-        if len(need_yahoo_norm) == 1:
-            sym = need_yahoo_norm[0]
+        if len(clean_syms) == 1:
+            sym = clean_syms[0]
             yahoo_data_by_norm[sym] = fetch_price_from_yahoo(sym)
-        elif len(need_yahoo_norm) > 1:
-            tickers = yf.Tickers(" ".join(need_yahoo_norm))
-            for sym in need_yahoo_norm:
+        else:
+            tickers = yf.Tickers(" ".join(clean_syms))
+            for sym in clean_syms:
                 try:
                     sub_ticker = tickers.tickers.get(sym)
                     if not sub_ticker:
@@ -779,37 +711,26 @@ def fetch_batch_data(symbols_list: list):
                 except Exception:
                     yahoo_data_by_norm[sym] = {"price": 0.0, "prev_close": 0.0, "year_high": 0.0, "year_low": 0.0}
     except Exception:
-        for sym in need_yahoo_norm:
+        for sym in clean_syms:
             yahoo_data_by_norm[sym] = fetch_price_from_yahoo(sym)
 
-    # 3) Compose final results with fallbacks
     for raw_sym in input_symbols:
         norm = norm_map.get(raw_sym) or get_ticker_symbol(raw_sym)
+        d = yahoo_data_by_norm.get(norm, {"price": 0.0, "prev_close": 0.0, "year_high": 0.0, "year_low": 0.0})
 
-        snap = live_by_raw.get(raw_sym, {}) or {}
-        yd = yahoo_data_by_norm.get(norm, {"price": 0.0, "prev_close": 0.0, "year_high": 0.0, "year_low": 0.0})
+        price = _safe_float(d.get("price", 0.0))
+        prev_close = _safe_float(d.get("prev_close", 0.0))
+        year_high = _safe_float(d.get("year_high", 0.0))
+        year_low = _safe_float(d.get("year_low", 0.0))
+        source = "yahoo"
 
-        if snap.get("ok"):
-            price = _safe_float(snap.get("price", 0.0))
-            prev_close = _safe_float(snap.get("prev_close", 0.0))
-            year_high = _safe_float(snap.get("year_high", 0.0)) or _safe_float(yd.get("year_high", 0.0))
-            year_low = _safe_float(snap.get("year_low", 0.0)) or _safe_float(yd.get("year_low", 0.0))
-            source = str(snap.get("source") or "google_finance")
-        else:
-            price = _safe_float(yd.get("price", 0.0))
-            prev_close = _safe_float(yd.get("prev_close", 0.0))
-            year_high = _safe_float(yd.get("year_high", 0.0))
-            year_low = _safe_float(yd.get("year_low", 0.0))
-            source = "yahoo"
-
-        # Yahoo history fallback (kept) if still missing price
+        # ✅ Yahoo history fallback before Argaam
         if price <= 0:
             try:
                 h = yf.download(
                     norm,
                     period="5d",
                     interval="1d",
-                    auto_adjust=False,
                     progress=False,
                     threads=False,
                     group_by="column",
@@ -822,8 +743,7 @@ def fetch_batch_data(symbols_list: list):
                     source = "yahoo_history"
             except Exception as e:
                 log_exception(e, "Ignored exception", level="DEBUG")
-
-        # Argaam fallback if still missing
+        # ✅ Argaam fallback
         if price <= 0:
             p2 = fetch_price_from_argaam(raw_sym)
             if _is_reasonable_price(p2):
@@ -835,14 +755,16 @@ def fetch_batch_data(symbols_list: list):
                 source = "failed"
 
         res_entry = {
-            "price": float(_safe_float(price)),
-            "prev_close": float(_safe_float(prev_close)),
-            "year_high": float(_safe_float(year_high)),
-            "year_low": float(_safe_float(year_low)),
+            "price": price,
+            "prev_close": prev_close,
+            "year_high": year_high,
+            "year_low": year_low,
             "source": source,
         }
 
         results[raw_sym] = res_entry
+
+        # variants mapping
         for v in _symbol_variants(raw_sym):
             results.setdefault(v, res_entry)
 
