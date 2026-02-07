@@ -1,34 +1,59 @@
-from osoli_logging import log_exception
 # ai_engine_core/core.py
 
-from datetime import datetime
+from __future__ import annotations
 
-def _now_str():
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-
-def _normalize_symbol(sym: str) -> str:
-    sym = (sym or "").strip().upper()
-    if sym.isdigit():
-        return f"{sym}.SR"
-    sym = sym.replace(" ", "").replace("-", "")
-    if sym.endswith("SR") and ".SR" not in sym:
-        sym = sym.replace("SR", ".SR")
-    return sym
+import re
+from typing import Any, Optional
 
 
-def _map_period_from_timeframe(timeframe: str):
+def _normalize_symbol(symbol: str) -> str:
     """
-    ✅ إضافة: استخدام timeframe في اختيار فترة جلب البيانات (بدون كسر أي شيء)
-    لأن get_chart_history عندك ممكن يدعم period فقط.
+    Normalize symbol to a consistent internal format.
+    - Keep Saudi tickers as-is (e.g. 4161.SR)
+    - Strip spaces
     """
-    tf = (timeframe or "1D").upper().strip()
-    if tf in ["1H", "60M", "H"]:
-        return "60d"
-    if tf in ["4H", "240M"]:
-        return "180d"
-    if tf in ["1W", "W"]:
-        return "5y"
-    if tf in ["1MO", "1M", "MO"]:
-        return "10y"
-    return "6mo"
+    s = str(symbol or "").strip().upper()
+    s = re.sub(r"\s+", "", s)
+    return s
+
+
+def _to_float(x: Any, default: Optional[float] = 0.0) -> Optional[float]:
+    """
+    Safe float conversion used across AI engine.
+
+    - Returns `default` if conversion fails.
+    - If default is None -> returns None on failure.
+    """
+    try:
+        if x is None:
+            return default
+        if isinstance(x, (int, float)):
+            return float(x)
+        s = str(x).strip()
+        if not s:
+            return default
+        s = s.replace(",", "")
+        # handle parentheses negative e.g. "(123.4)"
+        if s.startswith("(") and s.endswith(")"):
+            s = "-" + s[1:-1]
+        # strip common currency tokens
+        s = s.replace("SAR", "").replace("ر.س", "").strip()
+        # NaN-like
+        if s.lower() in ("nan", "none", "null", "na"):
+            return default
+        return float(s)
+    except Exception:
+        return default
+
+
+def _round2(x: Any, default: float = 0.0) -> float:
+    """
+    Round to 2 decimals safely.
+    """
+    v = _to_float(x, None)
+    if v is None:
+        return float(default)
+    try:
+        return float(round(v, 2))
+    except Exception:
+        return float(default)
