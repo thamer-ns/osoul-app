@@ -1,5 +1,7 @@
 # financial_analysis/yahoo_data.py
 import time
+import json
+import re
 from datetime import datetime
 from typing import Dict, List, Any
 
@@ -183,6 +185,134 @@ def diagnose_quote_summary(symbol: str, modules: List[str] | None = None) -> Dic
         hint = "فشل اتصال/شبكة. تحقق من الإنترنت أو قيود السيرفر."
 
     return {"symbol": sym, "url": url, "status": status, "error": err, "hint": hint}
+
+
+
+# ==============================================================
+# Yahoo HTML (finance.yahoo.com) fallback
+# - This is a single-page fetch per statement type and often works
+#   even when the quoteSummary endpoint is rate-limited.
+# ==============================================================
+
+def _parse_yahoo_root_app_main(html: str) -> dict:
+    """Extract root.App.main JSON from Yahoo Finance HTML."""
+    if not html:
+        return {}
+    # Common pattern: root.App.main = {...};
+    m = re.search(r"root\.App\.main\s*=\s*(\{.*?\})\s*;\s*\n", html, flags=re.DOTALL)
+    if not m:
+        # fallback: script tag without newline
+        m = re.search(r"root\.App\.main\s*=\s*(\{.*?\})\s*;\s*</script>", html, flags=re.DOTALL | re.IGNORECASE)
+    if not m:
+        return {}
+    try:
+        return json.loads(m.group(1))
+    except Exception:
+        return {}
+
+def _fetch_yahoo_quote_store_from_html(symbol: str, statement: str = "financials") -> dict:
+    """Fetch Yahoo Finance statement page and extract QuoteSummaryStore."""
+    sym = get_ticker_symbol(symbol).replace("^", "%5E")
+    # statement pages: financials, balance-sheet, cash-flow
+    page = statement or "financials"
+    url = f"https://finance.yahoo.com/quote/{sym}/{page}"
+    try:
+        r = _session.get(url, timeout=10)
+        if r.status_code != 200 or not r.text:
+            return {}
+        app = _parse_yahoo_root_app_main(r.text)
+        store = (
+            app.get("context", {})
+               .get("dispatcher", {})
+               .get("stores", {})
+               .get("QuoteSummaryStore", {})
+        )
+        return store if isinstance(store, dict) else {}
+    except Exception:
+        return {}
+
+def fetch_full_financial_statements_yahoo_html(symbol: str) -> Dict[str, Any]:
+    """Fetch annual+quarterly full statements via Yahoo HTML pages."""
+    store_fin = _fetch_yahoo_quote_store_from_html(symbol, "financials")
+    store_bal = _fetch_yahoo_quote_store_from_html(symbol, "balance-sheet")
+    store_cf = _fetch_yahoo_quote_store_from_html(symbol, "cash-flow")
+
+    def _grab(st: dict, key: str):
+        v = st.get(key) if isinstance(st, dict) else None
+        return v if isinstance(v, dict) else {}
+
+    annual = {
+        "income": _grab(store_fin, "incomeStatementHistory"),
+        "balance": _grab(store_bal, "balanceSheetHistory"),
+        "cashflow": _grab(store_cf, "cashflowStatementHistory"),
+    }
+    quarterly = {
+        "income": _grab(store_fin, "incomeStatementHistoryQuarterly"),
+        "balance": _grab(store_bal, "balanceSheetHistoryQuarterly"),
+        "cashflow": _grab(store_cf, "cashflowStatementHistoryQuarterly"),
+    }
+    ttm = {
+        "income": _grab(store_fin, "incomeStatementHistoryTTM"),
+        "balance": {},
+        "cashflow": _grab(store_cf, "cashflowStatementHistoryTTM"),
+    }
+
+    # Normalize using the same logic as JSON path (copy minimal here)
+    def _extract_records(module_dict: dict) -> List[Dict[str, Any]]:
+        # module_dict example: {'incomeStatementHistory':[...]} or {'incomeStatementHistory':[{'endDate':...}]}
+        if not isinstance(module_dict, dict):
+            return []
+        # find first list in dict
+        items = None
+        for k, v in module_dict.items():
+            if isinstance(v, list):
+                items = v
+                break
+        if not items:
+            return []
+        out = []
+        for item in items:
+            if isinstance(item, dict):
+                out.append(item)
+        return out
+
+    def _normalize_records(records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        out = []
+        for r in records:
+            end = r.get("endDate") or {}
+            date_str = end.get("fmt") if isinstance(end, dict) else None
+            if not date_str:
+                # sometimes only raw
+                raw = end.get("raw") if isinstance(end, dict) else None
+                if raw:
+                    try:
+                        date_str = datetime.utcfromtimestamp(int(raw)).strftime("%Y-%m-%d")
+                    except Exception:
+                        date_str = None
+            # flatten values: {'totalRevenue': {'raw':..., 'fmt':...}}
+            flat = {}
+            for k, v in r.items():
+                if k in ("maxAge", "endDate"):
+                    continue
+                if isinstance(v, dict):
+                    if "raw" in v:
+                        flat[k] = v.get("raw")
+                    elif "fmt" in v:
+                        flat[k] = v.get("fmt")
+                else:
+                    flat[k] = v
+            if date_str:
+                out.append({"date": date_str, "data": flat})
+        return out
+
+    def _pack(periods: dict) -> dict:
+        return {
+            "income": _normalize_records(_extract_records(periods.get("income", {}))),
+            "balance": _normalize_records(_extract_records(periods.get("balance", {}))),
+            "cashflow": _normalize_records(_extract_records(periods.get("cashflow", {}))),
+        }
+
+    return {"annual": _pack(annual), "quarterly": _pack(quarterly), "ttm": _pack(ttm)}
 
 
 def _yahoo_quote_summary(symbol: str, modules: List[str]) -> dict:
@@ -474,113 +604,149 @@ def fetch_full_financial_statements_yahoo_json(
     Fetch full Income/Balance/Cashflow statements (all available line-items)
     from Yahoo QuoteSummary JSON.
 
+    Fallback:
+      If QuoteSummary is rate-limited / fails, we attempt to fetch from Yahoo HTML pages
+      (finance.yahoo.com/quote/<sym>/{financials|balance-sheet|cash-flow}) and parse
+      root.App.main -> QuoteSummaryStore.
+
     Returns:
       {
         "Annual": {"income": [{"date":..., "data": {...}},...], "balance":[...], "cashflow":[...]},
         "Quarterly": {...},
         "TTM": {...}  # derived (income/cashflow sum last 4 quarters; balance = latest quarter)
       }
-
-    Notes:
-      - Yahoo raw values are typically in *currency units*. If as_thousands=True,
-        we divide by 1000 to match Yahoo Finance table display ("all numbers in thousands").
-      - TTM is *computed* from Quarterly data.
     """
-    sym = get_ticker_symbol(symbol)
-    freq = str(period_type or "Annual").strip().title()
-    if freq not in ("Annual", "Quarterly", "All"):
-        freq = "Annual"
 
-    # Always fetch both annual + quarterly once for stability
-    modules = [
-        "incomeStatementHistory",
-        "incomeStatementHistoryQuarterly",
-        "balanceSheetHistory",
-        "balanceSheetHistoryQuarterly",
-        "cashflowStatementHistory",
-        "cashflowStatementHistoryQuarterly",
-    ]
-    root = _yahoo_quote_summary(sym, modules)
-    if not root:
+    sym = get_ticker_symbol(symbol)
+    if not sym:
         return {}
 
-    def get_list(key: str) -> List[dict]:
-        return _extract_stmt_list(root, key)
+    # --- try QuoteSummary JSON first ---
+    root = None
+    try:
+        modules = [
+            "incomeStatementHistory",
+            "incomeStatementHistoryQuarterly",
+            "balanceSheetHistory",
+            "balanceSheetHistoryQuarterly",
+            "cashflowStatementHistory",
+            "cashflowStatementHistoryQuarterly",
+            "defaultKeyStatistics",
+            "price",
+        ]
+        root = _yahoo_quote_summary(sym, modules)
+    except Exception:
+        root = None
+
+    # --- fallback to HTML ---
+    if not root:
+        try:
+            html_pack = fetch_full_financial_statements_yahoo_html(sym)
+            if isinstance(html_pack, dict) and (html_pack.get("annual") or html_pack.get("quarterly")):
+                out = {
+                    "Annual": html_pack.get("annual", {}),
+                    "Quarterly": html_pack.get("quarterly", {}),
+                }
+                if include_ttm and html_pack.get("ttm"):
+                    out["TTM"] = html_pack.get("ttm", {})
+                return out
+        except Exception:
+            pass
+        return {}
+
+    # ---- original normalization path ----
+    res = root.get("quoteSummary", {}).get("result") or []
+    if not res:
+        return {}
+    r0 = res[0] if isinstance(res[0], dict) else {}
+    if not r0:
+        return {}
 
     annual = {
-        "income": get_list("incomeStatementHistory"),
-        "balance": get_list("balanceSheetHistory"),
-        "cashflow": get_list("cashflowStatementHistory"),
+        "income": r0.get("incomeStatementHistory") or {},
+        "balance": r0.get("balanceSheetHistory") or {},
+        "cashflow": r0.get("cashflowStatementHistory") or {},
     }
     quarterly = {
-        "income": get_list("incomeStatementHistoryQuarterly"),
-        "balance": get_list("balanceSheetHistoryQuarterly"),
-        "cashflow": get_list("cashflowStatementHistoryQuarterly"),
+        "income": r0.get("incomeStatementHistoryQuarterly") or {},
+        "balance": r0.get("balanceSheetHistoryQuarterly") or {},
+        "cashflow": r0.get("cashflowStatementHistoryQuarterly") or {},
     }
 
-    def normalize(lst: List[dict]) -> List[Dict[str, Any]]:
+    # Build normalized lists
+    def _to_list(module_dict: dict) -> list:
+        if not isinstance(module_dict, dict):
+            return []
+        for v in module_dict.values():
+            if isinstance(v, list):
+                return [x for x in v if isinstance(x, dict)]
+        return []
+
+    def _flatten_record(item: dict) -> Dict[str, Any]:
+        end = item.get("endDate") or {}
+        date_str = end.get("fmt") if isinstance(end, dict) else None
+        if not date_str:
+            raw = end.get("raw") if isinstance(end, dict) else None
+            if raw:
+                try:
+                    date_str = datetime.utcfromtimestamp(int(raw)).strftime("%Y-%m-%d")
+                except Exception:
+                    date_str = None
+        flat = {}
+        for k, v in item.items():
+            if k in ("maxAge", "endDate"):
+                continue
+            if isinstance(v, dict):
+                flat[k] = v.get("raw", v.get("fmt"))
+            else:
+                flat[k] = v
+        return {"date": date_str, "data": flat}
+
+    def _norm(module_dict: dict) -> List[Dict[str, Any]]:
         out = []
-        for rec in lst or []:
-            if not isinstance(rec, dict):
-                continue
-            d = _yf_date_str(rec.get("endDate") or rec.get("asOfDate") or rec.get("periodEndDate"))
-            data = _extract_numeric_items(rec)
-            if not data:
-                continue
-            if as_thousands:
-                data = {k: (float(v) / 1000.0) for k, v in data.items()}
-            out.append({"date": d, "data": data})
-        out = sorted(out, key=lambda x: x.get("date", ""), reverse=True)
+        for it in _to_list(module_dict):
+            rec = _flatten_record(it)
+            if rec.get("date"):
+                out.append(rec)
         return out
 
-    out = {
-        "Annual": {k: normalize(v) for k, v in annual.items()},
-        "Quarterly": {k: normalize(v) for k, v in quarterly.items()},
+    annual_pack = {
+        "income": _norm(annual["income"]),
+        "balance": _norm(annual["balance"]),
+        "cashflow": _norm(annual["cashflow"]),
+    }
+    quarterly_pack = {
+        "income": _norm(quarterly["income"]),
+        "balance": _norm(quarterly["balance"]),
+        "cashflow": _norm(quarterly["cashflow"]),
     }
 
+    out = {"Annual": annual_pack, "Quarterly": quarterly_pack}
+
+    # Scale to thousands to match UI expectation (Yahoo website shows 'All numbers in thousands')
+    if as_thousands:
+        def _scale_pack(pack: Dict[str, Any]) -> Dict[str, Any]:
+            for stmt in ("income", "balance", "cashflow"):
+                rows = pack.get(stmt) or []
+                for row in rows:
+                    data = row.get("data") or {}
+                    for k, v in list(data.items()):
+                        try:
+                            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                                data[k] = v / 1000.0
+                        except Exception:
+                            pass
+            return pack
+        out["Annual"] = _scale_pack(out["Annual"])
+        out["Quarterly"] = _scale_pack(out["Quarterly"])
+
+    # Compute TTM from quarterly
     if include_ttm:
-        # derive from quarterly (if available)
-        q_income = out["Quarterly"].get("income") or []
-        q_cash = out["Quarterly"].get("cashflow") or []
-        q_balance = out["Quarterly"].get("balance") or []
+        try:
+            ttm_pack = _compute_ttm_from_quarterly(out["Quarterly"])
+            out["TTM"] = ttm_pack
+        except Exception:
+            pass
 
-        def ttm_sum(records: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-            if not records or len(records) < 1:
-                return {}
-            # use last 4 quarters if possible, else whatever available
-            recent = records[:4]
-            # union of keys
-            keys = set()
-            for r in recent:
-                keys |= set((r.get("data") or {}).keys())
-            sums = {}
-            for k in keys:
-                s = 0.0
-                for r in recent:
-                    s += float((r.get("data") or {}).get(k, 0.0) or 0.0)
-                sums[k] = s
-            return {"date": recent[0].get("date"), "data": sums}
-
-        def latest_snapshot(records: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-            if not records:
-                return {}
-            return {"date": records[0].get("date"), "data": (records[0].get("data") or {})}
-
-        ttm_income = ttm_sum(q_income)
-        ttm_cash = ttm_sum(q_cash)
-        ttm_balance = latest_snapshot(q_balance)
-
-        ttm = {"income": [], "balance": [], "cashflow": []}
-        if ttm_income:
-            ttm["income"] = [ttm_income]
-        if ttm_balance:
-            ttm["balance"] = [ttm_balance]
-        if ttm_cash:
-            ttm["cashflow"] = [ttm_cash]
-        out["TTM"] = ttm
-
-    if freq == "Annual":
-        return {"Annual": out["Annual"], "TTM": out.get("TTM", {})}
-    if freq == "Quarterly":
-        return {"Quarterly": out["Quarterly"], "TTM": out.get("TTM", {})}
     return out
+
