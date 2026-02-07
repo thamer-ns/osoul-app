@@ -1,3 +1,4 @@
+from osoli_logging import log_exception
 # market_data.py
 
 import re
@@ -9,6 +10,25 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
+
+
+# ============================================================
+# Diagnostics: market/price history fetch (yfinance)
+# ============================================================
+_LAST_MARKET_DIAGNOSTICS: Dict[str, Any] = {
+    "ok": None, "when": None, "symbol": None, "interval": None, "period": None,
+    "attempts": [], "error": None,
+}
+
+def _set_market_diag(**kw):
+    try:
+        _LAST_MARKET_DIAGNOSTICS.update(kw)
+    except Exception:
+        pass
+
+def get_last_market_diagnostics() -> Dict[str, Any]:
+    """Return last diagnostics for price-history fetching."""
+    return dict(_LAST_MARKET_DIAGNOSTICS)
 
 # ✅ Optional web deps (avoid crash in some deployments)
 try:
@@ -151,16 +171,20 @@ def _ensure_datetime_index(df: pd.DataFrame) -> pd.DataFrame:
     if not isinstance(d.index, pd.DatetimeIndex):
         try:
             d.index = pd.to_datetime(d.index, errors="coerce")
-        except Exception:
-            pass
-
+        except Exception as e:
+            try:
+                att['error'] = repr(e)
+                _LAST_MARKET_DIAGNOSTICS['attempts'].append(att)
+                _set_market_diag(ok=False, when=time.strftime('%Y-%m-%d %H:%M:%S'), symbol=sym, interval=itv, period=p, error=repr(e))
+            except Exception:
+                pass
+            log_exception(e, "Ignored exception", level="DEBUG")
     d = d[~pd.isna(d.index)]
     d = d[~d.index.duplicated(keep="last")]
     try:
         d = d.sort_index()
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     return d
 
 
@@ -214,6 +238,13 @@ def _normalize_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
         d["Close"] = d["Adj Close"]
     if "Open" not in d.columns and "Close" in d.columns:
         d["Open"] = d["Close"]
+
+    # بعض الجداول (أو مصادر بديلة) قد لا تحتوي High/Low.
+    # لمحرك المستشار نُولّدها من Close كـ fallback آمن.
+    if "High" not in d.columns and "Close" in d.columns:
+        d["High"] = d["Close"]
+    if "Low" not in d.columns and "Close" in d.columns:
+        d["Low"] = d["Close"]
 
     for c in ["Open", "High", "Low", "Close", "Volume"]:
         if c in d.columns:
@@ -459,9 +490,8 @@ def fetch_price_from_yahoo(symbol: str) -> Dict[str, float]:
                         last_price = _safe_float(h["Close"].iloc[-1])
                     if prev_close <= 0 and len(h) >= 2:
                         prev_close = _safe_float(h["Close"].iloc[-2])
-            except Exception:
-                pass
-
+            except Exception as e:
+                log_exception(e, "Ignored exception", level="DEBUG")
         return {
             "price": float(last_price) if _is_reasonable_price(last_price) else 0.0,
             "prev_close": float(prev_close) if _is_reasonable_price(prev_close) else 0.0,
@@ -493,9 +523,8 @@ def get_tasi_data():
         if _is_reasonable_price(curr):
             chg = ((curr - prev) / prev) * 100.0 if prev > 0 else 0.0
             return float(curr), round(_safe_float(chg), 2)
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     return 0.0, 0.0
 
 
@@ -511,8 +540,12 @@ def get_chart_history(symbol: str, period: str = None, interval: str = "1d", yea
     itv = _normalize_interval(interval)
     tries = _build_period_fallbacks(itv, period=period, years=years)
 
+    # diagnostics init
+    _set_market_diag(ok=None, when=time.strftime('%Y-%m-%d %H:%M:%S'), symbol=sym, interval=itv, period=period or f'{years}y', attempts=[], error=None)
+
     for p in tries:
         try:
+            att = {'period': p, 'interval': itv, 'rows': 0, 'error': None}
             df = yf.download(
                 sym,
                 period=p,
@@ -524,17 +557,33 @@ def get_chart_history(symbol: str, period: str = None, interval: str = "1d", yea
             )
             df = _normalize_ohlcv_columns(df)
 
+            try:
+                att['rows'] = int(len(df)) if df is not None else 0
+            except Exception:
+                pass
+
             if df is not None and not df.empty:
                 df = df.dropna(subset=[c for c in ["Open", "High", "Low", "Close"] if c in df.columns], how="any")
                 df = _ensure_datetime_index(df)
                 if not df.empty and "Close" in df.columns:
+                    try:
+                        _LAST_MARKET_DIAGNOSTICS['attempts'].append(att)
+                    except Exception:
+                        pass
+                    _set_market_diag(ok=True, when=time.strftime('%Y-%m-%d %H:%M:%S'), symbol=sym, interval=itv, period=p)
                     return df
-        except Exception:
-            pass
+        except Exception as e:
+            log_exception(e, "Ignored exception", level="DEBUG")
         finally:
+            try:
+                if att not in _LAST_MARKET_DIAGNOSTICS.get('attempts', []):
+                    _LAST_MARKET_DIAGNOSTICS['attempts'].append(att)
+            except Exception:
+                pass
             # ✅ Gentle backoff to reduce rate-limit pressure
             time.sleep(0.25)
 
+    _set_market_diag(ok=False, when=time.strftime('%Y-%m-%d %H:%M:%S'), symbol=sym, interval=itv, period=period or f'{years}y')
     return pd.DataFrame()
 
 
@@ -692,9 +741,8 @@ def fetch_batch_data(symbols_list: list):
                     if prev_close <= 0 and len(h) >= 2:
                         prev_close = float(_safe_float(h["Close"].iloc[-2]))
                     source = "yahoo_history"
-            except Exception:
-                pass
-
+            except Exception as e:
+                log_exception(e, "Ignored exception", level="DEBUG")
         # ✅ Argaam fallback
         if price <= 0:
             p2 = fetch_price_from_argaam(raw_sym)
@@ -742,9 +790,8 @@ def get_static_info(symbol: str) -> Dict[str, Any]:
                 name = nm
             if sec:
                 sector = sec
-    except Exception:
-        pass
-
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
     return {
         "symbol": sym,
         "name": name,
