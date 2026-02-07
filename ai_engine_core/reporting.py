@@ -5,554 +5,241 @@ import traceback
 import pandas as pd
 
 from .config import AI_ENGINE_NAME, AI_ENGINE_VERSION
-from .core import _normalize_symbol, _map_period_from_timeframe
-from .ohlcv import _ensure_ohlcv_columns
-from .indicators import _compute_indicators
-
-from .technicals import (
-    _detect_advanced_patterns,
-    _analyze_market_structure,
-    _detect_liquidity_sweep,
-    _detect_order_block,
-    _analyze_ichimoku,
-    _analyze_financial_golden_rules,
-)
-
-# Optional technical modules (safe imports)
-try:
-    from .technicals import _detect_inside_bar
-except Exception:
-    _detect_inside_bar = None
-
-try:
-    from .technicals import _detect_gaps
-except Exception:
-    _detect_gaps = None
-
-try:
-    from .technicals import _detect_rsi_divergence
-except Exception:
-    _detect_rsi_divergence = None
-
-try:
-    from .technicals import _regime_hint_from_adx
-except Exception:
-    _regime_hint_from_adx = None
-
-try:
-    from .technicals import _vsa_lite
-except Exception:
-    _vsa_lite = None
-
-# NEW optional modules (Smart Money / Fib / Patterns / Scalping)
-try:
-    from .technicals import _analyze_fibonacci_smc
-except Exception:
-    _analyze_fibonacci_smc = None
-
-try:
-    from .technicals import _detect_swing_failure_pattern
-except Exception:
-    _detect_swing_failure_pattern = None
-
-try:
-    from .technicals import _detect_amd_cycle
-except Exception:
-    _detect_amd_cycle = None
-
-try:
-    from .technicals import _detect_chart_patterns
-except Exception:
-    _detect_chart_patterns = None
-
-try:
-    from .technicals import _scalping_profile
-except Exception:
-    _scalping_profile = None
-
-from .risk import (
-    _analyze_sr,
-    _risk_plan_from_atr_sr,
-    _risk_gates,
-    _build_scenarios,
-    _calc_confidence,
-    _build_explainability,
-    _infer_strategy_hint,
-)
-
-from .user_rules import load_user_rules, _eval_user_rule
-from .logging_learning import log_ai_signal, _get_weight
+from .core import _normalize_symbol, _to_float, _round2
+from .packs import build_technical_pack, build_vsa_pack, build_fundamental_pack
+from .scoring import compute_osoli_score
+from .risk import build_risk_gates
+from .scenarios import build_scenarios
 
 
-def _timeframe_to_interval(timeframe: str) -> str:
-    tf = str(timeframe or "").strip().upper()
-    if tf in ("1H", "60M", "H"):
-        return "60m"
-    if tf in ("30M",):
-        return "30m"
-    if tf in ("15M",):
-        return "15m"
-    if tf in ("5M",):
-        return "5m"
-    if tf in ("1W", "W"):
-        return "1wk"
-    if tf in ("1M", "MO", "MONTH"):
-        return "1mo"
-    return "1d"
-
-
-def _dedup_limit(items, limit=12):
-    out, seen = [], set()
-    for x in (items or []):
-        s = str(x).strip()
-        if not s:
-            continue
-        k = s.lower()
-        if k in seen:
-            continue
-        out.append(s)
-        seen.add(k)
-        if len(out) >= limit:
-            break
-    return out
-
-
-def _safe_float(x, default=0.0):
+def _stance_from_score(score: float) -> str:
+    """Convert numeric score into stance label."""
     try:
-        if x is None:
-            return default
-        return float(x)
+        s = float(score)
     except Exception:
-        return default
+        s = 0.0
+    if s >= 70:
+        return "bullish"
+    if s <= 30:
+        return "bearish"
+    return "neutral"
 
 
-def generate_ai_report(symbol, timeframe="1D"):
-    """Main public API used by views/shared.py
-
-    Returns a dict with:
-      recommendation/color/strategy
-      tech_score/fund_score/total_score
-      reasons, confidence, risk_gates, scenarios, risk_plan, engine_meta
-
-    This file intentionally keeps backwards-compatible keys expected by the UI.
-    """
-
-    symbol = _normalize_symbol(symbol)
-
+def _confidence_from_scores(scores: dict) -> float:
+    """Estimate confidence based on pack availability and score consistency."""
     try:
-        from market_data import get_chart_history, get_last_market_diagnostics, get_static_info
+        available = 0
+        total = 0
+        for k in ["technical", "fundamental", "vsa", "risk"]:
+            total += 1
+            if scores.get(k, None) is not None:
+                available += 1
+        base = available / max(total, 1)
 
-        # Optional import (won't break if missing)
-        try:
-            from market_data import get_relative_strength_vs_tasi
-        except Exception:
-            get_relative_strength_vs_tasi = None
-
-        period = _map_period_from_timeframe(timeframe)
-        interval = _timeframe_to_interval(timeframe)
-
-        # Fetch history with interval support (fallback for older signatures)
-        try:
-            df = get_chart_history(symbol, period=period, interval=interval)
-        except TypeError:
-            df = get_chart_history(symbol, period)
-
-        if df is None or (isinstance(df, pd.DataFrame) and df.empty):
-            details = {"market": get_last_market_diagnostics()}
-            raise ValueError("لا توجد بيانات سعرية كافية للسهم (Price History). " + str(details))
-
-        df = _ensure_ohlcv_columns(df)
-        if df is None or df.empty:
-            raise ValueError("no ohlcv")
-
-        # Minimum candles based on interval
-        min_rows = 60 if interval in ("1d", "1wk", "1mo") else 120
-        if len(df) < min_rows:
-            raise ValueError(f"insufficient candles ({len(df)}<{min_rows})")
-
-        # Indicators pack
-        ind = _compute_indicators(df)
-
-        # =========================
-        # Core tech modules
-        # =========================
-        s_candle, o_candle = _detect_advanced_patterns(df)
-        s_struct, o_struct = _analyze_market_structure(df)
-        s_sr, o_sr, f_sr = _analyze_sr(df)
-        s_fund, o_fund, m_fund = _analyze_financial_golden_rules(symbol)
-
-        s_liq, o_liq, f_liq = _detect_liquidity_sweep(df)
-        s_ob, o_ob, f_ob = _detect_order_block(df)
-        s_ichi, o_ichi, f_ichi = _analyze_ichimoku(df)
-
-        # =========================
-        # Optional tech add-ons
-        # =========================
-        s_inside, o_inside, f_inside = 0, [], {}
-        if callable(_detect_inside_bar):
-            try:
-                s_inside, o_inside, f_inside = _detect_inside_bar(df)
-            except Exception:
-                s_inside, o_inside, f_inside = 0, [], {}
-
-        s_gaps, o_gaps, f_gaps = 0, [], {}
-        if callable(_detect_gaps):
-            try:
-                s_gaps, o_gaps, f_gaps = _detect_gaps(df)
-            except Exception:
-                s_gaps, o_gaps, f_gaps = 0, [], {}
-
-        s_div, o_div, f_div = 0, [], {}
-        if callable(_detect_rsi_divergence):
-            try:
-                s_div, o_div, f_div = _detect_rsi_divergence(df, ind)
-            except Exception:
-                s_div, o_div, f_div = 0, [], {}
-
-        s_reg, o_reg, f_reg = 0, [], {}
-        if callable(_regime_hint_from_adx):
-            try:
-                s_reg, o_reg, f_reg = _regime_hint_from_adx(ind)
-            except Exception:
-                s_reg, o_reg, f_reg = 0, [], {}
-
-        s_vsa, o_vsa, f_vsa = 0, [], {}
-        if callable(_vsa_lite):
-            try:
-                s_vsa, o_vsa, f_vsa = _vsa_lite(df)
-            except Exception:
-                s_vsa, o_vsa, f_vsa = 0, [], {}
-
-        # =========================
-        # NEW: Smart Money / Fib / Patterns / Scalping
-        # =========================
-        s_fib, o_fib, f_fib = 0, [], {}
-        if callable(_analyze_fibonacci_smc):
-            try:
-                s_fib, o_fib, f_fib = _analyze_fibonacci_smc(df)
-            except Exception:
-                s_fib, o_fib, f_fib = 0, [], {}
-
-        s_sfp, o_sfp, f_sfp = 0, [], {}
-        if callable(_detect_swing_failure_pattern):
-            try:
-                s_sfp, o_sfp, f_sfp = _detect_swing_failure_pattern(df)
-            except Exception:
-                s_sfp, o_sfp, f_sfp = 0, [], {}
-
-        s_amd, o_amd, f_amd = 0, [], {}
-        if callable(_detect_amd_cycle):
-            try:
-                s_amd, o_amd, f_amd = _detect_amd_cycle(df)
-            except Exception:
-                s_amd, o_amd, f_amd = 0, [], {}
-
-        s_pat, o_pat, f_pat = 0, [], {}
-        if callable(_detect_chart_patterns):
-            try:
-                s_pat, o_pat, f_pat = _detect_chart_patterns(df)
-            except Exception:
-                s_pat, o_pat, f_pat = 0, [], {}
-
-        s_sclp, o_sclp, f_sclp = 0, [], {}
-        if callable(_scalping_profile):
-            try:
-                s_sclp, o_sclp, f_sclp = _scalping_profile(df, ind)
-            except Exception:
-                s_sclp, o_sclp, f_sclp = 0, [], {}
-
-        # =========================
-        # Base score (tech)
-        # =========================
-        base_tech = (
-            s_candle + s_struct + s_sr + s_liq + s_ob + s_ichi
-            + s_inside + s_gaps + s_div + s_reg + s_vsa
-            + s_fib + s_sfp + s_amd + s_pat + s_sclp
-        )
-
-        tech_reasons = (
-            (o_struct or []) + (o_candle or []) + (o_sr or [])
-            + (o_liq or []) + (o_ob or []) + (o_ichi or [])
-            + (o_inside or []) + (o_gaps or []) + (o_div or []) + (o_reg or []) + (o_vsa or [])
-            + (o_fib or []) + (o_sfp or []) + (o_amd or []) + (o_pat or []) + (o_sclp or [])
-        )
-        fund_reasons = o_fund or []
-
-        # =========================
-        # Features aggregation
-        # =========================
-        features = {}
-
-        fund_feats = (m_fund or {}).get("_fund_features", {}) if isinstance(m_fund, dict) else {}
-        for d in [f_sr, fund_feats, f_liq, f_ob, f_ichi, f_inside, f_gaps, f_div, f_reg, f_vsa, f_fib, f_sfp, f_amd, f_pat, f_sclp]:
-            try:
-                for k, v in (d or {}).items():
-                    if isinstance(v, (bool, int)):
-                        features[str(k)] = int(v)
-            except Exception as e:
-                log_exception(e, "Ignored exception", level="DEBUG")
-        # Numeric features (safe)
-        try:
-            features["close"] = float(df["Close"].iloc[-1])
-
-            if isinstance(ind.get("rsi14"), pd.Series):
-                features["rsi14"] = float(ind["rsi14"].iloc[-1])
-
-            if isinstance(ind.get("macd"), pd.Series) and not pd.isna(ind["macd"].iloc[-1]):
-                features["macd"] = float(ind["macd"].iloc[-1])
-
-            if isinstance(ind.get("adx14"), pd.Series) and not pd.isna(ind["adx14"].iloc[-1]):
-                features["adx14"] = float(ind["adx14"].iloc[-1])
-
-            if isinstance(ind.get("sma50"), pd.Series) and not pd.isna(ind["sma50"].iloc[-1]):
-                features["sma50"] = float(ind["sma50"].iloc[-1])
-
-            if isinstance(ind.get("sma200"), pd.Series) and not pd.isna(ind["sma200"].iloc[-1]):
-                features["sma200"] = float(ind["sma200"].iloc[-1])
-
-            if isinstance(ind.get("atr14"), pd.Series) and not pd.isna(ind["atr14"].iloc[-1]):
-                features["atr14"] = float(ind["atr14"].iloc[-1])
-
-            if ind.get("fib382") is not None:
-                features["fib382"] = float(ind["fib382"])
-        except Exception as e:
-            log_exception(e, "Ignored exception", level="DEBUG")
-        # Relative strength vs TASI (optional)
-        if get_relative_strength_vs_tasi is not None:
-            try:
-                rs = get_relative_strength_vs_tasi(symbol, period=None, interval="1d") or {}
-                if rs.get("ok"):
-                    features["rs_outperf_3m"] = _safe_float(rs.get("outperf_3m"), 0.0)
-                    features["rs_outperf_1m"] = _safe_float(rs.get("outperf_1m"), 0.0)
-                    features["rs_label"] = str(rs.get("label") or "")
-                    if str(rs.get("label") or "").strip():
-                        tech_reasons.append(f"📌 Relative Strength vs TASI: {rs.get('label')}")
-            except Exception as e:
-                log_exception(e, "Ignored exception", level="DEBUG")
-        # Weighted bonus on boolean flags only
-        weighted_bonus = 0.0
-        for k, v in features.items():
-            if isinstance(v, (bool, int)) and int(v) == 1:
-                weighted_bonus += (0.2 * (_get_weight(k, 1.0) - 1.0))
-
-        tech_score = float(base_tech + weighted_bonus)
-        fund_score = float(s_fund)
-        total_score = float(tech_score + fund_score)
-
-        # =========================
-        # User rules delta
-        # =========================
-        user_delta = 0.0
-        try:
-            rules = load_user_rules(enabled_only=True, max_rows=30)
-        except Exception:
-            rules = []
-
-        if rules:
-            for rr in rules:
-                parsed = rr.get("parsed") or {}
-                hit, delta, reason, f_user = _eval_user_rule(parsed, df, ind)
-                if hit:
-                    user_delta += float(delta)
-                    if reason:
-                        tech_reasons.append(reason)
-                    for kk, vv in (f_user or {}).items():
-                        try:
-                            features[str(kk)] = int(vv)
-                        except Exception as e:
-                            log_exception(e, "Ignored exception", level="DEBUG")
-        if abs(user_delta) > 0:
-            tech_score = float(tech_score + user_delta)
-            total_score = float(tech_score + fund_score)
-
-        # Sector
-        sector = None
-        try:
-            info = get_static_info(symbol) or {}
-            if isinstance(info, dict):
-                sector = info.get("sector") or info.get("Sector") or info.get("industry") or None
-        except Exception:
-            sector = None
-
-        # module scores for strategy hint
-        module_scores = {
-            "MarketStructure": s_struct,
-            "Candles": s_candle,
-            "SupportResistance": s_sr,
-            "LiquiditySweep": s_liq,
-            "OrderBlock": s_ob,
-            "Ichimoku": s_ichi,
-            "InsideBar": s_inside,
-            "Gaps": s_gaps,
-            "Divergence": s_div,
-            "Regime": s_reg,
-            "VSA": s_vsa,
-            "Fundamental": s_fund,
-            "UserRules": user_delta,
-        }
-        strategy_name = _infer_strategy_hint(module_scores)
-
-        # =========================
-        # Recommendation mapping
-        # =========================
-        rec = "⚖️ محايد / مراقبة"
-        clr = "#6c757d"
-        strat = "السعر في منطقة حيرة. انتظر إشارة أوضح."
-
-        if total_score >= 8:
-            rec = "💎 فرصة ماسية (Strong Buy)"
-            clr = "#198754"
-            strat = "توافق قوي: هيكل + مناطق + إشارات قوة."
-        elif total_score >= 4:
-            rec = "✅ شراء / تجميع"
-            clr = "#28a745"
-            strat = "الإشارات الإيجابية تغلب."
-        elif total_score <= -5:
-            rec = "⛔ خروج / وقف خسارة"
-            clr = "#dc3545"
-            strat = "إشارات ضعف/كسر دعم/هيكل سلبي."
-        elif tech_score > 4 and fund_score < 0:
-            rec = "⚡ مضاربة بحذر"
-            clr = "#ffc107"
-            strat = "فني قوي لكن المالي ضعيف — تقليل مخاطرة."
-        elif fund_score >= 4 and tech_score < 0:
-            rec = "📉 استثمار قيمة"
-            clr = "#0d6efd"
-            strat = "مالي قوي والسعر ضعيف — مناسب للصبر."
-
-        tech_reasons = _dedup_limit(tech_reasons, limit=12) or ["حركة السعر طبيعية"]
-        fund_reasons = _dedup_limit(fund_reasons, limit=8) or ["المؤشرات المالية طبيعية"]
-
-        confidence, confidence_label = _calc_confidence(tech_score, fund_score, df)
-        try:
-            confidence = float(confidence)
-            if 0 <= confidence <= 1:
-                confidence *= 100.0
-        except Exception:
-            confidence = 0.0
-
-        explainability = _build_explainability(tech_reasons, fund_reasons, total_score, tech_score, fund_score)
-        explainability["confidence_note"] = f"Confidence={int(confidence)}% ({confidence_label})"
-
-        # Better direction rule
-        if total_score >= 2:
-            direction = "buy"
-        elif total_score <= -2:
-            direction = "sell"
+        # penalize extreme disagreement
+        vals = []
+        for k in ["technical", "fundamental", "vsa"]:
+            v = scores.get(k, None)
+            if v is not None:
+                vals.append(float(v))
+        if len(vals) >= 2:
+            spread = max(vals) - min(vals)
         else:
-            direction = "neutral"
+            spread = 0.0
 
-        risk_plan = _risk_plan_from_atr_sr(df, ind, direction=direction)
+        # spread 0..100 -> penalty 0..0.35
+        penalty = min(max(spread / 100.0, 0.0), 1.0) * 0.35
+        conf = max(min(base - penalty + 0.35, 0.99), 0.15)
+        return float(conf)
+    except Exception:
+        return 0.35
+
+
+def _build_factor_opinions(packs: dict, scores: dict) -> list:
+    """Create multi-factor advisor opinions with evidence + confidence."""
+    opinions = []
+
+    # Technical factor
+    tech = packs.get("technical") or {}
+    tech_score = scores.get("technical")
+    opinions.append({
+        "factor": "technical",
+        "stance": _stance_from_score(tech_score if tech_score is not None else 50),
+        "score": _to_float(tech_score, 0.0),
+        "confidence": 0.55 if tech else 0.25,
+        "evidence": tech.get("evidence", []),
+        "notes": tech.get("notes", ""),
+    })
+
+    # Fundamental factor
+    fund = packs.get("fundamental") or {}
+    fund_score = scores.get("fundamental")
+    opinions.append({
+        "factor": "fundamental",
+        "stance": _stance_from_score(fund_score if fund_score is not None else 50),
+        "score": _to_float(fund_score, 0.0),
+        "confidence": 0.60 if fund else 0.25,
+        "evidence": fund.get("evidence", []),
+        "notes": fund.get("notes", ""),
+    })
+
+    # VSA factor
+    vsa = packs.get("vsa") or {}
+    vsa_score = scores.get("vsa")
+    opinions.append({
+        "factor": "vsa",
+        "stance": _stance_from_score(vsa_score if vsa_score is not None else 50),
+        "score": _to_float(vsa_score, 0.0),
+        "confidence": 0.50 if vsa else 0.20,
+        "evidence": vsa.get("evidence", []),
+        "notes": vsa.get("notes", ""),
+    })
+
+    # Risk factor
+    risk = packs.get("risk") or {}
+    risk_score = scores.get("risk")
+    opinions.append({
+        "factor": "risk",
+        "stance": "neutral" if risk else "neutral",
+        "score": _to_float(risk_score, 0.0),
+        "confidence": 0.70 if risk else 0.25,
+        "evidence": risk.get("issues", []),
+        "notes": risk.get("notes", ""),
+    })
+
+    return opinions
+
+
+def generate_ai_report(symbol: str, price_df: pd.DataFrame = None, financial_df: pd.DataFrame = None) -> dict:
+    """
+    Build the full AI report with:
+    - Packs (technical/vsa/fundamental)
+    - Osoli score + signals
+    - Risk gates
+    - Scenarios
+    - Multi-factor advisor opinions
+    """
+    try:
+        sym = _normalize_symbol(symbol)
+        report = {
+            "engine": {"name": AI_ENGINE_NAME, "version": AI_ENGINE_VERSION},
+            "symbol": sym,
+            "packs": {},
+            "scores": {},
+            "osoli": {},
+            "risk_gates": {},
+            "scenarios": [],
+            "advisor_factors": [],
+            "advisor_summary": {},
+            "errors": [],
+        }
+
+        # -------------------------
+        # Build packs
+        # -------------------------
+        packs = {}
+        scores = {}
 
         try:
-            last_bar = str(df.index[-1])
-        except Exception:
-            last_bar = None
+            packs["technical"] = build_technical_pack(sym, price_df=price_df)
+        except Exception as e:
+            packs["technical"] = {"ok": False, "error": str(e), "evidence": [], "notes": ""}
+            report["errors"].append(f"technical_pack: {str(e)}")
 
-        # =============================
-        # Fundamental Data Quality Gate (Financial Statements)
-        # =============================
-        fundamental_quality = None
         try:
-            from financial_analysis import assess_fundamental_quality  # type: ignore
-            fundamental_quality = assess_fundamental_quality(symbol, period_type="Annual")
-        except Exception:
-            fundamental_quality = None
+            packs["vsa"] = build_vsa_pack(sym, price_df=price_df)
+        except Exception as e:
+            packs["vsa"] = {"ok": False, "error": str(e), "evidence": [], "notes": ""}
+            report["errors"].append(f"vsa_pack: {str(e)}")
 
-        # If fundamental data quality is low, neutralize recommendation slightly to avoid misleading signals
         try:
-            if isinstance(fundamental_quality, dict) and (fundamental_quality.get("pass") is False):
-                rec = "⚠️ مراقبة — جودة البيانات الأساسية منخفضة"
-                clr = "gray"
-                confidence = min(int(confidence), 35)
+            packs["fundamental"] = build_fundamental_pack(sym, financial_df=financial_df)
+        except Exception as e:
+            packs["fundamental"] = {"ok": False, "error": str(e), "evidence": [], "notes": ""}
+            report["errors"].append(f"fundamental_pack: {str(e)}")
+
+        # -------------------------
+        # Compute Osoli score
+        # -------------------------
+        try:
+            osoli = compute_osoli_score(sym, packs)
+            report["osoli"] = osoli or {}
+        except Exception as e:
+            report["osoli"] = {"ok": False, "error": str(e)}
+            report["errors"].append(f"osoli_score: {str(e)}")
+
+        # -------------------------
+        # Scores per pack (0..100) best-effort
+        # -------------------------
+        try:
+            tech_score = (packs.get("technical") or {}).get("score", None)
+            fund_score = (packs.get("fundamental") or {}).get("score", None)
+            vsa_score = (packs.get("vsa") or {}).get("score", None)
+
+            scores["technical"] = _to_float(tech_score, None)
+            scores["fundamental"] = _to_float(fund_score, None)
+            scores["vsa"] = _to_float(vsa_score, None)
         except Exception:
             pass
 
-        report = {
-            "status": "ok",
-            "recommendation": rec,
-            "color": clr,
-            "strategy": strat,
-            "tech_score": round(float(tech_score), 2),
-            "fund_score": round(float(fund_score), 2),
-            "total_score": round(float(total_score), 2),
-            "tech_reasons": tech_reasons,
-            "fund_reasons": fund_reasons,
-            "trend": "صاعد" if float(tech_score) >= 0 else "هابط",
-            "confidence": int(confidence),
-            "confidence_label": confidence_label,
-            "explainability": explainability,
-            "features": features,
-            "calibration": {},
-            "strategy_name": strategy_name,
-            "sector": sector,
-            "risk_plan": risk_plan,
-            "fundamental_quality": fundamental_quality,
-            "engine_meta": {
-                "engine": AI_ENGINE_NAME,
-                "version": AI_ENGINE_VERSION,
-                "timeframe": str(timeframe),
-                "period_used": str(period),
-                "interval_used": str(interval),
-                "rows": int(len(df)),
-                "last_bar": last_bar,
-            },
-        }
-
-        report["risk_gates"] = _risk_gates(report)
-        report["scenarios"] = _build_scenarios(df, report)
+        # -------------------------
+        # Risk gates + scenarios
+        # -------------------------
+        try:
+            risk_gates = build_risk_gates(sym, packs, price_df=price_df)
+            report["risk_gates"] = risk_gates or {}
+            # make a risk score
+            scores["risk"] = _to_float((risk_gates or {}).get("risk_score", None), None)
+            packs["risk"] = risk_gates or {}
+        except Exception as e:
+            report["risk_gates"] = {"ok": False, "error": str(e)}
+            report["errors"].append(f"risk_gates: {str(e)}")
 
         try:
-            if (not report["risk_gates"]["pass"]) and ("شراء" in str(report["recommendation"]) or "Buy" in str(report["recommendation"])):
-                report["recommendation"] = "⚠️ إشارة موجودة لكن بوابات المخاطر رفضت"
-                report["color"] = "#ffc107"
-                report["strategy"] = "تم رفض التوصية بسبب: " + " | ".join(report["risk_gates"]["reasons"])
+            scenarios = build_scenarios(sym, packs, price_df=price_df)
+            report["scenarios"] = scenarios or []
         except Exception as e:
-            log_exception(e, "Ignored exception", level="DEBUG")
-        signal_id = log_ai_signal(
-            symbol,
-            timeframe,
-            features,
-            report,
-            horizon_days=20,
-            sector=sector,
-            strategy_name=strategy_name,
-        )
-        if signal_id:
-            report["signal_id"] = signal_id
+            report["scenarios"] = []
+            report["errors"].append(f"scenarios: {str(e)}")
+
+        # -------------------------
+        # Attach packs & scores
+        # -------------------------
+        report["packs"] = packs
+        report["scores"] = scores
+
+        # -------------------------
+        # Multi-factor advisor opinions
+        # -------------------------
+        try:
+            opinions = _build_factor_opinions(packs, scores)
+            report["advisor_factors"] = opinions
+
+            overall_conf = _confidence_from_scores(scores)
+            bullish = [x for x in opinions if x.get("stance") == "bullish"]
+            bearish = [x for x in opinions if x.get("stance") == "bearish"]
+            neutral = [x for x in opinions if x.get("stance") == "neutral"]
+
+            report["advisor_summary"] = {
+                "overall_confidence": float(overall_conf),
+                "bullish_factors": [x.get("factor") for x in bullish],
+                "bearish_factors": [x.get("factor") for x in bearish],
+                "neutral_factors": [x.get("factor") for x in neutral],
+                "overall_stance": "bullish" if len(bullish) > len(bearish) else ("bearish" if len(bearish) > len(bullish) else "neutral"),
+            }
+        except Exception as e:
+            report["advisor_factors"] = []
+            report["advisor_summary"] = {"overall_confidence": 0.35, "overall_stance": "neutral", "error": str(e)}
+            report["errors"].append(f"advisor_split: {str(e)}")
 
         return report
 
     except Exception as e:
-        tr = traceback.format_exc()
-        base = {
-            "status": "error",
-            "__error__": str(e),
-            "recommendation": "غير متاح",
-            "color": "#6c757d",
-            "strategy": "نقص بيانات أو خطأ داخلي",
-            "tech_reasons": [],
-            "fund_reasons": [],
-            "trend": "-",
-            "confidence": 0,
-            "confidence_label": "منخفضة",
-            "explainability": {"positives": [], "negatives": [], "notes": ["AI Engine Error"]},
-            "features": {},
-            "calibration": {},
-            "strategy_name": None,
-            "sector": None,
-            "risk_plan": {},
-            "risk_gates": {"pass": False, "reasons": ["AI Engine Error"]},
-            "scenarios": [],
-            "engine_meta": {
-                "engine": AI_ENGINE_NAME,
-                "version": AI_ENGINE_VERSION,
-                "timeframe": str(timeframe),
-                "period_used": None,
-                "interval_used": None,
-                "rows": 0,
-                "last_bar": None,
-            },
+        log_exception(e, "AI report failed", level="ERROR")
+        return {
+            "engine": {"name": AI_ENGINE_NAME, "version": AI_ENGINE_VERSION},
+            "symbol": symbol,
+            "ok": False,
+            "error": str(e),
+            "traceback": traceback.format_exc(),
         }
-        base["__trace__"] = tr
-        return base
