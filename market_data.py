@@ -239,13 +239,6 @@ def _normalize_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
     if "Open" not in d.columns and "Close" in d.columns:
         d["Open"] = d["Close"]
 
-    # بعض الجداول (أو مصادر بديلة) قد لا تحتوي High/Low.
-    # لمحرك المستشار نُولّدها من Close كـ fallback آمن.
-    if "High" not in d.columns and "Close" in d.columns:
-        d["High"] = d["Close"]
-    if "Low" not in d.columns and "Close" in d.columns:
-        d["Low"] = d["Close"]
-
     for c in ["Open", "High", "Low", "Close", "Volume"]:
         if c in d.columns:
             d[c] = pd.to_numeric(d[c], errors="coerce")
