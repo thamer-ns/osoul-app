@@ -119,13 +119,58 @@ class FinancialParser:
                 return f"{m}.SR"
         return None
 
-    def _detect_format_and_parse(self, text):
-        lines = (text or "").split("\n")
+        def _detect_format_and_parse(self, text):
+            lines = (text or "").split("\n")
 
-        if any(re.search(r"\[\d{6}\]", line) for line in lines):
-            return self._parse_tadawul_style(lines)
+            # Yahoo Finance pasted table (plain text)
+            try:
+                if isinstance(text, str) and (
+                    "All numbers in thousands" in text
+                    or "BreakdownTTM" in text
+                    or "Breakdown TTM" in text
+                    or ("Income Statement" in text and "Breakdown" in text)
+                ):
+                    y = parse_yahoo_finance_paste(text)
+                    if y and y.get("records"):
+                        # Return as table-style records but also attach full statement payload
+                        results = []
+                        for rec in y["records"]:
+                            # Keep minimal mapping for legacy summary fields (Revenue/NI/Assets/Liab/Equity/OCF)
+                            data = rec.get("data") or {}
+                            mapped = {
+                                "revenue": data.get("total_revenue", data.get("operating_revenue", 0.0)),
+                                "net_income": data.get("net_income", data.get("net_income_common_stockholders", 0.0)),
+                                "operating_cash_flow": data.get("operating_cash_flow", 0.0),
+                                "total_assets": data.get("total_assets", 0.0),
+                                "total_liabilities": data.get("total_liabilities_net_minority_interest", data.get("total_liabilities", 0.0)),
+                                "total_equity": data.get("total_equity_gross_minority_interest", data.get("total_equity", 0.0)),
+                                "gross_profit": data.get("gross_profit", 0.0),
+                                "operating_income": data.get("operating_income", data.get("total_operating_income_as_reported", 0.0)),
+                                "ebit": data.get("ebit", 0.0),
+                                "ebitda": data.get("ebitda", 0.0),
+                                "basic_eps": data.get("basic_eps", 0.0),
+                                "diluted_eps": data.get("diluted_eps", 0.0),
+                                "interest_expense": data.get("interest_expense", data.get("interest_expense_non_operating", 0.0)),
+                            }
+                            results.append({
+                                "date": rec.get("date"),
+                                "data": mapped,
+                                "_full_statement": {
+                                    "statement": y.get("statement"),
+                                    "scale": y.get("scale"),
+                                    "data": data,
+                                },
+                            })
+                        return results
+            except Exception:
+                pass
 
-        return self._parse_table_style(lines)
+            # Tadawul style (legacy)
+            if any(re.search(r"\[\d{6}\]", line) for line in lines):
+                return self._parse_tadawul_style(lines)
+
+            return self._parse_table_style(lines)
+
 
     def _parse_tadawul_style(self, lines):
         extracted_data = {}
@@ -358,51 +403,101 @@ def fetch_financials_from_argaam(symbol: str) -> dict:
     return {}
 
 
-def fetch_financials_from_tadawul(symbol: str) -> dict:
-    """Best-effort snapshot from Tadawul (Saudi Exchange).
 
-    الهدف هنا تقليل اعتمادنا على Yahoo عند تعذرها (429/Timeout) عبر
-    محاولة استخراج أرقام أساسية من صفحة تداول إن توفرت.
+# ==============================================================
+# Yahoo Finance pasted table parser (plain text)
+# ==============================================================
 
-    ⚠️ هذا مسار احتياطي فقط، وإذا تغيرت الصفحة/تعذر التحميل يعيد {}.
-    """
-    if not requests or not BeautifulSoup:
+def _slugify_row_label(label: str) -> str:
+    s = re.sub(r"[^0-9A-Za-z]+", "_", str(label or "").strip().lower()).strip("_")
+    return s or "item"
+
+def parse_yahoo_finance_paste(text: str) -> Dict[str, Any]:
+    raw = (text or "").strip()
+    if not raw:
+        return {}
+    lt = raw.lower()
+    statement = "income"
+    if "balance sheet" in lt:
+        statement = "balance"
+    elif "cash flow" in lt:
+        statement = "cashflow"
+    elif "income statement" in lt:
+        statement = "income"
+
+    scale = "thousands" if "all numbers in thousands" in lt else "units"
+
+    lines = [l.strip() for l in raw.splitlines() if l.strip()]
+    header_line = ""
+    for l in lines:
+        if l.lower().startswith("breakdown"):
+            header_line = l
+            break
+    if not header_line:
+        for l in lines:
+            if "breakdown" in l.lower() and ("ttm" in l.upper() or "/" in l):
+                header_line = l
+                break
+
+    periods: List[str] = []
+    if header_line:
+        tok = header_line.replace("Breakdown", "Breakdown ").replace("TTM", "TTM ")
+        tok = re.sub(r"(\d{1,2}/\d{1,2}/\d{4})", r" \1 ", tok)
+        parts = [p for p in tok.split() if p and p.lower() != "breakdown"]
+        for p in parts:
+            if p.upper() == "TTM":
+                periods.append("TTM")
+            elif re.fullmatch(r"\d{1,2}/\d{1,2}/\d{4}", p):
+                mm, dd, yy = p.split("/")
+                periods.append(f"{yy}-{int(mm):02d}-{int(dd):02d}")
+
+    if not periods:
+        found = re.findall(r"\d{1,2}/\d{1,2}/\d{4}", raw)
+        if "TTM" in raw:
+            periods.append("TTM")
+        for p in found[:6]:
+            mm, dd, yy = p.split("/")
+            periods.append(f"{yy}-{int(mm):02d}-{int(dd):02d}")
+
+    if len(periods) < 2:
         return {}
 
-    s = get_ticker_symbol(symbol).replace(".SR", "")
-    if not s.isdigit():
-        return {}
+    num_re = r"[-+]?\d[\d,]*\.?\d*"
+    rows_map: Dict[str, List[float]] = {}
 
-    # صفحات تداول تتغير، لذا نجرّب أكثر من نمط URL بشكل محافظ.
-    urls = [
-        f"https://www.saudiexchange.sa/wps/portal/tadawul/markets/equities/quote/{s}",
-        f"https://www.saudiexchange.sa/wps/portal/tadawul/markets/quotedetails/quote/{s}",
-    ]
-
-    for url in urls:
-        try:
-            html = _fetch_html(url, timeout=8)
-            if not html:
-                continue
-            soup = BeautifulSoup(html, "html.parser")
-            txt = soup.get_text("\n", strip=True)
-            if not txt:
-                continue
-
-            # نستخدم نفس FinancialParser الذي يستخدمه أرقام/قوقل
-            parser = FinancialParser()
-            results, _ = parser._detect_format_and_parse(txt)
-            if not results:
-                continue
-
-            results = sorted(results, key=lambda x: x.get("date", ""), reverse=True)
-            rec = results[0]
-            data = rec.get("data", {}) or {}
-            data["date"] = rec.get("date")
-            data["_source_url"] = url
-            data["source"] = "Tadawul"
-            return data
-        except Exception:
+    for l in lines:
+        if l == header_line:
             continue
+        if l.lower() in ("annual", "quarterly", "collapse all"):
+            continue
+        nums = re.findall(num_re, l)
+        if len(nums) < 2:
+            continue
+        m = re.search(num_re, l)
+        if not m:
+            continue
+        label = l[:m.start()].strip(" -:\t")
+        if not label:
+            continue
+        vals=[]
+        for n in nums[:len(periods)]:
+            try:
+                vals.append(float(n.replace(",", "")))
+            except Exception:
+                vals.append(0.0)
+        if len(vals) == len(periods):
+            rows_map[label]=vals
 
-    return {}
+    if not rows_map:
+        return {}
+
+    records=[]
+    for j, per in enumerate(periods):
+        if per == "TTM":
+            continue
+        data={}
+        for label, vals in rows_map.items():
+            data[_slugify_row_label(label)] = vals[j]
+        records.append({"date": per, "data": data})
+
+    return {"statement": statement, "periods": periods, "rows": rows_map, "records": records, "scale": scale}
