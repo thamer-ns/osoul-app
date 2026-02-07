@@ -239,9 +239,22 @@ def fetch_full_statement_records(
     return out
 
 
-def has_full_statement(symbol: str, statement: str, period_type: str = "Annual", *, scale: str = "thousands") -> bool:
+def has_full_statement(symbol: str, statement: str | None = None, period_type: str = "Annual", *, scale: str = "thousands") -> bool:
+    """Return True if there is a stored full statement record.
+
+    Backward-compatible:
+    - some callers used `has_full_statement(symbol, period_type=...)` بدون تحديد statement.
+    - إذا لم يُحدد statement نتحقق من وجود أيٍ من (income/balance/cashflow).
+    """
     try:
-        df = fetch_full_statement_records(symbol, statement, period_type, scale=scale)
-        return df is not None and not df.empty
+        if statement:
+            df = fetch_full_statement_records(symbol, statement, period_type, scale=scale)
+            return df is not None and not df.empty
+
+        for st_name in ("income", "balance", "cashflow"):
+            df = fetch_full_statement_records(symbol, st_name, period_type, scale=scale)
+            if df is not None and not df.empty:
+                return True
+        return False
     except Exception:
         return False
