@@ -40,7 +40,7 @@ def _validate_username(u: str):
 def _validate_password(p: str):
     p = (p or "")
     if len(p) < 4:
-        return False, "رمز الدخول قصير جداً (4 أحرف/أرقام على الأقل)"
+        return False, "كلمة المرور قصير جداً (4 أحرف/أرقام على الأقل)"
     return True, ""
 
 
@@ -193,7 +193,7 @@ def login_system():
         with t1:
             with st.form("login_form"):
                 u = st.text_input("المستخدم", key="login_user")
-                p = st.text_input("رمز الدخول", type="password", key="login_pass")
+                p = st.text_input("كلمة المرور", type="password", key="login_pass")
                 rem = st.checkbox("تذكرني", value=True)
 
                 if st.form_submit_button("دخول", type="primary"):
@@ -206,7 +206,7 @@ def login_system():
                     p = (p or "")
 
                     if not u or not p:
-                        st.error("أدخل اسم المستخدم ورمز الدخول.")
+                        st.error("أدخل اسم المستخدم وكلمة المرور.")
                         _register_login_attempt()
                         return False
 
@@ -234,7 +234,7 @@ def login_system():
             with st.form("signup_form"):
                 nu = st.text_input("اسم المستخدم", key="signup_user")
                 em = st.text_input("البريد الإلكتروني (اختياري)", key="signup_email")
-                npw = st.text_input("رمز دخول جديد", type="password", key="signup_pass")
+                npw = st.text_input("كلمة مرور جديدة", type="password", key="signup_pass")
 
                 if st.form_submit_button("إنشاء"):
                     nu = (nu or "").strip()
