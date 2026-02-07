@@ -1,6 +1,7 @@
 from osoli_logging import log_exception
 # database.py
-# NOTE: psycopg2 قد لا يكون متاحًا في بعض البيئات (أو قد تفشل عملية التثبيت).
+
+# NOTE: psycopg2 قد لا يكون متاحًا في بعض البيئات.
 # لا نريد أن ينهار التطبيق بالكامل بسبب ذلك؛ لذلك نجعل الاستيراد مرنًا.
 try:
     import psycopg2  # type: ignore
@@ -8,12 +9,13 @@ try:
 except ModuleNotFoundError:
     psycopg2 = None  # type: ignore
     pool = None  # type: ignore
+
 import pandas as pd
 import streamlit as st
 import bcrypt
 from contextlib import contextmanager
 import re
-import config  # تم ربط الملف بـ config
+import config  # ربط ملف الإعدادات
 from osoli_logging import get_logger, log_exception
 
 
@@ -26,17 +28,22 @@ def get_connection_pool():
     Connection pool (cached) for Streamlit using PostgreSQL.
     """
     if psycopg2 is None:
-        # لا نُسقط التطبيق بسبب Driver مفقود
         st.error("⚠️ مكتبة psycopg2 غير مثبتة. ثبّت psycopg2-binary داخل requirements.txt أو فعّل بيئة Postgres.")
         return None
 
-    db_url = getattr(config, 'DB_CONNECTION_URL', None) or getattr(config, 'get_db_url', lambda: None)()
+    # محاولة الحصول على DATABASE_URL من config أو من دالة get_db_url إن وُجدت
+    db_url = getattr(config, "DB_CONNECTION_URL", None)
+    if not db_url and hasattr(config, "get_db_url"):
+        try:
+            db_url = config.get_db_url()
+        except Exception:
+            db_url = None
+
     if not db_url:
         st.error("⚠️ لم يتم العثور على رابط قاعدة البيانات. ضع DATABASE_URL في Secrets أو Environment Variables")
         return None
 
     try:
-        # إنشاء مسبح اتصالات بحد أدنى 1 وحد أقصى 20
         return pool.SimpleConnectionPool(1, 20, db_url)
     except Exception as e:
         st.error(f"❌ فشل إنشاء Connection Pool: {e}")
@@ -85,10 +92,8 @@ def normalize_sql_tables(name: str) -> str:
     n = (name or "").strip().replace('"', "")
     if not n:
         return ""
-    # Lowercase + keep only safe chars/_.
     n = re.sub(r"[^A-Za-z0-9_]", "", n)
-    n = n.lower()
-    return n
+    return n.lower()
 
 
 # =========================================================
@@ -130,7 +135,7 @@ def fetch_table(table_name: str) -> pd.DataFrame:
         if not conn:
             return pd.DataFrame()
 
-        # 1) Try exact (safe-ish)
+        # 1) Try exact
         try:
             t = name_raw.strip().replace('"', "")
             if _is_safe_identifier(t):
@@ -146,7 +151,7 @@ def fetch_table(table_name: str) -> pd.DataFrame:
         except Exception as e:
             log_exception(e, "Ignored DB read error (lowercase)", level="DEBUG")
 
-        # 3) Normalize from list
+        # 3) Normalize
         try:
             t = normalize_sql_tables(name_raw).strip().replace('"', "")
             if not _is_safe_identifier(t):
@@ -154,6 +159,37 @@ def fetch_table(table_name: str) -> pd.DataFrame:
             return pd.read_sql(f"SELECT * FROM {t}", conn)
         except Exception:
             return pd.DataFrame()
+
+
+# =========================================================
+# 3) إصلاح صياغة CREATE TABLE (PRIMARY KEY)
+# =========================================================
+def _fix_create_table_primary_key_syntax(sql: str) -> str:
+    """Fix common Postgres syntax error: `...) PRIMARY KEY (...)` must be inside parentheses.
+
+    Example (bad):
+        CREATE TABLE x (a INT) PRIMARY KEY (a)
+    Example (fixed):
+        CREATE TABLE x (a INT, PRIMARY KEY (a))
+    """
+    try:
+        s = str(sql or "").strip()
+        if not s:
+            return s
+        if not re.match(r"^CREATE\s+TABLE", s, flags=re.IGNORECASE):
+            return s
+
+        # If PRIMARY KEY comes after the closing paren, move it inside
+        if re.search(r"\)\s*PRIMARY\s+KEY\s*\(", s, flags=re.IGNORECASE):
+            s = re.sub(
+                r"\)\s*(PRIMARY\s+KEY\s*\([^\)]*\))",
+                r", \1)",
+                s,
+                flags=re.IGNORECASE,
+            )
+        return s
+    except Exception:
+        return sql
 
 
 # =========================================================
@@ -182,54 +218,54 @@ def migrate_financial_schema():
         )
 
 
-def _fix_create_table_primary_key_syntax(sql: str) -> str:
-    """Fix common Postgres syntax error: `...) PRIMARY KEY (...)` must be inside parentheses.
-
-    Example (bad):
-        CREATE TABLE x (a INT) PRIMARY KEY (a)
-    Example (fixed):
-        CREATE TABLE x (a INT, PRIMARY KEY (a))
+def migrate_users_schema():
     """
-    try:
-        s = str(sql or "").strip()
-        if not s:
-            return s
-        # Only target CREATE TABLE statements
-        if not re.match(r"^CREATE\s+TABLE", s, flags=re.IGNORECASE):
-            return s
-        # If PRIMARY KEY comes after the closing paren, move it inside
-        if re.search(r"\)\s*PRIMARY\s+KEY\s*\(", s, flags=re.IGNORECASE):
-            s = re.sub(
-                r"\)\s*(PRIMARY\s+KEY\s*\([^\)]*\))",
-                r", \1)",
-                s,
-                flags=re.IGNORECASE,
-            )
-        return s
-    except Exception:
-        return sql
+    تأكد أن جدول users يحتوي على schema_name لاستخدامه في multi-schema إن رغبت لاحقًا.
+    إذا لم تستخدم schemas متعددة، سيبقى الافتراضي 'public'.
+    """
+    # إضافة عمود schema_name إذا غير موجود
+    execute_query("ALTER TABLE users ADD COLUMN IF NOT EXISTS schema_name VARCHAR(64) DEFAULT 'public'", ())
+    # إضافة عمود email إذا غير موجود (احتياط)
+    execute_query("ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT", ())
 
 
 def init_db():
     """
-    إنشاء جميع الجداول الأساسية. يتم استخدام lowercase لتفادي مشاكل Postgres.
+    إنشاء جميع الجداول الأساسية.
     """
     tables = [
-        "CREATE TABLE IF NOT EXISTS users (username VARCHAR(50) PRIMARY KEY, password TEXT, email TEXT)",
+        # ✅ users: lowercase + schema_name داخل الجدول
+        "CREATE TABLE IF NOT EXISTS users (username VARCHAR(50) PRIMARY KEY, password TEXT, email TEXT, schema_name VARCHAR(64) DEFAULT 'public')",
+
         """CREATE TABLE IF NOT EXISTS trades (
-            id SERIAL PRIMARY KEY, symbol VARCHAR(20), company_name TEXT, sector TEXT,
-            asset_type VARCHAR(20), date DATE, quantity DOUBLE PRECISION, entry_price DOUBLE PRECISION,
-            exit_price DOUBLE PRECISION DEFAULT 0, current_price DOUBLE PRECISION DEFAULT 0,
-            strategy VARCHAR(20), status VARCHAR(10) DEFAULT 'Open', exit_date DATE, notes TEXT
+            id SERIAL PRIMARY KEY,
+            symbol VARCHAR(20),
+            company_name TEXT,
+            sector TEXT,
+            asset_type VARCHAR(20),
+            date DATE,
+            quantity DOUBLE PRECISION,
+            entry_price DOUBLE PRECISION,
+            exit_price DOUBLE PRECISION DEFAULT 0,
+            current_price DOUBLE PRECISION DEFAULT 0,
+            strategy VARCHAR(20),
+            status VARCHAR(10) DEFAULT 'Open',
+            exit_date DATE,
+            notes TEXT
         )""",
+
         "CREATE TABLE IF NOT EXISTS deposits (id SERIAL PRIMARY KEY, date DATE, amount DOUBLE PRECISION, note TEXT)",
         "CREATE TABLE IF NOT EXISTS withdrawals (id SERIAL PRIMARY KEY, date DATE, amount DOUBLE PRECISION, note TEXT)",
         "CREATE TABLE IF NOT EXISTS returnsgrants (id SERIAL PRIMARY KEY, date DATE, symbol VARCHAR(20), company_name TEXT, amount DOUBLE PRECISION, note TEXT)",
         "CREATE TABLE IF NOT EXISTS watchlist (symbol VARCHAR(20) PRIMARY KEY, target_price DOUBLE PRECISION, note TEXT)",
         "CREATE TABLE IF NOT EXISTS investmentthesis (symbol VARCHAR(20) PRIMARY KEY, thesis_text TEXT, target_price DOUBLE PRECISION, recommendation VARCHAR(20), last_updated DATE)",
+
+        # ✅ financialstatements: PRIMARY KEY داخل الأقواس
         """CREATE TABLE IF NOT EXISTS financialstatements (
-            symbol VARCHAR(20), date DATE,
-            revenue DOUBLE PRECISION, net_income DOUBLE PRECISION,
+            symbol VARCHAR(20),
+            date DATE,
+            revenue DOUBLE PRECISION,
+            net_income DOUBLE PRECISION,
             period_type VARCHAR(20) DEFAULT 'Annual',
             source VARCHAR(20) DEFAULT 'Auto',
             PRIMARY KEY(symbol, date, period_type)
@@ -243,38 +279,124 @@ def init_db():
                     cur.execute(_fix_create_table_primary_key_syntax(t))
             conn.commit()
 
+    # Migrations
     migrate_financial_schema()
+    migrate_users_schema()
 
 
 # =========================================================
 # 5) المصادقة والأمان (Auth)
 # =========================================================
-def db_create_user(u, p):
+def db_create_user(u, p, email: str = None):
+    """
+    Create a user in `users` table (lowercase to avoid Postgres case issues).
+    """
     try:
+        u = str(u or "").strip()
+        if not u:
+            return False
+
         h = bcrypt.hashpw(p.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-        return execute_query("INSERT INTO Users (username, password) VALUES (%s, %s)", (u, h))
+
+        if email is not None:
+            return execute_query(
+                "INSERT INTO users (username, password, email) VALUES (%s, %s, %s)",
+                (u, h, str(email)),
+            )
+
+        return execute_query(
+            "INSERT INTO users (username, password) VALUES (%s, %s)",
+            (u, h),
+        )
     except Exception as e:
         log_exception(e, "Ignored DB create user error", level="DEBUG")
         return False
 
 
-def db_check_login(u, p):
+def db_check_login(u, p) -> bool:
+    """
+    Verify username/password against `users`.
+    """
     try:
-        df = fetch_table("users")
-        if df.empty:
+        u = str(u or "").strip()
+        if not u:
             return False
+
+        df = fetch_table("users")
+        if df.empty or "username" not in df.columns or "password" not in df.columns:
+            return False
+
         row = df[df["username"] == u]
         if row.empty:
             return False
+
         stored = row.iloc[0]["password"]
-        return bcrypt.checkpw(p.encode("utf-8"), stored.encode("utf-8"))
+        if not stored:
+            return False
+
+        return bcrypt.checkpw(p.encode("utf-8"), str(stored).encode("utf-8"))
     except Exception as e:
         log_exception(e, "Ignored DB auth error", level="DEBUG")
         return False
 
 
 # =========================================================
-# 6) تشخيص قاعدة البيانات (Diagnostics)
+# 6) Aliases مطلوبة لملف security.py
+# =========================================================
+def db_verify_user(username: str, password: str) -> bool:
+    """
+    اسم متوقع داخل security.py
+    """
+    return db_check_login(username, password)
+
+
+def db_user_exists(username: str) -> bool:
+    """
+    اسم متوقع داخل security.py
+    """
+    try:
+        u = str(username or "").strip()
+        if not u:
+            return False
+        df = fetch_table("users")
+        if df.empty or "username" not in df.columns:
+            return False
+        return bool((df["username"] == u).any())
+    except Exception as e:
+        log_exception(e, "Ignored DB user_exists error", level="DEBUG")
+        return False
+
+
+def db_get_user_schema(username: str) -> str:
+    """
+    اسم متوقع داخل security.py
+    - إن لم يكن لديك schemas متعددة، يرجع 'public'
+    - إذا كان users يحتوي schema_name سيقرأه
+    """
+    try:
+        u = str(username or "").strip()
+        if not u:
+            return "public"
+
+        df = fetch_table("users")
+        if df.empty:
+            return "public"
+
+        if "schema_name" in df.columns:
+            row = df[df["username"] == u]
+            if not row.empty:
+                v = row.iloc[0].get("schema_name")
+                v = str(v).strip() if v is not None else ""
+                return v or "public"
+
+        return "public"
+    except Exception as e:
+        log_exception(e, "Ignored DB get_user_schema error", level="DEBUG")
+        return "public"
+
+
+# =========================================================
+# 7) تشخيص قاعدة البيانات (Diagnostics)
 # =========================================================
 def get_db_diagnostics() -> dict:
     info = {
@@ -315,7 +437,7 @@ def get_db_diagnostics() -> dict:
                     except Exception:
                         info["counts"][t] = None
 
-                # فحص الجداول المكررة (Capital vs Small)
+                # فحص الجداول المكررة (Capital vs Small) إن وُجدت
                 cur.execute(
                     """
                     SELECT tablename FROM pg_tables
@@ -347,7 +469,7 @@ def get_db_diagnostics() -> dict:
 
 
 # =========================================================
-# 7) أدوات الإصلاح المتقدمة (Advanced Migration Helpers)
+# 8) أدوات إصلاح متقدمة (اختياري)
 # =========================================================
 def _table_exists(conn, table_name: str) -> bool:
     try:
@@ -383,24 +505,6 @@ def _get_columns(conn, table_name: str):
         return []
 
 
-def _get_primary_key_cols(conn, table_name: str) -> list:
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT a.attname
-                FROM pg_index i
-                JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
-                WHERE i.indrelid = %s::regclass
-                AND i.indisprimary;
-                """,
-                (table_name,),
-            )
-            return [r[0] for r in cur.fetchall()]
-    except Exception:
-        return []
-
-
 def _set_sequence_to_max_id(conn, table_lower: str, id_col: str = "id"):
     try:
         with conn.cursor() as cur:
@@ -419,8 +523,8 @@ def _set_sequence_to_max_id(conn, table_lower: str, id_col: str = "id"):
     except Exception as e:
         try:
             conn.rollback()
-        except Exception as e:
-            log_exception(e, "Ignored DB cleanup error", level="DEBUG")
+        except Exception as e2:
+            log_exception(e2, "Ignored DB cleanup error", level="DEBUG")
         print(f"Sequence Fix Error ({table_lower}): {e}")
         return False
 
@@ -449,25 +553,21 @@ def migrate_fix_case_duplicate_tables(drop_old: bool = False) -> dict:
 
         try:
             for old, new in pairs:
-                # check existence
                 old_exists = _table_exists(conn, old)
                 new_exists = _table_exists(conn, new)
 
                 if old_exists and not new_exists:
-                    # rename old -> new (lowercase)
                     with conn.cursor() as cur:
                         cur.execute(f'ALTER TABLE "{old}" RENAME TO {new};')
                     conn.commit()
                     report["actions"].append(f"renamed {old} -> {new}")
 
                 if old_exists and new_exists and drop_old:
-                    # drop old if duplicate exists
                     with conn.cursor() as cur:
                         cur.execute(f'DROP TABLE IF EXISTS "{old}" CASCADE;')
                     conn.commit()
                     report["actions"].append(f"dropped duplicate {old}")
 
-                # fix sequence if table has serial id
                 cols = _get_columns(conn, new)
                 if "id" in cols:
                     _set_sequence_to_max_id(conn, new, "id")
