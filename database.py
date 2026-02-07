@@ -223,9 +223,7 @@ def migrate_users_schema():
     تأكد أن جدول users يحتوي على schema_name لاستخدامه في multi-schema إن رغبت لاحقًا.
     إذا لم تستخدم schemas متعددة، سيبقى الافتراضي 'public'.
     """
-    # إضافة عمود schema_name إذا غير موجود
     execute_query("ALTER TABLE users ADD COLUMN IF NOT EXISTS schema_name VARCHAR(64) DEFAULT 'public'", ())
-    # إضافة عمود email إذا غير موجود (احتياط)
     execute_query("ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT", ())
 
 
@@ -396,7 +394,61 @@ def db_get_user_schema(username: str) -> str:
 
 
 # =========================================================
-# 7) تشخيص قاعدة البيانات (Diagnostics)
+# 7) Healthcheck (مطلوب بواسطة views/settings.py)
+# =========================================================
+def db_healthcheck() -> dict:
+    """
+    Healthcheck سريع لقاعدة البيانات.
+    مطلوب بواسطة views/settings.py
+    """
+    import time as _time
+
+    started = _time.time()
+    out = {
+        "ok": False,
+        "error": None,
+        "database": None,
+        "user": None,
+        "host": None,
+        "port": None,
+        "time_ms": None,
+    }
+
+    try:
+        with get_db() as conn:
+            if not conn:
+                out["error"] = "No connection pool / DATABASE_URL missing"
+                out["time_ms"] = round((_time.time() - started) * 1000, 2)
+                return out
+
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1;")
+                _ = cur.fetchone()
+
+                cur.execute("SELECT current_database(), current_user, inet_server_addr()::text, inet_server_port();")
+                res = cur.fetchone()
+                if res:
+                    dbname, user, host, port = res
+                    out["database"] = dbname
+                    out["user"] = user
+                    out["host"] = host
+                    out["port"] = port
+
+            out["ok"] = True
+            out["time_ms"] = round((_time.time() - started) * 1000, 2)
+            return out
+
+    except Exception as e:
+        try:
+            out["error"] = str(e)
+            out["time_ms"] = round((_time.time() - started) * 1000, 2)
+        except Exception:
+            out["error"] = "Unknown error"
+        return out
+
+
+# =========================================================
+# 8) تشخيص قاعدة البيانات (Diagnostics)
 # =========================================================
 def get_db_diagnostics() -> dict:
     info = {
@@ -469,7 +521,7 @@ def get_db_diagnostics() -> dict:
 
 
 # =========================================================
-# 8) أدوات إصلاح متقدمة (اختياري)
+# 9) أدوات إصلاح متقدمة (اختياري)
 # =========================================================
 def _table_exists(conn, table_name: str) -> bool:
     try:
