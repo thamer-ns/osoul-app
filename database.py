@@ -83,6 +83,9 @@ def get_db():
                 log_exception(e, "Ignored DB cleanup error", level="DEBUG")
             conn = pool_obj.getconn()
 
+        # ✅ ضبط tenant schema (search_path) حسب المستخدم الحالي
+        _ensure_search_path(conn)
+
         yield conn
 
     except Exception as e:
@@ -103,6 +106,109 @@ def get_db():
         except Exception as e:
                 log_exception(e, "Ignored DB cleanup error", level="DEBUG")
 
+
+
+# =========================================================
+# ✅ 1.5) Tenant Schema (قاعدة مستقلة لكل مستخدم عبر Schema)
+# =========================================================
+
+_SCHEMA_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+def _safe_schema_name(username: str) -> str:
+    """Generate deterministic schema name for a user."""
+    u = str(username or "").strip().lower()
+    if not u:
+        return "public"
+    import hashlib
+    h = hashlib.sha1(u.encode("utf-8")).hexdigest()[:10]
+    return f"u_{h}"
+
+def _ensure_search_path(conn):
+    """Set search_path to current tenant schema if available."""
+    try:
+        schema = st.session_state.get("db_schema") or "public"
+        schema = str(schema).strip()
+        if not schema or not _SCHEMA_RE.match(schema):
+            schema = "public"
+        with conn.cursor() as cur:
+            cur.execute(f"SET search_path TO {schema}, public;")
+        conn.commit()
+    except Exception as e:
+        log_exception(e, "Ignored search_path error", level="DEBUG")
+
+def db_get_user_schema(username: str) -> str:
+    """Return schema_name for a given username (stored in public.users)."""
+    u = (username or "").strip()
+    if not u:
+        return "public"
+    with get_db() as conn:
+        if not conn:
+            return "public"
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT schema_name FROM public.users WHERE username = %s", (u,))
+                r = cur.fetchone()
+                sch = (r[0] if r and r[0] else None)
+                sch = str(sch).strip() if sch else "public"
+                if not _SCHEMA_RE.match(sch):
+                    return "public"
+                return sch
+        except Exception as e:
+            log_exception(e, "db_get_user_schema failed", level="DEBUG")
+            return "public"
+
+def db_user_exists(username: str) -> bool:
+    u = (username or "").strip()
+    if not u:
+        return False
+    with get_db() as conn:
+        if not conn:
+            return False
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM public.users WHERE username = %s LIMIT 1", (u,))
+                return cur.fetchone() is not None
+        except Exception:
+            return False
+
+def init_tenant_schema(schema: str):
+    """Create tenant schema + tables (excluding users)."""
+    schema = str(schema or "").strip()
+    if not schema or not _SCHEMA_RE.match(schema) or schema == "public":
+        return
+
+    tables = [
+        f"""CREATE TABLE IF NOT EXISTS {schema}.trades (
+            id SERIAL PRIMARY KEY, symbol VARCHAR(20), company_name TEXT, sector TEXT,
+            asset_type VARCHAR(20), date DATE, quantity DOUBLE PRECISION, entry_price DOUBLE PRECISION,
+            exit_price DOUBLE PRECISION DEFAULT 0, current_price DOUBLE PRECISION DEFAULT 0,
+            strategy VARCHAR(20), status VARCHAR(10) DEFAULT 'Open', exit_date DATE, notes TEXT
+        )""",
+        f"CREATE TABLE IF NOT EXISTS {schema}.deposits (id SERIAL PRIMARY KEY, date DATE, amount DOUBLE PRECISION, note TEXT)",
+        f"CREATE TABLE IF NOT EXISTS {schema}.withdrawals (id SERIAL PRIMARY KEY, date DATE, amount DOUBLE PRECISION, note TEXT)",
+        f"CREATE TABLE IF NOT EXISTS {schema}.returnsgrants (id SERIAL PRIMARY KEY, date DATE, symbol VARCHAR(20), company_name TEXT, amount DOUBLE PRECISION, note TEXT)",
+        f"CREATE TABLE IF NOT EXISTS {schema}.watchlist (symbol VARCHAR(20) PRIMARY KEY, target_price DOUBLE PRECISION, note TEXT)",
+        f"CREATE TABLE IF NOT EXISTS {schema}.investmentthesis (symbol VARCHAR(20) PRIMARY KEY, thesis_text TEXT, target_price DOUBLE PRECISION, recommendation VARCHAR(20), last_updated DATE)",
+        f"""CREATE TABLE IF NOT EXISTS {schema}.financialstatements (
+            symbol VARCHAR(20), date DATE,
+            revenue DOUBLE PRECISION, net_income DOUBLE PRECISION,
+            period_type VARCHAR(20) DEFAULT 'Annual',
+            source VARCHAR(20) DEFAULT 'Auto',
+            PRIMARY KEY(symbol, date, period_type)
+        )""",
+    ]
+
+    with get_db() as conn:
+        if not conn:
+            return
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"CREATE SCHEMA IF NOT EXISTS {schema};")
+                for t in tables:
+                    cur.execute(t)
+            conn.commit()
+        except Exception as e:
+            log_exception(e, "init_tenant_schema failed")
 
 # =========================================================
 # 2) أدوات التعامل مع الأسماء (Table Name Normalizer)
@@ -299,7 +405,7 @@ def init_db():
     إنشاء جميع الجداول الأساسية. يتم استخدام lowercase لتفادي مشاكل Postgres.
     """
     tables = [
-        "CREATE TABLE IF NOT EXISTS users (username VARCHAR(50) PRIMARY KEY, password TEXT, email TEXT)",
+        "CREATE TABLE IF NOT EXISTS users (username VARCHAR(50) PRIMARY KEY, password TEXT, email TEXT, schema_name VARCHAR(64) DEFAULT 'public') PRIMARY KEY, password TEXT, email TEXT)",
         """CREATE TABLE IF NOT EXISTS trades (
             id SERIAL PRIMARY KEY, symbol VARCHAR(20), company_name TEXT, sector TEXT,
             asset_type VARCHAR(20), date DATE, quantity DOUBLE PRECISION, entry_price DOUBLE PRECISION,
@@ -327,22 +433,56 @@ def init_db():
                     cur.execute(t)
             conn.commit()
 
+
+    # ✅ ترقية جدول المستخدمين (للتوافق مع النسخ القديمة)
+    try:
+        execute_query("ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT", ())
+        execute_query("ALTER TABLE users ADD COLUMN IF NOT EXISTS schema_name VARCHAR(64) DEFAULT 'public'", ())
+    except Exception as e:
+        log_exception(e, "Ignored users migration", level="DEBUG")
+
     migrate_financial_schema()
 
 
 # =========================================================
 # 5) المصادقة والأمان (Auth)
 # =========================================================
-def db_create_user(u, p):
+def db_create_user(username: str, code: str, email: str = "", *, force_public: bool = False) -> bool:
+    """Create user in public.users.
+
+    - `code` is the login code (stored as bcrypt hash in `password` column for backward compatibility)
+    - For existing deployments, keeping data safe:
+        * current/legacy users remain on `public` schema (no migration)
+        * new users get their own schema (tenant) unless `force_public=True`
+    """
+    u = str(username or "").strip()
+    c = str(code or "").strip()
+    em = str(email or "").strip()
+    if not u or not c:
+        return False
+
+    # منع تكرار المستخدم
+    if db_user_exists(u):
+        return False
+
+    schema = "public" if force_public else _safe_schema_name(u)
+
     try:
-        h = bcrypt.hashpw(p.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-        return execute_query("INSERT INTO Users (username, password) VALUES (%s, %s)", (u, h))
+        h = bcrypt.hashpw(c.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+        ok = execute_query(
+            "INSERT INTO public.users (username, password, email, schema_name) VALUES (%s, %s, %s, %s)",
+            (u, h, em, schema),
+        )
+        if ok and schema != "public":
+            init_tenant_schema(schema)
+        return bool(ok)
     except Exception as e:
-        print(f"Create User Error: {e}")
+        log_exception(e, "Create User Error")
         return False
 
 
 def db_verify_user(u, p):
+(u, p):
     """
     التحقق من المستخدم.
     """
@@ -351,7 +491,7 @@ def db_verify_user(u, p):
             return False
         try:
             with conn.cursor() as cur:
-                cur.execute("SELECT password FROM users WHERE username = %s", (u,))
+                cur.execute("SELECT password FROM public.users WHERE username = %s", (u,))
                 res = cur.fetchone()
                 if res and res[0]:
                     return bcrypt.checkpw(p.encode("utf-8"), res[0].encode("utf-8"))
