@@ -7,7 +7,7 @@ import time
 import os
 import re
 
-from database import db_verify_user, db_create_user, fetch_table
+from database import db_verify_user, db_create_user, db_get_user_schema, db_user_exists
 from config import APP_NAME, APP_ICON
 
 
@@ -39,19 +39,17 @@ def _validate_username(u: str):
 
 def _validate_password(p: str):
     p = (p or "")
-    if len(p) < 6:
-        return False, "كلمة المرور قصيرة جداً (6 أحرف على الأقل)"
+    if len(p) < 4:
+        return False, "رمز الدخول قصير جداً (4 أحرف/أرقام على الأقل)"
     return True, ""
 
 
 def _user_exists_in_db(username: str) -> bool:
     try:
-        df = fetch_table("users")
-        if df is None or df.empty or "username" not in df.columns:
-            return False
-        return (df["username"].astype(str) == str(username)).any()
+        return bool(db_user_exists(username))
     except Exception:
         return False
+
 
 
 # ============================================================
@@ -106,6 +104,7 @@ def _bootstrap_auth_from_cookie():
         if _user_exists_in_db(cookie_user):
             s["username"] = cookie_user
             s["authenticated"] = True
+            s["db_schema"] = db_get_user_schema(cookie_user)
             s["_auth_bootstrapped"] = True
             return
         else:
@@ -194,7 +193,7 @@ def login_system():
         with t1:
             with st.form("login_form"):
                 u = st.text_input("المستخدم", key="login_user")
-                p = st.text_input("كلمة المرور", type="password", key="login_pass")
+                p = st.text_input("رمز الدخول", type="password", key="login_pass")
                 rem = st.checkbox("تذكرني", value=True)
 
                 if st.form_submit_button("دخول", type="primary"):
@@ -207,13 +206,14 @@ def login_system():
                     p = (p or "")
 
                     if not u or not p:
-                        st.error("أدخل اسم المستخدم وكلمة المرور.")
+                        st.error("أدخل اسم المستخدم ورمز الدخول.")
                         _register_login_attempt()
                         return False
 
                     if db_verify_user(u, p):
                         st.session_state["username"] = u
                         st.session_state["authenticated"] = True
+                        st.session_state["db_schema"] = db_get_user_schema(u)
 
                         if rem:
                             expires = datetime.datetime.now() + datetime.timedelta(days=30)
@@ -232,11 +232,13 @@ def login_system():
         # ---------------------
         with t2:
             with st.form("signup_form"):
-                nu = st.text_input("مستخدم جديد", key="signup_user")
-                npw = st.text_input("كلمة مرور جديدة", type="password", key="signup_pass")
+                nu = st.text_input("اسم المستخدم", key="signup_user")
+                em = st.text_input("البريد الإلكتروني (اختياري)", key="signup_email")
+                npw = st.text_input("رمز دخول جديد", type="password", key="signup_pass")
 
                 if st.form_submit_button("إنشاء"):
                     nu = (nu or "").strip()
+                    em = (em or "").strip()
                     npw = (npw or "")
 
                     ok_u, msg_u = _validate_username(nu)
@@ -253,7 +255,7 @@ def login_system():
                         st.error("اسم المستخدم موجود مسبقاً.")
                         return False
 
-                    if db_create_user(nu, npw):
+                    if db_create_user(nu, npw, em):
                         st.success("تم الإنشاء! سجل دخولك الآن.")
                     else:
                         st.error("حدث خطأ أثناء إنشاء المستخدم.")
