@@ -5,22 +5,63 @@ import pandas as pd
 import numpy as np
 
 def _ensure_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    يطبع أسماء الأعمدة إلى Open/High/Low/Close/Volume
-    ويفك MultiIndex إذا موجود.
-    """
-    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
-        return df
+    """Ensure OHLCV columns exist.
 
-    # فك MultiIndex الأعمدة (أحياناً من yfinance)
-    try:
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = [str(c[-1]) for c in df.columns]
-    except Exception as e:
-        log_exception(e, "Ignored exception", level="DEBUG")
-    cols = {c: c for c in df.columns}
-    lower = {str(c).lower(): c for c in df.columns}
+    The AI engine expects: Open, High, Low, Close, Volume.
+    Some sources (or edge cases) may return only Close/Adj Close.
+    We normalize common alternatives and, if still missing, synthesize
+    missing OHLC from Close to avoid hard failures.
+    """
+    if df is None or df.empty:
+        return pd.DataFrame()
 
+    df = df.copy()
+
+    # Flatten MultiIndex columns from yfinance sometimes: ('Price','Open') etc.
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = [c[-1] if isinstance(c, tuple) else c for c in df.columns]
+
+    # Normalize common names (case-insensitive)
+    rename = {}
+    for c in list(df.columns):
+        lc = str(c).strip().lower()
+        if lc == "adj close":
+            rename[c] = "Adj Close"
+        elif lc == "open":
+            rename[c] = "Open"
+        elif lc == "high":
+            rename[c] = "High"
+        elif lc == "low":
+            rename[c] = "Low"
+        elif lc == "close":
+            rename[c] = "Close"
+        elif lc == "volume":
+            rename[c] = "Volume"
+    if rename:
+        df.rename(columns=rename, inplace=True)
+
+    # If Close missing but Adj Close exists, use it
+    if "Close" not in df.columns and "Adj Close" in df.columns:
+        df["Close"] = df["Adj Close"]
+
+    # Synthesize missing OHLC from Close when necessary (safe fallback)
+    if "Close" in df.columns:
+        for c in ["Open", "High", "Low"]:
+            if c not in df.columns:
+                df[c] = df["Close"]
+
+    # Volume optional: if missing, fill zeros
+    if "Volume" not in df.columns:
+        df["Volume"] = 0
+
+    # Ensure required columns order exists
+    req = ["Open", "High", "Low", "Close", "Volume"]
+    for c in req:
+        if c not in df.columns:
+            # If we still miss something, keep old strictness message but don't crash upstream
+            df[c] = 0
+
+    return df
     def pick(*names):
         for n in names:
             if n in cols:
