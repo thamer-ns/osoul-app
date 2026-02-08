@@ -197,15 +197,35 @@ def _sym_key(sym: str) -> str:
     return (sym or "").replace(".", "_").replace("-", "_").replace(" ", "_")
 
 def _normalize_symbol(sym: str) -> str:
-    sym = (sym or "").strip().upper()
-    if not sym:
+    """Normalize user/UI symbols to canonical '####.SR' (or '^TASI.SR')."""
+    s = (sym or "").strip().upper()
+    if not s:
         return ""
-    if sym.isdigit():
-        return f"{sym}.SR"
-    sym = sym.replace(" ", "").replace("-", "")
-    if sym.endswith("SR") and ".SR" not in sym:
-        sym = sym.replace("SR", ".SR")
-    return sym
+    s = s.replace(" ", "").replace("-", "")
+
+    # Google Finance style: TADAWUL:7202
+    if ":" in s and not s.startswith("^"):
+        _h, tail = s.split(":", 1)
+        tail = (tail or "").strip()
+        if tail:
+            s = tail
+
+    # UI style: SR.7202
+    if s.startswith("SR."):
+        s = s[3:]
+
+    # Index
+    if s in ["TASI", ".TASI", "^TASI", "^TASI.SR", "TASI.SR"]:
+        return "^TASI.SR"
+
+    if s.isdigit():
+        return f"{s}.SR"
+
+    if s.endswith("SR") and ".SR" not in s:
+        s = s[:-2] + ".SR"
+
+    # if user typed 1120.SR already, keep it
+    return s
 
 def _safe_status_series(df: pd.DataFrame) -> pd.Series:
     if df is None or df.empty or "status" not in df.columns:
