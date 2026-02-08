@@ -1,7 +1,7 @@
-# ai_engine_core/scoring.py
+# ai_engine_core/scenarios.py
 from __future__ import annotations
 
-from typing import Any, Dict, Tuple, List
+from typing import Any, Dict, List, Optional
 
 
 def _to_float(x: Any, default: float = 0.0) -> float:
@@ -36,172 +36,217 @@ def _clamp(v: float, lo: float = 0.0, hi: float = 100.0) -> float:
     return v
 
 
-def _score_from_pack(pack: Dict[str, Any]) -> float:
-    """
-    Standardize extracting 'score' from a pack.
-    Pack contract (best-effort):
-      - pack["score"] may exist and be 0..100
-      - else compute a heuristic based on evidence length + ok flags
-    """
-    if not isinstance(pack, dict) or not pack:
+def _price_from_df(price_df) -> float:
+    try:
+        if price_df is None:
+            return 0.0
+        if getattr(price_df, "empty", True):
+            return 0.0
+        for c in ["Close", "close", "Adj Close", "adj_close", "last", "Last"]:
+            if c in price_df.columns:
+                return _to_float(price_df[c].iloc[-1], 0.0)
+        last_row = price_df.iloc[-1]
+        for v in list(last_row.values)[::-1]:
+            fv = _to_float(v, 0.0)
+            if fv > 0:
+                return fv
+        return 0.0
+    except Exception:
         return 0.0
 
-    # direct score
-    s = pack.get("score", None)
-    if s is not None:
-        return _clamp(_to_float(s, 0.0), 0.0, 100.0)
 
-    # heuristic fallback
-    ok = pack.get("ok", True)
-    evidence = pack.get("evidence", []) or []
-    evn = len(evidence) if isinstance(evidence, list) else 0
+def _levels_from_pack(tech_pack: Dict[str, Any]) -> Dict[str, List[float]]:
+    """Extract best-effort support/resistance levels from the technical pack."""
+    supports: List[float] = []
+    resistances: List[float] = []
 
-    base = 50.0
-    if ok is False:
-        base -= 15.0
-    base += min(evn * 2.0, 20.0)  # up to +20
+    if not isinstance(tech_pack, dict):
+        return {"support": supports, "resistance": resistances}
 
-    return _clamp(base, 0.0, 100.0)
+    # common keys we might have in different implementations
+    for k in ["support_levels", "supports", "support", "sr_support", "demand_zones", "zones_support"]:
+        v = tech_pack.get(k)
+        if isinstance(v, list):
+            supports += [_to_float(x, 0.0) for x in v]
+        elif isinstance(v, (int, float, str)):
+            supports.append(_to_float(v, 0.0))
 
+    for k in ["resistance_levels", "resistances", "resistance", "sr_resistance", "supply_zones", "zones_resistance"]:
+        v = tech_pack.get(k)
+        if isinstance(v, list):
+            resistances += [_to_float(x, 0.0) for x in v]
+        elif isinstance(v, (int, float, str)):
+            resistances.append(_to_float(v, 0.0))
 
-def _weight_map() -> Dict[str, float]:
-    """
-    Default weights. Adjust later if needed.
-    """
-    return {
-        "technical": 0.40,
-        "fundamental": 0.35,
-        "vsa": 0.15,
-        "risk": 0.10,  # risk here is a modifier pack
-    }
+    # pivots sometimes include S1/S2/R1/R2
+    piv = tech_pack.get("pivots")
+    if isinstance(piv, dict):
+        for kk in ["S1", "S2", "S3", "PP"]:
+            if kk in piv:
+                supports.append(_to_float(piv.get(kk), 0.0))
+        for kk in ["R1", "R2", "R3"]:
+            if kk in piv:
+                resistances.append(_to_float(piv.get(kk), 0.0))
 
+    # clean
+    supports = sorted([x for x in supports if x > 0], reverse=True)
+    resistances = sorted([x for x in resistances if x > 0])
 
-def _risk_adjustment(risk_pack: Dict[str, Any]) -> Tuple[float, List[str]]:
-    """
-    Convert risk issues into a penalty factor.
-    Returns: (penalty_points, issues_list)
-    """
-    issues = []
-    penalty = 0.0
+    # de-dup with rounding
+    def _dedup(vals: List[float]) -> List[float]:
+        out = []
+        seen = set()
+        for x in vals:
+            key = round(float(x), 3)
+            if key not in seen:
+                out.append(float(x))
+                seen.add(key)
+        return out
 
-    if isinstance(risk_pack, dict):
-        # common keys
-        risk_score = risk_pack.get("risk_score", None)
-        if risk_score is not None:
-            # risk_score expected 0..100 (higher risk)
-            rs = _clamp(_to_float(risk_score, 0.0), 0.0, 100.0)
-            # map to penalty 0..25
-            penalty += (rs / 100.0) * 25.0
-
-        iss = risk_pack.get("issues", None)
-        if isinstance(iss, list):
-            issues.extend([str(x) for x in iss if str(x).strip()][:10])
-
-        # sometimes flags
-        if risk_pack.get("ok") is False:
-            penalty += 5.0
-
-    penalty = _clamp(penalty, 0.0, 35.0)
-    return float(penalty), issues
+    return {"support": _dedup(supports)[:5], "resistance": _dedup(resistances)[:5]}
 
 
-def compute_osoli_score(symbol: str, packs: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Main API expected by ai_engine_core.reporting.py
+def build_scenarios(
+    symbol: str,
+    packs: Optional[Dict[str, Any]] = None,
+    price_df=None,
+) -> List[Dict[str, Any]]:
+    """Build simple, explainable scenarios.
 
-    Input:
-      symbol: str
-      packs: dict with keys like:
-        - packs["technical"] -> dict (score/evidence/ok/notes)
-        - packs["fundamental"] -> dict
-        - packs["vsa"] -> dict
-        - packs["risk"] -> dict (risk_score/issues)
+    This module exists primarily to satisfy the refactor in reporting.py:
+      from .scenarios import build_scenarios
 
-    Output dict (stable):
-      {
-        "ok": bool,
-        "symbol": str,
-        "score": float (0..100),
-        "rating": str,
-        "signals": {...},
-        "components": {...},
-        "penalties": {...},
-        "notes": str
-      }
+    It is intentionally best-effort and never raises.
     """
     sym = str(symbol or "").strip().upper()
     packs = packs or {}
-
-    weights = _weight_map()
 
     tech = packs.get("technical") or {}
     fund = packs.get("fundamental") or {}
     vsa = packs.get("vsa") or {}
     risk = packs.get("risk") or {}
 
-    tech_s = _score_from_pack(tech)
-    fund_s = _score_from_pack(fund)
-    vsa_s = _score_from_pack(vsa)
+    price = _price_from_df(price_df)
+    if price <= 0:
+        price = _to_float((tech or {}).get("price", 0.0), 0.0)
 
-    # weighted base score
-    base = (
-        tech_s * weights["technical"]
-        + fund_s * weights["fundamental"]
-        + vsa_s * weights["vsa"]
-    )
+    levels = _levels_from_pack(tech)
+    supports = levels.get("support", [])
+    resistances = levels.get("resistance", [])
 
-    # risk penalty
-    penalty, risk_issues = _risk_adjustment(risk)
-    score = _clamp(base - penalty, 0.0, 100.0)
+    # confidence heuristic from available packs
+    avail = 0
+    for k in [tech, fund, vsa, risk]:
+        if isinstance(k, dict) and k:
+            avail += 1
+    base_conf = 0.35 + (avail / 4.0) * 0.5  # 0.35..0.85
+    base_conf = _clamp(base_conf, 0.2, 0.9)
 
-    # rating buckets
-    if score >= 80:
-        rating = "A"
-    elif score >= 70:
-        rating = "B"
-    elif score >= 55:
-        rating = "C"
-    elif score >= 40:
-        rating = "D"
+    scenarios: List[Dict[str, Any]] = []
+
+    # Determine bias from scores if present
+    tech_s = _to_float((tech or {}).get("score", 0.0), 0.0)
+    fund_s = _to_float((fund or {}).get("score", 0.0), 0.0)
+    vsa_s = _to_float((vsa or {}).get("score", 0.0), 0.0)
+
+    bullish_votes = sum([1 for s in [tech_s, fund_s, vsa_s] if s >= 60])
+    bearish_votes = sum([1 for s in [tech_s, fund_s, vsa_s] if s <= 40])
+    if bullish_votes > bearish_votes:
+        bias = "bullish"
+    elif bearish_votes > bullish_votes:
+        bias = "bearish"
     else:
-        rating = "E"
+        bias = "neutral"
 
-    # simple signals
-    signals = {
-        "technical_bias": "bullish" if tech_s >= 65 else ("bearish" if tech_s <= 35 else "neutral"),
-        "fundamental_bias": "bullish" if fund_s >= 65 else ("bearish" if fund_s <= 35 else "neutral"),
-        "vsa_bias": "bullish" if vsa_s >= 60 else ("bearish" if vsa_s <= 40 else "neutral"),
-        "risk_level": "high" if penalty >= 18 else ("medium" if penalty >= 9 else "low"),
-    }
+    # helpers to pick levels around price
+    def _nearest_above(vals: List[float], p: float) -> float:
+        for x in sorted(vals):
+            if x > p:
+                return x
+        return 0.0
 
-    components = {
-        "technical": float(round(tech_s, 2)),
-        "fundamental": float(round(fund_s, 2)),
-        "vsa": float(round(vsa_s, 2)),
-        "base_weighted": float(round(base, 2)),
-    }
+    def _nearest_below(vals: List[float], p: float) -> float:
+        for x in sorted(vals, reverse=True):
+            if x < p:
+                return x
+        return 0.0
 
-    penalties = {
-        "risk_penalty": float(round(penalty, 2)),
-        "risk_issues": risk_issues,
-    }
+    r1 = _nearest_above(resistances, price) if price > 0 else (resistances[0] if resistances else 0.0)
+    s1 = _nearest_below(supports, price) if price > 0 else (supports[0] if supports else 0.0)
 
-    notes = ""
-    if isinstance(tech, dict) and tech.get("notes"):
-        notes += f"TECH: {str(tech.get('notes')).strip()}  "
-    if isinstance(fund, dict) and fund.get("notes"):
-        notes += f"FUND: {str(fund.get('notes')).strip()}  "
-    if isinstance(vsa, dict) and vsa.get("notes"):
-        notes += f"VSA: {str(vsa.get('notes')).strip()}  "
+    # --- Scenario 1: Breakout ---
+    if price > 0 and r1 > 0:
+        entry = r1
+        stop = s1 if s1 > 0 else price * 0.94
+        t1 = entry * 1.03
+        t2 = entry * 1.06
+        scenarios.append({
+            "name": "اختراق مقاومة",
+            "type": "breakout",
+            "bias": "bullish",
+            "entry": float(round(entry, 4)),
+            "stop": float(round(stop, 4)),
+            "targets": [float(round(t1, 4)), float(round(t2, 4))],
+            "confidence": float(round(base_conf * (0.9 if bias == "bearish" else 1.0), 2)),
+            "rationale": [
+                f"الدخول بعد اختراق/إغلاق فوق المقاومة {round(r1, 4)}.",
+                "الوقف أسفل أقرب دعم/منطقة طلب أو نسبة ثابتة إذا لم تتوفر مستويات.",
+            ],
+        })
 
-    out = {
-        "ok": True,
-        "symbol": sym,
-        "score": float(round(score, 2)),
-        "rating": rating,
-        "signals": signals,
-        "components": components,
-        "penalties": penalties,
-        "notes": notes.strip(),
-    }
-    return out
+    # --- Scenario 2: Pullback to support ---
+    if price > 0 and s1 > 0:
+        entry = s1
+        stop = entry * 0.97
+        t1 = price if price > entry else entry * 1.02
+        t2 = (r1 if r1 > 0 else entry * 1.05)
+        scenarios.append({
+            "name": "ارتداد من دعم",
+            "type": "pullback",
+            "bias": "bullish" if bias != "bearish" else "neutral",
+            "entry": float(round(entry, 4)),
+            "stop": float(round(stop, 4)),
+            "targets": [float(round(t1, 4)), float(round(t2, 4))],
+            "confidence": float(round(base_conf, 2)),
+            "rationale": [
+                f"الدخول قرب الدعم {round(s1, 4)} مع إشارة انعكاس/تأكيد.",
+                "الوقف تحت الدعم بنسبة بسيطة لإدارة المخاطر.",
+            ],
+        })
+
+    # --- Scenario 3: Breakdown / rejection ---
+    if price > 0:
+        # Use support if available, else use 3% below price
+        breakdown = s1 if s1 > 0 else price * 0.97
+        stop = r1 if r1 > 0 else price * 1.03
+        t1 = breakdown * 0.98
+        t2 = breakdown * 0.95
+        scenarios.append({
+            "name": "كسر دعم / رفض من مقاومة",
+            "type": "breakdown",
+            "bias": "bearish",
+            "entry": float(round(breakdown, 4)),
+            "stop": float(round(stop, 4)),
+            "targets": [float(round(t1, 4)), float(round(t2, 4))],
+            "confidence": float(round(base_conf * (1.0 if bias == "bearish" else 0.85), 2)),
+            "rationale": [
+                "سيناريو دفاعي: في حال كسر دعم مهم أو ظهور رفض قوي من مقاومة.",
+                "يُستخدم كتخفيض مخاطرة/خروج أو للبيع للمضارب المتقدم.",
+            ],
+        })
+
+    # attach risk gate context if present
+    try:
+        rg = packs.get("risk") or {}
+        if isinstance(rg, dict) and rg:
+            for sc in scenarios:
+                sc["risk_level"] = rg.get("risk_level", "")
+                sc["risk_score"] = _to_float(rg.get("risk_score", 0.0), 0.0)
+    except Exception:
+        pass
+
+    # ensure stable output
+    for sc in scenarios:
+        sc["symbol"] = sym
+
+    return scenarios[:5]
