@@ -32,6 +32,34 @@ from analytics import (
 from market_data import get_chart_history
 
 # ========================================================
+# ✅ Yahoo diagnostics wrappers (defined early to avoid ImportError
+# in case of circular imports / partial initialization)
+# ========================================================
+from typing import Any, Dict
+
+
+def get_last_yahoo_diagnostics() -> Dict[str, Any]:
+    """Return last Yahoo diagnostics snapshot (best-effort).
+
+    Defined *early* so `from views.shared import get_last_yahoo_diagnostics`
+    never fails even if this module is partially initialized.
+    """
+    try:
+        from financial_analysis.yahoo_data import get_last_yahoo_diagnostics as _g  # type: ignore
+        return _g() or {}
+    except Exception:
+        return {}
+
+
+def diagnose_quote_summary(symbol: str) -> Dict[str, Any]:
+    """Run a lightweight quote/summary diagnosis (best-effort)."""
+    try:
+        from financial_analysis.yahoo_data import diagnose_quote_summary as _d  # type: ignore
+        return _d(symbol) or {}
+    except Exception:
+        return {}
+
+# ========================================================
 # 🛡️ Fail-Safe Imports (كما في ملفك)
 # ========================================================
 
