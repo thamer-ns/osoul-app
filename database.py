@@ -15,6 +15,8 @@ import streamlit as st
 import bcrypt
 from contextlib import contextmanager
 import re
+import os
+import sqlite3
 import config  # ربط ملف الإعدادات
 from osoli_logging import get_logger, log_exception
 
@@ -22,16 +24,22 @@ from osoli_logging import get_logger, log_exception
 # =========================================================
 # 1) إعداد الاتصال (Connection Setup)
 # =========================================================
+_DB_MODE = "postgres"  # or "sqlite"
+_SQLITE_PATH = os.path.join(os.path.dirname(__file__), "osoul_local.db")
+
+
 @st.cache_resource
 def get_connection_pool():
-    """
-    Connection pool (cached) for Streamlit using PostgreSQL.
-    """
-    if psycopg2 is None:
-        st.error("⚠️ مكتبة psycopg2 غير مثبتة. ثبّت psycopg2-binary داخل requirements.txt أو فعّل بيئة Postgres.")
-        return None
+    """Return a Postgres connection pool if DATABASE_URL exists.
 
-    # محاولة الحصول على DATABASE_URL من config أو من دالة get_db_url إن وُجدت
+    Streamlit Cloud deployments sometimes run without Secrets/Env configured.
+    In that case we **fallback to SQLite** so the app stays usable (login, watchlist,
+    basic trades) instead of crashing.
+    """
+
+    global _DB_MODE
+
+    # Try DATABASE_URL from config/env.
     db_url = getattr(config, "DB_CONNECTION_URL", None)
     if not db_url and hasattr(config, "get_db_url"):
         try:
@@ -39,8 +47,16 @@ def get_connection_pool():
         except Exception:
             db_url = None
 
+    # If missing -> SQLite fallback (no error, just warning once).
     if not db_url:
-        st.error("⚠️ لم يتم العثور على رابط قاعدة البيانات. ضع DATABASE_URL في Secrets أو Environment Variables")
+        _DB_MODE = "sqlite"
+        st.warning("⚠️ لا يوجد DATABASE_URL — تم استخدام SQLite محليًا (osoul_local.db) تلقائيًا.")
+        return None
+
+    # If psycopg2 missing -> SQLite fallback.
+    if psycopg2 is None or pool is None:
+        _DB_MODE = "sqlite"
+        st.warning("⚠️ psycopg2 غير متاح — تم استخدام SQLite محليًا (osoul_local.db) تلقائيًا.")
         return None
 
     try:
@@ -52,10 +68,29 @@ def get_connection_pool():
 
 @contextmanager
 def get_db():
-    """
-    Yield a db connection from pool and return it back to pool.
+    """Yield a DB connection.
+
+    - Postgres: from connection pool
+    - SQLite fallback: sqlite3 connection
     """
     p = get_connection_pool()
+
+    # SQLite mode
+    if p is None and _DB_MODE == "sqlite":
+        conn = None
+        try:
+            conn = sqlite3.connect(_SQLITE_PATH, check_same_thread=False)
+            yield conn
+        finally:
+            try:
+                if conn is not None:
+                    conn.commit()
+                    conn.close()
+            except Exception:
+                pass
+        return
+
+    # Postgres mode
     if p is None:
         yield None
         return
@@ -107,9 +142,19 @@ def execute_query(query: str, params: tuple = ()):
         if not conn:
             return False
         try:
-            with conn.cursor() as cur:
-                cur.execute(query, params)
-            conn.commit()
+            q = query
+            p = params
+
+            # SQLite compatibility: convert %s placeholders to ?
+            if _DB_MODE == "sqlite":
+                q = re.sub(r"%s", "?", q)
+
+            cur = conn.cursor()
+            cur.execute(q, p)
+            try:
+                conn.commit()
+            except Exception:
+                pass
             return True
         except Exception as e:
             try:
@@ -231,6 +276,82 @@ def init_db():
     """
     إنشاء جميع الجداول الأساسية.
     """
+
+    # -----------------------------------------------------
+    # SQLite fallback DDL (keeps the app functional without DATABASE_URL)
+    # -----------------------------------------------------
+    if _DB_MODE == "sqlite":
+        sqlite_tables = [
+            """CREATE TABLE IF NOT EXISTS users (
+                username TEXT PRIMARY KEY,
+                password TEXT,
+                email TEXT,
+                schema_name TEXT DEFAULT 'public'
+            )""",
+            """CREATE TABLE IF NOT EXISTS trades (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT,
+                company_name TEXT,
+                sector TEXT,
+                asset_type TEXT,
+                date TEXT,
+                quantity REAL,
+                entry_price REAL,
+                exit_price REAL DEFAULT 0,
+                current_price REAL DEFAULT 0,
+                strategy TEXT,
+                status TEXT DEFAULT 'Open',
+                notes TEXT,
+                created_at TEXT DEFAULT (datetime('now'))
+            )""",
+            """CREATE TABLE IF NOT EXISTS portfolio (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT,
+                quantity REAL,
+                avg_price REAL,
+                created_at TEXT DEFAULT (datetime('now'))
+            )""",
+            """CREATE TABLE IF NOT EXISTS watchlist (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT,
+                created_at TEXT DEFAULT (datetime('now'))
+            )""",
+            """CREATE TABLE IF NOT EXISTS financialstatements (
+                symbol TEXT,
+                date TEXT,
+                period_type TEXT,
+                revenue REAL DEFAULT 0,
+                net_income REAL DEFAULT 0,
+                total_assets REAL DEFAULT 0,
+                total_liabilities REAL DEFAULT 0,
+                total_equity REAL DEFAULT 0,
+                operating_cash_flow REAL DEFAULT 0,
+                debt REAL DEFAULT 0,
+                current_assets REAL DEFAULT 0,
+                current_liabilities REAL DEFAULT 0,
+                gross_profit REAL DEFAULT 0,
+                operating_income REAL DEFAULT 0,
+                interest_expense REAL DEFAULT 0,
+                source TEXT DEFAULT 'Unknown',
+                raw_json TEXT,
+                created_at TEXT DEFAULT (datetime('now')),
+                PRIMARY KEY (symbol, date, period_type)
+            )""",
+        ]
+
+        with get_db() as conn:
+            if not conn:
+                return False
+            try:
+                cur = conn.cursor()
+                for t in sqlite_tables:
+                    cur.execute(t)
+                conn.commit()
+                return True
+            except Exception as e:
+                log_exception(e, "SQLite init_db failed", level="ERROR")
+                return False
+
     tables = [
         # ✅ users: lowercase + schema_name داخل الجدول
         "CREATE TABLE IF NOT EXISTS users (username VARCHAR(50) PRIMARY KEY, password TEXT, email TEXT, schema_name VARCHAR(64) DEFAULT 'public')",
