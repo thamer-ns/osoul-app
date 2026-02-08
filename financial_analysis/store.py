@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional
 
 import pandas as pd
 
-from database import execute_query, fetch_table
+from database import execute_query, fetch_table, get_db_mode
 from market_data import get_ticker_symbol
 from .utils import _safe_date_str
 
@@ -125,7 +125,8 @@ def ensure_financialstatements_raw_table() -> None:
     وبالتالي جملة ON CONFLICT تفشل (no unique constraint).
     لذلك ننشئ Unique Index بشكل آمن (IF NOT EXISTS) حتى لو كان الجدول موجود مسبقًا.
     """
-    ddl = f"""
+    # Postgres/Supabase DDL
+    ddl_pg = f"""
     CREATE TABLE IF NOT EXISTS {_TABLE_NAME} (
         id BIGSERIAL PRIMARY KEY,
         symbol TEXT NOT NULL,
@@ -137,20 +138,38 @@ def ensure_financialstatements_raw_table() -> None:
         source TEXT,
         data_json JSONB NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE(symbol, statement, period_type, as_of, scale)
     );
     """
-    execute_query(ddl)
 
-    # ✅ Ensure unique index exists for UPSERT (even if table existed before)
-    try:
-        execute_query(
-            f"""CREATE UNIQUE INDEX IF NOT EXISTS {_TABLE_NAME}_uq
-            ON {_TABLE_NAME} (symbol, statement, period_type, as_of, scale);"""
-        )
-    except Exception:
-        pass
+    # SQLite fallback DDL (Streamlit Cloud without DATABASE_URL)
+    ddl_sqlite = f"""
+    CREATE TABLE IF NOT EXISTS {_TABLE_NAME} (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol TEXT NOT NULL,
+        statement TEXT NOT NULL,
+        period_type TEXT NOT NULL,
+        as_of TEXT NOT NULL,
+        scale TEXT NOT NULL DEFAULT 'raw',
+        currency TEXT,
+        source TEXT,
+        data_json TEXT NOT NULL,
+        created_at TEXT DEFAULT (datetime('now')),
+        updated_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(symbol, statement, period_type, as_of, scale)
+    );
+    """
 
+    mode = (get_db_mode() or "postgres").lower()
+    ok = False
+    if mode != "sqlite":
+        ok = bool(execute_query(ddl_pg))
+        if ok:
+            return
+
+    # If sqlite mode (or postgres DDL failed), try SQLite DDL.
+    execute_query(ddl_sqlite)
     return
 
 
@@ -188,6 +207,26 @@ def save_full_statement_record(
 
     payload = json.dumps(data or {}, ensure_ascii=False)
 
+    mode = (get_db_mode() or "postgres").lower()
+
+    if mode == "sqlite":
+        query = f"""
+        INSERT INTO {_TABLE_NAME}
+            (symbol, statement, period_type, as_of, scale, currency, source, data_json, updated_at)
+        VALUES
+            (%s, %s, %s, %s, %s, %s, %s, %s, datetime('now'))
+        ON CONFLICT(symbol, statement, period_type, as_of, scale)
+        DO UPDATE SET
+            currency = excluded.currency,
+            source = excluded.source,
+            data_json = excluded.data_json,
+            updated_at = datetime('now')
+        ;
+        """
+        params = (sym, st, ptype, as_of_d, sc, currency, source[:50], payload)
+        return bool(execute_query(query, params))
+
+    # Postgres
     query = f"""
     INSERT INTO {_TABLE_NAME}
         (symbol, statement, period_type, as_of, scale, currency, source, data_json, updated_at)
@@ -223,12 +262,21 @@ def fetch_full_statement_records(
     if sc not in ("raw", "thousands"):
         sc = "thousands"
 
-    query = f"""
-    SELECT as_of::text AS as_of, data_json
-    FROM {_TABLE_NAME}
-    WHERE symbol = %s AND statement = %s AND period_type = %s AND scale = %s
-    ORDER BY as_of DESC;
-    """
+    mode = (get_db_mode() or "postgres").lower()
+    if mode == "sqlite":
+        query = f"""
+        SELECT as_of AS as_of, data_json
+        FROM {_TABLE_NAME}
+        WHERE symbol = %s AND statement = %s AND period_type = %s AND scale = %s
+        ORDER BY as_of DESC;
+        """
+    else:
+        query = f"""
+        SELECT as_of::text AS as_of, data_json
+        FROM {_TABLE_NAME}
+        WHERE symbol = %s AND statement = %s AND period_type = %s AND scale = %s
+        ORDER BY as_of DESC;
+        """
     df = fetch_table(query, (sym, st, ptype, sc))
     if df is None or df.empty:
         return pd.DataFrame()
