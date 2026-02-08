@@ -459,7 +459,31 @@ def get_tasi_data():
     """
     Return a stable dict for TASI snapshot.
     """
-    return fetch_price_from_yahoo("^TASI.SR")
+    d = fetch_price_from_yahoo("^TASI.SR") or {}
+
+    # yfinance sometimes returns empty fast_info for indices.
+    # Fallback to a tiny history call to keep TASI from showing as 0.
+    try:
+        if _safe_float(d.get("price", 0.0)) <= 0:
+            h = yf.download(
+                "^TASI.SR",
+                period="5d",
+                interval="1d",
+                progress=False,
+                threads=False,
+                group_by="column",
+            )
+            h = _normalize_ohlcv_columns(h)
+            if h is not None and (not h.empty) and "Close" in h.columns:
+                price = float(_safe_float(h["Close"].iloc[-1]))
+                prev = float(_safe_float(h["Close"].iloc[-2])) if len(h) >= 2 else 0.0
+                if _is_reasonable_price(price):
+                    d["price"] = price
+                    d["prev_close"] = prev
+    except Exception as e:
+        log_exception(e, "Ignored exception", level="DEBUG")
+
+    return d
 
 
 def get_chart_history(symbol: str, interval: str = "1d", period: Optional[str] = None) -> pd.DataFrame:
