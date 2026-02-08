@@ -165,34 +165,69 @@ def execute_query(query: str, params: tuple = ()):
             return False
 
 
-def fetch_table(table_name: str) -> pd.DataFrame:
+def fetch_table(table_or_query, params: tuple = ()) -> pd.DataFrame:
+    """Fetch data as a DataFrame.
+
+    ✅ يدعم حالتين (توافق مع النسخ السليمة):
+    1) اسم جدول: fetch_table("trades")
+    2) استعلام SQL مع باراميترات: fetch_table("SELECT ... WHERE x=%s", (..,))
+
+    ملاحظة: في SQLite يتم تحويل %s إلى ? تلقائيًا.
     """
-    Read whole table as DataFrame. Tries:
-      1) exact
-      2) lowercase
-      3) normalized
-    """
-    name_raw = str(table_name or "").strip()
-    if not name_raw:
+
+    if table_or_query is None:
         return pd.DataFrame()
+
+    q = str(table_or_query).strip()
+    if not q:
+        return pd.DataFrame()
+
+    q_lower = q.lstrip().lower()
+    is_query = (
+        " " in q_lower
+        or "\n" in q_lower
+        or q_lower.startswith("select")
+        or q_lower.startswith("with")
+        or q_lower.startswith("pragma")
+        or q_lower.startswith("show")
+    )
 
     with get_db() as conn:
         if not conn:
             return pd.DataFrame()
 
+        # --- Query mode ---
+        if is_query:
+            try:
+                sql = q
+                if _DB_MODE == "sqlite":
+                    sql = re.sub(r"%s", "?", sql)
+                return pd.read_sql(sql, conn, params=params or ())
+            except Exception as e:
+                log_exception(e, "fetch_table(query) failed", level="ERROR")
+                return pd.DataFrame()
+
+        # --- Table-name mode ---
+        name_raw = q.strip().replace('"', "")
+        if not name_raw:
+            return pd.DataFrame()
+
+        # 0) Ensure safe identifier
+        if not _is_safe_identifier(name_raw):
+            maybe = normalize_sql_tables(name_raw).strip().replace('"', "")
+            if not _is_safe_identifier(maybe):
+                return pd.DataFrame()
+            name_raw = maybe
+
         # 1) Try exact
         try:
-            t = name_raw.strip().replace('"', "")
-            if _is_safe_identifier(t):
-                return pd.read_sql(f"SELECT * FROM {t}", conn)
+            return pd.read_sql(f"SELECT * FROM {name_raw}", conn)
         except Exception as e:
             log_exception(e, "Ignored DB read error (exact)", level="DEBUG")
 
         # 2) Try lowercase
         try:
-            t = name_raw.strip().replace('"', "").lower()
-            if _is_safe_identifier(t):
-                return pd.read_sql(f"SELECT * FROM {t}", conn)
+            return pd.read_sql(f"SELECT * FROM {name_raw.lower()}", conn)
         except Exception as e:
             log_exception(e, "Ignored DB read error (lowercase)", level="DEBUG")
 
@@ -204,6 +239,11 @@ def fetch_table(table_name: str) -> pd.DataFrame:
             return pd.read_sql(f"SELECT * FROM {t}", conn)
         except Exception:
             return pd.DataFrame()
+
+
+def get_db_mode() -> str:
+    """Return active DB mode: postgres|sqlite."""
+    return str(_DB_MODE or "postgres")
 
 
 # =========================================================
