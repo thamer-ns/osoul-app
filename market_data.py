@@ -30,6 +30,42 @@ def get_last_market_diagnostics() -> Dict[str, Any]:
     """Return last diagnostics for price-history fetching."""
     return dict(_LAST_MARKET_DIAGNOSTICS)
 
+
+# ------------------------------------------------------------
+# Diagnostics: live price snapshot (google/argaam/yahoo)
+# ------------------------------------------------------------
+_LAST_LIVE_DIAGNOSTICS: Dict[str, Any] = {
+    "ok": None, "when": None, "symbol_in": None, "symbol_norm": None,
+    "attempts": [], "error": None,
+}
+
+def _set_live_diag(**kw):
+    try:
+        _LAST_LIVE_DIAGNOSTICS.update(kw)
+    except Exception:
+        pass
+
+def get_last_live_diagnostics() -> Dict[str, Any]:
+    """Return last diagnostics for live price snapshot."""
+    return dict(_LAST_LIVE_DIAGNOSTICS)
+
+# ------------------------------------------------------------
+# Diagnostics: TASI snapshot
+# ------------------------------------------------------------
+_LAST_TASI_DIAGNOSTICS: Dict[str, Any] = {
+    "ok": None, "when": None, "attempts": [], "error": None, "price": 0.0, "prev_close": 0.0
+}
+
+def get_last_tasi_diagnostics() -> Dict[str, Any]:
+    return dict(_LAST_TASI_DIAGNOSTICS)
+
+def _set_tasi_diag(**kw):
+    try:
+        _LAST_TASI_DIAGNOSTICS.update(kw)
+    except Exception:
+        pass
+
+
 # ✅ Optional web deps (avoid crash in some deployments)
 try:
     import requests
@@ -87,21 +123,50 @@ def _http_get(url: str, timeout: int = 6, retries: int = 2, sleep: float = 0.6):
 # 🔤 Symbol Normalization (توحيد الرموز)
 # ============================================================
 def get_ticker_symbol(symbol: str) -> str:
-    """توحيد الرموز لتوافق Yahoo Finance"""
+    """Normalize symbols for data sources (Yahoo/Google/Argaam).
+
+    Accepts common user/UI formats:
+      - 1120, 1120.SR
+      - SR.1120 (some UI cards)
+      - TADAWUL:1120 / SA:1120 (Google Finance style)
+      - ^TASI / TASI / ^TASI.SR (index)
+    Returns a Yahoo-friendly symbol like 1120.SR or ^TASI.SR.
+    """
     s = str(symbol or "").strip().upper()
     if not s:
         return ""
 
-    if s in ["TASI", ".TASI", "^TASI", "^TASI.SR"]:
+    # Remove whitespace/dashes
+    s = s.replace(" ", "").replace("-", "")
+
+    # Google Finance style: TADAWUL:7202
+    if ":" in s and not s.startswith("^"):
+        _head, tail = s.split(":", 1)
+        tail = (tail or "").strip()
+        if tail:
+            s = tail
+
+    # UI style: SR.7202
+    if s.startswith("SR."):
+        s = s[3:]
+
+    # Index
+    if s in ["TASI", ".TASI", "^TASI", "^TASI.SR", "TASI.SR"]:
         return "^TASI.SR"
 
+    # Plain digits -> Saudi exchange suffix
     if s.isdigit():
         return f"{s}.SR"
 
-    if not s.startswith("^") and not s.endswith(".SR"):
-        return f"{s}.SR"
+    # Already has .SR suffix or is an index
+    if s.startswith("^") or s.endswith(".SR"):
+        return s
 
-    return s
+    # Some inputs may end with SR without dot
+    if s.endswith("SR") and not s.endswith(".SR"):
+        return s[:-2] + ".SR"
+
+    return f"{s}.SR"
 
 
 def _symbol_variants(symbol: str) -> List[str]:
@@ -162,163 +227,89 @@ def fetch_live_price_snapshot(symbol: str) -> Dict[str, Any]:
       1) Google Finance (TADAWUL)
       2) Argaam (أرقام) fallback
       3) Yahoo fast_info / history fallback
+
+    Diagnostics are stored in `get_last_live_diagnostics()`.
     """
-    sym = str(symbol or "").strip().upper()
-    if not sym:
+    sym_in = str(symbol or "").strip().upper()
+    if not sym_in:
+        _set_live_diag(ok=False, when=time.time(), symbol_in=sym_in, symbol_norm="", attempts=[], error="empty_symbol")
         return {"ok": False, "price": 0.0, "source": "none"}
 
+    sym_norm = get_ticker_symbol(sym_in)
+    attempts = []
+    err = None
+
     # 1) Google Finance
-    gf = fetch_google_finance_snapshot(sym) or {}
-    price = _safe_float(gf.get("price", 0.0))
-    if gf.get("ok") and _is_reasonable_price(price):
-        return {
-            "ok": True,
-            "price": float(price),
-            "prev_close": float(_safe_float(gf.get("prev_close", 0.0))) if _is_reasonable_price(_safe_float(gf.get("prev_close", 0.0))) else 0.0,
-            "year_high": 0.0,
-            "year_low": 0.0,
-            "source": "google_finance",
-            "url": gf.get("url", ""),
-        }
-
-    # 2) Argaam (price only)
-    p2 = fetch_price_from_argaam(sym)
-    if _is_reasonable_price(p2):
-        return {
-            "ok": True,
-            "price": float(p2),
-            "prev_close": float(p2),
-            "year_high": 0.0,
-            "year_low": 0.0,
-            "source": "argaam",
-        }
-
-    # 3) Yahoo (best-effort)
-    yd = fetch_price_from_yahoo(sym) or {}
-    price = _safe_float(yd.get("price", 0.0))
-    if _is_reasonable_price(price):
-        return {
-            "ok": True,
-            "price": float(price),
-            "prev_close": float(_safe_float(yd.get("prev_close", 0.0))),
-            "year_high": float(_safe_float(yd.get("year_high", 0.0))),
-            "year_low": float(_safe_float(yd.get("year_low", 0.0))),
-            "source": "yahoo",
-        }
-
-    # Yahoo history as last attempt (kept very light)
     try:
-        norm = get_ticker_symbol(sym)
-        h = yf.download(
-            norm,
-            period="5d",
-            interval="1d",
-            progress=False,
-            threads=False,
-            group_by="column",
-        )
-        h = _normalize_ohlcv_columns(h)
-        if not h.empty and "Close" in h.columns:
-            price = float(_safe_float(h["Close"].iloc[-1]))
-            prev = float(_safe_float(h["Close"].iloc[-2])) if len(h) >= 2 else 0.0
-            if _is_reasonable_price(price):
-                return {"ok": True, "price": price, "prev_close": prev, "source": "yahoo_history"}
+        gf = fetch_google_finance_snapshot(sym_in) or {}
+        attempts.append({
+            "source": "google_finance",
+            "symbol": sym_in,
+            "ok": bool(gf.get("ok")),
+            "status": gf.get("status"),
+            "error": gf.get("error"),
+        })
+        price = _safe_float(gf.get("price", 0.0))
+        if gf.get("ok") and _is_reasonable_price(price):
+            _set_live_diag(ok=True, when=time.time(), symbol_in=sym_in, symbol_norm=sym_norm, attempts=attempts, error=None)
+            return {
+                "ok": True,
+                "price": float(price),
+                "prev_close": float(_safe_float(gf.get("prev_close", 0.0))) if _is_reasonable_price(_safe_float(gf.get("prev_close", 0.0))) else 0.0,
+                "year_high": 0.0,
+                "year_low": 0.0,
+                "source": "google_finance",
+                "url": gf.get("url", ""),
+            }
     except Exception as e:
+        err = str(e)
+        attempts.append({"source": "google_finance", "symbol": sym_in, "ok": False, "error": err})
         log_exception(e, "Ignored exception", level="DEBUG")
 
-    return {"ok": False, "price": 0.0, "source": "failed"}
-
-
-# ============================================================
-# 🧼 Index Cleaner (مهم 
-# ============================================================
-def _ensure_datetime_index(df: pd.DataFrame) -> pd.DataFrame:
+    # 2) Argaam (price only)
     try:
-        if df is None or df.empty:
-            return df
-        if not isinstance(df.index, pd.DatetimeIndex):
-            df.index = pd.to_datetime(df.index, errors="coerce")
-        df = df[~df.index.isna()]
-        return df
-    except Exception:
-        return df
+        p2 = fetch_price_from_argaam(sym_in)
+        attempts.append({"source": "argaam", "symbol": sym_in, "ok": _is_reasonable_price(p2), "price": float(p2 or 0.0)})
+        if _is_reasonable_price(p2):
+            _set_live_diag(ok=True, when=time.time(), symbol_in=sym_in, symbol_norm=sym_norm, attempts=attempts, error=None)
+            return {
+                "ok": True,
+                "price": float(p2),
+                "prev_close": float(p2),
+                "year_high": 0.0,
+                "year_low": 0.0,
+                "source": "argaam",
+            }
+    except Exception as e:
+        err = str(e)
+        attempts.append({"source": "argaam", "symbol": sym_in, "ok": False, "error": err})
+        log_exception(e, "Ignored exception", level="DEBUG")
 
+    # 3) Yahoo (best-effort) — try normalized variants
+    try:
+        for cand in _symbol_variants(sym_norm):
+            yd = fetch_price_from_yahoo(cand) or {}
+            price = _safe_float(yd.get("price", 0.0))
+            ok = _is_reasonable_price(price)
+            attempts.append({"source": "yahoo", "symbol": cand, "ok": ok, "price": float(price or 0.0), "error": yd.get("error")})
+            if ok:
+                _set_live_diag(ok=True, when=time.time(), symbol_in=sym_in, symbol_norm=sym_norm, attempts=attempts, error=None)
+                return {
+                    "ok": True,
+                    "price": float(price),
+                    "prev_close": float(_safe_float(yd.get("prev_close", 0.0))) if _is_reasonable_price(_safe_float(yd.get("prev_close", 0.0))) else 0.0,
+                    "year_high": float(_safe_float(yd.get("year_high", 0.0))),
+                    "year_low": float(_safe_float(yd.get("year_low", 0.0))),
+                    "source": "yahoo",
+                }
+    except Exception as e:
+        err = str(e)
+        attempts.append({"source": "yahoo", "symbol": sym_norm, "ok": False, "error": err})
+        log_exception(e, "Ignored exception", level="DEBUG")
 
-def _normalize_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or df.empty:
-        return pd.DataFrame()
+    _set_live_diag(ok=False, when=time.time(), symbol_in=sym_in, symbol_norm=sym_norm, attempts=attempts, error=err or "no_data")
+    return {"ok": False, "price": 0.0, "source": "none"}
 
-    df = df.copy()
-
-    # Handle yfinance multi-index columns
-    if isinstance(df.columns, pd.MultiIndex):
-        # Often: (Price, 'Open'), etc. We'll flatten.
-        df.columns = [c[-1] if isinstance(c, tuple) else c for c in df.columns]
-
-    rename_map = {
-        "open": "Open",
-        "high": "High",
-        "low": "Low",
-        "close": "Close",
-        "adj close": "Adj Close",
-        "volume": "Volume",
-    }
-    new_cols = {}
-    for c in df.columns:
-        lc = str(c).strip().lower()
-        if lc in rename_map:
-            new_cols[c] = rename_map[lc]
-        else:
-            # keep original for unknown
-            new_cols[c] = c
-
-    df.rename(columns=new_cols, inplace=True)
-    df = _ensure_datetime_index(df)
-    return df
-
-
-def _normalize_interval(interval: str) -> str:
-    it = str(interval or "1d").strip().lower()
-    ok = {"1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h", "1d", "5d", "1wk", "1mo", "3mo"}
-    if it == "1h":
-        it = "60m"
-    if it in ok:
-        return it
-    return "1d"
-
-
-def _default_period_for_interval(interval: str) -> str:
-    it = _normalize_interval(interval)
-    # Keep periods small for intraday
-    if it in {"1m", "2m", "5m"}:
-        return "5d"
-    if it in {"15m", "30m"}:
-        return "1mo"
-    if it in {"60m", "90m"}:
-        return "3mo"
-    if it in {"1wk"}:
-        return "2y"
-    if it in {"1mo", "3mo"}:
-        return "10y"
-    return "2y"
-
-
-def _build_period_fallbacks(period: str) -> List[str]:
-    p = str(period or "").strip()
-    if not p:
-        return ["1y", "2y", "5y", "10y"]
-    fallbacks = [p]
-    # heuristic fallback chain
-    chain = ["5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "max"]
-    if p not in chain:
-        return fallbacks + ["1y", "2y", "5y"]
-    i = chain.index(p)
-    return fallbacks + chain[i+1:]
-
-
-# ============================================================
-# 📈 Google Finance (Snapshot)
-# ============================================================
 def fetch_google_finance_snapshot(symbol: str) -> Dict[str, Any]:
     sym = str(symbol or "").strip().upper()
     if not sym:
@@ -456,18 +447,38 @@ def fetch_price_from_yahoo(symbol: str) -> Dict[str, float]:
 
 
 def get_tasi_data():
-    """
-    Return a stable dict for TASI snapshot.
-    """
-    d = fetch_price_from_yahoo("^TASI.SR") or {}
+    """Return a stable dict for TASI snapshot + diagnostics.
 
-    # yfinance sometimes returns empty fast_info for indices.
-    # Fallback to a tiny history call to keep TASI from showing as 0.
-    try:
-        if _safe_float(d.get("price", 0.0)) <= 0:
+    Tries multiple Yahoo symbols because index tickers change sometimes.
+    Stores details in `get_last_tasi_diagnostics()`.
+    """
+    candidates = ["^TASI.SR", "TASI.SR", "^TASI", "SA:TASI", "TADAWUL:TASI"]
+    attempts = []
+    err = None
+    d: Dict[str, Any] = {"price": 0.0, "prev_close": 0.0}
+
+    for cand in candidates:
+        try:
+            yd = fetch_price_from_yahoo(cand) or {}
+            price = _safe_float(yd.get("price", 0.0))
+            prev = _safe_float(yd.get("prev_close", 0.0))
+            ok = _is_reasonable_price(price)
+            attempts.append({"symbol": cand, "ok": ok, "price": float(price or 0.0), "prev_close": float(prev or 0.0), "source": "yahoo_fast"})
+            if ok:
+                d["price"] = float(price)
+                d["prev_close"] = float(prev) if _is_reasonable_price(prev) else 0.0
+                _set_tasi_diag(ok=True, when=time.time(), attempts=attempts, error=None, price=d["price"], prev_close=d["prev_close"])
+                return d
+        except Exception as e:
+            err = str(e)
+            attempts.append({"symbol": cand, "ok": False, "error": err, "source": "yahoo_fast"})
+            log_exception(e, "Ignored exception", level="DEBUG")
+
+        # fallback to history close (some indices lack fast_info)
+        try:
             h = yf.download(
-                "^TASI.SR",
-                period="5d",
+                get_ticker_symbol(cand),
+                period="7d",
                 interval="1d",
                 progress=False,
                 threads=False,
@@ -477,12 +488,19 @@ def get_tasi_data():
             if h is not None and (not h.empty) and "Close" in h.columns:
                 price = float(_safe_float(h["Close"].iloc[-1]))
                 prev = float(_safe_float(h["Close"].iloc[-2])) if len(h) >= 2 else 0.0
-                if _is_reasonable_price(price):
+                ok = _is_reasonable_price(price)
+                attempts.append({"symbol": cand, "ok": ok, "price": price, "prev_close": prev, "source": "yahoo_hist"})
+                if ok:
                     d["price"] = price
-                    d["prev_close"] = prev
-    except Exception as e:
-        log_exception(e, "Ignored exception", level="DEBUG")
+                    d["prev_close"] = prev if _is_reasonable_price(prev) else 0.0
+                    _set_tasi_diag(ok=True, when=time.time(), attempts=attempts, error=None, price=d["price"], prev_close=d["prev_close"])
+                    return d
+        except Exception as e:
+            err = str(e)
+            attempts.append({"symbol": cand, "ok": False, "error": err, "source": "yahoo_hist"})
+            log_exception(e, "Ignored exception", level="DEBUG")
 
+    _set_tasi_diag(ok=False, when=time.time(), attempts=attempts, error=err or "no_data", price=0.0, prev_close=0.0)
     return d
 
 
