@@ -5,7 +5,7 @@ import pandas as pd
 import plotly.express as px
 
 from components import render_kpi, safe_fmt
-from market_data import get_tasi_data
+from market_data import get_tasi_data, get_last_tasi_diagnostics
 from views.shared import _safe_status_series, calculate_portfolio_risk_score
 from analytics import generate_equity_curve
 
@@ -47,6 +47,12 @@ def view_dashboard(fin):
             """,
             unsafe_allow_html=True
         )
+
+        # Diagnostics (when TASI shows 0)
+        if float(tp or 0) == 0.0:
+            with st.expander('🩺 تشخيص مصدر TASI', expanded=False):
+                st.json(get_last_tasi_diagnostics())
+
     with c_risk:
         render_kpi(f"المخاطرة ({risk_label})", f"{risk_score}/100", risk_color, "🛡️")
 
