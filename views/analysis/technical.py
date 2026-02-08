@@ -2,7 +2,7 @@
 import streamlit as st
 import pandas as pd
 
-from market_data import get_chart_history
+from market_data import get_chart_history, get_last_market_diagnostics
 from views.shared import _sym_key, _render_technical_chart_flex
 
 
@@ -99,6 +99,11 @@ def render_technical_tab(sym: str):
 
     # Snapshot (KPIs)
     snap = _price_snapshot(sym, period=period_opts[p_label], interval=interval_opts[i_label])
+    if not snap:
+        st.warning('البيانات التاريخية غير كافية أو غير صالحة لهذا الفاصل الزمني.')
+        with st.expander('🩺 تشخيص مصدر البيانات', expanded=False):
+            st.json(get_last_market_diagnostics())
+
     k1, k2, k3, k4 = st.columns(4)
     with k1:
         st.metric("السعر", f"{snap.get('last', 0):,.2f}" if snap.get("last") else "—")
