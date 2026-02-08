@@ -250,3 +250,92 @@ def build_scenarios(
         sc["symbol"] = sym
 
     return scenarios[:5]
+
+
+# ==============================================================
+# ✅ Compatibility: compute_osoli_score (required by reporting.py)
+# ==============================================================
+
+
+def compute_osoli_score(symbol: str, packs: Dict[str, Any]) -> Dict[str, Any]:
+    """Compute an overall Osoli Score (0..100) in a stable schema.
+
+    Some UI/reporting code imports this symbol directly. Earlier refactors
+    introduced regressions where the function was missing, which breaks the
+    AI report generation path.
+
+    Returns:
+      {
+        "symbol": "XXXX",
+        "score": int 0..100,
+        "grade": "A".."F",
+        "confidence": float 0..1,
+        "components": {"fundamental":.., "technical":.., "vsa":.., "classical":..},
+        "issues": [..]
+      }
+    """
+
+    sym = str(symbol or "").strip().upper()
+    packs = packs or {}
+    issues: List[str] = []
+
+    fund = packs.get("fundamental") or {}
+    tech = packs.get("technical") or {}
+    vsa = packs.get("vsa") or {}
+    classical = packs.get("classical") or {}
+
+    def _pack_score(p: Any) -> float:
+        if isinstance(p, dict):
+            if "score" in p:
+                return _clamp(_to_float(p.get("score"), 0.0), 0.0, 100.0)
+            # best-effort inference
+            if any(k in p for k in ("Piotroski", "Graham", "Valuation")):
+                s = 0.0
+                s += _to_float(p.get("Piotroski"), 0.0) * 6.0
+                s += _to_float(p.get("Graham"), 0.0) * 10.0
+                s += _to_float(p.get("Valuation"), 0.0) * 10.0
+                return _clamp(s, 0.0, 100.0)
+        return 0.0
+
+    fund_score = _pack_score(fund)
+    tech_score = _pack_score(tech)
+    vsa_score = _pack_score(vsa)
+    cls_score = _pack_score(classical)
+
+    present = sum(1 for p in (fund, tech, vsa, classical) if isinstance(p, dict) and len(p) > 0)
+    confidence = 0.35 + 0.15 * present
+    confidence = float(_clamp(confidence * 100.0, 0.0, 100.0) / 100.0)
+    if present <= 1:
+        issues.append("حزم التحليل غير مكتملة؛ تم حساب درجة تقريبية فقط.")
+
+    # weights
+    w_f, w_t, w_v, w_c = 0.40, 0.35, 0.15, 0.10
+    score = fund_score * w_f + tech_score * w_t + vsa_score * w_v + cls_score * w_c
+    score = int(round(_clamp(score, 0.0, 100.0)))
+
+    if score >= 85:
+        grade = "A"
+    elif score >= 75:
+        grade = "B"
+    elif score >= 65:
+        grade = "C"
+    elif score >= 55:
+        grade = "D"
+    elif score >= 45:
+        grade = "E"
+    else:
+        grade = "F"
+
+    return {
+        "symbol": sym,
+        "score": score,
+        "grade": grade,
+        "confidence": confidence,
+        "components": {
+            "fundamental": float(round(fund_score, 2)),
+            "technical": float(round(tech_score, 2)),
+            "vsa": float(round(vsa_score, 2)),
+            "classical": float(round(cls_score, 2)),
+        },
+        "issues": issues,
+    }
