@@ -3,27 +3,44 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import Any, Optional
 
 
+def _now_str() -> str:
+    """Return a readable timestamp string."""
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
 def _normalize_symbol(symbol: str) -> str:
-    """
-    Normalize symbol to a consistent internal format.
-    - Keep Saudi tickers as-is (e.g. 4161.SR)
-    - Strip spaces
-    """
+    """Normalize symbol to a consistent internal format."""
     s = str(symbol or "").strip().upper()
     s = re.sub(r"\s+", "", s)
+
+    # Saudi numeric tickers
+    if s.isdigit():
+        return f"{s}.SR"
+
+    # common index mapping kept as-is
     return s
 
 
-def _to_float(x: Any, default: Optional[float] = 0.0) -> Optional[float]:
-    """
-    Safe float conversion used across AI engine.
+def _map_period_from_timeframe(timeframe: str) -> str:
+    """Map a UI timeframe to a yfinance-like period (best-effort)."""
+    tf = str(timeframe or "1D").upper().strip()
+    if tf in ("1H", "60M", "H"):
+        return "60d"
+    if tf in ("4H", "240M"):
+        return "180d"
+    if tf in ("1W", "W"):
+        return "5y"
+    if tf in ("1MO", "1M", "MO"):
+        return "10y"
+    return "6mo"
 
-    - Returns `default` if conversion fails.
-    - If default is None -> returns None on failure.
-    """
+
+def _to_float(x: Any, default: Optional[float] = 0.0) -> Optional[float]:
+    """Safe float conversion used across AI engine."""
     try:
         if x is None:
             return default
@@ -33,12 +50,9 @@ def _to_float(x: Any, default: Optional[float] = 0.0) -> Optional[float]:
         if not s:
             return default
         s = s.replace(",", "")
-        # handle parentheses negative e.g. "(123.4)"
         if s.startswith("(") and s.endswith(")"):
             s = "-" + s[1:-1]
-        # strip common currency tokens
         s = s.replace("SAR", "").replace("ر.س", "").strip()
-        # NaN-like
         if s.lower() in ("nan", "none", "null", "na"):
             return default
         return float(s)
@@ -47,9 +61,7 @@ def _to_float(x: Any, default: Optional[float] = 0.0) -> Optional[float]:
 
 
 def _round2(x: Any, default: float = 0.0) -> float:
-    """
-    Round to 2 decimals safely.
-    """
+    """Round to 2 decimals safely."""
     v = _to_float(x, None)
     if v is None:
         return float(default)
