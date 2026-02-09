@@ -89,7 +89,7 @@ def render_technical_tab(sym: str):
         "15 دقيقة": "15m",
     }
 
-    c_p, c_i, c_chart_mode_removed = st.columns([1.2, 1.2, 1.6])
+    c_p, c_i = st.columns([1.2, 1.2])
     p_label = c_p.selectbox("الفترة (Period)", list(period_opts.keys()), index=2, key=f"tech_p_{symk}")
     i_label = c_i.selectbox("الفاصل (Interval)", list(interval_opts.keys()), index=0, key=f"tech_i_{symk}")
 
@@ -113,13 +113,9 @@ def render_technical_tab(sym: str):
         st.write("- اسحب داخل الشارت للتحريك (Pan).")
         st.write("- استخدم Scroll للتكبير/التصغير.")
         st.write("- لو واجهت مشكلة بيانات جرّب فترة أكبر أو وضع Fallback.")
-
     # Chart
     try:
-        if chart_mode_removed == "":
-            _render_tv_like_chart(sym, period_opts[p_label], interval_opts[i_label])
-        else:
-            _render_technical_chart_flex(sym, period=period_opts[p_label], interval=interval_opts[i_label])
+        _render_technical_chart_flex(sym, period=period_opts[p_label], interval=interval_opts[i_label])
     except Exception as e:
         st.error("❌ حصل خطأ أثناء عرض الشارت.")
         st.code(str(e))
