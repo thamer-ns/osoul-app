@@ -1,5 +1,7 @@
 #views/settings.py
 import streamlit as st
+
+from feature_flags import get_all_flags, set_flag
 from analytics import create_smart_backup
 from database import db_healthcheck
 
@@ -9,6 +11,34 @@ def view_tools():
 
 def view_settings():
     st.header("الإعدادات")
+
+
+    # =====================================================
+    # 🧪 ميزات تجريبية (Feature Flags)
+    # - لا تغيّر السلوك الافتراضي
+    # - تظهر فقط لمن يريد تفعيلها
+    # =====================================================
+    with st.expander("🧪 ميزات تجريبية (اختيارية)", expanded=False):
+        flags = get_all_flags()
+
+        st.caption("هذه الميزات اختيارية ولا تؤثر على المستخدم العادي إلا إذا فعّلتها هنا.")
+        c1, c2 = st.columns(2)
+
+        with c1:
+            v_xirr = st.checkbox("📈 إظهار XIRR للمحفظة", value=bool(flags.get("enable_xirr", False)))
+            v_notes = st.checkbox("📒 إظهار ملاحظات الاستراتيجيات + سجل التجارب", value=bool(flags.get("enable_strategy_notes", False)))
+
+        with c2:
+            v_wrappers = st.checkbox("🈶 استخدام عناصر عربية محسّنة (placeholders)", value=bool(flags.get("use_ar_wrappers", False)))
+            v_compare = st.checkbox("🧠 مقارنة محرك المستشار (قديم/جديد) — متقدم", value=bool(flags.get("enable_engine_compare", False)))
+
+        # persist to session
+        set_flag("enable_xirr", v_xirr)
+        set_flag("enable_strategy_notes", v_notes)
+        set_flag("use_ar_wrappers", v_wrappers)
+        set_flag("enable_engine_compare", v_compare)
+
+        st.info("✅ يتم حفظ الاختيارات لهذه الجلسة. إذا أردت جعلها دائمة لاحقًا نربطها بقاعدة البيانات (اختياري).")
 
     # =====================================================
     # ✅ Theme (Light/Dark) - CSS only, no logic changes
