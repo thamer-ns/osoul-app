@@ -14,6 +14,24 @@ from views.shared import (
 )
 
 
+# Optional: full statements + data quality + diagnostics (وجودها لا يكسر البرنامج لو غير متاحة)
+try:
+    from financial_analysis.sync import sync_full_yahoo  # type: ignore
+except Exception:
+    sync_full_yahoo = None
+
+try:
+    from financial_analysis.data_quality import assess_fundamental_quality  # type: ignore
+except Exception:
+    assess_fundamental_quality = None
+
+try:
+    from views.shared import get_last_yahoo_diagnostics, diagnose_yahoo_quote_summary  # type: ignore
+except Exception:
+    get_last_yahoo_diagnostics = None
+    diagnose_yahoo_quote_summary = None
+
+
 def _to_num(x, default=0.0):
     try:
         if x is None or x == "":
@@ -139,7 +157,22 @@ def render_financial_dashboard_ui(symbol):
 
         if not dashboard_has_data:
             st.warning("⚠️ لا توجد بيانات مالية محفوظة لهذا السهم.")
+
+
+            with st.expander("✅ بوابة جودة البيانات (Fundamental Data Quality)", expanded=False):
+                if not assess_fundamental_quality:
+                    st.info("وحدة Data Quality غير متاحة في هذه النسخة.")
+                else:
+                    try:
+                        q = assess_fundamental_quality(symbol)
+                        st.json(q)
+                        if isinstance(q, dict) and q.get("pass") is False:
+                            st.warning("البيانات تبدو ناقصة/غير متناسقة — راجع إدارة البيانات أو جرّب مزامنة القوائم الكاملة.")
+                    except Exception as e:
+                        st.error(str(e))
+
             st.info("👈 انتقل لتبويب 'إدارة البيانات' لرفع ملف أو جلب المعلومات.")
+
         else:
 
             # ---- Metrics
@@ -246,6 +279,41 @@ def render_financial_dashboard_ui(symbol):
                 """,
                 unsafe_allow_html=True,
             )
+
+            st.markdown("##### 📦 مزامنة القوائم الكاملة (اختياري)")
+            st.caption("هذه المزامنة تحاول حفظ القوائم *الكاملة* (سنوي/ربع سنوي) عند توفرها — بدون تغيير تحليل لوحة البيانات الحالية.")
+            cfa, cfq, cdiag = st.columns([1, 1, 1])
+
+            if cfa.button("مزامنة كاملة — سنوي", key=f"full_sync_a_{_sym_key(symbol)}"):
+                if not sync_full_yahoo:
+                    st.warning("ميزة القوائم الكاملة غير متاحة في هذه النسخة.")
+                else:
+                    with st.spinner("جاري مزامنة القوائم الكاملة (سنوي).."):
+                        ok, msg = sync_full_yahoo(symbol, period="annual")
+                    (st.success(msg) if ok else st.error(msg))
+                    if ok:
+                        st.rerun()
+
+            if cfq.button("مزامنة كاملة — ربع سنوي", key=f"full_sync_q_{_sym_key(symbol)}"):
+                if not sync_full_yahoo:
+                    st.warning("ميزة القوائم الكاملة غير متاحة في هذه النسخة.")
+                else:
+                    with st.spinner("جاري مزامنة القوائم الكاملة (ربع سنوي).."):
+                        ok, msg = sync_full_yahoo(symbol, period="quarterly")
+                    (st.success(msg) if ok else st.error(msg))
+                    if ok:
+                        st.rerun()
+
+            with cdiag:
+                st.write("")
+                if st.button("🩺 فحص سريع", key=f"diag_probe_{_sym_key(symbol)}"):
+                    if diagnose_yahoo_quote_summary:
+                        diag = diagnose_yahoo_quote_summary(symbol)
+                    elif get_last_yahoo_diagnostics:
+                        diag = get_last_yahoo_diagnostics()
+                    else:
+                        diag = {"error": "diagnostics unavailable"}
+                    st.json(diag)
             if st.button("بدء المزامنة الآلية", key=f"sync_yahoo_{_sym_key(symbol)}", type="primary"):
                 with st.spinner("جاري الاتصال..."):
                     ok, msg = sync_auto_yahoo(symbol)
@@ -254,6 +322,17 @@ def render_financial_dashboard_ui(symbol):
                     st.rerun()
                 else:
                     st.error(msg)
+
+                # 🩺 Diagnostics (لا يغير أي ميزة — فقط يوضح السبب)
+                with st.expander("🩺 تشخيص Yahoo (لماذا قد تفشل المزامنة؟)", expanded=False):
+                    if diagnose_yahoo_quote_summary:
+                        diag = diagnose_yahoo_quote_summary(symbol)
+                    elif get_last_yahoo_diagnostics:
+                        diag = get_last_yahoo_diagnostics()
+                    else:
+                        diag = {"status": None, "hint": "Diagnostics غير متاحة", "error": None, "url": None, "ts": None}
+                    st.json(diag)
+
 
         with t2:
             render_data_import_ui_content(symbol)
