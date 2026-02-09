@@ -1,3 +1,4 @@
+from .yahoo_data import fetch_full_financial_statements_yahoo_json, fetch_full_financial_statements_yahoo_html
 # financial_analysis/sync.py
 from typing import Tuple, List
 
@@ -5,6 +6,7 @@ import yfinance as yf
 
 from market_data import get_ticker_symbol
 from .store import save_financial_record
+from .store import save_full_statement_record, ensure_financialstatements_raw_table
 from .utils import _safe_float, _safe_date_str
 from .parsers import fetch_financials_from_argaam, fetch_financials_from_google_finance
 
@@ -145,3 +147,130 @@ def sync_auto_yahoo(symbol):
         if ok2:
             return True, f"تعذر Yahoo. {msg2}"
         return False, str(e)
+
+
+# ==============================================================
+# 📦 Full Statements Sync (Annual/Quarterly) — Optional
+# ==============================================================
+def sync_full_yahoo(symbol: str, *, include_ttm: bool = True) -> Tuple[bool, str]:
+    """
+    Fetch and store ALL line-items for:
+      - Income statement
+      - Balance sheet
+      - Cashflow statement
+    For Annual + Quarterly (+ optional TTM derived)
+    Values are stored in *thousands* to match Yahoo UI.
+    """
+    from .yahoo_data import fetch_full_financial_statements_yahoo_json, diagnose_quote_summary
+    from .store_full import save_full_statement_record, has_full_statement, fetch_full_statement_records
+
+    # ----------------------------------------------------------
+    # ✅ Throttle/cache (module-level, process-only)
+    # - reduces repeated Yahoo hits during Streamlit reruns
+    # ----------------------------------------------------------
+    import time as _time
+
+    global _FULL_YAHOO_CACHE, _FULL_YAHOO_CACHE_TS, _FULL_YAHOO_LAST_FAIL
+    try:
+        _FULL_YAHOO_CACHE
+    except Exception:
+        _FULL_YAHOO_CACHE = {}
+        _FULL_YAHOO_CACHE_TS = {}
+        _FULL_YAHOO_LAST_FAIL = {}
+
+    cache_key = f"{symbol}::ALL"
+    now = _time.time()
+    ttl = 6 * 60 * 60  # 6h
+    cooldown = 60      # 60s after failure
+
+    ts = float(_FULL_YAHOO_CACHE_TS.get(cache_key, 0.0) or 0.0)
+    if ts and (now - ts) < ttl:
+        cached = _FULL_YAHOO_CACHE.get(cache_key) or {}
+        if isinstance(cached, dict) and cached:
+            data = cached
+        else:
+            data = {}
+    else:
+        data = {}
+
+    symbol = get_ticker_symbol(symbol)
+
+    try:
+        # If we have fresh cached full bundle, skip network.
+        if not data:
+            # Cooldown after failures (avoid hammering Yahoo on reruns)
+            last_fail = float(_FULL_YAHOO_LAST_FAIL.get(cache_key, 0.0) or 0.0)
+            if last_fail and (now - last_fail) < cooldown:
+                if has_full_statement(symbol):
+                    return True, "⚠️ تم عرض آخر قوائم كاملة محفوظة (تجنبًا لضرب Yahoo أثناء التحديثات)."
+                return False, "⚠️ تم إيقاف المحاولة مؤقتًا لتجنب 429. أعد المحاولة بعد دقيقة."
+
+            data = fetch_full_financial_statements_yahoo_json(
+                symbol,
+                period_type="All",
+                as_thousands=True,
+                include_ttm=include_ttm,
+            ) or {}
+
+            # cache success
+            if data:
+                _FULL_YAHOO_CACHE[cache_key] = data
+                _FULL_YAHOO_CACHE_TS[cache_key] = now
+
+        if not data:
+            diag = diagnose_quote_summary(symbol) or {}
+            status = str(diag.get("status") or "").strip()
+            err = str(diag.get("error") or "").strip()
+            hint = str(diag.get("hint") or "").strip()
+            details = ""
+            if status or err:
+                details = f" التفاصيل: status={status}, error={err}"
+                if hint:
+                    details += f" | hint={hint}"
+
+            # mark fail time for cooldown
+            _FULL_YAHOO_LAST_FAIL[cache_key] = now
+
+            # fallback to stored full statements if exist
+            if has_full_statement(symbol):
+                # just confirm we can read them
+                _ = fetch_full_statement_records(symbol, limit=1)
+                return True, "⚠️ Yahoo غير متاح الآن. تم عرض آخر قوائم كاملة محفوظة." + details
+
+            # fallback to summary (multi sources) so the rest of the app can still work
+            ok2, msg2 = sync_auto_multi_sources(symbol, prefer="yahoo")
+            if ok2:
+                return True, "⚠️ لم تُجلب القوائم الكاملة من Yahoo، لكن تم تحديث القوائم الأساسية من مصادر بديلة. " + msg2 + details
+
+            return False, "❌ لم يتم جلب أي بيانات كاملة من Yahoo." + details + "\n"
+
+        saved = 0
+        for period_type, bundle in data.items():
+            if period_type not in ("Annual", "Quarterly", "TTM"):
+                continue
+            for statement, recs in (bundle or {}).items():
+                for r in recs or []:
+                    d = (r or {}).get("date")
+                    payload = (r or {}).get("data") or {}
+                    if not d or not isinstance(payload, dict) or not payload:
+                        continue
+                    ok = save_full_statement_record(
+                        symbol,
+                        statement=statement,
+                        period_type=period_type,
+                        as_of=d,
+                        data=payload,
+                        scale="thousands",
+                        source="YahooJSON",
+                    )
+                    if ok:
+                        saved += 1
+
+        if saved == 0:
+            return False, "⚠️ تم الجلب لكن لم يتم حفظ أي سجل (تحقق من DB)."
+        return True, f"✅ تم حفظ {saved} سجلات (قوائم كاملة) لـ {symbol}."
+
+    except Exception as e:
+        from osoli_logging import log_exception
+        log_exception(e, "sync_full_yahoo failed")
+        return False, f"❌ خطأ أثناء مزامنة القوائم الكاملة: {e}"
