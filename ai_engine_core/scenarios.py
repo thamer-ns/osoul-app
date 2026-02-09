@@ -85,23 +85,61 @@ def build_scenarios(
             except Exception:
                 pass
 
-        # Risk gates suggestion
-        stop = 0.0
-        if sup > 0:
-            stop = sup
-        elif last_price > 0:
-            stop = last_price * 0.97
 
-        # Targets
+        # -----------------------------
+        # Normalize S/R around price (avoid inverted stops/targets)
+        # -----------------------------
+        if sup > 0 and res > 0 and sup > res:
+            # swap if clearly inverted
+            sup, res = res, sup
+
+        if last_price > 0:
+            # If both levels are on the same side of price, re-infer conservatively
+            if sup > 0 and sup >= last_price and price_df is not None and getattr(price_df, "empty", True) is False:
+                try:
+                    lo2 = _to_float(price_df["Low"].tail(60).min(), 0.0) if "Low" in price_df.columns else 0.0
+                    if lo2 > 0 and lo2 < last_price:
+                        sup = lo2
+                except Exception:
+                    pass
+
+            if res > 0 and res <= last_price and price_df is not None and getattr(price_df, "empty", True) is False:
+                try:
+                    hi2 = _to_float(price_df["High"].tail(60).max(), 0.0) if "High" in price_df.columns else 0.0
+                    if hi2 > 0 and hi2 > last_price:
+                        res = hi2
+                except Exception:
+                    pass
+
+        # Risk gates suggestion (for long/base: stop must be below entry)
+        stop = 0.0
+        if last_price > 0:
+            # Prefer support below price; otherwise use % stop
+            if sup > 0 and sup < last_price:
+                stop = sup
+            else:
+                stop = last_price * 0.97
+        
+
+        # Targets (ensure logical ordering)
         t1 = 0.0
         t2 = 0.0
-        if res > 0 and last_price > 0:
-            t1 = res
-            t2 = max(res * 1.03, last_price * 1.05)
-        elif last_price > 0:
-            t1 = last_price * 1.03
-            t2 = last_price * 1.06
+        if last_price > 0:
+            # Prefer resistance above price as first target
+            if res > last_price:
+                t1 = res
+            else:
+                t1 = last_price * 1.03
 
+            # Second target extends beyond first
+            t2 = max(t1 * 1.03, last_price * 1.06)
+
+        # Safety: if targets accidentally fall below last price, push them up
+        if last_price > 0:
+            if t1 and t1 <= last_price:
+                t1 = last_price * 1.03
+            if t2 and t2 <= t1:
+                t2 = max(t1 * 1.03, last_price * 1.06)
         # Direction hint from technical pack
         direction = "neutral"
         if isinstance(technical, dict):
@@ -128,10 +166,15 @@ def build_scenarios(
                     "name": "سيناريو صاعد (اختراق)",
                     "timeframe": timeframe,
                     "direction": "buy",
-                    "trigger": res if res > 0 else last_price * 1.01,
-                    "entry": (res if res > 0 else last_price * 1.01),
-                    "stop": max(stop, last_price * 0.97) if stop > 0 else last_price * 0.97,
-                    "targets": [t1, t2],
+                    "trigger": (res if (res > 0 and res > last_price) else last_price * 1.01),
+                    "entry": (res if (res > 0 and res > last_price) else last_price * 1.01),
+                    # Stop must be below entry
+                    "stop": (sup if (sup > 0 and sup < (res if (res > 0 and res > last_price) else last_price * 1.01)) else ( (res if (res > 0 and res > last_price) else last_price * 1.01) * 0.97 )),
+                    # Targets must be above entry
+                    "targets": [
+                        max(t1, (res if (res > 0 and res > last_price) else last_price * 1.01) * 1.02) if (res if (res > 0 and res > last_price) else last_price * 1.01) > 0 else t1,
+                        max(t2, max(t1, (res if (res > 0 and res > last_price) else last_price * 1.01) * 1.02) * 1.03) if (res if (res > 0 and res > last_price) else last_price * 1.01) > 0 else t2,
+                    ],
                     "notes": ["يفضّل تأكيد الاختراق بحجم تداول/إغلاق."]
                 }
             )
@@ -140,8 +183,8 @@ def build_scenarios(
                     "name": "سيناريو هابط (كسر دعم)",
                     "timeframe": timeframe,
                     "direction": "sell",
-                    "trigger": sup if sup > 0 else last_price * 0.99,
-                    "entry": (sup if sup > 0 else last_price * 0.99),
+                    "trigger": (sup if (sup > 0 and sup < last_price) else last_price * 0.99),
+                    "entry": (sup if (sup > 0 and sup < last_price) else last_price * 0.99),
                     "stop": (last_price * 1.02),
                     "targets": [
                         sup * 0.97 if sup > 0 else last_price * 0.97,
