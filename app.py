@@ -1,22 +1,31 @@
 # app.py
 import os
 import sys
+from typing import Optional
 
 import streamlit as st
 
 # -----------------------------------------------------------------------------
 # 🔧 Import bootstrap
-# بعض النسخ/الرفع إلى GitHub قد تضع المشروع داخل مجلد فرعي (مثل osoul-app-main).
+# بعض الرفعّات إلى GitHub تضع المشروع داخل مجلد فرعي (مثل: osoul-app-main).
 # هذا البلوك يجعل `import config` وباقي الوحدات يعمل حتى لو تغيّر مسار التشغيل.
 # -----------------------------------------------------------------------------
 _BASE_DIR = os.path.dirname(__file__)
-for _p in (_BASE_DIR, os.path.join(_BASE_DIR, "osoul-app-main")):
+
+# أضف المسار الحالي + أي مجلد فرعي يبدو أنه يحتوي ملفات المشروع
+_candidates = [
+    _BASE_DIR,
+    os.path.join(_BASE_DIR, "osoul-app-main"),
+    os.path.join(_BASE_DIR, "osoul-app"),
+]
+for _p in _candidates:
     try:
         if _p and os.path.isdir(_p) and _p not in sys.path:
             sys.path.insert(0, _p)
     except Exception:
         pass
 
+# الآن imports
 from config import APP_NAME, APP_ICON
 from database import init_db
 from styles import apply_custom_css
@@ -37,9 +46,6 @@ try:
     from components import render_app_header
 except Exception:
     render_app_header = None
-
-
-from typing import Optional
 
 
 def _safe_image(path: str, width: Optional[int] = None):
