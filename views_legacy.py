@@ -792,177 +792,34 @@ def _render_ai_report_readable(rep: dict, show_debug=False, compact=False):
 
 
 # ========================================================
-# TradingView-like Plot (Fixes)
+# (تم حذف الشارت الاحترافي بالكامل بطلب المستخدم)
+# - نُبقي دالة _render_technical_chart_flex بشكل بسيط للنسخة legacy
 # ========================================================
 
-def _build_tv_like_plot(df: pd.DataFrame, title: str = "") -> go.Figure:
-    """
-    يبني شارت شموع + حجم (TradingView-like) باستخدام Plotly:
-    - Zoom/Pan
-    - Range Slider
-    - Hover unified + Spikes
-    """
-    d = df.copy()
-
-    # توحيد العمود الزمني: إما عمود date أو index
-    if "date" in d.columns:
-        d["date"] = pd.to_datetime(d["date"], errors="coerce")
-        d = d.dropna(subset=["date"]).sort_values("date")
-        x = d["date"]
-    else:
-        try:
-            d.index = pd.to_datetime(d.index, errors="coerce")
-        except Exception:
-            pass
-        d = d[~pd.isna(d.index)]
-        d = d.sort_index()
-        x = d.index
-
-    # توحيد أعمدة الأسعار: open/high/low/close/volume
-    colmap = {str(c).lower(): c for c in d.columns}
-    Open = colmap.get("open") if "open" in colmap else ("Open" if "Open" in d.columns else None)
-    High = colmap.get("high") if "high" in colmap else ("High" if "High" in d.columns else None)
-    Low  = colmap.get("low")  if "low"  in colmap else ("Low"  if "Low"  in d.columns else None)
-    Close= colmap.get("close")if "close"in colmap else ("Close"if "Close" in d.columns else None)
-    Vol  = colmap.get("volume")if "volume"in colmap else ("Volume" if "Volume" in d.columns else None)
-
-    if not all([Open, High, Low, Close]):
-        raise ValueError("بيانات الشارت لا تحتوي أعمدة OHLC بشكل صحيح.")
-
-    # تحويل أعمدة الأسعار إلى أرقام
-    for c in [Open, High, Low, Close]:
-        d[c] = pd.to_numeric(d[c], errors="coerce")
-
-    # حجم التداول: نسمح أنه غير موجود
-    if Vol and Vol in d.columns:
-        d[Vol] = pd.to_numeric(d[Vol], errors="coerce").fillna(0)
-
-    # Subplots: صف للشموع + صف للحجم
-    fig = make_subplots(
-        rows=2, cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.03,
-        row_heights=[0.75, 0.25]
-    )
-
-    fig.add_trace(
-        go.Candlestick(
-            x=x,
-            open=d[Open], high=d[High], low=d[Low], close=d[Close],
-            name="OHLC",
-        ),
-        row=1, col=1
-    )
-
-    if Vol and Vol in d.columns:
-        fig.add_trace(
-            go.Bar(x=x, y=d[Vol], name="Volume"),
-            row=2, col=1
-        )
-
-    fig.update_layout(
-        title=title,
-        height=720,
-        margin=dict(l=10, r=10, t=50, b=10),
-        xaxis=dict(
-            rangeslider=dict(visible=True),
-            showspikes=True,
-            spikemode="across",
-            spikesnap="cursor",
-            showline=True,
-        ),
-        xaxis2=dict(
-            showspikes=True,
-            spikemode="across",
-            spikesnap="cursor",
-        ),
-        yaxis=dict(
-            showspikes=True,
-            spikemode="across",
-            spikesnap="cursor",
-            fixedrange=False
-        ),
-        yaxis2=dict(
-            showspikes=True,
-            spikemode="across",
-            spikesnap="cursor",
-            fixedrange=False
-        ),
-        hovermode="x unified",
-        dragmode="pan",
-        showlegend=False,
-    )
-
-    fig.update_xaxes(
-        rangeselector=dict(
-            buttons=list([
-                dict(count=7, label="7D", step="day", stepmode="backward"),
-                dict(count=1, label="1M", step="month", stepmode="backward"),
-                dict(count=3, label="3M", step="month", stepmode="backward"),
-                dict(count=6, label="6M", step="month", stepmode="backward"),
-                dict(count=1, label="1Y", step="year", stepmode="backward"),
-                dict(step="all", label="All"),
-            ])
-        )
-    )
-
-    return fig
-
-
 def _render_technical_chart_flex(symbol: str, period: str, interval: str):
+    """Legacy fallback chart.
+    استخدم الرسم البسيط بدل الشارت الاحترافي.
     """
-    يرسم شارت احترافي داخل views.py بدون الاعتماد على charts.py.
-    """
-    with st.spinner("جاري جلب بيانات الشارت..."):
-        df = _get_chart_history_flex(symbol, period, interval)
-
-    if df is None:
-        st.error("❌ لم يتم جلب بيانات الشارت.")
-        return
-
-    if not isinstance(df, pd.DataFrame):
-        try:
-            df = pd.DataFrame(df)
-        except Exception:
-            st.error("❌ البيانات غير قابلة للتحويل إلى DataFrame.")
-            return
-
-    if df.empty:
-        st.warning("⚠️ البيانات فارغة (جرّب فترة أكبر).")
-        return
-
-    # إذا الداتا جاءت index datetime، نحولها إلى عمود date
-    if "date" not in df.columns:
-        try:
-            if isinstance(df.index, pd.DatetimeIndex):
-                df = df.reset_index().rename(columns={"index": "date"})
-        except Exception:
-            pass
-
     try:
-        fig = _build_tv_like_plot(df, title=f"{symbol} | {period} | {interval}")
-        st.plotly_chart(
-            fig,
-            use_container_width=True,
-            config={
-                "scrollZoom": True,
-                "displaylogo": False,
-                "displayModeBar": True,
-                "modeBarButtonsToAdd": [
-                    "drawline",
-                    "drawopenpath",
-                    "drawrect",
-                    "drawcircle",
-                    "eraseshape",
-                ],
-            },
-        )
-        st.caption("💡 تلميح: اسحب للتحريك (Pan)، و Scroll للتكبير/التصغير، و Range Slider للتنقل.")
+        with st.spinner("جاري جلب بيانات الشارت..."):
+            df = _get_chart_history_flex(symbol, period, interval)
+        if df is None:
+            st.error("❌ لم يتم جلب بيانات الشارت.")
+            return
+        if not isinstance(df, pd.DataFrame):
+            df = pd.DataFrame(df)
+        if df.empty:
+            st.warning("⚠️ البيانات فارغة (جرّب فترة أكبر).")
+            return
+        cols = {str(c).lower(): c for c in df.columns}
+        close = cols.get('close') or ('Close' if 'Close' in df.columns else None)
+        if close and close in df.columns:
+            st.line_chart(df[close])
+        else:
+            st.line_chart(df)
     except Exception as e:
-        st.error(f"❌ فشل بناء الشارت الاحترافي: {e}")
-        st.info("سأعرض الشارت القديم كخطة بديلة.")
-        _render_technical_chart_flex(symbol, period=period, interval=interval)
-
+        st.error("❌ حصل خطأ أثناء عرض الشارت.")
+        st.code(str(e))
 
 # ========================================================
 # ✅ Table wrapper (نفس تصميم جدول الاستثمار)
