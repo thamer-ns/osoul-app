@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 
+
 # ============================================================
 # 🔐 Database URL
 # ============================================================
@@ -54,6 +55,7 @@ DATABASE_URL = os.getenv("DATABASE_URL") or _get_secret("DATABASE_URL", "")
 # توافق مع نسخ سابقة كانت تبحث عن DB_CONNECTION_URL
 DB_CONNECTION_URL = os.getenv("DB_CONNECTION_URL") or DATABASE_URL
 
+
 # ============================================================
 # 🏷️ هوية التطبيق
 # ============================================================
@@ -67,6 +69,7 @@ if os.path.exists(_DEFAULT_ICON_PATH):
 else:
     APP_ICON = os.getenv("APP_ICON", "📈")
 
+
 # ============================================================
 # 🎨 ألوان افتراضية للاستخدام داخل الواجهات
 # ============================================================
@@ -79,12 +82,14 @@ DEFAULT_COLORS = {
     "muted": "#6B7280",
 }
 
+
 # ============================================================
 # 🖼️ مسارات الشعارات (تُستخدم في settings و CSS)
 # ============================================================
 LOGO_FULL_PATH = os.getenv("LOGO_FULL_PATH", "assets/logo_full.png")
 LOGO_MARK_PATH = os.getenv("LOGO_MARK_PATH", "assets/logo_mark.png")
 LOGO_APP_PATH = os.getenv("LOGO_APP_PATH", "assets/logo_app.png")
+
 
 # ============================================================
 # 💼 إعدادات التداول/المختبر
