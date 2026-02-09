@@ -227,6 +227,7 @@ def db_get_user_schema(username: str) -> str:
 
 def ensure_users_table():
     if table_exists("users"):
+        _migrate_users_table_schema()
         return True
 
     # Note: SQLite and Postgres types differ; keep portable.
@@ -253,6 +254,75 @@ def ensure_users_table():
 
     return execute_query(q)
 
+
+
+def _users_columns() -> set[str]:
+    """Return set of column names in users table (lowercase)."""
+    conn, kind = get_connection()
+    cols: set[str] = set()
+    try:
+        cur = conn.cursor()
+        if kind == "postgres":
+            cur.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_name='users' AND table_schema=current_schema()"
+            )
+            cols = {str(r[0]).lower() for r in (cur.fetchall() or [])}
+        else:
+            cur.execute("PRAGMA table_info(users)")
+            cols = {str(r[1]).lower() for r in (cur.fetchall() or [])}
+    except Exception:
+        cols = set()
+    finally:
+        put_connection(conn, kind)
+    return cols
+
+
+def _migrate_users_table_schema():
+    """Backwards-compatible migration from older schema.
+
+    Older versions used column name `password` (bcrypt hash).
+    Newer code uses `password_hash`.
+    We keep both and backfill `password_hash` from `password` if needed.
+    """
+    if not table_exists("users"):
+        return
+
+    cols = _users_columns()
+    if "password_hash" in cols:
+        return  # nothing to do
+
+    # Add missing column then backfill
+    conn, kind = get_connection()
+    try:
+        cur = conn.cursor()
+        if kind == "postgres":
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT")
+            # backfill when older column exists
+            if "password" in cols:
+                cur.execute(
+                    "UPDATE users SET password_hash = password WHERE password_hash IS NULL AND password IS NOT NULL"
+                )
+        else:
+            # SQLite: add column if missing
+            try:
+                cur.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
+            except Exception:
+                pass
+            if "password" in cols:
+                try:
+                    cur.execute(
+                        "UPDATE users SET password_hash = password WHERE password_hash IS NULL AND password IS NOT NULL"
+                    )
+                except Exception:
+                    pass
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+    finally:
+        put_connection(conn, kind)
 
 def _hash_password(password: str) -> str:
     try:
@@ -300,14 +370,18 @@ def db_create_user(username: str, password: str, email: str = "") -> bool:
         cur = conn.cursor()
         ph = _hash_password(password)
         created_at = time.strftime("%Y-%m-%d %H:%M:%S")
+
+        cols = _users_columns()
+        pw_col = "password_hash" if "password_hash" in cols else ("password" if "password" in cols else "password_hash")
+
         if kind == "postgres":
             cur.execute(
-                "INSERT INTO users (username, password_hash, email, created_at) VALUES (%s, %s, %s, %s)",
+                f"INSERT INTO users (username, {pw_col}, email, created_at) VALUES (%s, %s, %s, %s)",
                 (username, ph, email or None, created_at),
             )
         else:
             cur.execute(
-                "INSERT INTO users (username, password_hash, email, created_at) VALUES (?, ?, ?, ?)",
+                f"INSERT INTO users (username, {pw_col}, email, created_at) VALUES (?, ?, ?, ?)",
                 (username, ph, email or None, created_at),
             )
         conn.commit()
@@ -327,10 +401,13 @@ def db_verify_user(username: str, password: str) -> bool:
     conn, kind = get_connection()
     try:
         cur = conn.cursor()
+        cols = _users_columns()
+        pw_col = "password_hash" if "password_hash" in cols else ("password" if "password" in cols else "password_hash")
+
         if kind == "postgres":
-            cur.execute("SELECT password_hash FROM users WHERE username=%s LIMIT 1", (username,))
+            cur.execute(f"SELECT {pw_col} FROM users WHERE username=%s LIMIT 1", (username,))
         else:
-            cur.execute("SELECT password_hash FROM users WHERE username=? LIMIT 1", (username,))
+            cur.execute(f"SELECT {pw_col} FROM users WHERE username=? LIMIT 1", (username,))
         row = cur.fetchone()
         if not row:
             return False
