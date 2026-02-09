@@ -22,6 +22,10 @@ def sync_auto_multi_sources(symbol: str, prefer: str = "yahoo") -> Tuple[bool, s
     """
     symbol = get_ticker_symbol(symbol)
     saved = 0
+        requested = (period or 'all').lower()
+        allow_annual = (requested == 'all') or requested.startswith('a')
+        allow_quarterly = (requested == 'all') or requested.startswith('q')
+        allow_ttm = (requested == 'all') or include_ttm
     notes: List[str] = []
 
     try:
@@ -152,13 +156,13 @@ def sync_auto_yahoo(symbol):
 # ==============================================================
 # 📦 Full Statements Sync (Annual/Quarterly) — Optional
 # ==============================================================
-def sync_full_yahoo(symbol: str, *, include_ttm: bool = True) -> Tuple[bool, str]:
+def sync_full_yahoo(symbol: str, period: str = 'all', *, include_ttm: bool = True) -> Tuple[bool, str]:
     """
     Fetch and store ALL line-items for:
       - Income statement
       - Balance sheet
       - Cashflow statement
-    For Annual + Quarterly (+ optional TTM derived)
+    For Annual/Quarterly (or all) (+ optional TTM derived)
     Values are stored in *thousands* to match Yahoo UI.
     """
     from .yahoo_data import fetch_full_financial_statements_yahoo_json, diagnose_quote_summary
@@ -178,7 +182,15 @@ def sync_full_yahoo(symbol: str, *, include_ttm: bool = True) -> Tuple[bool, str
         _FULL_YAHOO_CACHE_TS = {}
         _FULL_YAHOO_LAST_FAIL = {}
 
-    cache_key = f"{symbol}::ALL"
+    period_norm = (period or 'all').lower()
+    if period_norm in ('a','annual','y','year','yearly'):
+        period_type_req = 'Annual'
+    elif period_norm in ('q','quarter','quarterly'):
+        period_type_req = 'Quarterly'
+    else:
+        period_type_req = 'All'
+
+    cache_key = f"{symbol}::{period_type_req}"
     now = _time.time()
     ttl = 6 * 60 * 60  # 6h
     cooldown = 60      # 60s after failure
@@ -207,7 +219,7 @@ def sync_full_yahoo(symbol: str, *, include_ttm: bool = True) -> Tuple[bool, str
 
             data = fetch_full_financial_statements_yahoo_json(
                 symbol,
-                period_type="All",
+                period_type=period_type_req,
                 as_thousands=True,
                 include_ttm=include_ttm,
             ) or {}
@@ -245,8 +257,18 @@ def sync_full_yahoo(symbol: str, *, include_ttm: bool = True) -> Tuple[bool, str
             return False, "❌ لم يتم جلب أي بيانات كاملة من Yahoo." + details + "\n"
 
         saved = 0
+        requested = (period or 'all').lower()
+        allow_annual = (requested == 'all') or requested.startswith('a')
+        allow_quarterly = (requested == 'all') or requested.startswith('q')
+        allow_ttm = (requested == 'all') or include_ttm
         for period_type, bundle in data.items():
-            if period_type not in ("Annual", "Quarterly", "TTM"):
+            if period_type_req != 'All' and period_type != period_type_req and period_type != ('TTM' if period_type_req=='Annual' else ''):
+                continue
+            if period_type == 'Annual' and not allow_annual:
+                continue
+            if period_type == 'Quarterly' and not allow_quarterly:
+                continue
+            if period_type == 'TTM' and not allow_ttm:
                 continue
             for statement, recs in (bundle or {}).items():
                 for r in recs or []:
