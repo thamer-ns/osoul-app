@@ -1,10 +1,9 @@
 # database.py
-
 from __future__ import annotations
 
 import os
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import pandas as pd
 import streamlit as st
@@ -16,37 +15,39 @@ except Exception:
     psycopg2 = None
     SimpleConnectionPool = None
 
-
 import config
-
-# ============================================================
-# DB Pool (Postgres) + Fallback (SQLite)
-# ============================================================
 
 _POOL: Optional["SimpleConnectionPool"] = None
 _POOL_LAST_ERR: Optional[str] = None
 _POOL_LAST_OK: bool = False
 _POOL_LAST_CHECK: float = 0.0
 
-# If Postgres is not configured, fallback to sqlite for basic local usage
 _SQLITE_PATH = os.getenv("SQLITE_PATH", "osoul_local.db")
 
 
 def _is_postgres_url(url: str) -> bool:
-    u = (url or "").lower()
+    u = (url or "").lower().strip()
     return u.startswith("postgres://") or u.startswith("postgresql://")
 
 
 def _get_db_url() -> str:
-    """Return DB URL from config/env/secrets (preferred)."""
-    return (getattr(config, "DB_CONNECTION_URL", None) or getattr(config, "DATABASE_URL", None) or "").strip()
+    return ((getattr(config, "DB_CONNECTION_URL", "") or "").strip()
+            or (getattr(config, "DATABASE_URL", "") or "").strip())
+
+
+def _warn_missing_db_url_once():
+    try:
+        if st.session_state.get("_warned_missing_db_url"):
+            return
+        st.session_state["_warned_missing_db_url"] = True
+    except Exception:
+        pass
+    st.warning("⚠️ لم يتم العثور على DATABASE_URL في Secrets/Env. سيتم استخدام SQLite محلية (وقد لا تظهر بياناتك القديمة).")
 
 
 def get_connection_pool():
-    """Get or create a Postgres connection pool, if configured."""
     global _POOL, _POOL_LAST_ERR, _POOL_LAST_OK, _POOL_LAST_CHECK
 
-    # rate-limit pool init checks
     now = time.time()
     if _POOL is not None and (now - _POOL_LAST_CHECK) < 2:
         return _POOL
@@ -54,27 +55,29 @@ def get_connection_pool():
     _POOL_LAST_CHECK = now
     db_url = _get_db_url()
 
-    # مصدر الرابط: Streamlit Secrets (DATABASE_URL) أو متغيرات البيئة.
-    # نعرض رسالة عامة بدون افتراض وجود secrets.toml داخل المستودع.
-    if not getattr(config, "DB_CONNECTION_URL", None):
-        st.error("⚠️ لم يتم العثور على رابط قاعدة البيانات (DATABASE_URL) في Secrets/Env.")
-        _POOL_LAST_OK = False
-        return None
-
     if not db_url:
         _POOL_LAST_ERR = "Missing DATABASE_URL"
         _POOL_LAST_OK = False
+        _POOL = None
+        _warn_missing_db_url_once()
         return None
 
-    # If url isn't postgres, we won't create pool
     if not _is_postgres_url(db_url):
-        _POOL_LAST_ERR = "DATABASE_URL is not a Postgres URL (expected postgresql://...)"
+        _POOL_LAST_ERR = "DATABASE_URL is not a Postgres URL"
         _POOL_LAST_OK = False
+        _POOL = None
+        try:
+            if not st.session_state.get("_warned_bad_db_url"):
+                st.session_state["_warned_bad_db_url"] = True
+                st.warning("⚠️ DATABASE_URL موجود لكنه ليس Postgres (يجب أن يبدأ بـ postgresql:// أو postgres://). سيتم استخدام SQLite محلية.")
+        except Exception:
+            pass
         return None
 
     if psycopg2 is None or SimpleConnectionPool is None:
         _POOL_LAST_ERR = "psycopg2 is not available"
         _POOL_LAST_OK = False
+        _POOL = None
         return None
 
     try:
@@ -87,15 +90,17 @@ def get_connection_pool():
         _POOL = None
         _POOL_LAST_OK = False
         _POOL_LAST_ERR = str(e)
+        try:
+            if not st.session_state.get("_warned_pool_fail"):
+                st.session_state["_warned_pool_fail"] = True
+                st.warning("⚠️ تعذر إنشاء اتصال Postgres. سيتم استخدام SQLite محلية.")
+                st.caption(str(e))
+        except Exception:
+            pass
         return None
 
 
 def get_connection():
-    """
-    Get a DB connection:
-    - Postgres if DATABASE_URL is set and valid
-    - else SQLite fallback
-    """
     pool = get_connection_pool()
     if pool is not None:
         try:
@@ -103,10 +108,8 @@ def get_connection():
         except Exception:
             pass
 
-    # SQLite fallback
     try:
         import sqlite3
-
         conn = sqlite3.connect(_SQLITE_PATH, check_same_thread=False)
         return conn, "sqlite"
     except Exception as e:
@@ -114,7 +117,6 @@ def get_connection():
 
 
 def put_connection(conn, kind: str):
-    """Return connection to pool if postgres, otherwise close sqlite."""
     if not conn:
         return
     if kind == "postgres":
@@ -132,15 +134,9 @@ def put_connection(conn, kind: str):
 
 
 def db_healthcheck() -> Dict[str, Any]:
-    """
-    Simple healthcheck that UI can call.
-    Returns:
-      { ok: bool, kind: 'postgres'|'sqlite'|..., error: str }
-    """
     try:
         conn, kind = get_connection()
         try:
-            # light query
             cur = conn.cursor() if hasattr(conn, "cursor") else None
             if cur:
                 cur.execute("SELECT 1")
@@ -151,10 +147,6 @@ def db_healthcheck() -> Dict[str, Any]:
     except Exception as e:
         return {"ok": False, "kind": "none", "error": str(e)}
 
-
-# ============================================================
-# Helpers
-# ============================================================
 
 def execute_query(query: str, params: Optional[Tuple[Any, ...]] = None) -> bool:
     conn, kind = get_connection()
@@ -205,33 +197,11 @@ def table_exists(table_name: str) -> bool:
         put_connection(conn, kind)
 
 
-def ensure_table(query: str) -> bool:
-    return execute_query(query)
-
-
-# ============================================================
-# Schema / Multi-user
-# ============================================================
-
-def get_user_schema(username: str) -> str:
-    # default schema for single-tenant
-    return "public"
-
-
-def db_get_user_schema(username: str) -> str:
-    return get_user_schema(username)
-
-
-# ============================================================
-# Users table (auth)
-# ============================================================
-
 def ensure_users_table():
     if table_exists("users"):
         return True
 
-    # Note: SQLite and Postgres types differ; keep portable.
-    q = """
+    q_sqlite = '''
     CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE NOT NULL,
@@ -239,42 +209,35 @@ def ensure_users_table():
         email TEXT,
         created_at TEXT
     );
-    """
-    if psycopg2 is not None and _is_postgres_url(_get_db_url()):
-        # postgres flavor
-        q = """
-        CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
-            username TEXT UNIQUE NOT NULL,
-            password_hash TEXT NOT NULL,
-            email TEXT,
-            created_at TEXT
-        );
-        """
-
-    return execute_query(q)
+    '''
+    q_pg = '''
+    CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        email TEXT,
+        created_at TEXT
+    );
+    '''
+    db_url = _get_db_url()
+    return execute_query(q_pg if (psycopg2 is not None and _is_postgres_url(db_url)) else q_sqlite)
 
 
 def _hash_password(password: str) -> str:
     try:
         import bcrypt
-
         return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
     except Exception:
-        # fallback (weak) — should not happen if bcrypt installed
         import hashlib
-
         return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 
 def _check_password(password: str, password_hash: str) -> bool:
     try:
         import bcrypt
-
         return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
     except Exception:
         import hashlib
-
         return hashlib.sha256(password.encode("utf-8")).hexdigest() == (password_hash or "")
 
 
@@ -343,23 +306,11 @@ def db_verify_user(username: str, password: str) -> bool:
         put_connection(conn, kind)
 
 
-# ============================================================
-# Financial statements storage (light + raw json)
-# ============================================================
-
 def init_db():
-    """
-    Ensure core tables exist.
-    Works for:
-      - Postgres (public schema)
-      - SQLite fallback
-    """
-    # users
     ensure_users_table()
 
-    # lightweight financial table
     if not table_exists("financialstatements"):
-        q = """
+        q_sqlite = '''
         CREATE TABLE IF NOT EXISTS financialstatements (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             symbol TEXT,
@@ -385,40 +336,39 @@ def init_db():
             shares_outstanding REAL,
             created_at TEXT
         );
-        """
-        if psycopg2 is not None and _is_postgres_url(_get_db_url()):
-            q = """
-            CREATE TABLE IF NOT EXISTS financialstatements (
-                id SERIAL PRIMARY KEY,
-                symbol TEXT,
-                date_str TEXT,
-                period_type TEXT,
-                source TEXT,
-                revenue DOUBLE PRECISION,
-                net_income DOUBLE PRECISION,
-                total_assets DOUBLE PRECISION,
-                total_liabilities DOUBLE PRECISION,
-                total_equity DOUBLE PRECISION,
-                operating_cash_flow DOUBLE PRECISION,
-                investing_cash_flow DOUBLE PRECISION,
-                financing_cash_flow DOUBLE PRECISION,
-                free_cash_flow DOUBLE PRECISION,
-                current_assets DOUBLE PRECISION,
-                current_liabilities DOUBLE PRECISION,
-                long_term_debt DOUBLE PRECISION,
-                gross_profit DOUBLE PRECISION,
-                operating_income DOUBLE PRECISION,
-                interest_expense DOUBLE PRECISION,
-                ebitda DOUBLE PRECISION,
-                shares_outstanding DOUBLE PRECISION,
-                created_at TEXT
-            );
-            """
-        execute_query(q)
+        '''
+        q_pg = '''
+        CREATE TABLE IF NOT EXISTS financialstatements (
+            id SERIAL PRIMARY KEY,
+            symbol TEXT,
+            date_str TEXT,
+            period_type TEXT,
+            source TEXT,
+            revenue DOUBLE PRECISION,
+            net_income DOUBLE PRECISION,
+            total_assets DOUBLE PRECISION,
+            total_liabilities DOUBLE PRECISION,
+            total_equity DOUBLE PRECISION,
+            operating_cash_flow DOUBLE PRECISION,
+            investing_cash_flow DOUBLE PRECISION,
+            financing_cash_flow DOUBLE PRECISION,
+            free_cash_flow DOUBLE PRECISION,
+            current_assets DOUBLE PRECISION,
+            current_liabilities DOUBLE PRECISION,
+            long_term_debt DOUBLE PRECISION,
+            gross_profit DOUBLE PRECISION,
+            operating_income DOUBLE PRECISION,
+            interest_expense DOUBLE PRECISION,
+            ebitda DOUBLE PRECISION,
+            shares_outstanding DOUBLE PRECISION,
+            created_at TEXT
+        );
+        '''
+        db_url = _get_db_url()
+        execute_query(q_pg if (psycopg2 is not None and _is_postgres_url(db_url)) else q_sqlite)
 
-    # raw json table (full statements)
     if not table_exists("financialstatements_raw"):
-        q = """
+        q_sqlite = '''
         CREATE TABLE IF NOT EXISTS financialstatements_raw (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             symbol TEXT,
@@ -428,43 +378,19 @@ def init_db():
             payload TEXT,
             created_at TEXT
         );
-        """
-        if psycopg2 is not None and _is_postgres_url(_get_db_url()):
-            q = """
-            CREATE TABLE IF NOT EXISTS financialstatements_raw (
-                id SERIAL PRIMARY KEY,
-                symbol TEXT,
-                date_str TEXT,
-                period_type TEXT,
-                source TEXT,
-                payload TEXT,
-                created_at TEXT
-            );
-            """
-        execute_query(q)
+        '''
+        q_pg = '''
+        CREATE TABLE IF NOT EXISTS financialstatements_raw (
+            id SERIAL PRIMARY KEY,
+            symbol TEXT,
+            date_str TEXT,
+            period_type TEXT,
+            source TEXT,
+            payload TEXT,
+            created_at TEXT
+        );
+        '''
+        db_url = _get_db_url()
+        execute_query(q_pg if (psycopg2 is not None and _is_postgres_url(db_url)) else q_sqlite)
 
     return True
-
-
-# ============================================================
-# Compatibility wrappers used by other modules
-# ============================================================
-
-def db_get_user_schema(username: str) -> str:
-    return get_user_schema(username)
-
-
-# ============================================================
-# (Optional) Extra helpers referenced by older code
-# ============================================================
-
-def fetch_table_safe(t: str) -> pd.DataFrame:
-    try:
-        return fetch_table(t)
-    except Exception:
-        return pd.DataFrame()
-
-
-# ============================================================
-# End of file
-# ============================================================
