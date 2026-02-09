@@ -1,4 +1,3 @@
-# financial_analysis/yahoo_data.py
 import time
 from datetime import datetime
 import re
@@ -75,63 +74,114 @@ def _yf_session():
 
 
 def _http_get_json(url: str, timeout: int = 8, retries: int = 2, sleep: float = 0.6) -> dict:
-    """HTTP GET JSON with robust diagnostics.
+    """
+    Robust JSON GET with diagnostics + smarter backoff.
 
-    Always records _LAST_YAHOO_DIAGNOSTICS via _set_last_diag(), even when:
-    - requests is unavailable
-    - session can't be created
-    - network/timeout/JSON errors happen
-    - non-200 status codes are returned
+    - Always records diagnostics via _set_last_diag().
+    - Adds clear hint for 429/403/404 and other common failures.
     """
     if not requests:
         _set_last_diag(url=url, status=None, error="requests unavailable", snippet=None, hint="requests unavailable")
         return {}
+
     ses = _yf_session()
     if not ses:
         _set_last_diag(url=url, status=None, error="session unavailable", snippet=None, hint="session unavailable")
         return {}
 
-    last_err = None
     last_status = None
-    last_snip = None
+    last_snippet = None
+    last_err = None
 
     for i in range(retries + 1):
         try:
             r = ses.get(url, timeout=timeout)
             last_status = getattr(r, "status_code", None)
-            last_snip = (getattr(r, "text", "") or "")[:200].replace("\n", " ")
-            # record per-attempt status
+            txt = (getattr(r, "text", "") or "")
+            last_snippet = txt[:200].replace("\n", " ").strip() if txt else None
+
             if last_status == 200:
                 try:
-                    j = r.json() or {}
-                    _set_last_diag(url=url, status=200, error=None, snippet=last_snip, hint=None)
-                    return j
-                except Exception as je:
-                    last_err = je
-                    _set_last_diag(url=url, status=200, error=je, snippet=last_snip, hint="JSON decode error")
+                    data = r.json() or {}
+                    _set_last_diag(url=url, status=200, error=None, snippet=last_snippet, hint="OK")
+                    return data
+                except Exception as e:
+                    last_err = e
+                    _set_last_diag(url=url, status=200, error=e, snippet=last_snippet, hint="Invalid JSON response")
                     return {}
-            elif last_status in (401, 403):
-                _set_last_diag(url=url, status=last_status, error=f"HTTP {last_status}", snippet=last_snip, hint="Blocked/Forbidden")
+
+            # Non-200: set useful hint
+            if last_status == 429:
+                _set_last_diag(
+                    url=url,
+                    status=429,
+                    error=None,
+                    snippet=last_snippet,
+                    hint="Rate limit (429) — انتظر 1-2 دقيقة ثم أعد المحاولة",
+                )
+                # exponential backoff
+                time.sleep(max(0.5, sleep) * (2 ** i))
+                continue
+
+            if last_status in (401, 403):
+                _set_last_diag(
+                    url=url,
+                    status=last_status,
+                    error=None,
+                    snippet=last_snippet,
+                    hint="Blocked/Forbidden — جرّب لاحقًا أو استخدم مصدر بديل",
+                )
+                # no aggressive retry on forbidden
                 return {}
-            elif last_status == 404:
-                _set_last_diag(url=url, status=404, error="HTTP 404", snippet=last_snip, hint="Not found / symbol or endpoint")
+
+            if last_status == 404:
+                _set_last_diag(
+                    url=url,
+                    status=404,
+                    error=None,
+                    snippet=last_snippet,
+                    hint="Not found — رمز غير صحيح أو تغيّر endpoint",
+                )
                 return {}
-            elif last_status in (429, 503):
-                hint = "Rate limit (429)" if last_status == 429 else "Service unavailable (503)"
-                _set_last_diag(url=url, status=last_status, error=f"HTTP {last_status}", snippet=last_snip, hint=hint)
-                time.sleep(sleep * (2 if last_status == 429 else 1))
-            else:
-                _set_last_diag(url=url, status=last_status, error=f"HTTP {last_status}", snippet=last_snip, hint="HTTP error")
+
+            if last_status in (503, 502, 500):
+                _set_last_diag(
+                    url=url,
+                    status=last_status,
+                    error=None,
+                    snippet=last_snippet,
+                    hint="Server busy — أعد المحاولة لاحقًا",
+                )
+                time.sleep(max(0.5, sleep) * (1.5 ** i))
+                continue
+
+            _set_last_diag(
+                url=url,
+                status=last_status,
+                error=None,
+                snippet=last_snippet,
+                hint=f"HTTP {last_status} — استجابة غير متوقعة",
+            )
+
         except Exception as e:
             last_err = e
-            _set_last_diag(url=url, status=last_status, error=e, snippet=last_snip, hint="Request error")
+            _set_last_diag(url=url, status=last_status, error=e, snippet=last_snippet, hint="Network/timeout error")
+
         if i < retries:
-            time.sleep(sleep)
+            time.sleep(max(0.2, sleep))
 
-    # retries exhausted
-    _set_last_diag(url=url, status=last_status, error=last_err, snippet=last_snip, hint="Empty response")
+    # Final fallback
+    if last_status == 429:
+        hint = "Rate limit (429) — انتظر 1-2 دقيقة ثم أعد المحاولة"
+    elif last_status in (401, 403):
+        hint = "Blocked/Forbidden — جرّب لاحقًا أو استخدم مصدر بديل"
+    elif last_status == 404:
+        hint = "Not found — رمز غير صحيح أو تغيّر endpoint"
+    else:
+        hint = "Empty response"
+
+    _set_last_diag(url=url, status=last_status, error=last_err, snippet=last_snippet, hint=hint)
     return {}
-
 
 
 def _yf_raw(v, default=0.0) -> float:
@@ -406,12 +456,12 @@ def diagnose_quote_summary(symbol: str) -> Dict[str, Any]:
         data = _yahoo_quote_summary(symbol, modules=["price"])
         diag = get_last_yahoo_diagnostics()
         if not data:
+            # keep whatever hint set by _http_get_json; fallback only if missing
             diag["hint"] = diag.get("hint") or "Empty response"
         return diag
     except Exception as e:
         diag = get_last_yahoo_diagnostics()
         diag["error"] = str(e)
-        # Provide a helpful hint for the most common cases
         status = diag.get("status")
         if status == 429:
             diag["hint"] = "Rate limit (429) — حاول بعد 1-2 دقيقة أو فعّل التخزين المحلي"
@@ -420,85 +470,3 @@ def diagnose_quote_summary(symbol: str) -> Dict[str, Any]:
         elif status == 404:
             diag["hint"] = "Symbol not found / endpoint changed"
         return diag
-
-
-# ==============================================================
-# 📚 Full Statements (QuoteSummary raw JSON + optional HTML fallback)
-# ==============================================================
-def fetch_full_financial_statements_yahoo_json(symbol: str, period: str = "annual") -> Dict[str, Any]:
-    """Fetch *raw* full statements dict from Yahoo quoteSummary.
-    Returns a dict with keys: income, balance, cash, meta.
-    Non-breaking: returns empty dict on failure.
-    """
-    symbol = get_ticker_symbol(symbol)
-    period = (period or "annual").lower()
-    try:
-        modules = ["incomeStatementHistory", "incomeStatementHistoryQuarterly",
-                   "balanceSheetHistory", "balanceSheetHistoryQuarterly",
-                   "cashflowStatementHistory", "cashflowStatementHistoryQuarterly"]
-        raw = _yahoo_quote_summary(symbol, modules=modules) or {}
-        # quoteSummary structure: {"quoteSummary":{"result":[{...}],"error":...}}
-        result = (raw.get("quoteSummary", {}) or {}).get("result") or []
-        if not result:
-            return {}
-        payload = result[0] or {}
-        out = {"meta": {"symbol": symbol, "period": period}}
-        if period.startswith("q"):
-            out["income"] = payload.get("incomeStatementHistoryQuarterly") or {}
-            out["balance"] = payload.get("balanceSheetHistoryQuarterly") or {}
-            out["cash"] = payload.get("cashflowStatementHistoryQuarterly") or {}
-        else:
-            out["income"] = payload.get("incomeStatementHistory") or {}
-            out["balance"] = payload.get("balanceSheetHistory") or {}
-            out["cash"] = payload.get("cashflowStatementHistory") or {}
-        return out
-    except Exception:
-        # diagnostics are already recorded by _http_get_json
-        return {}
-
-
-def _parse_yahoo_root_app_main(html: str) -> Dict[str, Any]:
-    """Extract Root.App.main JSON from Yahoo HTML (best-effort)."""
-    # Yahoo embeds JSON in: root.App.main = {...};
-    m = re.search(r"root\.App\.main\s*=\s*(\{.*?\});\s*\n", html, flags=re.DOTALL)
-    if not m:
-        m = re.search(r"root\.App\.main\s*=\s*(\{.*?\});", html, flags=re.DOTALL)
-    if not m:
-        return {}
-    blob = m.group(1)
-    try:
-        import json as _json
-        return _json.loads(blob)
-    except Exception:
-        return {}
-
-
-def fetch_full_financial_statements_yahoo_html(symbol: str) -> Dict[str, Any]:
-    """HTML fallback: fetch Yahoo quote page and try to extract quoteSummary-like stores.
-    Returns empty dict on failure.
-    """
-    symbol = get_ticker_symbol(symbol)
-    if not requests:
-        return {}
-    url = f"https://finance.yahoo.com/quote/{symbol}/financials?p={symbol}"
-    try:
-        s = _yf_session()
-        if not s:
-            return {}
-        r = s.get(url, timeout=12)
-        snippet = (r.text or "")[:200].replace("\n", " ")
-        _set_last_diag(url=url, status=r.status_code, error=None, snippet=snippet, hint=None)
-        if r.status_code != 200:
-            if r.status_code == 429:
-                _set_last_diag(url=url, status=429, error="HTTP 429", snippet=snippet, hint="Rate limit (429)")
-            return {}
-        root = _parse_yahoo_root_app_main(r.text or "")
-        # Try to reach a store that contains quoteSummary-like data
-        stores = (((root.get("context") or {}).get("dispatcher") or {}).get("stores") or {})
-        qs = stores.get("QuoteSummaryStore") or {}
-        if qs:
-            return {"meta": {"symbol": symbol, "period": "html"}, "quoteSummaryStore": qs}
-        return {"meta": {"symbol": symbol, "period": "html"}, "root": root}
-    except Exception as e:
-        _set_last_diag(url=url, status=None, error=e, snippet=None, hint="HTML fallback error")
-        return {}
