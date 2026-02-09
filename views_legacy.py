@@ -909,7 +909,7 @@ def _build_tv_like_plot(df: pd.DataFrame, title: str = "") -> go.Figure:
     return fig
 
 
-def _render_tv_like_chart(symbol: str, period: str, interval: str):
+def _render_technical_chart_flex(symbol: str, period: str, interval: str):
     """
     يرسم شارت احترافي داخل views.py بدون الاعتماد على charts.py.
     """
@@ -2221,7 +2221,7 @@ def view_analysis(fin):
             )
 
             if mode == "احترافي":
-                _render_tv_like_chart(sym, period_opts[p_label], interval_opts[i_label])
+                _render_technical_chart_flex(sym, period_opts[p_label], interval_opts[i_label])
             else:
                 _render_technical_chart_flex(sym, period=period_opts[p_label], interval=interval_opts[i_label])
 
