@@ -388,36 +388,280 @@ def diagnose_quote_summary(symbol: str) -> Dict[str, Any]:
 # ==============================================================
 # 📚 Full Statements (QuoteSummary raw JSON + optional HTML fallback)
 # ==============================================================
-def fetch_full_financial_statements_yahoo_json(symbol: str, period: str = "annual") -> Dict[str, Any]:
-    """Fetch *raw* full statements dict from Yahoo quoteSummary.
-    Returns a dict with keys: income, balance, cash, meta.
-    Non-breaking: returns empty dict on failure.
-    """
-    symbol = get_ticker_symbol(symbol)
-    period = (period or "annual").lower()
+def _yahoo_extract_raw(v):
+    """Extract numeric raw values from Yahoo dicts."""
     try:
-        modules = ["incomeStatementHistory", "incomeStatementHistoryQuarterly",
-                   "balanceSheetHistory", "balanceSheetHistoryQuarterly",
-                   "cashflowStatementHistory", "cashflowStatementHistoryQuarterly"]
+        if isinstance(v, dict):
+            if 'raw' in v and isinstance(v['raw'], (int, float)):
+                return float(v['raw'])
+            if 'fmt' in v and isinstance(v.get('fmt'), (int, float)):
+                return float(v['fmt'])
+        if isinstance(v, (int, float)):
+            return float(v)
+    except Exception:
+        return None
+    return None
+
+
+def _yahoo_extract_date(item: dict):
+    """Best-effort extract a date string from Yahoo statement row."""
+    for k in ('endDate', 'asOfDate', 'date'):
+        v = (item or {}).get(k)
+        if isinstance(v, dict):
+            # prefer fmt (YYYY-MM-DD) if present
+            if isinstance(v.get('fmt'), str) and v.get('fmt'):
+                return v['fmt']
+            raw = v.get('raw')
+            if isinstance(raw, (int, float)):
+                try:
+                    from datetime import datetime
+                    return datetime.utcfromtimestamp(int(raw)).strftime('%Y-%m-%d')
+                except Exception:
+                    pass
+        if isinstance(v, str) and v:
+            return v
+    return None
+
+
+def _yahoo_statement_records(history_container: dict, list_key: str, *, as_thousands: bool = False):
+    lst = (history_container or {}).get(list_key) or []
+    out = []
+    for item in lst:
+        if not isinstance(item, dict):
+            continue
+        d = _yahoo_extract_date(item)
+        if not d:
+            continue
+        data = {}
+        for k, v in item.items():
+            if k in ('maxAge', 'endDate', 'asOfDate', 'periodType', 'currencyCode'):
+                continue
+            raw = _yahoo_extract_raw(v)
+            if raw is None:
+                continue
+            if as_thousands:
+                raw = raw / 1000.0
+            data[k] = raw
+        if data:
+            out.append({'date': d, 'data': data})
+    return out
+
+
+def _compute_ttm(quarterly_recs, kind: str):
+    """Compute a light TTM bundle.
+    - income/cash: sum last 4 quarters
+    - balance: most recent quarter
+    """
+    if not quarterly_recs:
+        return []
+    # sort by date desc
+    qr = sorted([r for r in quarterly_recs if isinstance(r, dict) and r.get('date')], key=lambda r: r['date'], reverse=True)
+    if not qr:
+        return []
+    if kind == 'balance':
+        return [qr[0]]
+    window = qr[:4]
+    agg = {}
+    for r in window:
+        dct = (r.get('data') or {})
+        for k, v in dct.items():
+            if isinstance(v, (int, float)):
+                agg[k] = agg.get(k, 0.0) + float(v)
+    return [{'date': qr[0]['date'], 'data': agg}] if agg else []
+
+
+def fetch_full_financial_statements_yahoo_json(
+    symbol: str,
+    period: str = "annual",
+    *,
+    period_type: str | None = None,
+    as_thousands: bool = False,
+    include_ttm: bool = False,
+) -> Dict[str, Any]:
+    """Fetch full financial statements from Yahoo (quoteSummary).
+
+    This function supports **two** calling styles for backward compatibility:
+
+    1) Legacy/raw style (existing callers):
+       fetch_full_financial_statements_yahoo_json(symbol, period="annual"|"quarterly")
+       -> returns a raw dict with keys: income, balance, cash, meta
+
+    2) Structured/full style (used by sync_full_yahoo):
+       fetch_full_financial_statements_yahoo_json(
+           symbol,
+           period_type="Annual"|"Quarterly"|"All",
+           as_thousands=True,
+           include_ttm=True,
+       )
+       -> returns dict: {"Annual": {"income": [...], "balance": [...], "cash": [...]}, ...}
+
+    Always returns an empty dict on failure.
+    """
+
+    symbol = get_ticker_symbol(symbol)
+
+    # ---------------------------
+    # Helpers
+    # ---------------------------
+    def _extract_raw(v):
+        if isinstance(v, dict):
+            if "raw" in v:
+                return v.get("raw")
+            if "fmt" in v:
+                return v.get("fmt")
+        return v
+
+    def _coerce_date(v) -> str | None:
+        v = _extract_raw(v)
+        if v is None:
+            return None
+        # unix timestamp
+        if isinstance(v, (int, float)):
+            try:
+                return datetime.utcfromtimestamp(float(v)).date().isoformat()
+            except Exception:
+                return None
+        if isinstance(v, str):
+            s = v.strip()
+            if not s:
+                return None
+            # already ISO or formatted; keep as-is
+            return s
+        return None
+
+    def _to_number(v):
+        v = _extract_raw(v)
+        if isinstance(v, (int, float)):
+            x = float(v)
+            if as_thousands:
+                x = x / 1000.0
+            return x
+        return None
+
+    def _history_to_records(container: dict | None, list_key: str) -> list[dict]:
+        container = container or {}
+        items = container.get(list_key) or []
+        recs: list[dict] = []
+        if not isinstance(items, list):
+            return recs
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            date = _coerce_date(it.get("endDate") or it.get("asOfDate") or it.get("periodEndingDate"))
+            if not date:
+                continue
+            data: dict[str, float] = {}
+            for k, v in it.items():
+                if k in ("maxAge", "endDate", "asOfDate", "periodType", "currencyCode"):
+                    continue
+                num = _to_number(v)
+                if num is None:
+                    continue
+                data[str(k)] = num
+            if data:
+                recs.append({"date": date, "data": data})
+        return recs
+
+    def _build_bundle(payload: dict, p: str) -> dict[str, list[dict]]:
+        is_q = p.startswith("q")
+        inc_key = "incomeStatementHistoryQuarterly" if is_q else "incomeStatementHistory"
+        bs_key = "balanceSheetHistoryQuarterly" if is_q else "balanceSheetHistory"
+        cf_key = "cashflowStatementHistoryQuarterly" if is_q else "cashflowStatementHistory"
+
+        income = _history_to_records(payload.get(inc_key) or {}, "incomeStatementHistory")
+        balance = _history_to_records(payload.get(bs_key) or {}, "balanceSheetStatements")
+        cash = _history_to_records(payload.get(cf_key) or {}, "cashflowStatements")
+        return {"income": income, "balance": balance, "cash": cash}
+
+    def _compute_ttm_from_quarterly(q_bundle: dict[str, list[dict]]) -> dict[str, list[dict]]:
+        # income + cash: sum latest 4 quarters; balance: latest quarter snapshot
+        def sum_latest4(recs: list[dict]) -> dict[str, float]:
+            out: dict[str, float] = {}
+            top = recs[:4]
+            for r in top:
+                d = (r or {}).get("data") or {}
+                if not isinstance(d, dict):
+                    continue
+                for k, v in d.items():
+                    try:
+                        out[k] = float(out.get(k, 0.0)) + float(v)
+                    except Exception:
+                        continue
+            return out
+
+        def latest_snapshot(recs: list[dict]) -> dict[str, float]:
+            if not recs:
+                return {}
+            d = (recs[0] or {}).get("data") or {}
+            return {str(k): float(v) for k, v in d.items() if isinstance(v, (int, float))}
+
+        inc = q_bundle.get("income") or []
+        bal = q_bundle.get("balance") or []
+        cf = q_bundle.get("cash") or []
+        date = None
+        if inc and isinstance(inc[0], dict):
+            date = inc[0].get("date")
+        date = date or (bal[0].get("date") if bal and isinstance(bal[0], dict) else None) or (cf[0].get("date") if cf and isinstance(cf[0], dict) else None)
+        if not date:
+            return {"income": [], "balance": [], "cash": []}
+
+        ttm_income = sum_latest4(inc)
+        ttm_cash = sum_latest4(cf)
+        ttm_balance = latest_snapshot(bal)
+
+        out = {
+            "income": [{"date": str(date), "data": ttm_income}] if ttm_income else [],
+            "cash": [{"date": str(date), "data": ttm_cash}] if ttm_cash else [],
+            "balance": [{"date": str(date), "data": ttm_balance}] if ttm_balance else [],
+        }
+        return out
+
+    # ---------------------------
+    # Fetch quoteSummary
+    # ---------------------------
+    try:
+        modules = [
+            "incomeStatementHistory",
+            "incomeStatementHistoryQuarterly",
+            "balanceSheetHistory",
+            "balanceSheetHistoryQuarterly",
+            "cashflowStatementHistory",
+            "cashflowStatementHistoryQuarterly",
+        ]
         raw = _yahoo_quote_summary(symbol, modules=modules) or {}
-        # quoteSummary structure: {"quoteSummary":{"result":[{...}],"error":...}}
         result = (raw.get("quoteSummary", {}) or {}).get("result") or []
         if not result:
             return {}
         payload = result[0] or {}
-        out = {"meta": {"symbol": symbol, "period": period}}
-        if period.startswith("q"):
-            out["income"] = payload.get("incomeStatementHistoryQuarterly") or {}
-            out["balance"] = payload.get("balanceSheetHistoryQuarterly") or {}
-            out["cash"] = payload.get("cashflowStatementHistoryQuarterly") or {}
+
+        # Legacy/raw style
+        if period_type is None:
+            p = (period or "annual").lower()
+            bundle = _build_bundle(payload, p)
+            out = {"meta": {"symbol": symbol, "period": p}}
+            out.update(bundle)
+            return out
+
+        # Structured/full style
+        pt = (period_type or "All").strip().lower()
+        out: Dict[str, Any] = {}
+        if pt in ("all", "both"):
+            out["Annual"] = _build_bundle(payload, "annual")
+            out["Quarterly"] = _build_bundle(payload, "quarterly")
+            if include_ttm:
+                out["TTM"] = _compute_ttm_from_quarterly(out.get("Quarterly") or {})
+        elif pt.startswith("q"):
+            out["Quarterly"] = _build_bundle(payload, "quarterly")
+            if include_ttm:
+                out["TTM"] = _compute_ttm_from_quarterly(out.get("Quarterly") or {})
         else:
-            out["income"] = payload.get("incomeStatementHistory") or {}
-            out["balance"] = payload.get("balanceSheetHistory") or {}
-            out["cash"] = payload.get("cashflowStatementHistory") or {}
+            out["Annual"] = _build_bundle(payload, "annual")
         return out
+
     except Exception:
         # diagnostics are already recorded by _http_get_json
         return {}
+
 
 
 def _parse_yahoo_root_app_main(html: str) -> Dict[str, Any]:
