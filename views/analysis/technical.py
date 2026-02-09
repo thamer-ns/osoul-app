@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 
 from market_data import get_chart_history
-from views.shared import _sym_key, _render_tv_like_chart, _render_technical_chart_flex
+from views.shared import _sym_key, _render_technical_chart_flex
 
 
 def _safe_to_df(x):
@@ -89,16 +89,12 @@ def render_technical_tab(sym: str):
         "15 دقيقة": "15m",
     }
 
-    c_p, c_i, c_mode = st.columns([1.2, 1.2, 1.6])
+    c_p, c_i, c_chart_mode_removed = st.columns([1.2, 1.2, 1.6])
     p_label = c_p.selectbox("الفترة (Period)", list(period_opts.keys()), index=2, key=f"tech_p_{symk}")
     i_label = c_i.selectbox("الفاصل (Interval)", list(interval_opts.keys()), index=0, key=f"tech_i_{symk}")
 
-    mode = c_mode.radio(
-        "وضع الشارت",
-        ["احترافي", "قديم (Fallback)"],
-        horizontal=True,
-        key=f"tech_mode_{symk}",
-    )
+    # تم حذف "الشارت ال" بالكامل لأنه لا يعمل بشكل موثوق.
+    # نعتمد فقط على الشارت المرن (Fallback) لضمان الاستقرار.
 
     # Snapshot (KPIs)
     snap = _price_snapshot(sym, period=period_opts[p_label], interval=interval_opts[i_label])
@@ -120,7 +116,7 @@ def render_technical_tab(sym: str):
 
     # Chart
     try:
-        if mode == "احترافي":
+        if chart_mode_removed == "":
             _render_tv_like_chart(sym, period_opts[p_label], interval_opts[i_label])
         else:
             _render_technical_chart_flex(sym, period=period_opts[p_label], interval=interval_opts[i_label])
