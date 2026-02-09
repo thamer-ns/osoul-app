@@ -1,588 +1,470 @@
 # database.py
-import psycopg2
-from psycopg2 import pool
+
+from __future__ import annotations
+
+import os
+import time
+from typing import Any, Dict, List, Optional, Tuple
+
 import pandas as pd
 import streamlit as st
-import bcrypt
-from contextlib import contextmanager
-import re
-import config  # تم ربط الملف بـ config
+
+try:
+    import psycopg2
+    from psycopg2.pool import SimpleConnectionPool
+except Exception:
+    psycopg2 = None
+    SimpleConnectionPool = None
 
 
-# =========================================================
-# 1) إعداد الاتصال (Connection Setup)
-# =========================================================
+import config
 
-@st.cache_resource
+# ============================================================
+# DB Pool (Postgres) + Fallback (SQLite)
+# ============================================================
+
+_POOL: Optional["SimpleConnectionPool"] = None
+_POOL_LAST_ERR: Optional[str] = None
+_POOL_LAST_OK: bool = False
+_POOL_LAST_CHECK: float = 0.0
+
+# If Postgres is not configured, fallback to sqlite for basic local usage
+_SQLITE_PATH = os.getenv("SQLITE_PATH", "osoul_local.db")
+
+
+def _is_postgres_url(url: str) -> bool:
+    u = (url or "").lower()
+    return u.startswith("postgres://") or u.startswith("postgresql://")
+
+
+def _get_db_url() -> str:
+    """Return DB URL from config/env/secrets (preferred)."""
+    return (getattr(config, "DB_CONNECTION_URL", None) or getattr(config, "DATABASE_URL", None) or "").strip()
+
+
 def get_connection_pool():
-    """
-    Connection pool (cached) for Streamlit using PostgreSQL.
-    """
+    """Get or create a Postgres connection pool, if configured."""
+    global _POOL, _POOL_LAST_ERR, _POOL_LAST_OK, _POOL_LAST_CHECK
+
+    # rate-limit pool init checks
+    now = time.time()
+    if _POOL is not None and (now - _POOL_LAST_CHECK) < 2:
+        return _POOL
+
+    _POOL_LAST_CHECK = now
+    db_url = _get_db_url()
+
+    # مصدر الرابط: Streamlit Secrets (DATABASE_URL) أو متغيرات البيئة.
+    # نعرض رسالة عامة بدون افتراض وجود secrets.toml داخل المستودع.
     if not getattr(config, "DB_CONNECTION_URL", None):
-        st.error("⚠️ لم يتم العثور على رابط قاعدة البيانات في secrets.toml")
+        st.error("⚠️ لم يتم العثور على رابط قاعدة البيانات (DATABASE_URL) في Secrets/Env.")
+        _POOL_LAST_OK = False
+        return None
+
+    if not db_url:
+        _POOL_LAST_ERR = "Missing DATABASE_URL"
+        _POOL_LAST_OK = False
+        return None
+
+    # If url isn't postgres, we won't create pool
+    if not _is_postgres_url(db_url):
+        _POOL_LAST_ERR = "DATABASE_URL is not a Postgres URL (expected postgresql://...)"
+        _POOL_LAST_OK = False
+        return None
+
+    if psycopg2 is None or SimpleConnectionPool is None:
+        _POOL_LAST_ERR = "psycopg2 is not available"
+        _POOL_LAST_OK = False
         return None
 
     try:
-        # إنشاء مسبح اتصالات بحد أدنى 1 وحد أقصى 20
-        # ملاحظة: sslmode يمرر إلى psycopg2.connect عبر kwargs (صحيح)
-        return psycopg2.pool.SimpleConnectionPool(
-            minconn=1,
-            maxconn=20,
-            dsn=config.DB_CONNECTION_URL,
-            sslmode="require",
-        )
+        if _POOL is None:
+            _POOL = SimpleConnectionPool(minconn=1, maxconn=5, dsn=db_url)
+        _POOL_LAST_OK = True
+        _POOL_LAST_ERR = None
+        return _POOL
     except Exception as e:
-        st.error(f"DB Error: {e}")
+        _POOL = None
+        _POOL_LAST_OK = False
+        _POOL_LAST_ERR = str(e)
         return None
 
 
-def _conn_is_healthy(conn) -> bool:
+def get_connection():
     """
-    بعض البيئات تقفل الاتصال القديم داخل Pool.
+    Get a DB connection:
+    - Postgres if DATABASE_URL is set and valid
+    - else SQLite fallback
     """
+    pool = get_connection_pool()
+    if pool is not None:
+        try:
+            return pool.getconn(), "postgres"
+        except Exception:
+            pass
+
+    # SQLite fallback
     try:
-        return conn is not None and getattr(conn, "closed", 1) == 0
-    except Exception:
-        return False
+        import sqlite3
+
+        conn = sqlite3.connect(_SQLITE_PATH, check_same_thread=False)
+        return conn, "sqlite"
+    except Exception as e:
+        raise RuntimeError(f"Failed to open sqlite fallback: {e}") from e
 
 
-@contextmanager
-def get_db():
-    """
-    Context Manager لإدارة الاتصال وإرجاعه للـ Pool بأمان.
-    """
-    pool_obj = get_connection_pool()
-    if not pool_obj:
-        yield None
+def put_connection(conn, kind: str):
+    """Return connection to pool if postgres, otherwise close sqlite."""
+    if not conn:
         return
-
-    conn = None
-    try:
-        conn = pool_obj.getconn()
-
-        # ✅ إصلاح: لو الاتصال قديم/مقفول — اغلقه وخذ غيره
-        if not _conn_is_healthy(conn):
+    if kind == "postgres":
+        pool = get_connection_pool()
+        if pool is not None:
             try:
-                pool_obj.putconn(conn, close=True)
+                pool.putconn(conn)
+                return
             except Exception:
                 pass
-            conn = pool_obj.getconn()
+    try:
+        conn.close()
+    except Exception:
+        pass
 
-        yield conn
 
+def db_healthcheck() -> Dict[str, Any]:
+    """
+    Simple healthcheck that UI can call.
+    Returns:
+      { ok: bool, kind: 'postgres'|'sqlite'|..., error: str }
+    """
+    try:
+        conn, kind = get_connection()
+        try:
+            # light query
+            cur = conn.cursor() if hasattr(conn, "cursor") else None
+            if cur:
+                cur.execute("SELECT 1")
+                _ = cur.fetchone()
+            return {"ok": True, "kind": kind, "error": ""}
+        finally:
+            put_connection(conn, kind)
     except Exception as e:
-        # rollback آمن
-        try:
-            if conn and _conn_is_healthy(conn):
-                conn.rollback()
-        except Exception:
-            pass
-        print(f"DB Connection/Block Error: {e}")
-        raise
-
-    finally:
-        # ارجاع الاتصال للمسبح
-        try:
-            if pool_obj and conn:
-                pool_obj.putconn(conn)
-        except Exception:
-            pass
+        return {"ok": False, "kind": "none", "error": str(e)}
 
 
-# =========================================================
-# 2) أدوات التعامل مع الأسماء (Table Name Normalizer)
-# =========================================================
-KNOWN_TABLES = [
-    # Core
-    "Users",
-    "Trades",
-    "Deposits",
-    "Withdrawals",
-    "ReturnsGrants",
-    "Watchlist",
-    "InvestmentThesis",
-    "FinancialStatements",
-    # AI / Lab
-    "ai_signals",
-    "ai_weights",
-    "ai_user_rules",
-    "lab_runs",
-    "lab_trades",
-    "lab_equity",
-    "ai_decisions",
-]
+# ============================================================
+# Helpers
+# ============================================================
 
-
-def normalize_sql_tables(query: str) -> str:
-    """
-    يحول أسماء الجداول المعروفة إلى lowercase إذا كانت غير مقتبسة "Quoted".
-    """
-    if not query:
-        return query
-    fixed = query
-    for t in KNOWN_TABLES:
-        fixed = re.sub(rf'(?<!")\b{re.escape(t)}\b(?!")', str(t).lower(), fixed)
-    return fixed
-
-
-def _fix_placeholders(query: str) -> str:
-    """
-    تحويل ? إلى %s للتوافق مع مكتبة psycopg2
-    """
-    if not query:
-        return query
-    return query.replace("?", "%s")
-
-
-def _quote_ident(name: str) -> str:
-    """
-    quoting identifiers safely: "name"
-    """
-    return '"' + str(name).replace('"', '""') + '"'
-
-
-def _is_safe_identifier(name: str) -> bool:
-    """
-    يسمح فقط بأسماء جداول/أعمدة آمنة (حروف/أرقام/underscore) لتجنب أي حقن.
-    """
-    if name is None:
-        return False
-    s = str(name).strip()
-    # يسمح بحالة وجود نقاط؟ عادة لا نحتاج schema.table داخل public
-    return bool(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", s))
-
-
-# =========================================================
-# 3) التنفيذ والجلب (Execute / Fetch)
-# =========================================================
-def execute_query(query, params=()):
-    """
-    Execute SQL with safe normalization and placeholder fix.
-    Returns True/False.
-    """
-    if not query:
-        return False
-
-    with get_db() as conn:
-        if not conn:
-            return False
-        try:
-            with conn.cursor() as cur:
-                fixed_query = normalize_sql_tables(str(query))
-                fixed_query = _fix_placeholders(fixed_query)
-                cur.execute(fixed_query, params or ())
-                conn.commit()
-            return True
-        except Exception as e:
-            try:
-                conn.rollback()
-            except Exception:
-                pass
-            print(f"Query Error: {e}")
-            return False
-
-
-def fetch_table(table_name):
-    """
-    ✅ جلب جدول بشكل آمن.
-    - يمنع إدخال أسماء غير آمنة
-    - يجرب: quoted -> lowercase -> normalized
-    """
-    if table_name is None:
-        return pd.DataFrame()
-
-    name_raw = str(table_name).strip().replace('"', "")
-    if not name_raw:
-        return pd.DataFrame()
-
-    with get_db() as conn:
-        if not conn:
-            return pd.DataFrame()
-
-        # 0) تحقق من سلامة اسم الجدول (لتجنب SQL injection عبر identifier)
-        # لو اسم الجدول عندك يحتوي أحرف غريبة — عطّني الاسم ونعدّل القاعدة.
-        if not _is_safe_identifier(name_raw):
-            # حاول على الأقل بالـ normalize لو كان من KNOWN_TABLES (Users/Trades...)
-            maybe = normalize_sql_tables(name_raw).strip().replace('"', "")
-            if not _is_safe_identifier(maybe):
-                return pd.DataFrame()
-            name_raw = maybe
-
-        # 1) Quoted exactly as passed
-        try:
-            return pd.read_sql(f"SELECT * FROM {_quote_ident(name_raw)}", conn)
-        except Exception:
-            pass
-
-        # 2) Lowercase (common in Postgres)
-        try:
-            return pd.read_sql(f"SELECT * FROM {name_raw.lower()}", conn)
-        except Exception:
-            pass
-
-        # 3) Normalize from list
-        try:
-            t = normalize_sql_tables(name_raw).strip().replace('"', "")
-            if not _is_safe_identifier(t):
-                return pd.DataFrame()
-            return pd.read_sql(f"SELECT * FROM {t}", conn)
-        except Exception:
-            return pd.DataFrame()
-
-
-# =========================================================
-# 4) التهيئة والمايجريشن (Init & Schema Migration)
-# =========================================================
-def migrate_financial_schema():
-    """
-    إضافة الأعمدة الجديدة لجدول القوائم المالية إذا لم تكن موجودة.
-    """
-    columns_to_add = [
-        ("total_assets", "DOUBLE PRECISION"),
-        ("total_liabilities", "DOUBLE PRECISION"),
-        ("total_equity", "DOUBLE PRECISION"),
-        ("operating_cash_flow", "DOUBLE PRECISION"),
-        ("current_assets", "DOUBLE PRECISION"),
-        ("current_liabilities", "DOUBLE PRECISION"),
-        ("long_term_debt", "DOUBLE PRECISION"),
-        ("source", "VARCHAR(20)"),
-        ("period_type", "VARCHAR(20)"),
-    ]
-
-    for col_name, col_type in columns_to_add:
-        execute_query(
-            f"ALTER TABLE financialstatements ADD COLUMN IF NOT EXISTS {col_name} {col_type}",
-            (),
-        )
-
-
-def init_db():
-    """
-    إنشاء جميع الجداول الأساسية. يتم استخدام lowercase لتفادي مشاكل Postgres.
-    """
-    tables = [
-        "CREATE TABLE IF NOT EXISTS users (username VARCHAR(50) PRIMARY KEY, password TEXT, email TEXT)",
-        """CREATE TABLE IF NOT EXISTS trades (
-            id SERIAL PRIMARY KEY, symbol VARCHAR(20), company_name TEXT, sector TEXT,
-            asset_type VARCHAR(20), date DATE, quantity DOUBLE PRECISION, entry_price DOUBLE PRECISION,
-            exit_price DOUBLE PRECISION DEFAULT 0, current_price DOUBLE PRECISION DEFAULT 0,
-            strategy VARCHAR(20), status VARCHAR(10) DEFAULT 'Open', exit_date DATE, notes TEXT
-        )""",
-        "CREATE TABLE IF NOT EXISTS deposits (id SERIAL PRIMARY KEY, date DATE, amount DOUBLE PRECISION, note TEXT)",
-        "CREATE TABLE IF NOT EXISTS withdrawals (id SERIAL PRIMARY KEY, date DATE, amount DOUBLE PRECISION, note TEXT)",
-        "CREATE TABLE IF NOT EXISTS returnsgrants (id SERIAL PRIMARY KEY, date DATE, symbol VARCHAR(20), company_name TEXT, amount DOUBLE PRECISION, note TEXT)",
-        "CREATE TABLE IF NOT EXISTS watchlist (symbol VARCHAR(20) PRIMARY KEY, target_price DOUBLE PRECISION, note TEXT)",
-        "CREATE TABLE IF NOT EXISTS investmentthesis (symbol VARCHAR(20) PRIMARY KEY, thesis_text TEXT, target_price DOUBLE PRECISION, recommendation VARCHAR(20), last_updated DATE)",
-        """CREATE TABLE IF NOT EXISTS financialstatements (
-            symbol VARCHAR(20), date DATE,
-            revenue DOUBLE PRECISION, net_income DOUBLE PRECISION,
-            period_type VARCHAR(20) DEFAULT 'Annual',
-            source VARCHAR(20) DEFAULT 'Auto',
-            PRIMARY KEY(symbol, date, period_type)
-        )""",
-    ]
-
-    with get_db() as conn:
-        if conn:
-            with conn.cursor() as cur:
-                for t in tables:
-                    cur.execute(t)
-            conn.commit()
-
-    migrate_financial_schema()
-
-
-# =========================================================
-# 5) المصادقة والأمان (Auth)
-# =========================================================
-def db_create_user(u, p):
+def execute_query(query: str, params: Optional[Tuple[Any, ...]] = None) -> bool:
+    conn, kind = get_connection()
     try:
-        h = bcrypt.hashpw(p.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-        return execute_query("INSERT INTO Users (username, password) VALUES (%s, %s)", (u, h))
-    except Exception as e:
-        print(f"Create User Error: {e}")
-        return False
-
-
-def db_verify_user(u, p):
-    """
-    التحقق من المستخدم.
-    """
-    with get_db() as conn:
-        if not conn:
-            return False
-        try:
-            with conn.cursor() as cur:
-                cur.execute("SELECT password FROM users WHERE username = %s", (u,))
-                res = cur.fetchone()
-                if res and res[0]:
-                    return bcrypt.checkpw(p.encode("utf-8"), res[0].encode("utf-8"))
-        except Exception as e:
-            print(f"Verify User Error: {e}")
-            return False
-    return False
-
-
-# =========================================================
-# 6) فحص الصحة والتشخيص (Healthcheck)
-# =========================================================
-def db_healthcheck():
-    """
-    تشخيص سريع: يعرض معلومات الاتصال + عداد سجلات الجداول + كشف ازدواج الجداول.
-    لا يغير أي بيانات.
-    """
-    info = {"connected": False, "db": {}, "counts": {}, "dup_tables": []}
-
-    with get_db() as conn:
-        if not conn:
-            return info
-
-        info["connected"] = True
-        try:
-            with conn.cursor() as cur:
-                cur.execute("SELECT current_database(), current_user, inet_server_addr()::text, inet_server_port();")
-                res = cur.fetchone()
-                if res:
-                    dbname, user, host, port = res
-                    info["db"] = {"database": dbname, "user": user, "host": host, "port": port}
-
-                tables = [
-                    "users",
-                    "trades",
-                    "deposits",
-                    "withdrawals",
-                    "returnsgrants",
-                    "watchlist",
-                    "investmentthesis",
-                    "financialstatements",
-                ]
-                for t in tables:
-                    try:
-                        cur.execute(f"SELECT COUNT(*) FROM {t};")
-                        info["counts"][t] = cur.fetchone()[0]
-                    except Exception:
-                        info["counts"][t] = None
-
-                # فحص الجداول المكررة (Capital vs Small)
-                cur.execute(
-                    """
-                    SELECT tablename FROM pg_tables
-                    WHERE schemaname='public'
-                    AND tablename IN ('trades','Trades','deposits','Deposits','financialstatements','FinancialStatements',
-                                     'users','Users','watchlist','Watchlist','investmentthesis','InvestmentThesis',
-                                     'withdrawals','Withdrawals','returnsgrants','ReturnsGrants');
-                    """
-                )
-                found = [r[0] for r in cur.fetchall()]
-                pairs = [
-                    ("Users", "users"),
-                    ("Trades", "trades"),
-                    ("Deposits", "deposits"),
-                    ("Withdrawals", "withdrawals"),
-                    ("ReturnsGrants", "returnsgrants"),
-                    ("Watchlist", "watchlist"),
-                    ("InvestmentThesis", "investmentthesis"),
-                    ("FinancialStatements", "financialstatements"),
-                ]
-                for a, b in pairs:
-                    if a in found and b in found:
-                        info["dup_tables"].append((a, b))
-
-        except Exception as e:
-            info["db"]["error"] = str(e)
-
-    return info
-
-
-# =========================================================
-# 7) أدوات الإصلاح المتقدمة (Advanced Migration Helpers)
-# =========================================================
-def _table_exists(conn, table_name: str) -> bool:
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT EXISTS(
-                    SELECT 1 FROM pg_tables
-                    WHERE schemaname='public' AND tablename=%s
-                );
-                """,
-                (table_name,),
-            )
-            return bool(cur.fetchone()[0])
-    except Exception:
-        return False
-
-
-def _get_columns(conn, table_name: str):
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT column_name
-                FROM information_schema.columns
-                WHERE table_schema='public' AND table_name=%s
-                ORDER BY ordinal_position;
-                """,
-                (table_name,),
-            )
-            return [r[0] for r in cur.fetchall()]
-    except Exception:
-        return []
-
-
-def _get_primary_key_cols(conn, table_name: str) -> list:
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                SELECT a.attname
-                FROM pg_index i
-                JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
-                WHERE i.indrelid = %s::regclass
-                AND i.indisprimary;
-                """,
-                (table_name,),
-            )
-            return [r[0] for r in cur.fetchall()]
-    except Exception:
-        return []
-
-
-def _set_sequence_to_max_id(conn, table_lower: str, id_col: str = "id"):
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT pg_get_serial_sequence(%s, %s);", (table_lower, id_col))
-            res = cur.fetchone()
-            if not res or not res[0]:
-                return True
-            seq = res[0]
-
-            cur.execute(f"SELECT COALESCE(MAX({id_col}), 0) FROM {table_lower};")
-            mx = int(cur.fetchone()[0] or 0)
-
-            cur.execute("SELECT setval(%s, %s, true);", (seq, mx))
+        cur = conn.cursor()
+        cur.execute(query, params or ())
         conn.commit()
         return True
-    except Exception as e:
+    except Exception:
         try:
             conn.rollback()
         except Exception:
             pass
-        print(f"Sequence Fix Error ({table_lower}): {e}")
         return False
+    finally:
+        put_connection(conn, kind)
 
 
-def migrate_fix_case_duplicate_tables(drop_old: bool = False) -> dict:
+def fetch_table(t: str) -> pd.DataFrame:
+    conn, kind = get_connection()
+    try:
+        return pd.read_sql(f"SELECT * FROM {t}", conn)
+    except Exception:
+        return pd.DataFrame()
+    finally:
+        put_connection(conn, kind)
+
+
+def table_exists(table_name: str) -> bool:
+    conn, kind = get_connection()
+    try:
+        cur = conn.cursor()
+        if kind == "postgres":
+            cur.execute(
+                "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name=%s)",
+                (table_name,),
+            )
+            return bool(cur.fetchone()[0])
+        else:
+            cur.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+                (table_name,),
+            )
+            return cur.fetchone() is not None
+    except Exception:
+        return False
+    finally:
+        put_connection(conn, kind)
+
+
+def ensure_table(query: str) -> bool:
+    return execute_query(query)
+
+
+# ============================================================
+# Schema / Multi-user
+# ============================================================
+
+def get_user_schema(username: str) -> str:
+    # default schema for single-tenant
+    return "public"
+
+
+def db_get_user_schema(username: str) -> str:
+    return get_user_schema(username)
+
+
+# ============================================================
+# Users table (auth)
+# ============================================================
+
+def ensure_users_table():
+    if table_exists("users"):
+        return True
+
+    # Note: SQLite and Postgres types differ; keep portable.
+    q = """
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        email TEXT,
+        created_at TEXT
+    );
     """
-    إصلاح ازدواج الجداول بسبب حالة الأحرف (Case Sensitivity).
-    """
-    report = {"ok": False, "actions": [], "errors": []}
+    if psycopg2 is not None and _is_postgres_url(_get_db_url()):
+        # postgres flavor
+        q = """
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            username TEXT UNIQUE NOT NULL,
+            password_hash TEXT NOT NULL,
+            email TEXT,
+            created_at TEXT
+        );
+        """
 
-    pairs = [
-        ("Users", "users"),
-        ("Trades", "trades"),
-        ("Deposits", "deposits"),
-        ("Withdrawals", "withdrawals"),
-        ("ReturnsGrants", "returnsgrants"),
-        ("Watchlist", "watchlist"),
-        ("InvestmentThesis", "investmentthesis"),
-        ("FinancialStatements", "financialstatements"),
-    ]
+    return execute_query(q)
 
-    serial_id_tables = {"trades", "deposits", "withdrawals", "returnsgrants"}
 
-    with get_db() as conn:
-        if not conn:
-            report["errors"].append("No DB connection")
-            return report
+def _hash_password(password: str) -> str:
+    try:
+        import bcrypt
 
+        return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+    except Exception:
+        # fallback (weak) — should not happen if bcrypt installed
+        import hashlib
+
+        return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+
+def _check_password(password: str, password_hash: str) -> bool:
+    try:
+        import bcrypt
+
+        return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
+    except Exception:
+        import hashlib
+
+        return hashlib.sha256(password.encode("utf-8")).hexdigest() == (password_hash or "")
+
+
+def db_user_exists(username: str) -> bool:
+    ensure_users_table()
+    conn, kind = get_connection()
+    try:
+        cur = conn.cursor()
+        if kind == "postgres":
+            cur.execute("SELECT 1 FROM users WHERE username=%s LIMIT 1", (username,))
+        else:
+            cur.execute("SELECT 1 FROM users WHERE username=? LIMIT 1", (username,))
+        return cur.fetchone() is not None
+    except Exception:
+        return False
+    finally:
+        put_connection(conn, kind)
+
+
+def db_create_user(username: str, password: str, email: str = "") -> bool:
+    ensure_users_table()
+    conn, kind = get_connection()
+    try:
+        cur = conn.cursor()
+        ph = _hash_password(password)
+        created_at = time.strftime("%Y-%m-%d %H:%M:%S")
+        if kind == "postgres":
+            cur.execute(
+                "INSERT INTO users (username, password_hash, email, created_at) VALUES (%s, %s, %s, %s)",
+                (username, ph, email or None, created_at),
+            )
+        else:
+            cur.execute(
+                "INSERT INTO users (username, password_hash, email, created_at) VALUES (?, ?, ?, ?)",
+                (username, ph, email or None, created_at),
+            )
+        conn.commit()
+        return True
+    except Exception:
         try:
-            with conn.cursor() as cur:
-                for src_cap, dst_low in pairs:
-                    src_exists = _table_exists(conn, src_cap)
-                    dst_exists = _table_exists(conn, dst_low)
-                    if not (src_exists and dst_exists):
-                        continue
+            conn.rollback()
+        except Exception:
+            pass
+        return False
+    finally:
+        put_connection(conn, kind)
 
-                    src_cols = _get_columns(conn, src_cap)
-                    dst_cols = _get_columns(conn, dst_low)
 
-                    common = [c for c in dst_cols if c in src_cols]
-                    if not common:
-                        report["errors"].append(f"No common columns between {src_cap} and {dst_low}")
-                        continue
+def db_verify_user(username: str, password: str) -> bool:
+    ensure_users_table()
+    conn, kind = get_connection()
+    try:
+        cur = conn.cursor()
+        if kind == "postgres":
+            cur.execute("SELECT password_hash FROM users WHERE username=%s LIMIT 1", (username,))
+        else:
+            cur.execute("SELECT password_hash FROM users WHERE username=? LIMIT 1", (username,))
+        row = cur.fetchone()
+        if not row:
+            return False
+        ph = row[0] if isinstance(row, (tuple, list)) else row
+        return _check_password(password, ph or "")
+    except Exception:
+        return False
+    finally:
+        put_connection(conn, kind)
 
-                    pk_cols = _get_primary_key_cols(conn, dst_low)
 
-                    cols_csv = ", ".join([_quote_ident(c) for c in common])
-                    src_table_sql = _quote_ident(src_cap)
+# ============================================================
+# Financial statements storage (light + raw json)
+# ============================================================
 
-                    if pk_cols and all(pk in common for pk in pk_cols):
-                        pk_csv = ", ".join([_quote_ident(c) for c in pk_cols])
+def init_db():
+    """
+    Ensure core tables exist.
+    Works for:
+      - Postgres (public schema)
+      - SQLite fallback
+    """
+    # users
+    ensure_users_table()
 
-                        if dst_low in ("watchlist", "investmentthesis", "financialstatements"):
-                            set_cols = [c for c in common if c not in pk_cols]
-                            if set_cols:
-                                set_sql = ", ".join([f"{_quote_ident(c)} = EXCLUDED.{_quote_ident(c)}" for c in set_cols])
-                                sql = f"""
-                                    INSERT INTO {dst_low} ({cols_csv})
-                                    SELECT {cols_csv} FROM {src_table_sql}
-                                    ON CONFLICT ({pk_csv}) DO UPDATE SET {set_sql};
-                                """
-                            else:
-                                sql = f"""
-                                    INSERT INTO {dst_low} ({cols_csv})
-                                    SELECT {cols_csv} FROM {src_table_sql}
-                                    ON CONFLICT ({pk_csv}) DO NOTHING;
-                                """
-                        else:
-                            sql = f"""
-                                INSERT INTO {dst_low} ({cols_csv})
-                                SELECT {cols_csv} FROM {src_table_sql}
-                                ON CONFLICT ({pk_csv}) DO NOTHING;
-                            """
-                    else:
-                        sql = f"""
-                            INSERT INTO {dst_low} ({cols_csv})
-                            SELECT {cols_csv} FROM {src_table_sql};
-                        """
+    # lightweight financial table
+    if not table_exists("financialstatements"):
+        q = """
+        CREATE TABLE IF NOT EXISTS financialstatements (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT,
+            date_str TEXT,
+            period_type TEXT,
+            source TEXT,
+            revenue REAL,
+            net_income REAL,
+            total_assets REAL,
+            total_liabilities REAL,
+            total_equity REAL,
+            operating_cash_flow REAL,
+            investing_cash_flow REAL,
+            financing_cash_flow REAL,
+            free_cash_flow REAL,
+            current_assets REAL,
+            current_liabilities REAL,
+            long_term_debt REAL,
+            gross_profit REAL,
+            operating_income REAL,
+            interest_expense REAL,
+            ebitda REAL,
+            shares_outstanding REAL,
+            created_at TEXT
+        );
+        """
+        if psycopg2 is not None and _is_postgres_url(_get_db_url()):
+            q = """
+            CREATE TABLE IF NOT EXISTS financialstatements (
+                id SERIAL PRIMARY KEY,
+                symbol TEXT,
+                date_str TEXT,
+                period_type TEXT,
+                source TEXT,
+                revenue DOUBLE PRECISION,
+                net_income DOUBLE PRECISION,
+                total_assets DOUBLE PRECISION,
+                total_liabilities DOUBLE PRECISION,
+                total_equity DOUBLE PRECISION,
+                operating_cash_flow DOUBLE PRECISION,
+                investing_cash_flow DOUBLE PRECISION,
+                financing_cash_flow DOUBLE PRECISION,
+                free_cash_flow DOUBLE PRECISION,
+                current_assets DOUBLE PRECISION,
+                current_liabilities DOUBLE PRECISION,
+                long_term_debt DOUBLE PRECISION,
+                gross_profit DOUBLE PRECISION,
+                operating_income DOUBLE PRECISION,
+                interest_expense DOUBLE PRECISION,
+                ebitda DOUBLE PRECISION,
+                shares_outstanding DOUBLE PRECISION,
+                created_at TEXT
+            );
+            """
+        execute_query(q)
 
-                    try:
-                        cur.execute(sql)
-                        report["actions"].append(f"Merged {src_table_sql} -> {dst_low} (cols={len(common)})")
-                        conn.commit()
-                    except Exception as e:
-                        try:
-                            conn.rollback()
-                        except Exception:
-                            pass
-                        report["errors"].append(f"Merge failed for {src_cap}->{dst_low}: {e}")
-                        continue
+    # raw json table (full statements)
+    if not table_exists("financialstatements_raw"):
+        q = """
+        CREATE TABLE IF NOT EXISTS financialstatements_raw (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            symbol TEXT,
+            date_str TEXT,
+            period_type TEXT,
+            source TEXT,
+            payload TEXT,
+            created_at TEXT
+        );
+        """
+        if psycopg2 is not None and _is_postgres_url(_get_db_url()):
+            q = """
+            CREATE TABLE IF NOT EXISTS financialstatements_raw (
+                id SERIAL PRIMARY KEY,
+                symbol TEXT,
+                date_str TEXT,
+                period_type TEXT,
+                source TEXT,
+                payload TEXT,
+                created_at TEXT
+            );
+            """
+        execute_query(q)
 
-                    if dst_low in serial_id_tables:
-                        _set_sequence_to_max_id(conn, dst_low, "id")
+    return True
 
-                    if drop_old:
-                        try:
-                            cur.execute(f"DROP TABLE IF EXISTS {src_table_sql} CASCADE;")
-                            conn.commit()
-                            report["actions"].append(f"Dropped old table {src_table_sql}")
-                        except Exception as e:
-                            try:
-                                conn.rollback()
-                            except Exception:
-                                pass
-                            report["errors"].append(f"Drop failed for {src_table_sql}: {e}")
 
-            report["ok"] = (len(report["errors"]) == 0)
-            return report
+# ============================================================
+# Compatibility wrappers used by other modules
+# ============================================================
 
-        except Exception as e:
-            try:
-                conn.rollback()
-            except Exception:
-                pass
-            report["errors"].append(str(e))
-            report["ok"] = False
-            return report
+def db_get_user_schema(username: str) -> str:
+    return get_user_schema(username)
+
+
+# ============================================================
+# (Optional) Extra helpers referenced by older code
+# ============================================================
+
+def fetch_table_safe(t: str) -> pd.DataFrame:
+    try:
+        return fetch_table(t)
+    except Exception:
+        return pd.DataFrame()
+
+
+# ============================================================
+# End of file
+# ============================================================
