@@ -1,6 +1,7 @@
 # financial_analysis/yahoo_data.py
 import time
 from datetime import datetime
+import re
 from typing import Dict, List, Any
 
 import pandas as pd
@@ -14,6 +15,39 @@ try:
     import requests
 except Exception:
     requests = None
+
+# ==============================
+# Diagnostics (آخر تشخيص لطلبات Yahoo)
+# ==============================
+_LAST_YAHOO_DIAGNOSTICS = {
+    "ts": None,
+    "url": None,
+    "status": None,
+    "error": None,
+    "snippet": None,
+    "hint": None,
+}
+
+
+def _set_last_diag(url=None, status=None, error=None, snippet=None, hint=None):
+    try:
+        _LAST_YAHOO_DIAGNOSTICS.update(
+            {
+                "ts": datetime.utcnow().isoformat() + "Z",
+                "url": url,
+                "status": status,
+                "error": str(error) if error else None,
+                "snippet": snippet,
+                "hint": hint,
+            }
+        )
+    except Exception:
+        pass
+
+
+def get_last_yahoo_diagnostics() -> Dict[str, Any]:
+    """Return last Yahoo request diagnostics (safe for UI)."""
+    return dict(_LAST_YAHOO_DIAGNOSTICS)
 
 
 # ==============================================================
@@ -324,3 +358,110 @@ def get_financial_statements(symbol: str, period_type: str = "Annual", refresh: 
         return get_stored_financials_df(sym, ptype)
 
     return stored if stored is not None else pd.DataFrame()
+
+# ==============================================================
+# 🩺 Diagnostics helpers (QuoteSummary)
+# ==============================================================
+def diagnose_quote_summary(symbol: str) -> Dict[str, Any]:
+    """Run a lightweight probe against quoteSummary and return status + hint."""
+    symbol = get_ticker_symbol(symbol)
+    try:
+        data = _yahoo_quote_summary(symbol, modules=["price"])
+        diag = get_last_yahoo_diagnostics()
+        if not data:
+            diag["hint"] = diag.get("hint") or "Empty response"
+        return diag
+    except Exception as e:
+        diag = get_last_yahoo_diagnostics()
+        diag["error"] = str(e)
+        # Provide a helpful hint for the most common cases
+        status = diag.get("status")
+        if status == 429:
+            diag["hint"] = "Rate limit (429) — حاول بعد 1-2 دقيقة أو فعّل التخزين المحلي"
+        elif status in (401, 403):
+            diag["hint"] = "Blocked/Forbidden — جرّب لاحقًا أو استخدم مصدر بديل"
+        elif status == 404:
+            diag["hint"] = "Symbol not found / endpoint changed"
+        return diag
+
+
+# ==============================================================
+# 📚 Full Statements (QuoteSummary raw JSON + optional HTML fallback)
+# ==============================================================
+def fetch_full_financial_statements_yahoo_json(symbol: str, period: str = "annual") -> Dict[str, Any]:
+    """Fetch *raw* full statements dict from Yahoo quoteSummary.
+    Returns a dict with keys: income, balance, cash, meta.
+    Non-breaking: returns empty dict on failure.
+    """
+    symbol = get_ticker_symbol(symbol)
+    period = (period or "annual").lower()
+    try:
+        modules = ["incomeStatementHistory", "incomeStatementHistoryQuarterly",
+                   "balanceSheetHistory", "balanceSheetHistoryQuarterly",
+                   "cashflowStatementHistory", "cashflowStatementHistoryQuarterly"]
+        raw = _yahoo_quote_summary(symbol, modules=modules) or {}
+        # quoteSummary structure: {"quoteSummary":{"result":[{...}],"error":...}}
+        result = (raw.get("quoteSummary", {}) or {}).get("result") or []
+        if not result:
+            return {}
+        payload = result[0] or {}
+        out = {"meta": {"symbol": symbol, "period": period}}
+        if period.startswith("q"):
+            out["income"] = payload.get("incomeStatementHistoryQuarterly") or {}
+            out["balance"] = payload.get("balanceSheetHistoryQuarterly") or {}
+            out["cash"] = payload.get("cashflowStatementHistoryQuarterly") or {}
+        else:
+            out["income"] = payload.get("incomeStatementHistory") or {}
+            out["balance"] = payload.get("balanceSheetHistory") or {}
+            out["cash"] = payload.get("cashflowStatementHistory") or {}
+        return out
+    except Exception:
+        # diagnostics are already recorded by _http_get_json
+        return {}
+
+
+def _parse_yahoo_root_app_main(html: str) -> Dict[str, Any]:
+    """Extract Root.App.main JSON from Yahoo HTML (best-effort)."""
+    # Yahoo embeds JSON in: root.App.main = {...};
+    m = re.search(r"root\.App\.main\s*=\s*(\{.*?\});\s*\n", html, flags=re.DOTALL)
+    if not m:
+        m = re.search(r"root\.App\.main\s*=\s*(\{.*?\});", html, flags=re.DOTALL)
+    if not m:
+        return {}
+    blob = m.group(1)
+    try:
+        import json as _json
+        return _json.loads(blob)
+    except Exception:
+        return {}
+
+
+def fetch_full_financial_statements_yahoo_html(symbol: str) -> Dict[str, Any]:
+    """HTML fallback: fetch Yahoo quote page and try to extract quoteSummary-like stores.
+    Returns empty dict on failure.
+    """
+    symbol = get_ticker_symbol(symbol)
+    if not requests:
+        return {}
+    url = f"https://finance.yahoo.com/quote/{symbol}/financials?p={symbol}"
+    try:
+        s = _yf_session()
+        if not s:
+            return {}
+        r = s.get(url, timeout=12)
+        snippet = (r.text or "")[:200].replace("\n", " ")
+        _set_last_diag(url=url, status=r.status_code, error=None, snippet=snippet, hint=None)
+        if r.status_code != 200:
+            if r.status_code == 429:
+                _set_last_diag(url=url, status=429, error="HTTP 429", snippet=snippet, hint="Rate limit (429)")
+            return {}
+        root = _parse_yahoo_root_app_main(r.text or "")
+        # Try to reach a store that contains quoteSummary-like data
+        stores = (((root.get("context") or {}).get("dispatcher") or {}).get("stores") or {})
+        qs = stores.get("QuoteSummaryStore") or {}
+        if qs:
+            return {"meta": {"symbol": symbol, "period": "html"}, "quoteSummaryStore": qs}
+        return {"meta": {"symbol": symbol, "period": "html"}, "root": root}
+    except Exception as e:
+        _set_last_diag(url=url, status=None, error=e, snippet=None, hint="HTML fallback error")
+        return {}
