@@ -1,5 +1,6 @@
 #views/lab.py
 import streamlit as st
+from feature_flags import get_flag
 import pandas as pd
 import traceback
 
@@ -9,6 +10,13 @@ from views.shared import (
     _get_chart_history_flex, _to_float, safe_fmt
 )
 from market_data import get_chart_history  # كما في ملفك
+
+# Optional: buried features
+try:
+    from backtester import get_strategy_notes, get_lab_runs
+except Exception:
+    get_strategy_notes = None
+    get_lab_runs = None
 
 def view_backtester_ui(fin):
     st.header("🧪 المختبر")
@@ -28,6 +36,36 @@ def view_backtester_ui(fin):
 
     strat = _select_strategy_ui(key_prefix="lab")
     st.caption("💡 إذا الاستراتيجية تعتمد على مؤشرات طويلة، اختر فترة أكبر (مثل 5y أو 10y).")
+
+
+    # -----------------------------------------------------
+    # 📒 ملاحظات الاستراتيجيات + سجل التجارب (اختياري)
+    # -----------------------------------------------------
+    if get_flag("enable_strategy_notes", False):
+        with st.expander("📒 ملاحظات الاستراتيجية (تجريبي)", expanded=False):
+            if callable(get_strategy_notes):
+                note = get_strategy_notes(strat)
+                if note:
+                    st.write(note)
+                else:
+                    st.info("لا توجد ملاحظات محفوظة لهذه الاستراتيجية.")
+            else:
+                st.info("ميزة الملاحظات غير متوفرة حالياً (backtester.py).")
+
+        with st.expander("📁 سجل التجارب السابقة (lab_runs) — تجريبي", expanded=False):
+            if callable(get_lab_runs):
+                try:
+                    runs = get_lab_runs(limit=50)
+                    if runs is None or (isinstance(runs, pd.DataFrame) and runs.empty):
+                        st.info("لا يوجد سجلات تجارب بعد.")
+                    else:
+                        if not isinstance(runs, pd.DataFrame):
+                            runs = pd.DataFrame(runs)
+                        st.dataframe(runs, use_container_width=True, hide_index=True)
+                except Exception as e:
+                    st.error(f"تعذر عرض سجل التجارب: {e}")
+            else:
+                st.info("ميزة سجل التجارب غير متوفرة حالياً (backtester.py).")
 
     if st.button("🚀 بدء الاختبار", key="bt_run", type="primary"):
         try:
