@@ -6,7 +6,12 @@ import time
 import os
 import re
 
-from database import db_verify_user, db_create_user, fetch_table
+from database import (
+    db_verify_user,
+    db_create_user,
+    db_user_exists,
+    db_healthcheck,
+)
 from config import APP_NAME, APP_ICON
 
 
@@ -44,11 +49,9 @@ def _validate_password(p: str):
 
 
 def _user_exists_in_db(username: str) -> bool:
+    # ✅ بدل fetch_table/pandas (قد يفشل قبل إنشاء الجدول)
     try:
-        df = fetch_table("users")
-        if df is None or df.empty or "username" not in df.columns:
-            return False
-        return (df["username"].astype(str) == str(username)).any()
+        return bool(db_user_exists(username))
     except Exception:
         return False
 
@@ -72,19 +75,10 @@ def _get_cookie_user(cookie_manager):
 
 
 # ============================================================
-# ✅ 2.5) Auth Bootstrap (حل إعادة تسجيل الدخول عند تحديث الصفحة)
+# ✅ 2.5) Auth Bootstrap
 # ============================================================
 
 def _bootstrap_auth_from_cookie():
-    """
-    الهدف:
-    - بعض بيئات Streamlit ترجع cookie=None في أول تشغيل/أول rerun لأن الكوكي ما تكون جاهزة.
-    - هذا يسبب ظهور شاشة الدخول كل مرة.
-    الحل:
-    - نجرب قراءة الكوكي مرة
-    - لو رجعت None في أول محاولة -> rerun واحد فقط
-    - بعدها نعتبر bootstrap انتهى وما نرجع نزعج المستخدم
-    """
     s = st.session_state
 
     # إذا سبق تفعيل جلسة صحيحة لا نلمسها
@@ -115,13 +109,10 @@ def _bootstrap_auth_from_cookie():
                 pass
 
     # إذا ما فيه كوكي (أو ما جاهزة)
-    # نعطي محاولة rerun واحدة فقط (لتهيئة الكوكي) ثم نوقف
     if cookie_user is None and tries < 1:
         s["_auth_bootstrap_tries"] = tries + 1
-        # rerun واحد فقط
         st.rerun()
 
-    # بعدها نثبت أنها bootstrapped حتى لا نعيد نفس الدوامة
     s["_auth_bootstrapped"] = True
 
 
@@ -157,11 +148,10 @@ def _register_login_attempt():
 
 
 # ============================================================
-# 4) Login System (used by app.py)
+# 4) Login System
 # ============================================================
 
 def login_system():
-    # ✅ bootstrap cookies once (prevents relogin on refresh)
     _bootstrap_auth_from_cookie()
 
     # 1) Session check
@@ -171,7 +161,6 @@ def login_system():
     # 2) Show Login UI
     c1, c2, c3 = st.columns([1, 2, 1])
     with c2:
-        # ✅ لا نطبع مسار الصورة كنص داخل العنوان (كان يظهر مثل: mount/src/...png)
         _icon_path = APP_ICON if isinstance(APP_ICON, str) else ""
         if _icon_path and _icon_path.lower().endswith((".png", ".jpg", ".jpeg", ".webp")) and os.path.exists(_icon_path):
             st.image(_icon_path, width=90)
@@ -180,17 +169,21 @@ def login_system():
                 unsafe_allow_html=True,
             )
         else:
-            # إذا كان APP_ICON إيموجي أو نص قصير
             st.markdown(
                 f"<h1 style='text-align:center;color:#0052CC'>{APP_ICON} {APP_NAME}</h1>",
                 unsafe_allow_html=True,
             )
 
+        # ✅ معلومات اتصال DB
+        hc = db_healthcheck()
+        if not hc.get("ok"):
+            st.warning("❌ لا يوجد اتصال بقاعدة البيانات الأساسية. سيتم استخدام SQLite محلية وقد لا تظهر الحسابات القديمة.")
+        else:
+            if hc.get("kind") == "sqlite":
+                st.warning("⚠️ أنت تعمل حالياً على SQLite محلية (fallback). الحسابات القديمة في Postgres لن تظهر هنا.")
+
         t1, t2 = st.tabs(["🔒 دخول", "👤 تسجيل"])
 
-        # ---------------------
-        # Login Tab
-        # ---------------------
         with t1:
             with st.form("login_form"):
                 u = st.text_input("المستخدم", key="login_user")
@@ -225,12 +218,13 @@ def login_system():
                         st.success("تم الدخول")
                         st.rerun()
                     else:
-                        st.error("خطأ في البيانات")
+                        hc2 = db_healthcheck()
+                        if hc2.get("kind") == "sqlite":
+                            st.error("خطأ في البيانات (أو أن الحساب غير موجود هنا لأن التطبيق يعمل على SQLite محلية وليس Postgres).")
+                        else:
+                            st.error("خطأ في البيانات")
                         _register_login_attempt()
 
-        # ---------------------
-        # Signup Tab
-        # ---------------------
         with t2:
             with st.form("signup_form"):
                 nu = st.text_input("مستخدم جديد", key="signup_user")
@@ -272,7 +266,6 @@ def logout():
     except Exception:
         pass
 
-    # ✅ لا تمسح كل شيء، فقط مفاتيح الدخول
     for k in [
         "username",
         "authenticated",
