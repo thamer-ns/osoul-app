@@ -1,11 +1,13 @@
 # views/portfolio.py
 import streamlit as st
+from feature_flags import get_flag
 import pandas as pd
 from datetime import date
 
 from components import render_kpi, render_custom_table, render_ticker_card, safe_fmt
 from database import execute_query, fetch_table
 from market_data import fetch_batch_data
+from analytics import compute_portfolio_xirr
 from data_source import get_company_details
 from security import validate_trade_inputs
 from views.shared import _safe_status_series, _clean_symbols_list, _normalize_symbol
@@ -116,6 +118,27 @@ def view_portfolio(fin, key):
             cash = _sf((fin or {}).get("cash", 0.0), 0.0) if isinstance(fin, dict) else 0.0
             cash_pct = _safe_cash_pct(fin or {}, total_market)
             portfolio_value = _sf((fin or {}).get("portfolio_value", cash + total_market), cash + total_market)
+
+
+            # -----------------------------------------------------
+            # 📈 XIRR (اختياري) — لا يظهر إلا بتفعيل Feature Flag
+            # -----------------------------------------------------
+            if get_flag("enable_xirr", False):
+                try:
+                    dep = (fin or {}).get("deposits", pd.DataFrame())
+                    wit = (fin or {}).get("withdrawals", pd.DataFrame())
+                    ret = (fin or {}).get("returns", pd.DataFrame())
+
+                    with st.expander("📈 عائد المحفظة الحقيقي XIRR (تجريبي)", expanded=False):
+                        st.caption("يعتمد على سجل الإيداعات/السحوبات/العوائد + القيمة الحالية للمحفظة.")
+                        xirr, method = compute_portfolio_xirr(dep, wit, ret, ending_value=portfolio_value)
+                        if xirr is None:
+                            st.warning(f"⚠️ لم يمكن حساب XIRR: {method}. تأكد من وجود تدفقات نقدية كافية وقيمة محفظة > 0.")
+                        else:
+                            st.metric("XIRR السنوي", f"{xirr*100:,.2f}%")
+                            st.caption(f"طريقة الحساب: {method}")
+                except Exception as e:
+                    st.error(f"تعذر حساب XIRR: {e}")
 
             c_r1, c_r2, c_r3, c_r4 = st.columns(4)
             with c_r1:
