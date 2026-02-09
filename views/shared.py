@@ -1335,3 +1335,34 @@ def _render_table_like_trades(df: pd.DataFrame, cols_spec=None, max_rows: int = 
             cols_spec.append((key, lbl, _guess_type(key)))
 
     render_custom_table(d, cols_spec)
+
+
+# ==============================================================
+# 🩺 Yahoo Diagnostics (safe import)
+# ==============================================================
+def _safe_import_yahoo_diag():
+    try:
+        from financial_analysis.yahoo_data import get_last_yahoo_diagnostics, diagnose_quote_summary  # type: ignore
+        return get_last_yahoo_diagnostics, diagnose_quote_summary
+    except Exception:
+        return None, None
+
+
+def get_last_yahoo_diagnostics():
+    fn, _ = _safe_import_yahoo_diag()
+    if not fn:
+        return {"ts": None, "url": None, "status": None, "error": "diagnostics unavailable", "snippet": None, "hint": None}
+    try:
+        return fn()
+    except Exception as e:
+        return {"ts": None, "url": None, "status": None, "error": str(e), "snippet": None, "hint": None}
+
+
+def diagnose_yahoo_quote_summary(symbol: str):
+    _, fn = _safe_import_yahoo_diag()
+    if not fn:
+        return {"ts": None, "url": None, "status": None, "error": "diagnose unavailable", "snippet": None, "hint": None}
+    try:
+        return fn(symbol)
+    except Exception as e:
+        return {"ts": None, "url": None, "status": None, "error": str(e), "snippet": None, "hint": None}
