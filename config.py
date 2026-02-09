@@ -46,41 +46,16 @@ BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 DB_NAME = "osoli_data.db"
 DB_PATH = DATA_DIR / DB_NAME
 
-
 # ==========================================
 # 3. إعدادات قاعدة البيانات (Database Config)
 # ==========================================
-def get_db_url() -> str | None:
-    """إرجاع رابط قاعدة البيانات بشكل آمن.
-
-    الأولوية:
-    1) متغيرات البيئة (DATABASE_URL)
-    2) Streamlit secrets (DATABASE_URL أو postgres.url)
-    """
-    env_url = os.getenv("DATABASE_URL") or os.getenv("OSOLI_DATABASE_URL")
-    if env_url:
-        return env_url
-
-    # محاولة جلب الرابط من الـ Secrets (قد لا يكون Streamlit متاحاً في بعض السياقات)
-    try:
-        url = None
-        try:
-            url = st.secrets.get("DATABASE_URL")  # type: ignore[attr-defined]
-        except Exception:
-            url = None
-
-        if url:
-            return str(url)
-
-        try:
-            return str(st.secrets["postgres"]["url"])  # type: ignore[index]
-        except Exception:
-            return None
-    except Exception:
-        return None
-
-# قيمة افتراضية لسهولة الاستيراد (لا تُجبر المشروع على وجود secrets.toml)
-DB_CONNECTION_URL = get_db_url()
+# محاولة جلب الرابط من الـ Secrets لدعم PostgreSQL
+try:
+    # ندعم التسميتين الشائعتين في Streamlit Cloud أو Local
+    DB_CONNECTION_URL = st.secrets.get("DATABASE_URL") or st.secrets["postgres"]["url"]
+except (FileNotFoundError, KeyError):
+    # في حال عدم وجود Secrets، نتركها فارغة ليتم التعامل مع الخطأ في database.py
+    DB_CONNECTION_URL = None
 
 # ==========================================
 # 4. الثوابت المالية (Financial Constants)
