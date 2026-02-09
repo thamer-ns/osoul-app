@@ -6,9 +6,12 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import date
 import traceback
+from feature_flags import get_flag
 
 from config import DEFAULT_COLORS
 from components import (
+    ar_selectbox,
+
     render_kpi,
     render_custom_table,
     render_ticker_card,
@@ -207,7 +210,7 @@ def _select_strategy_ui(key_prefix: str = "lab"):
         if not strat_map:
             return "Trend"
 
-        label = st.selectbox(
+        label = (ar_selectbox if get_flag('use_ar_wrappers', False) else st.selectbox)(
             "اختر الاستراتيجية",
             list(strat_map.keys()),
             index=0,
@@ -233,7 +236,7 @@ def _select_strategy_ui(key_prefix: str = "lab"):
         return "Trend"
 
     raw_str = [str(x) for x in raw] if raw else ["Trend", "Sniper"]
-    return st.selectbox("اختر الاستراتيجية", raw_str, index=0, key=f"{key_prefix}_strat")
+    return (ar_selectbox if get_flag('use_ar_wrappers', False) else st.selectbox)("اختر الاستراتيجية", raw_str, index=0, key=f"{key_prefix}_strat")
 
 def _render_technical_chart_flex(symbol: str, period: str = "2y", interval: str = "1d"):
     try:
@@ -1335,34 +1338,3 @@ def _render_table_like_trades(df: pd.DataFrame, cols_spec=None, max_rows: int = 
             cols_spec.append((key, lbl, _guess_type(key)))
 
     render_custom_table(d, cols_spec)
-
-
-# ==============================================================
-# 🩺 Yahoo Diagnostics (safe import)
-# ==============================================================
-def _safe_import_yahoo_diag():
-    try:
-        from financial_analysis.yahoo_data import get_last_yahoo_diagnostics, diagnose_quote_summary  # type: ignore
-        return get_last_yahoo_diagnostics, diagnose_quote_summary
-    except Exception:
-        return None, None
-
-
-def get_last_yahoo_diagnostics():
-    fn, _ = _safe_import_yahoo_diag()
-    if not fn:
-        return {"ts": None, "url": None, "status": None, "error": "diagnostics unavailable", "snippet": None, "hint": None}
-    try:
-        return fn()
-    except Exception as e:
-        return {"ts": None, "url": None, "status": None, "error": str(e), "snippet": None, "hint": None}
-
-
-def diagnose_yahoo_quote_summary(symbol: str):
-    _, fn = _safe_import_yahoo_diag()
-    if not fn:
-        return {"ts": None, "url": None, "status": None, "error": "diagnose unavailable", "snippet": None, "hint": None}
-    try:
-        return fn(symbol)
-    except Exception as e:
-        return {"ts": None, "url": None, "status": None, "error": str(e), "snippet": None, "hint": None}
