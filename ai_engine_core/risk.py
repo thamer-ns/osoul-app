@@ -211,6 +211,16 @@ def _risk_gates(report: dict) -> dict:
 
 
 def _build_scenarios(df: pd.DataFrame, report: dict) -> list:
+    """Build human scenarios with **direction-consistent** risk numbers.
+
+    Bug fix:
+    - Previously we reused report['risk_plan'] (which can be 'sell') for **buy** scenarios (اختراق/ارتداد),
+      producing inverted logic: target < entry and stop > entry.
+    - Now we create a dedicated plan per scenario direction (buy/sell) and enforce sanity.
+
+    Notes:
+    - This does NOT change your recommendation engine; it only fixes the *presentation* of scenarios.
+    """
     if df is None or df.empty or "Close" not in df.columns:
         return []
 
@@ -221,35 +231,162 @@ def _build_scenarios(df: pd.DataFrame, report: dict) -> list:
     feats = report.get("features") or {}
     rp = report.get("risk_plan") or {}
 
+    # Pull ATR if available (we store it in report['indicators'] in reporting)
+    atrv = None
+    try:
+        ind = report.get("indicators") or {}
+        atr = ind.get("atr14")
+        if isinstance(atr, pd.Series) and len(atr) and pd.notna(atr.iloc[-1]):
+            atrv = float(atr.iloc[-1])
+    except Exception:
+        atrv = None
+
+    def _plan_for(direction: str):
+        """Return a safe plan dict for requested direction."""
+        direction = (direction or "buy").lower().strip()
+        if direction not in ("buy", "sell", "neutral"):
+            direction = "buy"
+
+        # Prefer precomputed risk_plan if it matches direction and is sane
+        try:
+            rp_dir = str(rp.get("direction") or "").lower().strip()
+        except Exception:
+            rp_dir = ""
+
+        plan = {
+            "entry": round(float(close), 4),
+            "stop": None,
+            "target1": None,
+            "rr": None,
+            "direction": direction,
+        }
+
+        # If ATR missing, we fall back to small %-based envelopes
+        if atrv is None or atrv <= 0:
+            if direction == "sell":
+                plan["stop"] = round(float(close * 1.02), 4)
+                plan["target1"] = round(float(close * 0.97), 4)
+            else:
+                plan["stop"] = round(float(close * 0.98), 4)
+                plan["target1"] = round(float(close * 1.03), 4)
+        else:
+            sl_mult = 2.0
+            tp_mult = 3.0
+            if direction == "sell":
+                plan["stop"] = round(float(close + sl_mult * atrv), 4)
+                plan["target1"] = round(float(close - tp_mult * atrv), 4)
+            else:
+                plan["stop"] = round(float(close - sl_mult * atrv), 4)
+                plan["target1"] = round(float(close + tp_mult * atrv), 4)
+
+        # If we have a matching rp with valid numbers, reuse it (keeps consistency)
+        try:
+            if rp_dir == direction and rp.get("stop") and rp.get("target1"):
+                e = float(rp.get("entry") or close)
+                s = float(rp.get("stop"))
+                t = float(rp.get("target1"))
+                # sanity
+                if direction == "sell":
+                    if s > e and t < e:
+                        plan.update({"entry": round(e, 4), "stop": round(s, 4), "target1": round(t, 4)})
+                else:
+                    if s < e and t > e:
+                        plan.update({"entry": round(e, 4), "stop": round(s, 4), "target1": round(t, 4)})
+        except Exception:
+            pass
+
+        # Final sanity clamp (must always hold)
+        e = float(plan.get("entry") or close)
+        s = float(plan.get("stop") or 0.0)
+        t = float(plan.get("target1") or 0.0)
+
+        if direction == "sell":
+            # stop must be above entry; target must be below
+            if s <= e:
+                s = e * 1.02
+            if t >= e:
+                t = e * 0.97
+        else:
+            # buy/neutral: stop below entry; target above
+            if s >= e:
+                s = e * 0.98
+            if t <= e:
+                t = e * 1.03
+
+        plan["stop"] = round(float(s), 4)
+        plan["target1"] = round(float(t), 4)
+
+        # RR
+        risk = abs(e - s)
+        reward = abs(t - e)
+        rr = (reward / risk) if risk > 0 else 0.0
+        plan["rr"] = round(float(rr), 2)
+
+        return plan
+
     lows, highs = _support_resistance_zones(df, lookback=120, max_levels=6)
     near_sup = min(lows, key=lambda x: abs(close - x)) if lows else None
     near_res = min(highs, key=lambda x: abs(close - x)) if highs else None
 
     scenarios = []
 
-    if near_res is not None:
+    # BUY scenarios
+    long_plan = _plan_for("buy")
+    if near_res is not None and float(near_res) > 0:
         scenarios.append(
             {
                 "name": "سيناريو اختراق",
                 "trigger": f"إغلاق يومي فوق المقاومة ~ {near_res:.2f}",
-                "entry": rp.get("entry"),
-                "stop": rp.get("stop"),
-                "target1": rp.get("target1"),
+                "entry": long_plan.get("entry"),
+                "stop": long_plan.get("stop"),
+                "target1": long_plan.get("target1"),
                 "note": "يفضّل مع حجم داعم/زخم + عدم وجود مقاومات قريبة أعلى.",
             }
         )
 
-    if near_sup is not None:
+    if near_sup is not None and float(near_sup) > 0:
         scenarios.append(
             {
                 "name": "سيناريو ارتداد",
                 "trigger": f"ثبات فوق الدعم ~ {near_sup:.2f} + شمعة انعكاس",
-                "entry": rp.get("entry"),
-                "stop": rp.get("stop"),
-                "target1": rp.get("target1"),
+                "entry": long_plan.get("entry"),
+                "stop": long_plan.get("stop"),
+                "target1": long_plan.get("target1"),
                 "note": "أفضل إذا ظهرت إشارات قوة/تجميع (VSA/OBV/RSI).",
             }
         )
+
+    # SELL scenario (if broke support or recommendation is sell-like)
+    short_plan = _plan_for("sell")
+    try:
+        rec = str(report.get("recommendation") or "")
+        sell_like = ("بيع" in rec) or ("Sell" in rec) or ("Strong Sell" in rec)
+    except Exception:
+        sell_like = False
+
+    if sell_like or int(feats.get("broke_support_confirm") or 0) == 1:
+        if near_sup is not None:
+            scenarios.append(
+                {
+                    "name": "سيناريو كسر دعم",
+                    "trigger": f"إغلاق يومين تحت الدعم ~ {near_sup:.2f}",
+                    "entry": short_plan.get("entry"),
+                    "stop": short_plan.get("stop"),
+                    "target1": short_plan.get("target1"),
+                    "note": "تحذيري/إدارة مخاطرة — يُستخدم لتقليل الضرر عند كسر الدعم.",
+                }
+            )
+        else:
+            scenarios.append(
+                {
+                    "name": "سيناريو كسر دعم",
+                    "trigger": "كسر دعم مؤكّد (إغلاق يومين تحت منطقة دعم)",
+                    "entry": short_plan.get("entry"),
+                    "stop": short_plan.get("stop"),
+                    "target1": short_plan.get("target1"),
+                    "note": "تحذيري/إدارة مخاطرة.",
+                }
+            )
 
     if int(feats.get("broke_support_confirm") or 0) == 1 and near_sup is not None:
         scenarios.append(
