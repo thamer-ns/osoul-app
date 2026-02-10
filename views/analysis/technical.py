@@ -145,3 +145,26 @@ def view_technical(symbol: str, interval: str = "1d"):
 
     with tab2:
         _render_advanced_section(df, symbol=symbol, interval=interval)
+
+# =============================================================================
+# ✅ Compatibility export
+# -----------------------------------------------------------------------------
+# بعض النسخ/الملفات تستورد: render_technical_tab
+# بينما هذا الملف قدّم واجهة: view_technical
+# للحفاظ على التوافق بدون حذف أي شيء نوفّر Wrapper بسيط.
+# =============================================================================
+
+def render_technical_tab(symbol: str, interval: str = "1d"):
+    """Render the technical analysis tab (compatibility wrapper).
+
+    This preserves backward-compatibility for older imports expecting
+    `render_technical_tab` while delegating to `view_technical`.
+    """
+    return view_technical(symbol, interval=interval)
+
+
+__all__ = [
+    "view_technical",
+    "render_technical_tab",
+]
+
