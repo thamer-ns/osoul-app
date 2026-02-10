@@ -93,6 +93,15 @@ def _render_advanced_section(df: pd.DataFrame, symbol: str, interval: str):
     with st.spinner("جاري حساب المؤشرات المتقدمة..."):
         pack = compute_advanced_technical_pack(df, symbol=symbol, timeframe=interval)
 
+    # حفظ النتائج في قاعدة البيانات (كاش) ليستفيد منها المستشار وتبقى "مسجّلة".
+    try:
+        from ai_engine_core.db import save_advanced_indicators
+
+        save_advanced_indicators(symbol=symbol, interval=interval, payload=pack)
+    except Exception:
+        # لا نوقف الواجهة لو فشل التخزين — فقط نتجاهل.
+        pass
+
     # عرض ملخص سريع
     st.caption("هذه النتائج تُستخدم كذلك داخل **المستشار (AI)** ضمن حزمة التحليل الفني (Technical Pack).")
 
@@ -134,6 +143,7 @@ def view_technical(symbol: str, interval: str = "1d"):
 
         # مفتاح تخزين الرسم داخل session state
         # NOTE: views.shared._sym_key() تقبل وسيطًا واحدًا فقط.
+        # نضيف suffix يدويًا حتى تبقى مفاتيح الـ Streamlit فريدة لكل قسم.
         key = f"{_sym_key(symbol)}_tech_chart"
         try:
             _render_technical_chart_flex(symbol, df, key=key)
@@ -146,13 +156,3 @@ def view_technical(symbol: str, interval: str = "1d"):
 
     with tab2:
         _render_advanced_section(df, symbol=symbol, interval=interval)
-
-
-def render_technical_tab(symbol: str, interval: str = "1d"):
-    """Compatibility entry point.
-
-    Some parts of the app expect `render_technical_tab` to exist.
-    We keep this thin wrapper to preserve imports and avoid breaking
-    the existing routing logic.
-    """
-    return view_technical(symbol, interval=interval)
