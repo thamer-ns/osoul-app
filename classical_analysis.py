@@ -426,7 +426,7 @@ def render_classical_analysis(symbol: str, interval: str = "1d"):
     """
     itv = _norm_interval(interval)
 
-    st.markdown("### 🏛️ التحليل الكلاسيكي المطوّر (Multi-Timeframe Pivots + Swing Fib + Auto S/R + Zones + ATR/Volume)")
+    st.markdown("### 🏛️ التحليل الكلاسيكي المطوّر (محاور متعددة الفواصل + فيبوناتشي سوينغ + دعوم/مقاومات تلقائية + مناطق + ATR/الحجم)")
 
     # -----------------------------
     # Controls (Main)
@@ -449,7 +449,7 @@ def render_classical_analysis(symbol: str, interval: str = "1d"):
 
     colA, colB, colC, colD = st.columns([1.25, 1.25, 1.25, 1.25])
     show_zones = colA.checkbox("Zones بدل Lines", value=True, key=f"cl_z_{symbol}")
-    show_fib = colB.checkbox("إظهار Fibonacci Swing", value=True, key=f"cl_fib_{symbol}")
+    show_fib = colB.checkbox("إظهار فيبوناتشي (Swing)", value=True, key=f"cl_fib_{symbol}")
     show_sr = colC.checkbox("إظهار Auto Support/Resistance", value=True, key=f"cl_sr_{symbol}")
     show_pivots = colD.checkbox("إظهار Pivot Day/Week/Month", value=True, key=f"cl_piv_{symbol}")
 
@@ -865,8 +865,8 @@ def render_classical_analysis(symbol: str, interval: str = "1d"):
             st.caption("Invalidation: رجوع وإغلاق فوق Zone الكسر.")
 
     with st.expander("🧾 تفاصيل الحساب (للتوثيق وتجنب سوء الفهم)"):
-        st.write("**Base Interval:**", itv)
-        st.write("**Fib Meta:**", fib_meta if show_fib else "Fib disabled")
-        st.write("**Pivots Used:**", [{"tf": p["tf"], "src": p["src"], "keys": list(p["pivots"].keys())} for p in pivots_pack])
+        st.write("**الفاصل الأساسي:**", itv)
+        st.write("**بيانات فيبوناتشي:**", fib_meta if show_fib else "تم إيقاف فيبوناتشي")
+        st.write("**محاور الارتكاز المستخدمة:**", [{"tf": p["tf"], "src": p["src"], "keys": list(p["pivots"].keys())} for p in pivots_pack])
         st.write("**Auto S/R:**", {"supports": supports, "resistances": resistances})
         st.write("**Volume:**", {"today_volume": v, "vol_ma20": vma, "confirmed": vol_ok})
