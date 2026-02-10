@@ -50,6 +50,68 @@ def _safe_div(a, b, default=0.0):
         return default
 
 
+def _is_missing(x) -> bool:
+    """Return True if x is a missing/NA-like value."""
+    try:
+        if x is None:
+            return True
+        if isinstance(x, str) and x.strip().lower() in ("", "nan", "none", "null", "-"):
+            return True
+        # pandas NA
+        try:
+            import pandas as pd
+            if hasattr(pd, "isna") and pd.isna(x):
+                return True
+        except Exception:
+            pass
+        # numpy NaN
+        try:
+            import numpy as np
+            if isinstance(x, (np.floating, np.integer)):
+                try:
+                    return bool(np.isnan(float(x)))
+                except Exception:
+                    return False
+        except Exception:
+            pass
+        return False
+    except Exception:
+        return False
+
+
+def _safe_float_none(x):
+    """Safe float that preserves missing as None (does NOT coerce to 0)."""
+    try:
+        if _is_missing(x):
+            return None
+        try:
+            import numpy as np
+            if isinstance(x, (np.floating, np.integer)):
+                return float(x)
+        except Exception:
+            pass
+        s = str(x).replace(",", "").strip()
+        if s.lower() in ("nan", "none", ""):
+            return None
+        return float(s)
+    except Exception:
+        return None
+
+
+def _safe_div_none(a, b):
+    """Division that returns None when operands missing/invalid or denominator=0."""
+    try:
+        av = _safe_float_none(a)
+        bv = _safe_float_none(b)
+        if av is None or bv is None or bv == 0:
+            return None
+        return av / bv
+    except Exception:
+        return None
+
+
+
+
 def _safe_date_str(d) -> str:
     """
     يحاول تحويل تاريخ yahoo (Timestamp) أو string إلى YYYY-MM-DD
