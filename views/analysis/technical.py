@@ -141,12 +141,20 @@ def view_technical(symbol: str, interval: str = "1d"):
         # ====== الموجود سابقاً: الرسم + وصف بسيط ======
         st.markdown("### الرسم الفني (مرن)")
 
-        # مفتاح تخزين الرسم داخل session state
-        # NOTE: views.shared._sym_key() تقبل وسيطًا واحدًا فقط.
-        # نضيف suffix يدويًا حتى تبقى مفاتيح الـ Streamlit فريدة لكل قسم.
-        key = f"{_sym_key(symbol)}_tech_chart"
+        # شارة حداثة البيانات (Data Freshness)
         try:
-            _render_technical_chart_flex(symbol, df, key=key)
+            if df is not None and (not df.empty):
+                last_bar = df.index[-1]
+                st.caption(
+                    f"آخر شمعة: **{str(last_bar)}** | المصدر: **Yahoo/yfinance** | الفاصل: **{interval}**"
+                )
+        except Exception:
+            pass
+
+        # ✅ إصلاح: views.shared._render_technical_chart_flex لا يستقبل df أو key.
+        # يعرض الرسم عبر charts.render_technical_chart مع fallbacks متعددة.
+        try:
+            _render_technical_chart_flex(symbol, period="1y", interval=interval)
         except Exception as e:
             st.warning(f"تعذر عرض الرسم المرن: {e}")
             if df is not None and not df.empty:
