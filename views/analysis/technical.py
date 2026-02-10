@@ -19,6 +19,8 @@ import math
 import pandas as pd
 import streamlit as st
 
+from components import render_custom_table
+
 from market_data import get_chart_history
 from views.shared import _render_technical_chart_flex
 
@@ -148,6 +150,15 @@ def _render_quality_badge(df: pd.DataFrame):
             st.write("\n".join([f"- {x}" for x in q["issues"]]))
 
 
+
+def _render_table_like_trades(df: pd.DataFrame, columns_config, *, key: str):
+    """عرض جدول بنفس ستايل جدول الصفقات (finance-table)."""
+    try:
+        render_custom_table(df, columns_config=columns_config, key=key, use_container_width=True)
+    except Exception:
+        st.dataframe(df, use_container_width=True, hide_index=True)
+
+
 def _render_signals_table(signals: List[Any], title: str = "الإشارات"):
     if not signals:
         st.caption("لا توجد إشارات مُهيكلة من هذا المؤشر.")
@@ -166,18 +177,44 @@ def _render_signals_table(signals: List[Any], title: str = "الإشارات"):
     rest = [c for c in df_sig.columns if c not in preferred]
     df_sig = df_sig[preferred + rest]
 
+    col_map = {
+        "signal": "الإشارة",
+        "name": "الاسم",
+        "type": "النوع",
+        "direction": "الاتجاه",
+        "score": "الدرجة",
+        "strength": "القوة",
+        "note": "ملاحظة",
+        "when": "التوقيت",
+    }
+
+    columns_config = []
+    for c in df_sig.columns:
+        label = col_map.get(c, c)
+        col_type = "auto"
+        if c in ("score", "strength"):
+            col_type = "number"
+        columns_config.append((c, label, col_type))
+
     st.markdown(f"**{title}:**")
-    st.dataframe(df_sig, use_container_width=True, hide_index=True)
+    _render_table_like_trades(df_sig, columns_config, key=f"adv_sig_{abs(hash(title)) % 100000}")
+
 
 
 def _render_features_table(features: Dict[str, Any]):
     if not isinstance(features, dict) or not features:
-        st.caption("لا توجد خصائص مُهيكلة.")
+        st.caption("لا توجد خصائص (Features) مُهيكلة.")
         return
 
     rows = [{"feature": str(k), "value": v} for k, v in features.items()]
     df_feat = pd.DataFrame(rows)
-    st.dataframe(df_feat, use_container_width=True, hide_index=True)
+
+    columns_config = [
+        ("feature", "البند", "text"),
+        ("value", "القيمة", "auto"),
+    ]
+    _render_table_like_trades(df_feat, columns_config, key=f"adv_feat_{len(df_feat)}")
+
 
 
 def _render_indicator_block(title: str, res: Dict[str, Any]):
@@ -220,7 +257,7 @@ def _render_indicator_block(title: str, res: Dict[str, Any]):
 
     features = res.get("features", {})
     if isinstance(features, dict) and features:
-        with st.expander("خصائص/خصائص (تفاصيل رقمية)"):
+        with st.expander("خصائص/Features (تفاصيل رقمية)"):
             _render_features_table(features)
 
 
@@ -384,19 +421,27 @@ def _render_advanced_section(df: pd.DataFrame, symbol: str, interval: str):
     vp = pack.get("volume_profile_clusters", {}) or {}
     tl = pack.get("trendline_breakout", {}) or {}
 
-    with st.expander("1) RLS Forecast (التنبؤ/الارتداد للمتوسط)", expanded=True):
-        _render_indicator_block("RLS Forecast", rls)
+    with st.expander("1) توقع RLS (اتجاه/ارتداد للمتوسط)", expanded=True):
+        st.caption("**ماذا يعني؟** يتتبع الاتجاه ويقدّر احتمال الاستمرار أو الارتداد نحو المتوسط. "
+                   "يُستخدم كـ *تأكيد* مع باقي الأدلة (وليس قرار منفرد).")
+        _render_indicator_block("توقع RLS", rls)
 
-    with st.expander("2) Chaos Weighted RSI (زخم ديناميكي)", expanded=False):
-        _render_indicator_block("Chaos Weighted RSI", wrsi)
+    with st.expander("2) RSI مُوزّن ديناميكيًا (Chaos WRSI)", expanded=False):
+        st.caption("**ماذا يعني؟** زخم أكثر حساسية للسياق: يفرق بين زخم صحي وزخم مُنهك. "
+                   "يفضل قراءته مع الاتجاه العام والدعوم/المقاومات.")
+        _render_indicator_block("RSI مُوزّن ديناميكيًا", wrsi)
 
-    with st.expander("3) Volume Profile Clusters (شرائح حجم/سعر)", expanded=False):
-        _render_indicator_block("Volume Profile Clusters", vp)
+    with st.expander("3) شرائح الحجم السعري (Volume Profile Clusters)", expanded=False):
+        st.caption("**ماذا يعني؟** يحدد مناطق تكدّس أحجام قد تعمل كدعوم/مقاومات ديناميكية. "
+                   "يساعدك تعرف أين تركز الشراء/البيع تاريخيًا.")
+        _render_indicator_block("شرائح الحجم السعري", vp)
 
-    with st.expander("4) Trendline Breakout Navigator (ترندلاين + اختراق)", expanded=False):
-        _render_indicator_block("Trendline Breakout Navigator", tl)
+    with st.expander("4) مرشد اختراق الترند (Trendline Breakout)", expanded=False):
+        st.caption("**ماذا يعني؟** يرصد كسر خط اتجاه/قناة مع شروط تأكيد لتقليل الإشارات الكاذبة. "
+                   "استخدمه دائمًا مع وقف خسارة واضح.")
+        _render_indicator_block("اختراق الترند", tl)
 
-    st.caption("✅ ملاحظة: هذه النتائج تُستخدم كذلك داخل **المستشار (AI)** ضمن حزمة التحليل الفني (Technical Pack).")
+    st.caption("✅ ملاحظة: نتائج هذا القسم تُستخدم كذلك داخل **المستشار (AI)** ضمن الحزمة الفنية (Technical Pack).")
 
 
 def view_technical(symbol: str, interval: str = "1d"):
