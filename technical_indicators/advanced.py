@@ -459,7 +459,7 @@ def volume_profile_clusters(
 
     evidence = [
         f"إجمالي حجم (تقريبي) داخل الشرائح: {total_vol:.0f}",
-        f"أقوى مناطق POC (3): " + ", ".join([f\"{p:.2f}\" for p in top_pocs]),
+        "أقوى مناطق POC (3): " + ", ".join([f"{p:.2f}" for p in top_pocs]),
     ]
 
     # signals: price near a POC zone
@@ -572,15 +572,15 @@ def trendline_breakout(
             x_last = len(c) - 1
             line_last = m * x_last + b
             features["res_tl"] = _safe_float(line_last)
-            evidence.append(f\"ترند مقاومة من قمم pivots (ميل={m:.4f})\")
+            evidence.append(f"ترند مقاومة من قمم pivots (ميل={m:.4f})")
 
             # breakout: close crosses above resistance
             if float(c.iloc[-1]) > line_last and float(c.iloc[-2]) <= (m * (x_last - 1) + b):
-                signals.append({\"type\": \"BUY\", \"kind\": \"BREAKOUT_RES\", \"reason\": \"اختراق ترند مقاومة\"})
+                signals.append({"type": "BUY", "kind": "BREAKOUT_RES", "reason": "اختراق ترند مقاومة"})
 
             # retest: price touches line after breakout (rough)
             if float(l.iloc[-1]) <= line_last <= float(h.iloc[-1]):
-                signals.append({\"type\": \"INFO\", \"kind\": \"RETEST_RES\", \"reason\": \"لمس/إعادة اختبار قرب ترند المقاومة\"})
+                signals.append({"type": "INFO", "kind": "RETEST_RES", "reason": "لمس/إعادة اختبار قرب ترند المقاومة"})
 
     # support trendline from last two pivot lows
     if len(lows) >= 2:
@@ -592,18 +592,18 @@ def trendline_breakout(
             x_last = len(c) - 1
             line_last = m * x_last + b
             features["sup_tl"] = _safe_float(line_last)
-            evidence.append(f\"ترند دعم من قيعان pivots (ميل={m:.4f})\")
+            evidence.append(f"ترند دعم من قيعان pivots (ميل={m:.4f})")
 
             # breakdown: close crosses below support
             if float(c.iloc[-1]) < line_last and float(c.iloc[-2]) >= (m * (x_last - 1) + b):
-                signals.append({\"type\": \"SELL\", \"kind\": \"BREAKDOWN_SUP\", \"reason\": \"كسر ترند دعم\"})
+                signals.append({"type": "SELL", "kind": "BREAKDOWN_SUP", "reason": "كسر ترند دعم"})
 
             # retest: price touches line
             if float(l.iloc[-1]) <= line_last <= float(h.iloc[-1]):
-                signals.append({\"type\": \"INFO\", \"kind\": \"RETEST_SUP\", \"reason\": \"لمس/إعادة اختبار قرب ترند الدعم\"})
+                signals.append({"type": "INFO", "kind": "RETEST_SUP", "reason": "لمس/إعادة اختبار قرب ترند الدعم"})
 
     if not features:
-        evidence.append(\"لم يتم العثور على pivots كافية لبناء ترندلاين دعم/مقاومة.\")
+        evidence.append("لم يتم العثور على pivots كافية لبناء ترندلاين دعم/مقاومة.")
         conf = 30
     else:
         conf = 60
@@ -613,12 +613,12 @@ def trendline_breakout(
     conf = int(max(0, min(100, conf)))
 
     return {
-        \"name\": \"Trendline Breakout\",
-        \"features\": features,
-        \"signals\": signals,
-        \"evidence\": evidence,
-        \"confidence\": conf,
-        \"errors\": [],
+        "name": "Trendline Breakout",
+        "features": features,
+        "signals": signals,
+        "evidence": evidence,
+        "confidence": conf,
+        "errors": [],
     }
 
 
@@ -628,25 +628,24 @@ def trendline_breakout(
 
 def compute_advanced_technical_pack(
     df: pd.DataFrame,
-    symbol: str = \"\",
-    timeframe: str = \"1d\",
+    symbol: str = "",
+    timeframe: str = "1d",
 ) -> Dict[str, Any]:
-    \"\"\"Compute a compact pack of advanced indicators.\n\n    Returns a dict with named sub-results.\n    \"\"\"\n    out: Dict[str, Any] = {\n        \"meta\": {\n            \"symbol\": symbol,\n            \"timeframe\": timeframe,\n            \"rows\": int(len(df)) if df is not None else 0,\n        }\n    }\n\n    out[\"rls_forecast\"] = rls_forecast(df)\n    out[\"chaos_wrsi\"] = chaos_weighted_rsi(df)\n    out[\"volume_profile_clusters\"] = volume_profile_clusters(df)\n    out[\"trendline_breakout\"] = trendline_breakout(df)\n\n    return out\n```
+    """Compute a compact pack of advanced indicators.
 
----
+    Returns a dict with named sub-results.
+    """
+    out: Dict[str, Any] = {
+        "meta": {
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "rows": int(len(df)) if df is not None else 0,
+        }
+    }
 
-```python
-# ai_engine_core/packs.py
-# -*- coding: utf-8 -*-
+    out["rls_forecast"] = rls_forecast(df)
+    out["chaos_wrsi"] = chaos_weighted_rsi(df)
+    out["volume_profile_clusters"] = volume_profile_clusters(df)
+    out["trendline_breakout"] = trendline_breakout(df)
 
-\"\"\"AI Engine Packs.\n\nهذا الملف يوفّر Builders لحزم البيانات (Features) التي يعتمد عليها المستشار.\n\nملاحظة مهمة:\n- تم إنشاؤه/إضافته لأن reporting.py كان يتوقع وجوده (Missing pack builders).\n- لا يحذف أي منطق سابق؛ بل يضيف طبقة تجميع منظمة.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom typing import Any, Dict, Optional\n\nimport numpy as np\nimport pandas as pd\n\n# Optional advanced pack\ntry:\n    from technical_indicators.advanced import compute_advanced_technical_pack\nexcept Exception:\n    compute_advanced_technical_pack = None\n\n\ndef _safe_float(x: Any, default: float = 0.0) -> float:\n    try:\n        if x is None:\n            return default\n        return float(x)\n    except Exception:\n        return default\n\n\ndef _ensure_ohlcv(df: Optional[pd.DataFrame]) -> Optional[pd.DataFrame]:\n    if df is None or not isinstance(df, pd.DataFrame) or df.empty:\n        return None\n    # Normalize columns\n    cols = {c.lower(): c for c in df.columns}\n    # common yfinance names already ok\n    return df\n\n\ndef build_technical_pack(\n    df_price: Optional[pd.DataFrame],\n    symbol: str = \"\",\n    timeframe: str = \"1d\",\n) -> Dict[str, Any]:\n    \"\"\"Build technical pack (baseline + advanced).\n\n    - baseline: returns basic stats (last close, return, volatility)\n    - advanced: optional indicators via technical_indicators.advanced\n    \"\"\"\n    df = _ensure_ohlcv(df_price)\n\n    pack: Dict[str, Any] = {\n        \"name\": \"technical\",\n        \"meta\": {\"symbol\": symbol, \"timeframe\": timeframe},\n        \"features\": {},\n        \"advanced\": {},\n        \"errors\": [],\n    }\n\n    if df is None or df.empty:\n        pack[\"errors\"].append(\"missing_price_data\")\n        return pack\n\n    close = None\n    for c in [\"Close\", \"close\", \"CLOSE\"]:\n        if c in df.columns:\n            close = df[c].astype(float)\n            break\n    if close is None:\n        pack[\"errors\"].append(\"missing_close\")\n        return pack\n\n    # Baseline features\n    ret = close.pct_change().fillna(0.0)\n    vol = ret.rolling(20).std().fillna(0.0)\n\n    pack[\"features\"].update(\n        {\n            \"close\": _safe_float(close.iloc[-1]),\n            \"ret_1d\": _safe_float(ret.iloc[-1]),\n            \"vol_20\": _safe_float(vol.iloc[-1]),\n            \"trend_20\": _safe_float(close.iloc[-1] - close.iloc[-20]) if len(close) >= 20 else 0.0,\n        }\n    )\n\n    # Advanced features pack (optional)\n    if compute_advanced_technical_pack is not None:\n        try:\n            adv = compute_advanced_technical_pack(df, symbol=symbol, timeframe=timeframe)\n            pack[\"advanced\"] = adv\n\n            # Flatten some useful features into top-level for the AI report\n            rls = adv.get(\"rls_forecast\", {}).get(\"features\", {})\n            wrsi = adv.get(\"chaos_wrsi\", {}).get(\"features\", {})\n            vp = adv.get(\"volume_profile_clusters\", {}).get(\"features\", {})\n            tl = adv.get(\"trendline_breakout\", {}).get(\"features\", {})\n\n            # minimal flatten\n            for k, v in {\n                \"rls_slope\": rls.get(\"rls_slope\"),\n                \"rls_band_width\": rls.get(\"band_width\"),\n                \"wrsi\": wrsi.get(\"wrsi\"),\n                \"wrsi_chaos\": wrsi.get(\"chaos\"),\n                \"vp_main_poc\": vp.get(\"main_poc\"),\n                \"tl_res\": tl.get(\"res_tl\"),\n                \"tl_sup\": tl.get(\"sup_tl\"),\n            }.items():\n                if v is None:\n                    continue\n                pack[\"features\"][k] = _safe_float(v)\n\n        except Exception as e:\n            pack[\"errors\"].append(f\"advanced_pack_error: {e}\")\n\n    return pack\n\n\ndef build_vsa_pack(\n    df_price: Optional[pd.DataFrame],\n    symbol: str = \"\",\n    timeframe: str = \"1d\",\n) -> Dict[str, Any]:\n    \"\"\"Placeholder VSA pack.\n\n    ملاحظة: هذا pack موجود لتجنب خطأ Missing pack builders.\n    تستطيع لاحقًا توسيعه وربطه بمحركات VSA داخل مشروعك.\n    \"\"\"\n    df = _ensure_ohlcv(df_price)\n    pack: Dict[str, Any] = {\n        \"name\": \"vsa\",\n        \"meta\": {\"symbol\": symbol, \"timeframe\": timeframe},\n        \"features\": {},\n        \"errors\": [],\n    }\n\n    if df is None or df.empty:\n        pack[\"errors\"].append(\"missing_price_data\")\n        return pack\n\n    vol = None\n    for c in [\"Volume\", \"volume\", \"VOL\"]:\n        if c in df.columns:\n            vol = df[c].astype(float)\n            break\n\n    if vol is None:\n        pack[\"errors\"].append(\"missing_volume\")\n        return pack\n\n    pack[\"features\"].update(\n        {\n            \"volume_last\": _safe_float(vol.iloc[-1]),\n            \"volume_avg20\": _safe_float(vol.rolling(20).mean().iloc[-1]) if len(vol) >= 20 else _safe_float(vol.mean()),\n        }\n    )\n\n    return pack\n\n\ndef build_fundamental_pack(\n    fundamentals: Optional[Dict[str, Any]] = None,\n    symbol: str = \"\",\n) -> Dict[str, Any]:\n    \"\"\"Fundamental pack (lightweight).\n\n    - لا يجبر التطبيق على وجود بيانات مالية كاملة.\n    - يُستخدم كحاوية موحدة للمستشار.\n    \"\"\"\n    pack: Dict[str, Any] = {\n        \"name\": \"fundamental\",\n        \"meta\": {\"symbol\": symbol},\n        \"features\": {},\n        \"errors\": [],\n    }\n\n    if not fundamentals or not isinstance(fundamentals, dict):\n        pack[\"errors\"].append(\"missing_fundamentals\")\n        return pack\n\n    # Pass-through a few common keys if present\n    for k in [\n        \"revenue\",\n        \"net_income\",\n        \"total_assets\",\n        \"total_liabilities\",\n        \"equity\",\n        \"operating_cash_flow\",\n        \"free_cash_flow\",\n        \"eps\",\n    ]:\n        if k in fundamentals and fundamentals[k] is not None:\n            pack[\"features\"][k] = _safe_float(fundamentals[k])\n\n    return pack\n```
-
----
-
-### ✅ بخصوص سؤالك “تبغاها تظهر في أي تبويب؟”
-أنا حطّيتها (افتراضيًا) هنا:
-- داخل **📈 التحليل الفني** → تبويب فرعي جديد باسم **“مؤشرات متقدمة”** (بدون ما نضيف تبويب رئيسي جديد)
-
-إذا تبغاها بدل كذا (مثلاً: **تبويب رئيسي مستقل داخل analysis/__init__.py**) قلّي بس:  
-**هل تبغاها تبويب رئيسي جديد اسمه “🚀 مؤشرات متقدمة”؟**  
-وأطبّقها مباشرة بدون ما ألمس باقي التبويبات إلا بالإضافة فقط.
+    return out
