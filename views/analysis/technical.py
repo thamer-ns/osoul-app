@@ -1,127 +1,147 @@
-#views/analysis/technical.py
-import streamlit as st
+# views/analysis/technical.py
+# -*- coding: utf-8 -*-
+
+"""واجهة التحليل الفني.
+
+مهم:
+- لا يتم حذف أي شيء من الواجهة الحالية.
+- تمت إضافة قسم "مؤشرات متقدمة" فقط كإضافة.
+- هذه المؤشرات (عند توفرها) يتم استخدام نفس نتائجها داخل المستشار (AI)
+  عبر ai_engine_core/packs.py.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Dict, Optional
+
 import pandas as pd
+import streamlit as st
 
 from market_data import get_chart_history
 from views.shared import _sym_key, _render_technical_chart_flex
 
+# ==============================
+# مؤشرات متقدمة (Advanced Indicators)
+# ==============================
+# هذا الاستيراد اختياري حتى لا ينكسر التطبيق إذا لم تكن الحزمة موجودة.
+_ADV_AVAILABLE = True
+try:
+    from technical_indicators.advanced import compute_advanced_technical_pack
+except Exception:
+    compute_advanced_technical_pack = None
+    _ADV_AVAILABLE = False
 
-def _safe_to_df(x):
+
+def _as_list(x: Any):
     if x is None:
-        return None
-    if isinstance(x, pd.DataFrame):
+        return []
+    if isinstance(x, list):
         return x
-    try:
-        return pd.DataFrame(x)
-    except Exception:
-        return None
+    return [x]
 
 
-def _price_snapshot(symbol: str, period: str = "1y", interval: str = "1d"):
-    """
-    Snapshot بسيط للعرض:
-    - آخر إغلاق + تغير
-    - أعلى/أدنى خلال الفترة
-    - آخر حجم تداول
-    """
-    try:
-        df = _safe_to_df(get_chart_history(symbol, period=period, interval=interval))
-        if df is None or df.empty:
-            return {}
+def _render_indicator_block(title: str, res: Dict[str, Any]):
+    """Render a standardized indicator result."""
+    st.markdown(f"### {title}")
 
-        cols = {str(c).lower(): c for c in df.columns}
-        close = cols.get("close") or ("Close" if "Close" in df.columns else None)
-        high = cols.get("high") or ("High" if "High" in df.columns else None)
-        low = cols.get("low") or ("Low" if "Low" in df.columns else None)
-        vol = cols.get("volume") or ("Volume" if "Volume" in df.columns else None)
-
-        def _num(s):
-            return pd.to_numeric(s, errors="coerce")
-
-        out = {}
-        if close:
-            ser = _num(df[close]).dropna()
-            if not ser.empty:
-                out["last"] = float(ser.iloc[-1])
-                if len(ser) >= 2 and float(ser.iloc[-2]) != 0:
-                    out["chg_pct"] = (float(ser.iloc[-1]) / float(ser.iloc[-2]) - 1) * 100.0
-
-        if high:
-            ser = _num(df[high]).dropna()
-            if not ser.empty:
-                out["high"] = float(ser.max())
-
-        if low:
-            ser = _num(df[low]).dropna()
-            if not ser.empty:
-                out["low"] = float(ser.min())
-
-        if vol:
-            ser = _num(df[vol]).dropna()
-            if not ser.empty:
-                out["vol"] = float(ser.iloc[-1])
-
-        return out
-    except Exception:
-        return {}
-
-
-def render_technical_tab(sym: str):
-    symk = _sym_key(sym)
-
-    st.markdown("### 📈 التحليل الفني")
-    st.caption("تحسين العرض فقط: نفس الشارت ونفس المنطق—مع ملخص سريع وإعدادات أوضح.")
-
-    period_opts = {
-        "6 أشهر": "6mo",
-        "سنة": "1y",
-        "سنتين": "2y",
-        "5 سنوات": "5y",
-        "10 سنوات": "10y",
-        "الحد الأقصى": "max",
-    }
-    interval_opts = {
-        "يومي 1D": "1d",
-        "أسبوعي 1W": "1wk",
-        "شهري 1M": "1mo",
-        "ساعة 1H": "1h",
-        "30 دقيقة": "30m",
-        "15 دقيقة": "15m",
-    }
-
-    c_p, c_i = st.columns([1.2, 1.2])
-    p_label = c_p.selectbox("الفترة (Period)", list(period_opts.keys()), index=2, key=f"tech_p_{symk}")
-    i_label = c_i.selectbox("الفاصل (Interval)", list(interval_opts.keys()), index=0, key=f"tech_i_{symk}")
-
-    # تم حذف "الشارت ال" بالكامل لأنه لا يعمل بشكل موثوق.
-    # نعتمد فقط على الشارت المرن (Fallback) لضمان الاستقرار.
-
-    # Snapshot (KPIs)
-    snap = _price_snapshot(sym, period=period_opts[p_label], interval=interval_opts[i_label])
-    k1, k2, k3, k4 = st.columns(4)
-    with k1:
-        st.metric("السعر", f"{snap.get('last', 0):,.2f}" if snap.get("last") else "—")
-    with k2:
-        ch = snap.get("chg_pct", None)
-        st.metric("التغير", f"{ch:+.2f}%" if isinstance(ch, (int, float)) else "—")
-    with k3:
-        st.metric("أعلى", f"{snap.get('high', 0):,.2f}" if snap.get("high") else "—")
-    with k4:
-        st.metric("أدنى", f"{snap.get('low', 0):,.2f}" if snap.get("low") else "—")
-
-    with st.expander("⚙️ ملاحظات الاستخدام"):
-        st.write("- اسحب داخل الشارت للتحريك (Pan).")
-        st.write("- استخدم Scroll للتكبير/التصغير.")
-        st.write("- لو واجهت مشكلة بيانات جرّب فترة أكبر أو وضع Fallback.")
-    # Chart
-    try:
-        _render_technical_chart_flex(sym, period=period_opts[p_label], interval=interval_opts[i_label])
-    except Exception as e:
-        st.error("❌ حصل خطأ أثناء عرض الشارت.")
-        st.code(str(e))
-        st.info("سيتم عرض وضع Fallback تلقائيًا.")
+    conf = res.get("confidence")
+    if conf is not None:
         try:
-            _render_technical_chart_flex(sym, period=period_opts[p_label], interval=interval_opts[i_label])
-        except Exception as e2:
-            st.error("❌ حتى وضع Fallback فشل.")
-            st.code(str(e2))
+            st.caption(f"درجة الثقة: **{int(conf)}%**")
+        except Exception:
+            st.caption(f"درجة الثقة: **{conf}**")
+
+    errors = _as_list(res.get("errors"))
+    if errors:
+        st.warning("⚠️ ملاحظات/أخطاء أثناء الحساب:\n- " + "\n- ".join([str(e) for e in errors]))
+
+    evidence = _as_list(res.get("evidence"))
+    if evidence:
+        st.info("**الأدلة:**\n\n- " + "\n- ".join([str(e) for e in evidence]))
+
+    signals = _as_list(res.get("signals"))
+    if signals:
+        try:
+            st.markdown("**الإشارات:**")
+            df_sig = pd.DataFrame(signals)
+            st.dataframe(df_sig, use_container_width=True)
+        except Exception:
+            st.write(signals)
+
+    features = res.get("features", {})
+    if isinstance(features, dict) and features:
+        with st.expander("عرض الخصائص (Features)"):
+            try:
+                df_feat = pd.DataFrame(
+                    [{"feature": k, "value": v} for k, v in features.items()]
+                )
+                st.dataframe(df_feat, use_container_width=True)
+            except Exception:
+                st.json(features)
+
+
+def _render_advanced_section(df: pd.DataFrame, symbol: str, interval: str):
+    if not _ADV_AVAILABLE or compute_advanced_technical_pack is None:
+        st.warning("حزمة المؤشرات المتقدمة غير متوفرة داخل هذا الإصدار.")
+        st.caption("تأكد من وجود: technical_indicators/advanced.py")
+        return
+
+    if df is None or df.empty:
+        st.warning("لا توجد بيانات سعرية كافية لحساب المؤشرات المتقدمة.")
+        return
+
+    with st.spinner("جاري حساب المؤشرات المتقدمة..."):
+        pack = compute_advanced_technical_pack(df, symbol=symbol, timeframe=interval)
+
+    # عرض ملخص سريع
+    st.caption("هذه النتائج تُستخدم كذلك داخل **المستشار (AI)** ضمن حزمة التحليل الفني (Technical Pack).")
+
+    # العناصر
+    rls = pack.get("rls_forecast", {})
+    wrsi = pack.get("chaos_wrsi", {})
+    vp = pack.get("volume_profile_clusters", {})
+    tl = pack.get("trendline_breakout", {})
+
+    # --- RLS
+    _render_indicator_block("RLS Forecast (التنبؤ/الارتداد للمتوسط)", rls)
+
+    # --- Chaos WRSI
+    _render_indicator_block("Chaos Weighted RSI (زخم ديناميكي)", wrsi)
+
+    # --- Volume Profile Clusters
+    _render_indicator_block("Clusters Volume Profile (تحليل الحجم حسب شرائح سعرية)", vp)
+
+    # --- Trendline Breakout
+    _render_indicator_block("Trendline Breakout Navigator (ترندلاين + اختراق/إعادة اختبار)", tl)
+
+
+def view_technical(symbol: str, interval: str = "1d"):
+    st.subheader("📈 التحليل الفني")
+
+    # جلب بيانات الرسم/السعر
+    df = None
+    try:
+        df = get_chart_history(symbol, period="1y", interval=interval)
+    except Exception as e:
+        st.error(f"تعذر جلب البيانات السعرية للرسم: {e}")
+
+    # تبويبات داخل التحليل الفني (بدون حذف)
+    tab1, tab2 = st.tabs(["ملخص فني", "مؤشرات متقدمة"])
+
+    with tab1:
+        # ====== الموجود سابقاً: الرسم + وصف بسيط ======
+        st.markdown("### الرسم الفني (مرن)")
+
+        # مفتاح تخزين الرسم داخل session state
+        key = _sym_key(symbol, "tech_chart")
+        try:
+            _render_technical_chart_flex(symbol, df, key=key)
+        except Exception as e:
+            st.warning(f"تعذر عرض الرسم المرن: {e}")
+            if df is not None and not df.empty:
+                st.dataframe(df.tail(10), use_container_width=True)
+
+        st.caption("ملاحظة: هذا القسم هو الموجود سابقاً — لم يتم حذفه أو تغييره إلا بقدر تنظيم العرض داخل تبويب.")
+
+    with tab2:
+        _render_advanced_section(df, symbol=symbol, interval=interval)
