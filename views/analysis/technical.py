@@ -5,27 +5,49 @@
 
 مهم:
 - لا يتم حذف أي شيء من الواجهة الحالية.
-- تمت إضافة/تطوير قسم "مؤشرات متقدمة" فقط كإضافة وتحسين عرض.
+- تمت إضافة قسم "مؤشرات متقدمة" فقط كإضافة.
 - هذه المؤشرات (عند توفرها) يتم استخدام نفس نتائجها داخل المستشار (AI)
   عبر ai_engine_core/packs.py.
-
-تحسينات هذا الإصدار:
-- Score موحّد (0–100) للمؤشرات المتقدمة + تفسير (Explainability).
-- توحيد شكل الجداول ليطابق "جدول الصفقات" عبر render_custom_table.
-- شارة جودة بيانات الشموع (candles/last bar/issues) لتفسير ضعف الدقة.
 """
 
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
+
 import math
 
 import pandas as pd
 import streamlit as st
 
 from market_data import get_chart_history
-from views.shared import _sym_key, _render_technical_chart_flex
-from components import render_custom_table
+from views.shared import _render_technical_chart_flex
+
+# توحيد الجداول بنفس نمط "جدول الصفقات" (finance-table)
+try:
+    from components import render_custom_table
+except Exception:  # pragma: no cover
+    render_custom_table = None
+
+
+def _render_table_like_trades(df: pd.DataFrame, cols_spec: Optional[List[Tuple]] = None, *, key: Optional[str] = None):
+    """يعرض أي جدول بنفس ستايل جدول الصفقات.
+
+    - يستخدم render_custom_table إن كانت متوفرة.
+    - يهبط إلى st.dataframe كـ fallback.
+    """
+    if df is None or df.empty:
+        st.info("📭 لا توجد بيانات متاحة")
+        return
+
+    if render_custom_table is not None:
+        try:
+            render_custom_table(df, cols_spec, key=key, use_container_width=True)
+            return
+        except Exception:
+            # لا نكسر الصفحة بسبب تنسيق جدول
+            pass
+
+    st.dataframe(df, use_container_width=True, hide_index=True)
 
 # ==============================
 # مؤشرات متقدمة (Advanced Indicators)
@@ -39,9 +61,6 @@ except Exception:
     _ADV_AVAILABLE = False
 
 
-# ------------------------------
-# Helpers
-# ------------------------------
 def _as_list(x: Any) -> List[Any]:
     if x is None:
         return []
@@ -130,13 +149,6 @@ def _df_quality_snapshot(df: pd.DataFrame) -> Dict[str, Any]:
             bad = int((df["High"] < df["Low"]).sum())
             if bad:
                 out["issues"].append(f"وجدت {bad} شموع فيها High < Low (بيانات غير منطقية).")
-
-        # أسعار سالبة/صفر
-        if "Close" in df.columns:
-            bad2 = int((pd.to_numeric(df["Close"], errors="coerce").fillna(0) <= 0).sum())
-            if bad2:
-                out["issues"].append(f"وجدت {bad2} شموع بقيمة Close <= 0 (بيانات غير صالحة).")
-
     except Exception:
         pass
 
@@ -163,16 +175,7 @@ def _render_quality_badge(df: pd.DataFrame):
             st.write("\n".join([f"- {x}" for x in q["issues"]]))
 
 
-def _render_table_like_trades(df: pd.DataFrame, columns_config: List[Tuple[str, str, str]], key: str):
-    """يعرض DataFrame بنفس شكل جدول الصفقات (finance-table) عبر render_custom_table."""
-    if df is None or df.empty:
-        st.caption("لا توجد بيانات للعرض.")
-        return
-    # render_custom_table يدعم key/use_container_width
-    render_custom_table(df, columns_config, key=key, use_container_width=True)
-
-
-def _render_signals_table(signals: List[Any], title: str, key_prefix: str):
+def _render_signals_table(signals: List[Any], title: str = "الإشارات"):
     if not signals:
         st.caption("لا توجد إشارات مُهيكلة من هذا المؤشر.")
         return
@@ -185,51 +188,35 @@ def _render_signals_table(signals: List[Any], title: str, key_prefix: str):
             norm.append({"signal": str(s)})
 
     df_sig = pd.DataFrame(norm)
-    # ترتيب أعمدة شائع
+
     preferred = [c for c in ["signal", "name", "type", "direction", "score", "strength", "note", "when"] if c in df_sig.columns]
     rest = [c for c in df_sig.columns if c not in preferred]
     df_sig = df_sig[preferred + rest]
 
     st.markdown(f"**{title}:**")
+    cols_spec: List[Tuple] = []
+    for c in df_sig.columns:
+        c_low = str(c).lower()
+        if c_low in ("score", "strength"):
+            cols_spec.append((c, c, "number"))
+        else:
+            cols_spec.append((c, c, "auto"))
 
-    cols: List[Tuple[str, str, str]] = []
-    if "signal" in df_sig.columns:
-        cols.append(("signal", "الإشارة", "text"))
-    if "name" in df_sig.columns and ("signal" not in df_sig.columns):
-        cols.append(("name", "الإشارة", "text"))
-    if "type" in df_sig.columns:
-        cols.append(("type", "النوع", "text"))
-    if "direction" in df_sig.columns:
-        cols.append(("direction", "الاتجاه", "text"))
-    if "score" in df_sig.columns:
-        cols.append(("score", "الدرجة", "number"))
-    if "strength" in df_sig.columns:
-        cols.append(("strength", "القوة", "text"))
-    if "note" in df_sig.columns:
-        cols.append(("note", "ملاحظة", "text"))
-    if "when" in df_sig.columns:
-        cols.append(("when", "وقت", "text"))
-
-    # إذا ما طابقنا أي أعمدة، اعرضه كما هو
-    if not cols:
-        cols = [(c, c, "text") for c in df_sig.columns]
-
-    _render_table_like_trades(df_sig, cols, key=f"{key_prefix}-signals")
+    _render_table_like_trades(df_sig, cols_spec, key=f"adv_sig_{title}")
 
 
-def _render_features_table(features: Dict[str, Any], key_prefix: str):
+def _render_features_table(features: Dict[str, Any]):
     if not isinstance(features, dict) or not features:
         st.caption("لا توجد خصائص (Features) مُهيكلة.")
         return
 
     rows = [{"feature": str(k), "value": v} for k, v in features.items()]
     df_feat = pd.DataFrame(rows)
+    cols_spec = [("feature", "Feature", "text"), ("value", "Value", "auto")]
+    _render_table_like_trades(df_feat, cols_spec, key="adv_feat")
 
-    cols: List[Tuple[str, str, str]] = [("feature", "العنصر", "text"), ("value", "القيمة", "text")]
-    _render_table_like_trades(df_feat, cols, key=f"{key_prefix}-features")
 
-
-def _render_indicator_block(title: str, res: Dict[str, Any], key_prefix: str):
+def _render_indicator_block(title: str, res: Dict[str, Any]):
     """عرض موحد للمؤشر: تحيز + ثقة + رأي + أدلة + إشارات + Features."""
     if not isinstance(res, dict):
         st.error(f"{title}: نتيجة غير صالحة (ليست dict).")
@@ -265,12 +252,12 @@ def _render_indicator_block(title: str, res: Dict[str, Any], key_prefix: str):
 
     signals = _as_list(res.get("signals"))
     if signals:
-        _render_signals_table(signals, title="إشارات المؤشر", key_prefix=key_prefix)
+        _render_signals_table(signals, title="إشارات المؤشر")
 
     features = res.get("features", {})
     if isinstance(features, dict) and features:
         with st.expander("خصائص/Features (تفاصيل رقمية)"):
-            _render_features_table(features, key_prefix=key_prefix)
+            _render_features_table(features)
 
 
 def _pack_items(pack: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -348,6 +335,7 @@ def _advanced_unified_score(pack: Dict[str, Any], df: pd.DataFrame) -> Tuple[int
     q = _df_quality_snapshot(df)
     candles = int(q.get("candles") or 0)
     if candles and candles < 220:
+        # كلما قل التاريخ زادت العقوبة
         if candles < 120:
             score -= 20
             explain.append("تاريخ قصير جدًا (<120 شمعة): **-20**")
@@ -355,10 +343,12 @@ def _advanced_unified_score(pack: Dict[str, Any], df: pd.DataFrame) -> Tuple[int
             score -= 10
             explain.append("تاريخ أقل من 220 شمعة: **-10**")
 
-    if (not q.get("ok")) and q.get("issues"):
+    if not q.get("ok") and q.get("issues"):
+        # أعمدة ناقصة أو قيم غير منطقية
         score -= 15
         explain.append("ملاحظات جودة بيانات (أعمدة ناقصة/قيم غير منطقية): **-15**")
 
+    # Clamp
     score_i = int(round(_clamp(score, 0, 100)))
     explain.append(f"النتيجة النهائية (بعد الحد) = **{score_i}/100**")
     explain.append(f"ملخص الاتجاه: {overall} | صافي الميل = **{tilt:+d}**")
@@ -367,9 +357,6 @@ def _advanced_unified_score(pack: Dict[str, Any], df: pd.DataFrame) -> Tuple[int
 
 
 def _render_advanced_section(df: pd.DataFrame, symbol: str, interval: str):
-    st.markdown("## 🧠 المؤشرات المتقدمة")
-    st.caption("هدف هذا القسم: إشارات/أدلة إضافية **كمساند** للقرار، وليس كبديل عن إدارة المخاطر.")
-
     if not _ADV_AVAILABLE or compute_advanced_technical_pack is None:
         st.warning("حزمة المؤشرات المتقدمة غير متوفرة داخل هذا الإصدار.")
         st.caption("تأكد من وجود: technical_indicators/advanced.py")
@@ -378,6 +365,9 @@ def _render_advanced_section(df: pd.DataFrame, symbol: str, interval: str):
     if df is None or df.empty:
         st.warning("لا توجد بيانات سعرية كافية لحساب المؤشرات المتقدمة.")
         return
+
+    st.markdown("## 🧠 المؤشرات المتقدمة")
+    st.caption("هدف هذا القسم: تقديم إشارات/أدلة إضافية **كمساند** للقرار، وليس كبديل عن إدارة المخاطر.")
 
     # شارة جودة بيانات الشموع
     _render_quality_badge(df)
@@ -419,7 +409,7 @@ def _render_advanced_section(df: pd.DataFrame, symbol: str, interval: str):
             "- **Score الموحد**: يجمع (ثقة المؤشرات + اتفاقها + جودة بيانات الشموع).\n"
             "- **الاتجاه (إيجابي/سلبي/مختلط)**: يصف الميل العام، لكنه لا يساوي توصية شراء/بيع وحده.\n"
             "- إذا كانت جودة الشموع ضعيفة أو التاريخ قصير، تعامل مع النتائج على أنها **استرشادية فقط**.\n"
-            "- الأفضل رؤية **تقاطع الأدلة** مع إدارة مخاطر واضحة."
+            "- لا تعتمد على مؤشر واحد: الأفضل رؤية **تقاطع الأدلة** مع إدارة مخاطر واضحة."
         )
 
     st.divider()
@@ -431,25 +421,25 @@ def _render_advanced_section(df: pd.DataFrame, symbol: str, interval: str):
     tl = pack.get("trendline_breakout", {}) or {}
 
     with st.expander("1) RLS Forecast (التنبؤ/الارتداد للمتوسط)", expanded=True):
-        _render_indicator_block("RLS Forecast", rls, key_prefix=f"adv-{symbol}-{interval}-rls")
+        _render_indicator_block("RLS Forecast", rls)
 
     with st.expander("2) Chaos Weighted RSI (زخم ديناميكي)", expanded=False):
-        _render_indicator_block("Chaos Weighted RSI", wrsi, key_prefix=f"adv-{symbol}-{interval}-wrsi")
+        _render_indicator_block("Chaos Weighted RSI", wrsi)
 
     with st.expander("3) Volume Profile Clusters (شرائح حجم/سعر)", expanded=False):
-        _render_indicator_block("Volume Profile Clusters", vp, key_prefix=f"adv-{symbol}-{interval}-vp")
+        _render_indicator_block("Volume Profile Clusters", vp)
 
     with st.expander("4) Trendline Breakout Navigator (ترندلاين + اختراق)", expanded=False):
-        _render_indicator_block("Trendline Breakout Navigator", tl, key_prefix=f"adv-{symbol}-{interval}-tl")
+        _render_indicator_block("Trendline Breakout Navigator", tl)
 
-    st.caption("✅ هذه النتائج تُستخدم كذلك داخل **المستشار (AI)** ضمن حزمة التحليل الفني (Technical Pack).")
+    st.caption("✅ ملاحظة: هذه النتائج تُستخدم كذلك داخل **المستشار (AI)** ضمن حزمة التحليل الفني (Technical Pack).")
 
 
 def view_technical(symbol: str, interval: str = "1d"):
     st.subheader("📈 التحليل الفني")
 
     # جلب بيانات الرسم/السعر
-    df: Optional[pd.DataFrame] = None
+    df = None
     try:
         df = get_chart_history(symbol, period="1y", interval=interval)
     except Exception as e:
@@ -459,7 +449,6 @@ def view_technical(symbol: str, interval: str = "1d"):
     tab1, tab2 = st.tabs(["ملخص فني", "مؤشرات متقدمة"])
 
     with tab1:
-        # ====== الموجود سابقاً: الرسم + وصف بسيط ======
         st.markdown("### الرسم الفني (مرن)")
 
         # شارة حداثة البيانات (Data Freshness)
@@ -472,24 +461,18 @@ def view_technical(symbol: str, interval: str = "1d"):
         except Exception:
             pass
 
-        # ✅ الرسم المرن
+        # ✅ إصلاح: views.shared._render_technical_chart_flex لا يستقبل df أو key.
         try:
             _render_technical_chart_flex(symbol, period="1y", interval=interval)
         except Exception as e:
             st.warning(f"تعذر عرض الرسم المرن: {e}")
             if df is not None and not df.empty:
-                # توحيد شكل الجدول مثل جدول الصفقات
+                # fallback بنفس نمط الجداول الموحد
                 tail = df.tail(10).copy()
-                tail = tail.reset_index().rename(columns={tail.columns[0]: "date"})
-                cols = []
-                if "date" in tail.columns:
-                    cols.append(("date", "التاريخ", "text"))
-                for c in ["Open", "High", "Low", "Close", "Volume"]:
-                    if c in tail.columns:
-                        cols.append((c, c, "number"))
-                _render_table_like_trades(tail, cols, key=f"{_sym_key(symbol)}-ohlcv-tail")
+                cols_spec = [(c, c, "auto") for c in tail.columns]
+                _render_table_like_trades(tail, cols_spec, key="ohlcv_tail")
 
-        st.caption("ملاحظة: هذا القسم هو الموجود سابقاً — لم يتم حذفه.")
+        st.caption("ملاحظة: هذا القسم هو الموجود سابقاً — لم يتم حذفه أو تغييره إلا بقدر تنظيم العرض داخل تبويب.")
 
     with tab2:
         _render_advanced_section(df, symbol=symbol, interval=interval)
