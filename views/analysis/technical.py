@@ -156,3 +156,12 @@ def view_technical(symbol: str, interval: str = "1d"):
 
     with tab2:
         _render_advanced_section(df, symbol=symbol, interval=interval)
+
+
+def render_technical_tab(symbol: str, interval: str = "1d"):
+    """Compatibility wrapper.
+
+    The analysis router expects this name.
+    We keep the actual implementation in `view_technical`.
+    """
+    return view_technical(symbol, interval=interval)
