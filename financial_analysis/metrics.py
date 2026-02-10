@@ -7,7 +7,7 @@ import yfinance as yf
 
 from market_data import get_ticker_symbol
 from .store import get_stored_financials_df
-from .utils import _safe_float, _safe_div
+from .utils import _safe_float, _safe_div, _safe_float_none, _safe_div_none, _is_missing
 
 
 # ==============================================================
@@ -25,13 +25,13 @@ def _fetch_yahoo_info(symbol: str) -> dict:
         return {}
 
 
-def _best_key(row: pd.Series, keys: List[str], default=0.0) -> float:
+def _best_key(row: pd.Series, keys: List[str], default=0.0):
     for k in keys:
         if k in row.index:
-            v = _safe_float(row.get(k, 0.0))
-            if v != 0:
+            v = _safe_float_none(row.get(k, None))
+            if v not in (None, 0):
                 return v
-    return _safe_float(default)
+    return _safe_float_none(default) if default is None else _safe_float(default)
 
 
 def _compute_dupont(curr_row: pd.Series) -> dict:
@@ -676,3 +676,184 @@ def get_advanced_fundamental_ratios(symbol):
 
 def get_fundamental_ratios(symbol):
     return get_advanced_fundamental_ratios(symbol)
+
+
+
+# ==============================================================
+# ✅ OVERRIDE: missing -> None (عدم تحويل القيم الناقصة إلى صفر)
+# الهدف: منع نسب مضللة (ROE/Margins/FCF...) عند غياب بيانات أساسية.
+# هذه الدوال تُعيد None بدل 0.0 عندما تكون البيانات ناقصة.
+# ==============================================================
+def _v(x):
+    return _safe_float_none(x)
+
+def _d(a, b):
+    return _safe_div_none(a, b)
+
+def _compute_dupont(curr_row: pd.Series) -> dict:
+    out = {
+        "DuPont_Profit_Margin": None,
+        "DuPont_Asset_Turnover": None,
+        "DuPont_Equity_Multiplier": None,
+        "ROE": None,
+        "ROA": None,
+        "Asset_Turnover": None,
+    }
+    try:
+        rev = _v(curr_row.get("revenue"))
+        ni = _v(curr_row.get("net_income"))
+        assets = _v(curr_row.get("total_assets"))
+        eq = _v(curr_row.get("total_equity"))
+
+        pm = _d(ni, rev)
+        at = _d(rev, assets)
+        em = _d(assets, eq)
+
+        roe = (pm * at * em) if (pm is not None and at is not None and em is not None) else _d(ni, eq)
+        roa = _d(ni, assets)
+
+        out["DuPont_Profit_Margin"] = pm
+        out["DuPont_Asset_Turnover"] = at
+        out["DuPont_Equity_Multiplier"] = em
+        out["ROE"] = roe
+        out["ROA"] = roa
+        out["Asset_Turnover"] = at
+    except Exception:
+        pass
+    return out
+
+
+def _compute_liquidity_leverage(curr_row: pd.Series, prev_row: pd.Series = None) -> dict:
+    out = {
+        "Current_Ratio": None,
+        "Working_Capital": None,
+        "Debt_to_Equity": None,
+        "Liabilities_to_Assets": None,
+        "LT_Debt_Trend": None,
+    }
+    try:
+        ca = _v(curr_row.get("current_assets"))
+        cl = _v(curr_row.get("current_liabilities"))
+        ltd = _v(curr_row.get("long_term_debt"))
+        liab = _v(curr_row.get("total_liabilities"))
+        assets = _v(curr_row.get("total_assets"))
+        eq = _v(curr_row.get("total_equity"))
+
+        if ca is not None and cl is not None:
+            out["Working_Capital"] = ca - cl
+        out["Current_Ratio"] = _d(ca, cl)
+
+        # Debt-to-equity: الأفضل LTD/EQ، وإن تعذّر نحط Liab/Assets كبديل مع وسم في الـ Opinions لاحقاً.
+        dte = _d(ltd, eq)
+        if dte is None:
+            dte = _d(liab, assets)
+        out["Debt_to_Equity"] = dte
+        out["Liabilities_to_Assets"] = _d(liab, assets)
+
+        if prev_row is not None:
+            ltd_p = _v(prev_row.get("long_term_debt"))
+            if ltd is not None and ltd_p not in (None, 0):
+                out["LT_Debt_Trend"] = (ltd - ltd_p) / abs(ltd_p)
+    except Exception:
+        pass
+    return out
+
+
+def _compute_earnings_quality(curr_row: pd.Series) -> dict:
+    out = {
+        "OCF_to_NetIncome": None,
+        "Accruals_to_Assets": None,
+        "OCF_Margin": None,
+    }
+    try:
+        ni = _v(curr_row.get("net_income"))
+        ocf = _v(curr_row.get("operating_cash_flow"))
+        assets = _v(curr_row.get("total_assets"))
+        rev = _v(curr_row.get("revenue"))
+
+        out["OCF_to_NetIncome"] = _d(ocf, ni)
+        if out["OCF_to_NetIncome"] is None and ocf is not None and ni in (None, 0):
+            # إذا NI غير متوفر/0 و OCF موجب: لا نعطي 1.0 بشكل مضلل
+            out["OCF_to_NetIncome"] = None
+
+        if ni is not None and ocf is not None:
+            out["Accruals_to_Assets"] = _d((ni - ocf), assets)
+        out["OCF_Margin"] = _d(ocf, rev)
+    except Exception:
+        pass
+    return out
+
+
+def _compute_efficiency_pack(curr_row: pd.Series) -> dict:
+    out = {"Gross_Margin": None, "Operating_Margin": None, "Net_Margin": None}
+    try:
+        rev = _v(curr_row.get("revenue"))
+        if rev in (None, 0):
+            return out
+
+        gp = _best_key(curr_row, ["gross_profit", "grossProfit"], default=None)
+        op_inc = _best_key(curr_row, ["operating_income", "operatingIncome", "ebit"], default=None)
+        ni = _v(curr_row.get("net_income"))
+
+        out["Gross_Margin"] = _d(gp, rev)
+        out["Operating_Margin"] = _d(op_inc, rev)
+        out["Net_Margin"] = _d(ni, rev)
+    except Exception:
+        pass
+    return out
+
+
+def _compute_cashflow_pack(curr_row: pd.Series) -> dict:
+    out = {"Free_Cash_Flow": None, "FCF_Margin": None, "FCF_to_NetIncome": None}
+    try:
+        ocf = _v(curr_row.get("operating_cash_flow"))
+        capex = _best_key(curr_row, ["capex", "capital_expenditure", "capitalExpenditures"], default=None)
+        rev = _v(curr_row.get("revenue"))
+        ni = _v(curr_row.get("net_income"))
+
+        if ocf is None:
+            return out
+
+        capex_out = abs(_safe_float_none(capex) or 0.0) if capex is not None else 0.0
+        fcf = ocf - capex_out
+
+        out["Free_Cash_Flow"] = fcf
+        out["FCF_Margin"] = _d(fcf, rev)
+        out["FCF_to_NetIncome"] = _d(fcf, ni)
+    except Exception:
+        pass
+    return out
+
+
+def _compute_growth_pack(curr_row: pd.Series, prev_row: pd.Series) -> dict:
+    out = {"Revenue_Growth_YoY": None, "NetIncome_Growth_YoY": None}
+    try:
+        rev_c = _v(curr_row.get("revenue"))
+        rev_p = _v(prev_row.get("revenue"))
+        ni_c = _v(curr_row.get("net_income"))
+        ni_p = _v(prev_row.get("net_income"))
+
+        if rev_c is not None and rev_p not in (None, 0):
+            out["Revenue_Growth_YoY"] = (rev_c - rev_p) / abs(rev_p)
+        if ni_c is not None and ni_p not in (None, 0):
+            out["NetIncome_Growth_YoY"] = (ni_c - ni_p) / abs(ni_p)
+    except Exception:
+        pass
+    return out
+
+
+def _compute_interest_coverage_best_effort(curr_row: pd.Series, yahoo_info: dict) -> dict:
+    out = {"Interest_Coverage": None, "Interest_Coverage_Quality": "partial"}
+    try:
+        ebit = _best_key(curr_row, ["ebit", "operating_income", "operatingIncome"], default=None)
+        ie = _best_key(curr_row, ["interest_expense", "interestExpense"], default=None)
+
+        if ie in (None, 0):
+            ie = _safe_float_none(yahoo_info.get("interestExpense"))
+
+        if ebit is not None and ie not in (None, 0):
+            out["Interest_Coverage"] = ebit / abs(ie)
+            out["Interest_Coverage_Quality"] = "full"
+    except Exception:
+        pass
+    return out
