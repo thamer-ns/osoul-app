@@ -366,12 +366,12 @@ def render_technical_chart(symbol, period=None, interval="1d"):
     # SMA lines
     if "SMA_50" in plot_df.columns and not plot_df["SMA_50"].isna().all():
         fig.add_trace(
-            go.Scatter(x=plot_df.index, y=plot_df["SMA_50"], line=dict(color="orange", width=1.5), name="SMA 50"),
+            go.Scatter(x=plot_df.index, y=plot_df["SMA_50"], line=dict(color="orange", width=1.5), name="متوسط 50 (SMA)"),
             row=1, col=1
         )
     if "SMA_200" in plot_df.columns and not plot_df["SMA_200"].isna().all():
         fig.add_trace(
-            go.Scatter(x=plot_df.index, y=plot_df["SMA_200"], line=dict(color="#2962FF", width=2), name="SMA 200"),
+            go.Scatter(x=plot_df.index, y=plot_df["SMA_200"], line=dict(color="#2962FF", width=2), name="متوسط 200 (SMA)"),
             row=1, col=1
         )
 
@@ -394,7 +394,7 @@ def render_technical_chart(symbol, period=None, interval="1d"):
 
     # RSI
     fig.add_trace(
-        go.Scatter(x=plot_df.index, y=plot_df["RSI"], line=dict(color="purple"), name="RSI"),
+        go.Scatter(x=plot_df.index, y=plot_df["RSI"], line=dict(color="purple"), name="القوة النسبية (RSI)"),
         row=2, col=1
     )
     fig.add_hline(y=70, line_dash="dash", line_color="red", row=2, col=1)
@@ -402,9 +402,9 @@ def render_technical_chart(symbol, period=None, interval="1d"):
 
     # MACD
     colors = np.where(plot_df["MACD_Hist"] >= 0, "#26a69a", "#ef5350")
-    fig.add_trace(go.Bar(x=plot_df.index, y=plot_df["MACD_Hist"], marker_color=colors, name="Hist"), row=3, col=1)
-    fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df["MACD"], line=dict(color="blue"), name="MACD"), row=3, col=1)
-    fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df["Signal_Line"], line=dict(color="orange"), name="Signal"), row=3, col=1)
+    fig.add_trace(go.Bar(x=plot_df.index, y=plot_df["MACD_Hist"], marker_color=colors, name="الهيستوجرام"), row=3, col=1)
+    fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df["MACD"], line=dict(color="blue"), name="MACD (الماكد)"), row=3, col=1)
+    fig.add_trace(go.Scatter(x=plot_df.index, y=plot_df["Signal_Line"], line=dict(color="orange"), name="خط الإشارة"), row=3, col=1)
 
     # ========================================================
     # ✅ Professional interaction (TradingView-like)
