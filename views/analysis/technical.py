@@ -12,13 +12,15 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
+
+import math
 
 import pandas as pd
 import streamlit as st
 
 from market_data import get_chart_history
-from views.shared import _sym_key, _render_technical_chart_flex
+from views.shared import _render_technical_chart_flex
 
 # ==============================
 # مؤشرات متقدمة (Advanced Indicators)
@@ -32,7 +34,7 @@ except Exception:
     _ADV_AVAILABLE = False
 
 
-def _as_list(x: Any):
+def _as_list(x: Any) -> List[Any]:
     if x is None:
         return []
     if isinstance(x, list):
@@ -40,44 +42,282 @@ def _as_list(x: Any):
     return [x]
 
 
+def _safe_int(x: Any, default: Optional[int] = None) -> Optional[int]:
+    try:
+        if x is None:
+            return default
+        return int(float(x))
+    except Exception:
+        return default
+
+
+def _clamp(x: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, x))
+
+
+def _format_pct(x: Any) -> str:
+    v = _safe_int(x, None)
+    if v is None:
+        return "—"
+    return f"{_clamp(v, 0, 100):.0f}%"
+
+
+def _bias_label(bias: Any) -> Tuple[str, str]:
+    """ترميز بسيط للاتجاه/التحيز."""
+    if bias is None:
+        return ("محايد", "⚪")
+
+    # رقم
+    if isinstance(bias, (int, float)):
+        try:
+            fv = float(bias)
+            if math.isnan(fv):
+                return ("محايد", "⚪")
+            if fv > 0:
+                return ("إيجابي", "🟢")
+            if fv < 0:
+                return ("سلبي", "🔴")
+            return ("محايد", "⚪")
+        except Exception:
+            return (str(bias), "⚪")
+
+    s = str(bias).strip().lower()
+    if s in ("bullish", "up", "long", "positive", "buy"):
+        return ("إيجابي", "🟢")
+    if s in ("bearish", "down", "short", "negative", "sell"):
+        return ("سلبي", "🔴")
+    if s in ("neutral", "side", "range", "hold"):
+        return ("محايد", "⚪")
+    return (str(bias), "⚪")
+
+
+def _df_quality_snapshot(df: pd.DataFrame) -> Dict[str, Any]:
+    """فحص سريع لجودة بيانات OHLCV المستخدمة في المؤشرات المتقدمة."""
+    out: Dict[str, Any] = {"ok": True, "issues": [], "candles": 0, "last_dt": None}
+
+    if df is None or df.empty:
+        out["ok"] = False
+        out["issues"].append("لا توجد بيانات سعرية.")
+        return out
+
+    out["candles"] = int(len(df))
+    try:
+        out["last_dt"] = str(df.index[-1])
+    except Exception:
+        pass
+
+    # متطلبات دنيا (مبدئية)
+    if len(df) < 220:
+        out["issues"].append("عدد الشموع أقل من 220 (قد يضعف دقة مؤشرات مثل MA200/ADX/نماذج الاتجاه).")
+
+    required = {"Open", "High", "Low", "Close"}
+    missing_cols = [c for c in required if c not in df.columns]
+    if missing_cols:
+        out["ok"] = False
+        out["issues"].append(f"أعمدة ناقصة: {', '.join(missing_cols)}")
+
+    # تحقق من قيم غير منطقية
+    try:
+        if "High" in df.columns and "Low" in df.columns:
+            bad = int((df["High"] < df["Low"]).sum())
+            if bad:
+                out["issues"].append(f"وجدت {bad} شموع فيها High < Low (بيانات غير منطقية).")
+    except Exception:
+        pass
+
+    out["ok"] = bool(out["ok"] and (len(out["issues"]) == 0))
+    return out
+
+
+def _render_quality_badge(df: pd.DataFrame):
+    q = _df_quality_snapshot(df)
+
+    col1, col2, col3 = st.columns([1.2, 1.2, 2.6])
+    with col1:
+        st.metric("عدد الشموع", q.get("candles", 0))
+    with col2:
+        st.metric("آخر شمعة", q.get("last_dt") or "—")
+    with col3:
+        if q["ok"]:
+            st.success("جودة البيانات: **جيدة** ✅")
+        else:
+            st.warning("جودة البيانات: **تحتاج انتباه** ⚠️")
+
+    if q.get("issues"):
+        with st.expander("تفاصيل جودة البيانات (لماذا قد تقل الدقة؟)"):
+            st.write("\n".join([f"- {x}" for x in q["issues"]]))
+
+
+def _render_signals_table(signals: List[Any], title: str = "الإشارات"):
+    if not signals:
+        st.caption("لا توجد إشارات مُهيكلة من هذا المؤشر.")
+        return
+
+    norm: List[Dict[str, Any]] = []
+    for s in signals:
+        if isinstance(s, dict):
+            norm.append(s)
+        else:
+            norm.append({"signal": str(s)})
+
+    df_sig = pd.DataFrame(norm)
+
+    preferred = [c for c in ["signal", "name", "type", "direction", "score", "strength", "note", "when"] if c in df_sig.columns]
+    rest = [c for c in df_sig.columns if c not in preferred]
+    df_sig = df_sig[preferred + rest]
+
+    st.markdown(f"**{title}:**")
+    st.dataframe(df_sig, use_container_width=True, hide_index=True)
+
+
+def _render_features_table(features: Dict[str, Any]):
+    if not isinstance(features, dict) or not features:
+        st.caption("لا توجد خصائص (Features) مُهيكلة.")
+        return
+
+    rows = [{"feature": str(k), "value": v} for k, v in features.items()]
+    df_feat = pd.DataFrame(rows)
+    st.dataframe(df_feat, use_container_width=True, hide_index=True)
+
+
 def _render_indicator_block(title: str, res: Dict[str, Any]):
-    """Render a standardized indicator result."""
-    st.markdown(f"### {title}")
+    """عرض موحد للمؤشر: تحيز + ثقة + رأي + أدلة + إشارات + Features."""
+    if not isinstance(res, dict):
+        st.error(f"{title}: نتيجة غير صالحة (ليست dict).")
+        return
 
     conf = res.get("confidence")
-    if conf is not None:
-        try:
-            st.caption(f"درجة الثقة: **{int(conf)}%**")
-        except Exception:
-            st.caption(f"درجة الثقة: **{conf}**")
+    bias = res.get("bias") or res.get("trend") or res.get("direction")
+    summary = res.get("summary") or res.get("opinion") or res.get("commentary")
 
-    errors = _as_list(res.get("errors"))
+    bias_txt, bias_icon = _bias_label(bias)
+
+    st.markdown(f"### {title}")
+    c1, c2, c3 = st.columns([1.2, 1.2, 2.6])
+    with c1:
+        st.metric("التحيز", f"{bias_icon} {bias_txt}")
+    with c2:
+        st.metric("الثقة", _format_pct(conf))
+    with c3:
+        if summary:
+            st.info(f"**الرأي المختصر:** {summary}")
+        else:
+            st.caption("الرأي المختصر: —")
+
+    errors = _as_list(res.get("errors")) + _as_list(res.get("warnings"))
     if errors:
-        st.warning("⚠️ ملاحظات/أخطاء أثناء الحساب:\n- " + "\n- ".join([str(e) for e in errors]))
+        with st.expander("ملاحظات/أخطاء أثناء الحساب"):
+            st.write("\n".join([f"- {e}" for e in errors]))
 
     evidence = _as_list(res.get("evidence"))
     if evidence:
-        st.info("**الأدلة:**\n\n- " + "\n- ".join([str(e) for e in evidence]))
+        with st.expander("الأدلة التي بنى عليها المؤشر حكمه"):
+            st.write("\n".join([f"- {e}" for e in evidence]))
 
     signals = _as_list(res.get("signals"))
     if signals:
-        try:
-            st.markdown("**الإشارات:**")
-            df_sig = pd.DataFrame(signals)
-            st.dataframe(df_sig, use_container_width=True)
-        except Exception:
-            st.write(signals)
+        _render_signals_table(signals, title="إشارات المؤشر")
 
     features = res.get("features", {})
     if isinstance(features, dict) and features:
-        with st.expander("عرض الخصائص (Features)"):
-            try:
-                df_feat = pd.DataFrame(
-                    [{"feature": k, "value": v} for k, v in features.items()]
-                )
-                st.dataframe(df_feat, use_container_width=True)
-            except Exception:
-                st.json(features)
+        with st.expander("خصائص/Features (تفاصيل رقمية)"):
+            _render_features_table(features)
+
+
+def _pack_items(pack: Dict[str, Any]) -> List[Dict[str, Any]]:
+    items: List[Dict[str, Any]] = []
+    for k in ["rls_forecast", "chaos_wrsi", "volume_profile_clusters", "trendline_breakout"]:
+        v = pack.get(k)
+        if isinstance(v, dict) and v:
+            items.append(v)
+    return items
+
+
+def _pack_score(pack: Dict[str, Any]) -> Tuple[int, int, str]:
+    """ملخص الاتجاه العام: متوسط الثقة + صافي الميل + وصف."""
+    items = _pack_items(pack)
+    if not items:
+        return (0, 0, "لا توجد نتائج.")
+
+    confs: List[float] = []
+    pos = 0
+    neg = 0
+
+    for it in items:
+        c = _safe_int(it.get("confidence"), None)
+        if c is not None:
+            confs.append(_clamp(float(c), 0, 100))
+
+        btxt, _ = _bias_label(it.get("bias") or it.get("trend") or it.get("direction"))
+        if btxt == "إيجابي":
+            pos += 1
+        elif btxt == "سلبي":
+            neg += 1
+
+    avg_conf = int(round(sum(confs) / max(1, len(confs)))) if confs else 0
+    tilt = pos - neg
+
+    if pos > neg:
+        overall = "الغالب: **إيجابي**"
+    elif neg > pos:
+        overall = "الغالب: **سلبي**"
+    else:
+        overall = "الغالب: **محايد/مختلط**"
+
+    return (avg_conf, tilt, overall)
+
+
+def _advanced_unified_score(pack: Dict[str, Any], df: pd.DataFrame) -> Tuple[int, List[str]]:
+    """Score موحد (0-100) للمؤشرات المتقدمة + تفسير."""
+    explain: List[str] = []
+
+    items = _pack_items(pack)
+    if not items:
+        return 0, ["لا توجد نتائج صالحة لحساب الدرجة."]
+
+    avg_conf, tilt, overall = _pack_score(pack)
+
+    # Base
+    score = float(avg_conf)
+    explain.append(f"الأساس = متوسط الثقة عبر المؤشرات = **{avg_conf}%**")
+
+    # Agreement bonus (المؤشرات متفقة)
+    abs_tilt = abs(int(tilt))
+    if abs_tilt >= 3:
+        score += 8
+        explain.append("اتفاق قوي بين المؤشرات (ميل ≥ 3): **+8**")
+    elif abs_tilt == 2:
+        score += 5
+        explain.append("اتفاق جيد بين المؤشرات (ميل = 2): **+5**")
+    elif abs_tilt == 1:
+        score += 2
+        explain.append("اتفاق بسيط بين المؤشرات (ميل = 1): **+2**")
+    else:
+        explain.append("المؤشرات مختلطة/محايدة (لا يوجد Bonus للاتفاق).")
+
+    # Data quality penalty
+    q = _df_quality_snapshot(df)
+    candles = int(q.get("candles") or 0)
+    if candles and candles < 220:
+        # كلما قل التاريخ زادت العقوبة
+        if candles < 120:
+            score -= 20
+            explain.append("تاريخ قصير جدًا (<120 شمعة): **-20**")
+        else:
+            score -= 10
+            explain.append("تاريخ أقل من 220 شمعة: **-10**")
+
+    if not q.get("ok") and q.get("issues"):
+        # أعمدة ناقصة أو قيم غير منطقية
+        score -= 15
+        explain.append("ملاحظات جودة بيانات (أعمدة ناقصة/قيم غير منطقية): **-15**")
+
+    # Clamp
+    score_i = int(round(_clamp(score, 0, 100)))
+    explain.append(f"النتيجة النهائية (بعد الحد) = **{score_i}/100**")
+    explain.append(f"ملخص الاتجاه: {overall} | صافي الميل = **{tilt:+d}**")
+
+    return score_i, explain
 
 
 def _render_advanced_section(df: pd.DataFrame, symbol: str, interval: str):
@@ -90,8 +330,18 @@ def _render_advanced_section(df: pd.DataFrame, symbol: str, interval: str):
         st.warning("لا توجد بيانات سعرية كافية لحساب المؤشرات المتقدمة.")
         return
 
+    st.markdown("## 🧠 المؤشرات المتقدمة")
+    st.caption("هدف هذا القسم: تقديم إشارات/أدلة إضافية **كمساند** للقرار، وليس كبديل عن إدارة المخاطر.")
+
+    # شارة جودة بيانات الشموع
+    _render_quality_badge(df)
+
     with st.spinner("جاري حساب المؤشرات المتقدمة..."):
         pack = compute_advanced_technical_pack(df, symbol=symbol, timeframe=interval)
+
+    if not isinstance(pack, dict) or not pack:
+        st.error("تعذر إنتاج نتائج المؤشرات المتقدمة (pack فارغ/غير صالح).")
+        return
 
     # حفظ النتائج في قاعدة البيانات (كاش) ليستفيد منها المستشار وتبقى "مسجّلة".
     try:
@@ -99,29 +349,54 @@ def _render_advanced_section(df: pd.DataFrame, symbol: str, interval: str):
 
         save_advanced_indicators(symbol=symbol, interval=interval, payload=pack)
     except Exception:
-        # لا نوقف الواجهة لو فشل التخزين — فقط نتجاهل.
         pass
 
-    # عرض ملخص سريع
-    st.caption("هذه النتائج تُستخدم كذلك داخل **المستشار (AI)** ضمن حزمة التحليل الفني (Technical Pack).")
+    # ✅ Score موحد + تفسير
+    score, explain = _advanced_unified_score(pack, df)
+    avg_conf, tilt, overall = _pack_score(pack)
+
+    c1, c2, c3, c4 = st.columns([1.1, 1.1, 1.1, 2.7])
+    with c1:
+        st.metric("Score موحد", f"{score}/100")
+    with c2:
+        st.metric("متوسط الثقة", f"{avg_conf}%")
+    with c3:
+        st.metric("صافي الميل", f"{tilt:+d}")
+    with c4:
+        st.info(f"**النتيجة التنفيذية:** {overall}")
+
+    with st.expander("لماذا أخذت هذه الدرجة؟ (Explainability)", expanded=False):
+        st.write("\n".join([f"- {x}" for x in explain]))
+
+    with st.expander("كيف تقرأ هذا القسم؟ (قواعد بسيطة)", expanded=False):
+        st.write(
+            "- **Score الموحد**: يجمع (ثقة المؤشرات + اتفاقها + جودة بيانات الشموع).\n"
+            "- **الاتجاه (إيجابي/سلبي/مختلط)**: يصف الميل العام، لكنه لا يساوي توصية شراء/بيع وحده.\n"
+            "- إذا كانت جودة الشموع ضعيفة أو التاريخ قصير، تعامل مع النتائج على أنها **استرشادية فقط**.\n"
+            "- لا تعتمد على مؤشر واحد: الأفضل رؤية **تقاطع الأدلة** مع إدارة مخاطر واضحة."
+        )
+
+    st.divider()
 
     # العناصر
-    rls = pack.get("rls_forecast", {})
-    wrsi = pack.get("chaos_wrsi", {})
-    vp = pack.get("volume_profile_clusters", {})
-    tl = pack.get("trendline_breakout", {})
+    rls = pack.get("rls_forecast", {}) or {}
+    wrsi = pack.get("chaos_wrsi", {}) or {}
+    vp = pack.get("volume_profile_clusters", {}) or {}
+    tl = pack.get("trendline_breakout", {}) or {}
 
-    # --- RLS
-    _render_indicator_block("RLS Forecast (التنبؤ/الارتداد للمتوسط)", rls)
+    with st.expander("1) RLS Forecast (التنبؤ/الارتداد للمتوسط)", expanded=True):
+        _render_indicator_block("RLS Forecast", rls)
 
-    # --- Chaos WRSI
-    _render_indicator_block("Chaos Weighted RSI (زخم ديناميكي)", wrsi)
+    with st.expander("2) Chaos Weighted RSI (زخم ديناميكي)", expanded=False):
+        _render_indicator_block("Chaos Weighted RSI", wrsi)
 
-    # --- Volume Profile Clusters
-    _render_indicator_block("Clusters Volume Profile (تحليل الحجم حسب شرائح سعرية)", vp)
+    with st.expander("3) Volume Profile Clusters (شرائح حجم/سعر)", expanded=False):
+        _render_indicator_block("Volume Profile Clusters", vp)
 
-    # --- Trendline Breakout
-    _render_indicator_block("Trendline Breakout Navigator (ترندلاين + اختراق/إعادة اختبار)", tl)
+    with st.expander("4) Trendline Breakout Navigator (ترندلاين + اختراق)", expanded=False):
+        _render_indicator_block("Trendline Breakout Navigator", tl)
+
+    st.caption("✅ ملاحظة: هذه النتائج تُستخدم كذلك داخل **المستشار (AI)** ضمن حزمة التحليل الفني (Technical Pack).")
 
 
 def view_technical(symbol: str, interval: str = "1d"):
@@ -138,7 +413,6 @@ def view_technical(symbol: str, interval: str = "1d"):
     tab1, tab2 = st.tabs(["ملخص فني", "مؤشرات متقدمة"])
 
     with tab1:
-        # ====== الموجود سابقاً: الرسم + وصف بسيط ======
         st.markdown("### الرسم الفني (مرن)")
 
         # شارة حداثة البيانات (Data Freshness)
@@ -152,7 +426,6 @@ def view_technical(symbol: str, interval: str = "1d"):
             pass
 
         # ✅ إصلاح: views.shared._render_technical_chart_flex لا يستقبل df أو key.
-        # يعرض الرسم عبر charts.render_technical_chart مع fallbacks متعددة.
         try:
             _render_technical_chart_flex(symbol, period="1y", interval=interval)
         except Exception as e:
