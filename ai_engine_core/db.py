@@ -16,6 +16,107 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 
+# ============================================================
+# Compatibility helpers (used by ai_engine_core.user_rules)
+# ============================================================
+
+
+def _safe_import_db():
+    """Return (execute_query, kind) or (None, 'none') if DB isn't available."""
+    try:
+        from database import execute_query, get_connection, put_connection
+
+        # Probe connection to infer kind without forcing callers to import database.
+        conn, kind = get_connection()
+        put_connection(conn, kind)
+        return execute_query, kind
+    except Exception:
+        return None, "none"
+
+
+def _adapt_placeholders(sql: str, kind: str) -> str:
+    """Convert %s placeholders to ? for sqlite."""
+    if kind == "postgres":
+        return sql
+    # sqlite uses qmark style
+    return sql.replace("%s", "?")
+
+
+def _try_exec(sql: str, params: tuple = ()) -> bool:
+    """Execute a parameterized SQL safely across Postgres/SQLite."""
+    try:
+        from database import get_connection, put_connection
+
+        conn, kind = get_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute(_adapt_placeholders(sql, kind), params or ())
+            conn.commit()
+            return True
+        except Exception:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            return False
+        finally:
+            put_connection(conn, kind)
+    except Exception:
+        return False
+
+
+def _safe_fetch_table(table_name: str):
+    """Fetch a whole table as a pandas DataFrame. Returns None if unavailable."""
+    try:
+        from database import fetch_table
+
+        df = fetch_table(table_name)
+        return df
+    except Exception:
+        return None
+
+
+def _ensure_user_rules_table() -> None:
+    """Create ai_user_rules table if missing."""
+    try:
+        from database import get_connection, put_connection
+
+        conn, kind = get_connection()
+        try:
+            cur = conn.cursor()
+            if kind == "postgres":
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS ai_user_rules (
+                        id TEXT PRIMARY KEY,
+                        created_at TEXT,
+                        title TEXT,
+                        rule_text TEXT,
+                        parsed_json TEXT,
+                        enabled INTEGER DEFAULT 1
+                    );
+                    """
+                )
+            else:
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS ai_user_rules (
+                        id TEXT PRIMARY KEY,
+                        created_at TEXT,
+                        title TEXT,
+                        rule_text TEXT,
+                        parsed_json TEXT,
+                        enabled INTEGER DEFAULT 1
+                    );
+                    """
+                )
+            conn.commit()
+        finally:
+            put_connection(conn, kind)
+    except Exception:
+        return
+
+
 def _now_iso() -> str:
     return datetime.utcnow().replace(microsecond=0).isoformat()
 
