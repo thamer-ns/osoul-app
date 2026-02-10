@@ -459,3 +459,231 @@ def build_my_indicator_pack(df):
 
 ### 15.2 قالب عرض جدول موحد (مثل جدول الصفقات)
 > الأفضل استخدام: `views.shared.render_custom_table(df, col_types=..., key=...)`
+
+
+---
+
+## 16) خريطة البيانات (Data Lineage) — من المصدر إلى الرقم المعروض
+
+> الهدف: إذا رقم “طلع غريب” تعرف بسرعة أين تبحث: **مصدر؟ تخزين؟ تحويل؟ حساب؟ عرض؟**
+
+### 16.1 بيانات السعر/الشارت (OHLCV)
+**المصدر الأساسي:** Yahoo عبر `yfinance`  
+**المسار:**
+1) `market_data.get_chart_history(symbol, period, interval)`
+2) الرسم:
+   - `views/shared.py::_render_technical_chart_flex(...)`
+3) المؤشرات:
+   - `technical_indicators/*` أو `ai_engine_core/indicators.py`
+4) المستشار:
+   - `ai_engine_core/reporting.py` يقرأ OHLCV ويبنّي الإشارات
+
+**نقاط فشل شائعة:**
+- symbol غير مُطبع (بدون `.SR`)
+- تاريخ قصير (أقل من 220 شمعة) → انخفاض ثقة المؤشرات
+- فجوات أو شموع غير منطقية → تحذير جودة بيانات
+
+### 16.2 القوائم المالية (Financial Statements)
+**المصدر الأساسي:** Yahoo (JSON/HTML)  
+**المسار:**
+1) جلب: `financial_analysis/yahoo_data.py`
+2) مزامنة: `financial_analysis/sync.py`
+3) تخزين: `financial_analysis/store.py`
+4) جودة: `financial_analysis/data_quality.py`
+5) حساب نسب: `financial_analysis/metrics.py`
+6) العرض:
+   - `views/analysis/financial.py`
+7) المستشار:
+   - `ai_engine_core/reporting.py` + `ai_engine_core/packs.py`
+
+**نقاط فشل شائعة:**
+- 429 Rate limit → بيانات قديمة مخزنة
+- missing essentials (Revenue/NI/Equity/OCF) → Fail/Low confidence
+- خلط Annual/Quarterly/TTM → نتائج تبدو “صحيحة” لكنها غير موثوقة
+
+### 16.3 المؤشرات المتقدمة (Advanced Indicators)
+**المصدر:** حساب محلي على OHLCV  
+**المسار:**
+1) حساب: `technical_indicators/advanced.py::compute_advanced_technical_pack(df, ...)`
+2) عرض: `views/analysis/technical.py` (تبويب المؤشرات المتقدمة)
+3) تخزين (اختياري): `ai_engine_core/db.py::save_advanced_indicators(...)`
+4) إدخال للمستشار (اختياري):
+   - `ai_engine_core/packs.py` ثم `ai_engine_core/reporting.py`
+
+**نقاط فشل شائعة:**
+- ملف advanced.py فيه SyntaxError أو استيرادات ناقصة
+- df ناقص أعمدة OHLCV أو تاريخ قصير → تحذيرات + خصم Score
+
+---
+
+## 17) معيار موحد للأخطاء والتحذيرات (Error/Warn Contract)
+
+> هدفنا: المستخدم لا يرى Traceback. يرى رسالة واضحة + سبب + ما الذي يمكن فعله.
+
+### 17.1 قواعد عامة
+- **No Tracebacks** في UI: أي Exception تُلتقط وتُعرض كـ `st.warning/st.error`.
+- أي بيانات ناقصة: تظهر “غير متوفر (—)” بدل 0.
+- أي مصدر خارجي Rate limit: يظهر تنبيه “البيانات قد تكون قديمة”.
+
+### 17.2 قوالب رسائل مقترحة
+**429 Rate Limit:**
+- “تعذر تحديث البيانات الآن بسبب ضغط على المصدر (429). سيتم عرض آخر بيانات مخزنة إن وجدت. حاول لاحقًا.”
+
+**بيانات جزئية:**
+- “تم جلب جزء من القوائم فقط. قد تتأثر بعض النسب. راجع بوابة الجودة.”
+
+**خلط فترات:**
+- “تم استخدام Quarterly بدل Annual لعدم توفر السنوي. تم خفض الثقة.”
+
+---
+
+## 18) دليل التنسيق (Formatting Guide) — توحيد الأرقام والنصوص
+
+### 18.1 الأرقام المالية
+- اعرض العملة: `SAR`
+- استخدم ألف/مليون/مليار:
+  - 1,200,000 → “1.20 مليون”
+  - 3,400,000,000 → “3.40 مليار”
+- لا تعرض رقم خام كبير بدون وحدة.
+
+### 18.2 النسب
+- نسب مئوية: `%` مع 1–2 decimals
+- إذا missing: “—”
+
+### 18.3 الجداول
+- أي جدول في الواجهة: استخدم `render_custom_table` (نفس شكل جدول الصفقات)
+- لا تستخدم `st.dataframe` إلا كـ fallback عند الضرورة
+
+### 18.4 المصطلحات
+- أول مرة: عربي + (اختصار)
+  - “مؤشر القوة النسبية (RSI)”
+- لاحقًا: عربي فقط أو اختصار حسب تفضيلك
+
+---
+
+## 19) نظام ترجمة رسمي (i18n) — أفضل ممارسة
+
+> بدل تعريب متفرق: اعتمد قاموس ترجمة مركزي.
+
+### 19.1 المقترح
+- ملف: `i18n_ar.py` يحتوي قاموس كبير:
+  - UI labels
+  - أسماء الأعمدة
+  - أسماء المؤشرات
+- دالة: `tr(key: str) -> str`
+- في الواجهات:
+  - `st.write(tr("Score"))`
+
+### 19.2 ترجمة أعمدة features/signals
+أنشئ mapping مثل:
+- `breakout_strength` → “قوة الاختراق”
+- `regime` → “نظام السوق”
+- `cluster_score` → “درجة التجمع”
+
+ثم عند بناء الجدول:
+- rename columns قبل العرض.
+
+---
+
+## 20) مواصفات الحزم (Packs Spec) للمستشار
+
+> أي Pack يُنتج للمستشار يجب أن يكون قابل للدمج والشرح.
+
+### 20.1 Technical Pack (مثال)
+```python
+{
+  "score": 0-100,
+  "confidence": 0-100,
+  "bias": "bullish|bearish|neutral",
+  "signals": [...],
+  "evidence": [...],
+  "features": {...},
+  "issues": [...]
+}
+```
+
+### 20.2 Fundamental Pack (مثال)
+- يجب أن يحمل:
+  - الفترة المستخدمة (Annual/Quarterly/TTM)
+  - مشاكل الجودة (issues)
+  - confidence
+  - النسب الأساسية (None إذا missing)
+
+### 20.3 Risk Gates
+- مدخلاته:
+  - dq_pass, dq_confidence
+  - volatility window OK?
+  - trend regime
+- مخرجاته:
+  - `allowed_actions`: مثل “لا شراء قوي”
+  - `reasons`: قائمة أسباب
+
+---
+
+## 21) Playbook لتشخيص المشاكل بسرعة (Troubleshooting)
+
+### 21.1 الشارت لا يظهر
+**افحص:**
+- `market_data.get_chart_history`
+- هل الرمز مطبّع `.SR`؟
+- هل df فارغ؟
+
+**الحل:**
+- اعرض fallback (آخر 10 شموع)
+- اعرض رسالة “لا توجد بيانات”
+
+### 21.2 المؤشرات المتقدمة “غير متوفرة”
+**افحص:**
+- `technical_indicators/advanced.py` هل يستورد بدون خطأ؟
+- هل compute_advanced_technical_pack موجودة؟
+
+**الحل:**
+- Fail-safe import + رسالة واضحة للمستخدم
+
+### 21.3 القوائم لا تُجلب أو 429
+**افحص:**
+- `financial_analysis/yahoo_data.py` diagnostics
+- “Data Freshness Badge” هل يقول بيانات قديمة؟
+
+**الحل:**
+- backoff + cache + توضيح مصدر/تاريخ
+
+### 21.4 المستشار يعطي رأي ضعيف/محايد
+**افحص:**
+- dq_pass / confidence
+- عدد الشموع (تاريخ قصير)
+- تعارض إشارات
+
+**الحل:**
+- هذا متوقع إذا الجودة منخفضة؛ اعرض الأسباب ضمن evidence.
+
+---
+
+## 22) خطة اختبار Regression (أوسع من Smoke Test)
+
+### 22.1 سيناريوهات بيانات
+- سهم بتاريخ طويل (1y+)
+- سهم بتاريخ قصير (أقل من 120 شمعة)
+- سهم بسيولة ضعيفة (volume منخفض)
+- سهم بقوائم ناقصة (Revenue/Equity مفقود)
+- سهم يتعرض لـ 429 (تجربة وقت الذروة)
+
+### 22.2 توقعات السلوك
+- لا Traceback
+- ظهور Freshness
+- Fail/Low confidence يظهر للمستخدم
+- المستشار لا يعطي “Strong Buy” مع dq_fail
+
+---
+
+## 23) قالب “ملاحظة تعديل” (Change Note Template)
+
+ضعه أعلى أي دالة جديدة أو تعديل مهم:
+```python
+# CHANGE NOTE (YYYY-MM-DD):
+# - لماذا تم التعديل؟
+# - ما الذي يعتمد عليه؟
+# - ما هي حالات الفشل؟
+# - ما هو الـ fallback؟
+```
+
