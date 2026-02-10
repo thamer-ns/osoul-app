@@ -371,7 +371,7 @@ def _calc_pivots_from_df(df: pd.DataFrame, pivot_type: str):
 
 
 # ============================================================
-# ✅ Auto Support/Resistance (Clustered from pivots)
+# ✅ Auto الدعم/المقاومة (Clustered from pivots)
 # ============================================================
 def _cluster_levels(levels: list[float], tol: float):
     if not levels:
@@ -421,12 +421,12 @@ def auto_support_resistance_levels(df: pd.DataFrame, lookback=220, left=3, right
 def render_classical_analysis(symbol: str, interval: str = "1d"):
     """
     ✅ interval: '60m'/'1d'/'1wk'/'1mo'
-    التحليل (Fib + Auto S/R + Trend + Volume) مبني على هذا الفاصل.
+    التحليل (Fib + دعوم/مقاومات تلقائية + Trend + Volume) مبني على هذا الفاصل.
     Pivot Day/Week/Month يتم حسابها من بياناتها الخاصة (حتى لو التحليل على الساعة).
     """
     itv = _norm_interval(interval)
 
-    st.markdown("### 🏛️ التحليل الكلاسيكي المطوّر (محاور متعددة الفواصل + فيبوناتشي سوينغ + دعوم/مقاومات تلقائية + مناطق + ATR/الحجم)")
+    st.markdown("### 🏛️ التحليل الكلاسيكي المطوّر (Multi-Timeframe Pivots + Swing Fib + دعوم/مقاومات تلقائية + Zones + ATR/Volume)")
 
     # -----------------------------
     # Controls (Main)
@@ -449,8 +449,8 @@ def render_classical_analysis(symbol: str, interval: str = "1d"):
 
     colA, colB, colC, colD = st.columns([1.25, 1.25, 1.25, 1.25])
     show_zones = colA.checkbox("Zones بدل Lines", value=True, key=f"cl_z_{symbol}")
-    show_fib = colB.checkbox("إظهار فيبوناتشي (Swing)", value=True, key=f"cl_fib_{symbol}")
-    show_sr = colC.checkbox("إظهار Auto Support/Resistance", value=True, key=f"cl_sr_{symbol}")
+    show_fib = colB.checkbox("إظهار Fibonacci Swing", value=True, key=f"cl_fib_{symbol}")
+    show_sr = colC.checkbox("إظهار Auto الدعم/المقاومة", value=True, key=f"cl_sr_{symbol}")
     show_pivots = colD.checkbox("إظهار Pivot Day/Week/Month", value=True, key=f"cl_piv_{symbol}")
 
     colE, colF, colG, colH = st.columns([1.25, 1.25, 1.25, 1.25])
@@ -491,7 +491,7 @@ def render_classical_analysis(symbol: str, interval: str = "1d"):
         fibs, fib_meta = calculate_swing_fibonacci_levels(df, left=left, right=right, min_bars=fib_min)
 
     # -----------------------------
-    # Auto S/R (BASE)
+    # دعوم/مقاومات تلقائية (BASE)
     # -----------------------------
     supports, resistances = ([], [])
     if show_sr:
@@ -625,14 +625,14 @@ def render_classical_analysis(symbol: str, interval: str = "1d"):
                     annotation_position="bottom right"
                 )
 
-    # -------- Auto S/R (BASE)
+    # -------- دعوم/مقاومات تلقائية (BASE)
     if show_sr:
         for lvl in supports:
             y = float(lvl)
             lo, hi, w = _zone_bounds(y, last_atr, last_close)
             if show_zones:
                 fig.add_hrect(y0=lo, y1=hi, fillcolor="#2ca02c", opacity=0.06, line_width=0,
-                              annotation_text=f"Auto Support {y:.2f}", annotation_position="bottom left")
+                              annotation_text=f"Auto الدعم {y:.2f}", annotation_position="bottom left")
             else:
                 fig.add_hline(y=y, line_dash="dot", line_color="#2ca02c", line_width=1)
 
@@ -641,7 +641,7 @@ def render_classical_analysis(symbol: str, interval: str = "1d"):
             lo, hi, w = _zone_bounds(y, last_atr, last_close)
             if show_zones:
                 fig.add_hrect(y0=lo, y1=hi, fillcolor="#d62728", opacity=0.06, line_width=0,
-                              annotation_text=f"Auto Resistance {y:.2f}", annotation_position="top left")
+                              annotation_text=f"Auto المقاومة {y:.2f}", annotation_position="top left")
             else:
                 fig.add_hline(y=y, line_dash="dot", line_color="#d62728", line_width=1)
 
@@ -682,9 +682,9 @@ def render_classical_analysis(symbol: str, interval: str = "1d"):
         lvl_rows = []
         if show_sr:
             for s in supports[:4]:
-                lvl_rows.append({"النوع": "Support", "المستوى": f"{float(s):.2f}"})
+                lvl_rows.append({"النوع": "الدعم", "المستوى": f"{float(s):.2f}"})
             for r in resistances[:4]:
-                lvl_rows.append({"النوع": "Resistance", "المستوى": f"{float(r):.2f}"})
+                lvl_rows.append({"النوع": "المقاومة", "المستوى": f"{float(r):.2f}"})
 
         if show_fib and fibs:
             for k, v_ in list(fibs.items())[:6]:
@@ -772,12 +772,12 @@ def render_classical_analysis(symbol: str, interval: str = "1d"):
     if np.isnan(scen_up) and resistances:
         above_res = sorted([x for x in resistances if x > last_close])
         if above_res:
-            scen_up_name, scen_up = ("Auto Resistance", float(above_res[0]))
+            scen_up_name, scen_up = ("Auto المقاومة", float(above_res[0]))
 
     if np.isnan(scen_dn) and supports:
         below_sup = sorted([x for x in supports if x < last_close])
         if below_sup:
-            scen_dn_name, scen_dn = ("Auto Support", float(below_sup[-1]))
+            scen_dn_name, scen_dn = ("Auto الدعم", float(below_sup[-1]))
 
     # fallback to fib
     if (np.isnan(scen_up) or np.isnan(scen_dn)) and fibs:
@@ -868,5 +868,5 @@ def render_classical_analysis(symbol: str, interval: str = "1d"):
         st.write("**الفاصل الأساسي:**", itv)
         st.write("**بيانات فيبوناتشي:**", fib_meta if show_fib else "تم إيقاف فيبوناتشي")
         st.write("**محاور الارتكاز المستخدمة:**", [{"tf": p["tf"], "src": p["src"], "keys": list(p["pivots"].keys())} for p in pivots_pack])
-        st.write("**Auto S/R:**", {"supports": supports, "resistances": resistances})
+        st.write("**دعوم/مقاومات تلقائية:**", {"supports": supports, "resistances": resistances})
         st.write("**Volume:**", {"today_volume": v, "vol_ma20": vma, "confirmed": vol_ok})
