@@ -5,6 +5,13 @@ from typing import Optional
 
 import streamlit as st
 
+# Arabic UI: translate Streamlit default placeholders
+try:
+    from components import inject_streamlit_ar_i18n
+    inject_streamlit_ar_i18n(True)
+except Exception:
+    pass
+
 # -----------------------------------------------------------------------------
 # 🔧 Import bootstrap
 # بعض الرفعّات إلى GitHub تضع المشروع داخل مجلد فرعي (مثل: osoul-app-main).
