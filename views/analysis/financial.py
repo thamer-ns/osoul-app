@@ -212,7 +212,7 @@ def render_financial_dashboard_ui(symbol):
         # =====================================================
         # ✅ Data Quality Gate (Always visible)
         # =====================================================
-        with st.expander("✅ بوابة جودة البيانات (ناجح/مشاكل/ثقة)", expanded=False):
+        with st.expander("✅ بوابة جودة البيانات (Pass / Issues / Confidence)", expanded=False):
             if not callable(assess_fundamental_quality):
                 st.info("وحدة Data Quality غير متاحة في هذه النسخة.")
             else:
@@ -227,11 +227,11 @@ def render_financial_dashboard_ui(symbol):
                         tone = "success" if passed else ("warning" if score >= 35 else "danger")
                         st.markdown(f"**{title}** — الدرجة: **{score}/100**")
                         if passed:
-                            st.success("PASS ✅")
+                            st.success("ناجح ✅")
                         else:
-                            st.warning("FAIL / Low ✅")
+                            st.warning("فشل / ثقة منخفضة ⚠️")
                         if issues:
-                            st.write("**المشاكل:**")
+                            st.write("**المشكلات:**")
                             for it in issues[:12]:
                                 st.write(f"- {it}")
 
@@ -264,7 +264,7 @@ def render_financial_dashboard_ui(symbol):
             with c1:
                 st.metric("المتانة (F-Score)", f"{_to_num(fscore, 0):.0f}/9", str(health))
             with c2:
-                st.metric("قيمة جراهام", f"{_to_num(fv, 0):,.2f}" if _to_num(fv, 0) > 0 else "N/A")
+                st.metric("قيمة جراهام", f"{_to_num(fv, 0):,.2f}" if _to_num(fv, 0) > 0 else "غير متاح")
             with c3:
                 st.metric("الرأي", "جاهز" if opinions and str(opinions).strip() != "-" else "—")
             with c4:
@@ -422,8 +422,7 @@ def render_financial_dashboard_ui(symbol):
             with st.form(f"manual_fin_entry_{_sym_key(symbol)}"):
                 col_meta1, col_meta2 = st.columns(2)
                 f_date = col_meta1.date_input("تاريخ القوائم", date.today(), key=f"fin_date_{_sym_key(symbol)}")
-                f_type_label = col_meta2.selectbox("الفترة", ["سنوي", "ربع سنوي"], key=f"fin_type_{_sym_key(symbol)}")
-                f_type = "Annual" if f_type_label == "سنوي" else "Quarterly"
+                f_type = col_meta2.selectbox("الفترة", ["Annual", "Quarterly"], key=f"fin_type_{_sym_key(symbol)}")
 
                 st.divider()
                 st.markdown("**1. قائمة الدخل (Income Statement)**")
