@@ -687,3 +687,282 @@ def build_my_indicator_pack(df):
 # - ما هو الـ fallback؟
 ```
 
+
+
+---
+
+## 24) قاموس القرار (Decision Glossary) — ماذا تعني الكلمات فعليًا؟
+
+> هذا القسم يقلل اللبس بين “الدرجة” و“الثقة” و“التحيز” و“التوصية”.
+
+### 24.1 الفرق بين Score و Confidence
+- **الدرجة (Score):** تقييم رقمي لمجموعة إشارات/معايير (0–100).  
+  مثال: “التحليل الفني” قد يعطي Score = 72.
+- **الثقة (Confidence):** مدى موثوقية هذا التقييم بناءً على جودة البيانات واتساق الأدلة.  
+  مثال: Confidence = 45% بسبب تاريخ قصير أو بيانات ناقصة.
+
+**قاعدة ذهبية:**  
+Score مرتفع + Confidence منخفض ⇒ *لا توصية قوية*.
+
+### 24.2 Bias / Trend / Regime
+- **التحيز (Bias):** ميل عام (إيجابي/سلبي/محايد)
+- **الاتجاه (Trend):** اتجاه سعري واضح (صاعد/هابط/عرضي)
+- **نظام السوق (Regime):** بيئة السوق (ترند/تذبذب/انضغاط…)
+> قد يكون Bias إيجابي لكن Regime “متذبذب” ⇒ توصيات متحفظة.
+
+### 24.3 توصيات المستشار
+> هذه مجرد تعريفات تشغيلية (Operational Definitions) وليست توصية استثمارية.
+
+- **Strong Buy (شراء قوي):**
+  - إشارات متعددة متوافقة
+  - جودة بيانات Pass
+  - Confidence مرتفع (مثلاً ≥ 70)
+  - بوابات المخاطر تسمح
+
+- **Buy (شراء):**
+  - إشارات إيجابية واضحة
+  - Confidence متوسط/مرتفع
+  - مخاطر مقبولة
+
+- **Hold (احتفاظ/مراقبة):**
+  - إشارات مختلطة أو انتظار تأكيد
+  - أو Confidence منخفض
+
+- **Sell / Reduce (بيع/تخفيف):**
+  - إشارات سلبية أو كسر مستويات مهمة
+  - أو مخاطر عالية مقابل عائد متوقع ضعيف
+
+### 24.4 Data Quality Pass/Fail
+- **Pass:** القوائم الأساسية متوفرة ومتناسقة
+- **Fail:** نقص جوهري (Revenue/NI/Equity/OCF…) أو تناقضات تمنع حسابات موثوقة
+
+---
+
+## 25) عقود الصفحات (UI Contracts) — ماذا تتوقع كل صفحة؟ وماذا تُرجع؟
+
+> الهدف: عند تعديل صفحة أو دالة، تعرف ما الذي لا يجب تغييره حتى لا تكسر الترابط.
+
+### 25.1 صفحة التحليل `views/analysis/__init__.py`
+**Inputs:**
+- `symbol: str`
+- `interval: str` (افتراضي 1d)
+**Guarantees:**
+- تبويبات التحليل يجب أن تُفتح حتى لو تبويب واحد فشل (Fail-safe).
+
+### 25.2 الفني `views/analysis/technical.py`
+**Inputs:**
+- `symbol`
+- `interval`
+**Dependencies:**
+- `market_data.get_chart_history`
+- `views.shared._render_technical_chart_flex`
+- `technical_indicators.advanced.compute_advanced_technical_pack` (اختياري)
+**Output (UI):**
+- لا يُرجع قيمة (render فقط)  
+**Contract:**
+- ممنوع تغيير اسم `render_technical_tab` بدون wrapper توافق.
+
+### 25.3 المالي `views/analysis/financial.py`
+**Inputs:**
+- `symbol`
+- فترة القوائم (Annual/Quarterly)
+**Dependencies:**
+- `financial_analysis/store.py`
+- `financial_analysis/metrics.py`
+- `financial_analysis/data_quality.py`
+**Contract:**
+- أي نسبة غير قابلة للحساب يجب أن تظهر “—” وليس 0.
+
+### 25.4 المستشار `views/analysis/advisor.py`
+**Inputs:**
+- `symbol`
+- `interval`
+- (اختياري) إعدادات المستخدم/قواعد
+**Dependencies:**
+- `ai_engine.generate_ai_report`
+**Contract:**
+- إذا dq_fail أو low confidence ⇒ لا توصية قوية + سبب واضح.
+
+---
+
+## 26) قواعد التسمية والتوافق (Naming & Versioning Rules)
+
+### 26.1 دوال عامة في الواجهة
+أي دالة تُستدعى بالاسم من `views/analysis/__init__.py` أو router:
+- لا تُعاد تسميتها مباشرة.
+- إن لزم: أنشئ Wrapper توافق:
+  - مثال: `render_technical_tab` يستدعي `view_technical`.
+
+### 26.2 Schema Version للحزم (Packs)
+أي Pack يُفضل يحمل:
+```python
+{"schema_version": 1, ...}
+```
+إذا غيرت المفاتيح/الهيكل:
+- زِد `schema_version`
+- واجعل المستهلك (UI/Advisor) يتعامل مع النسخ القديمة.
+
+### 26.3 قاعدة “لا تغيّر شكل البيانات بصمت”
+- إذا غيّرت units أو الفترات، اكتبها صراحة في UI.
+
+---
+
+## 27) المراقبة والتشخيص (Observability) — بدون تعقيد
+
+### 27.1 مبادئ
+- أي خطأ خارجي (429/timeout) يجب أن يترك أثرًا:
+  - diagnostics محفوظ
+  - ويمكن عرضه في صفحة Tools
+
+### 27.2 أين نضع التشخيص؟
+- Yahoo:
+  - `financial_analysis/yahoo_data.py` (diagnostics)
+- AI:
+  - `ai_engine_core/logging_learning.py` (ai_signals)
+- Advanced:
+  - `ai_engine_core/db.py` (advanced_indicators cache)
+
+### 27.3 واجهة Tools (اقتراح)
+- صفحة `views/tools.py` أو `views/settings.py`:
+  - “آخر تشخيص Yahoo”
+  - “آخر تقرير جودة بيانات”
+  - “آخر إشارة AI”
+> هذا يقلل احتياجك لفتح logs في Streamlit Cloud.
+
+---
+
+## 28) الأمن والأسرار (Security & Secrets Guide)
+
+### 28.1 ماذا يوضع في `.streamlit/secrets.toml`؟
+- كلمات مرور قاعدة البيانات
+- مفاتيح API (إن وجدت)
+- connection strings
+
+### 28.2 ماذا لا يوضع في GitHub؟
+- `secrets.toml`
+- أي ملفات تحتوي tokens
+- مفاتيح خاصة
+
+### 28.3 نصيحة عملية
+- أضف `secrets.toml` إلى `.gitignore`
+- استخدم env vars على السيرفر إن أمكن
+
+---
+
+## 29) خارطة الطريق (Roadmap) + Definition of Done
+
+### 29.1 Roadmap مقترحة
+1) تعريب 100% للـ UI + مصطلحات المؤشرات + أعمدة الجداول
+2) توحيد كل الجداول بـ `render_custom_table`
+3) توحيد Units (Normalizer رسمي) لكل القوائم والنسب
+4) تحسين مصادر القوائم (Fallbacks) + caching
+5) صفحة Tools للتشخيص
+6) إضافة Regression Tests بسيطة
+
+### 29.2 Definition of Done (DoD)
+الميزة تعتبر مكتملة إذا:
+- لا Traceback للمستخدم
+- يظهر Freshness + Source
+- Data Quality Gate موجودة وواضحة
+- المستشار يشرح “لماذا” (Evidence)
+- الأداء مقبول (لا requests متكررة بلا caching)
+- Smoke tests + regression الأساسية تمر
+
+---
+
+## 30) حوكمة البيانات (Data Governance) — أهم نقطة للثقة
+
+### 30.1 قواعد
+- أي قيمة تُعرض يجب أن تُعرّف:
+  - المصدر
+  - الفترة
+  - الوحدة
+  - حداثة البيانات
+- أي حساب يعتمد على missing essentials يجب أن:
+  - يرجع None
+  - ويسجّل issue
+
+### 30.2 أسباب شائعة لبيانات “مقنعة لكنها غلط”
+- خلط Annual/Quarterly/TTM
+- اختلاف Units بين مصادر
+- تحويل missing إلى 0
+- استخدام تاريخ قصير للمؤشرات
+
+---
+
+## 31) دليل توحيد الأعمدة (Column Translation / Mapping)
+
+> حتى لا تظهر مفاتيح تقنية داخل الجداول.
+
+### 31.1 مثال Mapping
+- `breakout_strength` → “قوة الاختراق”
+- `regime` → “نظام السوق”
+- `cluster_score` → “درجة التجمع”
+- `signal` → “الإشارة”
+- `score` → “الدرجة”
+- `note` → “ملاحظة”
+
+### 31.2 أين تطبق؟
+- قبل عرض الجداول في UI:
+  - rename columns
+- أو عند بناء الجدول من features/signals:
+  - اعرض `display_name` بدل key الخام
+
+---
+
+## 32) نمط كتابة الأقسام التفسيرية داخل UI (Explainability Pattern)
+
+> هدفنا: أي قسم يعطي “نتيجة” يجب أن يعطي “معنى” و “حدود” و “متى تثق فيه”.
+
+### 32.1 قالب “ماذا يعني هذا؟”
+- ماذا يقيس؟
+- لماذا مهم؟
+- متى يعطي إشارة جيدة؟
+- متى يكون مضلل؟
+- ما الذي يؤثر على الثقة؟
+
+### 32.2 لماذا هذا مهم؟
+لأن المستخدم يرى رقمًا؛ بدون شرح قد يفهمه غلط أو يثق به أكثر من اللازم.
+
+---
+
+## 33) أسلوب صيانة الإصدارات (Maintenance)
+
+### 33.1 سياسة التغييرات
+- أي تغيير كبير → Patch صغير أولاً
+- ثم دمج تدريجي
+- لا “Rewrite” شامل إلا لو مع اختبارات قوية
+
+### 33.2 سياسة الرجوع
+- احتفظ بنسخة سابقة تعمل (`*_old_v.py` موجودة)
+- وثّق سبب الاختلاف في README
+
+---
+
+## 34) ملحق: قائمة الملفات الأكثر حساسية (High-Risk Files)
+
+> هذه الملفات إذا تغيرت غالبًا تكسر أشياء أخرى — تعامل معها بحذر.
+
+- `views/shared.py`
+- `views/analysis/__init__.py`
+- `views/analysis/technical.py`
+- `views/analysis/financial.py`
+- `ai_engine_core/reporting.py`
+- `ai_engine_core/db.py`
+- `financial_analysis/metrics.py`
+- `financial_analysis/store.py`
+
+---
+
+## 35) ملحق: قواعد تصميم UI (UI Design Rules)
+
+- لا تكدّس أرقام بدون وحدات/شرح
+- اجعل كل تبويب:
+  - Header + Freshness + Source
+  - KPI cards قليلة وواضحة
+  - جدول موحد
+  - Expanders للأدلة والتفاصيل
+- استعمل نفس المصطلحات في كل مكان (لا “Score” مرة و“Rating” مرة)
+
+---
+
