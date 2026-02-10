@@ -1,13 +1,12 @@
-#technical_indicators/_init_
+# technical_indicators/__init__.py
+# -*- coding: utf-8 -*-
 
-"""technical_indicators
+"""
+Technical Indicators package.
 
-حزمة مؤشرات فنية إضافية (Advanced) مبنية من الصفر لتناسب مشروع "أصولي".
-
-مبادئ التصميم:
-- بدون اعتماد على مكتبات ثقيلة.
-- كل مؤشر يرجع مخرجات "آمنة" ويمكن تجاهلها إذا كانت البيانات غير كافية.
-- تُستخدم داخل ai_engine_core/packs.py لرفع جودة التحليل الفني وتوليد أدلة عربية.
+This module hosts optional, advanced indicators that can be used by:
+- views/analysis/technical.py (UI display)
+- ai_engine_core/packs.py (AI Engine packs)
 """
 
 from .advanced import compute_advanced_technical_pack  # noqa: F401
