@@ -519,7 +519,7 @@ def _render_entry_risk_levels(entry: dict, risk: dict, levels: dict, score: int)
     res = levels.get("resistance")
 
     with c1:
-        st.metric("Score", f"{score}/100")
+        st.metric("الدرجة", f"{score}/100")
     with c2:
         st.metric("منطقة الدخول", _fmt_price(entry_zone))
     with c3:
@@ -913,7 +913,7 @@ def _render_ai_report_readable(rep: dict, show_debug: bool = False, compact: boo
 
     # Chips row
     st.markdown("<div class='os-card' style='padding:12px;margin-top:10px;'>", unsafe_allow_html=True)
-    _chip(f"Score {score}/100", _tone_score(score))
+    _chip(f"الدرجة {score}/100", _tone_score(score))
     _chip(f"{conf_label} ({conf}%)", _tone_conf(conf))
     st.markdown(
         "<span class='os-chip os-chip-gray'><span class='mi'>rule</span>اعتمد على الأدلة + بوابات المخاطر</span>",
