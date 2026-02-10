@@ -112,23 +112,49 @@ def build_technical_pack(
     # -------------------------------
     if compute_advanced_technical_pack is not None:
         try:
-            adv = compute_advanced_technical_pack(df)
+            # schema موحّد: {name, features, signals, evidence, confidence, errors, meta}
+            adv = compute_advanced_technical_pack(df, symbol=symbol, timeframe=timeframe)
             if isinstance(adv, dict):
                 adv_features = adv.get("features") or {}
                 if isinstance(adv_features, dict):
                     for k, v in adv_features.items():
                         if v is None:
                             continue
-                        # لا نستبدل خصائص موجودة مسبقًا إلا إذا كانت فارغة
-                        if k not in features or features.get(k) is None:
-                            features[k] = v
-                adv_reasons = adv.get("reasons") or []
-                if isinstance(adv_reasons, list):
-                    reasons.extend([str(x) for x in adv_reasons if str(x).strip()])
-                adv_score = adv.get("score")
-                if isinstance(adv_score, (int, float)):
-                    # Boost صغير ومحدود لتجنب "قفزات" غير منطقية
-                    score += max(-3.0, min(3.0, float(adv_score)))
+                        # نُسجّلها تحت بادئة adv_ لتفادي التعارض
+                        try:
+                            if isinstance(v, (int, float, bool)):
+                                features[f"adv_{k}"] = float(v)
+                        except Exception:
+                            pass
+
+                # Evidence عربية
+                adv_evidence = adv.get("evidence") or []
+                if isinstance(adv_evidence, list):
+                    reasons.extend([str(x) for x in adv_evidence if str(x).strip()])
+
+                # Signals (نضيف ملخصاً بسيطاً كسطر في الأسباب)
+                adv_signals = adv.get("signals") or []
+                if isinstance(adv_signals, list) and adv_signals:
+                    try:
+                        sig_text = ", ".join([str(s.get("name", "")) for s in adv_signals if isinstance(s, dict) and s.get("name")])
+                        if sig_text.strip():
+                            reasons.append(f"إشارات متقدمة: {sig_text}")
+                    except Exception:
+                        pass
+
+                # Confidence boost محدود
+                adv_conf = adv.get("confidence")
+                if isinstance(adv_conf, (int, float)):
+                    features["adv_confidence"] = float(adv_conf)
+                    score += max(-2.0, min(2.0, (float(adv_conf) - 50.0) / 25.0))
+
+                # Cache في DB (اختياري)
+                try:
+                    from .db import save_advanced_indicators
+
+                    save_advanced_indicators(symbol=str(symbol), interval=str(timeframe), pack=adv)
+                except Exception:
+                    pass
         except Exception:  # pragma: no cover
             reasons.append("⚠️ تعذر حساب بعض المؤشرات المتقدمة (تم تجاهلها بأمان).")
 
