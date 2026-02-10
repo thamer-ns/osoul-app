@@ -207,6 +207,18 @@ def _risk_gates(report: dict) -> dict:
     except Exception:
         pass
 
+    # Gate 4: Data Quality (Fundamental)
+    try:
+        dq_pass = int(feats.get("dq_pass") or 0)
+        dq_score = int(feats.get("dq_score") or 0)
+        rec = str(report.get("recommendation") or "")
+        is_buy_like = ("شراء" in rec) or ("Buy" in rec) or ("Strong" in rec)
+        if dq_pass == 0 and is_buy_like:
+            gates["pass"] = False
+            gates["reasons"].append(f"بوابة جودة البيانات: FAIL (Score={dq_score}/100) — يمنع توصية شراء قوية")
+    except Exception:
+        pass
+
     return gates
 
 
