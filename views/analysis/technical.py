@@ -133,7 +133,8 @@ def view_technical(symbol: str, interval: str = "1d"):
         st.markdown("### الرسم الفني (مرن)")
 
         # مفتاح تخزين الرسم داخل session state
-        key = _sym_key(symbol, "tech_chart")
+        # NOTE: views.shared._sym_key() تقبل وسيطًا واحدًا فقط.
+        key = f"{_sym_key(symbol)}_tech_chart"
         try:
             _render_technical_chart_flex(symbol, df, key=key)
         except Exception as e:
@@ -146,25 +147,12 @@ def view_technical(symbol: str, interval: str = "1d"):
     with tab2:
         _render_advanced_section(df, symbol=symbol, interval=interval)
 
-# =============================================================================
-# ✅ Compatibility export
-# -----------------------------------------------------------------------------
-# بعض النسخ/الملفات تستورد: render_technical_tab
-# بينما هذا الملف قدّم واجهة: view_technical
-# للحفاظ على التوافق بدون حذف أي شيء نوفّر Wrapper بسيط.
-# =============================================================================
 
 def render_technical_tab(symbol: str, interval: str = "1d"):
-    """Render the technical analysis tab (compatibility wrapper).
+    """Compatibility entry point.
 
-    This preserves backward-compatibility for older imports expecting
-    `render_technical_tab` while delegating to `view_technical`.
+    Some parts of the app expect `render_technical_tab` to exist.
+    We keep this thin wrapper to preserve imports and avoid breaking
+    the existing routing logic.
     """
     return view_technical(symbol, interval=interval)
-
-
-__all__ = [
-    "view_technical",
-    "render_technical_tab",
-]
-
