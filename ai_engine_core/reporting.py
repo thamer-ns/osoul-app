@@ -43,12 +43,6 @@ try:
 except Exception:
     _vsa_lite = None
 
-# Optional: Advanced technical indicators pack (RLS / Chaos WRSI / Volume Profile Clusters / Trendline Breakout)
-try:
-    from .packs import build_technical_pack  # type: ignore
-except Exception:
-    build_technical_pack = None  # type: ignore
-
 from .risk import (
     _analyze_sr,
     _risk_plan_from_atr_sr,
@@ -257,6 +251,54 @@ def generate_ai_report(symbol, timeframe="1D"):
         except Exception:
             pass
 
+        # =========================
+        # Advanced indicators (optional + cached)
+        # =========================
+        adv_pack = None
+        try:
+            from ai_engine_core.db import fetch_latest_advanced_indicators, save_advanced_indicators
+            from technical_indicators import compute_advanced_technical_pack
+
+            # Try cached result first
+            cached = fetch_latest_advanced_indicators(symbol=symbol, interval=str(interval), max_age_minutes=180)
+            if isinstance(cached, dict) and cached.get("payload"):
+                adv_pack = cached.get("payload")
+
+            if not isinstance(adv_pack, dict):
+                adv_pack = compute_advanced_technical_pack(df, symbol=symbol, timeframe=str(interval))
+                if isinstance(adv_pack, dict) and adv_pack.get("name"):
+                    # store for reuse
+                    try:
+                        save_advanced_indicators(symbol=symbol, interval=str(interval), payload=adv_pack)
+                    except Exception:
+                        pass
+
+            # Merge numeric features
+            if isinstance(adv_pack, dict):
+                adv_feats = adv_pack.get("features") or {}
+                for k, v in adv_feats.items():
+                    if isinstance(v, (int, float)):
+                        features[f"adv_{k}"] = float(v)
+
+                # Evidence + signals
+                for ev in (adv_pack.get("evidence") or []):
+                    if isinstance(ev, str) and ev.strip():
+                        tech_reasons.append(ev.strip())
+
+                adv_conf = adv_pack.get("confidence")
+                if isinstance(adv_conf, (int, float)):
+                    features["adv_confidence"] = float(adv_conf)
+
+                # If indicator returned errors, note them (but avoid spamming)
+                errs = adv_pack.get("errors") or []
+                if errs:
+                    # show at most 2
+                    for e in list(errs)[:2]:
+                        if isinstance(e, str) and e.strip():
+                            tech_reasons.append(f"⚠️ (مؤشرات متقدمة) {e.strip()}")
+        except Exception:
+            adv_pack = None
+
         # Relative strength vs TASI (optional)
         if get_relative_strength_vs_tasi is not None:
             try:
@@ -269,56 +311,6 @@ def generate_ai_report(symbol, timeframe="1D"):
                         tech_reasons.append(f"📌 Relative Strength vs TASI: {rs.get('label')}")
             except Exception:
                 pass
-
-        # ----------------------------------------------------------
-        # Advanced Technical Indicators (optional; does not affect core logic if unavailable)
-        # ----------------------------------------------------------
-        advanced_technical = None
-        if build_technical_pack is not None:
-            try:
-                tech_pack = build_technical_pack(df, symbol=symbol, timeframe=interval) or {}
-                adv = tech_pack.get("advanced") or {}
-                if isinstance(adv, dict) and adv:
-                    # Aggregate evidence / signals / confidence and flatten numeric features
-                    evidence: list[str] = []
-                    signals: list[str] = []
-                    confs: list[float] = []
-                    flat_features: dict[str, float] = {}
-                    for name, payload in adv.items():
-                        if not isinstance(payload, dict):
-                            continue
-                        for ev in (payload.get("evidence") or []):
-                            if isinstance(ev, str) and ev.strip():
-                                evidence.append(ev.strip())
-                        for sg in (payload.get("signals") or []):
-                            if isinstance(sg, str) and sg.strip():
-                                signals.append(sg.strip())
-                        c = payload.get("confidence")
-                        if isinstance(c, (int, float)):
-                            confs.append(float(c))
-                        feats = payload.get("features") or {}
-                        if isinstance(feats, dict):
-                            for fk, fv in feats.items():
-                                if isinstance(fv, (int, float)):
-                                    flat_features[f"adv_{name}_{fk}"] = float(fv)
-
-                    avg_conf = float(sum(confs) / len(confs)) if confs else 0.0
-                    advanced_technical = {
-                        "features": flat_features,
-                        "signals": signals[:30],
-                        "evidence": evidence[:30],
-                        "confidence": round(avg_conf, 2),
-                        "details": adv,
-                    }
-
-                    # Feed a short summary into technical reasons for AI explainability
-                    if evidence:
-                        tech_reasons.extend([f"🧠 مؤشرات متقدمة: {e}" for e in evidence[:6]])
-                    # Add flattened numeric features for the AI report (no scoring change by default)
-                    for fk, fv in flat_features.items():
-                        features[fk] = fv
-            except Exception:
-                advanced_technical = None
 
         # Weighted bonus on boolean flags only
         weighted_bonus = 0.0
@@ -423,6 +415,17 @@ def generate_ai_report(symbol, timeframe="1D"):
         except Exception:
             confidence = 0.0
 
+        # If advanced indicators are available, use their confidence as a small calibration factor
+        # rather than overriding the main confidence.
+        try:
+            adv_c = features.get("adv_confidence")
+            if isinstance(adv_c, (int, float)) and 0 <= float(adv_c) <= 100:
+                # Map [0..100] around 50 -> [-7.5 .. +7.5]
+                confidence = max(0.0, min(100.0, float(confidence) + (float(adv_c) - 50.0) * 0.15))
+                confidence_label = f"{confidence_label} + مؤشرات متقدمة"
+        except Exception:
+            pass
+
         explainability = _build_explainability(tech_reasons, fund_reasons, total_score, tech_score, fund_score)
         explainability["confidence_note"] = f"Confidence={int(confidence)}% ({confidence_label})"
 
@@ -456,7 +459,6 @@ def generate_ai_report(symbol, timeframe="1D"):
             "confidence_label": confidence_label,
             "explainability": explainability,
             "features": features,
-            "advanced_technical": advanced_technical,
             "calibration": {},
             "strategy_name": strategy_name,
             "sector": sector,
