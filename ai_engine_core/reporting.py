@@ -426,6 +426,53 @@ def generate_ai_report(symbol, timeframe="1D"):
         except Exception:
             pass
 
+        # =========================
+        # ✅ Data Quality Gate -> calibrate confidence + refuse strong recommendations
+        # =========================
+        dq = None
+        try:
+            from financial_analysis.data_quality import assess_fundamental_quality
+
+            dq = assess_fundamental_quality(symbol, period_type="Annual")
+        except Exception:
+            dq = None
+
+        if isinstance(dq, dict):
+            try:
+                dq_score = int(dq.get("score") or 0)
+                dq_pass = bool(dq.get("pass"))
+            except Exception:
+                dq_score, dq_pass = 0, False
+
+            # expose to UI/engine
+            features["dq_score"] = dq_score
+            features["dq_pass"] = 1 if dq_pass else 0
+
+            # confidence cap + label
+            if not dq_pass:
+                confidence = min(55.0, float(confidence))
+                confidence_label = f"{confidence_label} + جودة بيانات ضعيفة"
+
+        # Low confidence should prevent "strong" calls
+        try:
+            is_strong_like = ("Strong" in str(rec)) or ("💎" in str(rec)) or ("شراء" in str(rec))
+            if is_strong_like and float(confidence) < 55:
+                rec = "⚠️ إشارة ضعيفة — مراقبة"
+                clr = "#ffc107"
+                strat = "الثقة منخفضة أو البيانات ناقصة — لا نعطي توصية قوية حتى تتحسن الجودة/الاكتمال."
+        except Exception:
+            pass
+
+        # If data quality FAIL, force downgrade for buy/value calls
+        try:
+            if isinstance(dq, dict) and (not bool(dq.get("pass"))):
+                if ("Strong" in str(rec)) or ("شراء" in str(rec)) or ("استثمار" in str(rec)):
+                    rec = "⚠️ مراقبة — البيانات المالية غير كافية"
+                    clr = "#ffc107"
+                    strat = "تم تخفيض قوة التوصية بسبب فشل بوابة جودة البيانات (نقص/عدم اتساق)."
+        except Exception:
+            pass
+
         explainability = _build_explainability(tech_reasons, fund_reasons, total_score, tech_score, fund_score)
         explainability["confidence_note"] = f"Confidence={int(confidence)}% ({confidence_label})"
 
