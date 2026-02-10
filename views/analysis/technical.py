@@ -22,33 +22,6 @@ import streamlit as st
 from market_data import get_chart_history
 from views.shared import _render_technical_chart_flex
 
-# توحيد الجداول بنفس نمط "جدول الصفقات" (finance-table)
-try:
-    from components import render_custom_table
-except Exception:  # pragma: no cover
-    render_custom_table = None
-
-
-def _render_table_like_trades(df: pd.DataFrame, cols_spec: Optional[List[Tuple]] = None, *, key: Optional[str] = None):
-    """يعرض أي جدول بنفس ستايل جدول الصفقات.
-
-    - يستخدم render_custom_table إن كانت متوفرة.
-    - يهبط إلى st.dataframe كـ fallback.
-    """
-    if df is None or df.empty:
-        st.info("📭 لا توجد بيانات متاحة")
-        return
-
-    if render_custom_table is not None:
-        try:
-            render_custom_table(df, cols_spec, key=key, use_container_width=True)
-            return
-        except Exception:
-            # لا نكسر الصفحة بسبب تنسيق جدول
-            pass
-
-    st.dataframe(df, use_container_width=True, hide_index=True)
-
 # ==============================
 # مؤشرات متقدمة (Advanced Indicators)
 # ==============================
@@ -194,26 +167,17 @@ def _render_signals_table(signals: List[Any], title: str = "الإشارات"):
     df_sig = df_sig[preferred + rest]
 
     st.markdown(f"**{title}:**")
-    cols_spec: List[Tuple] = []
-    for c in df_sig.columns:
-        c_low = str(c).lower()
-        if c_low in ("score", "strength"):
-            cols_spec.append((c, c, "number"))
-        else:
-            cols_spec.append((c, c, "auto"))
-
-    _render_table_like_trades(df_sig, cols_spec, key=f"adv_sig_{title}")
+    st.dataframe(df_sig, use_container_width=True, hide_index=True)
 
 
 def _render_features_table(features: Dict[str, Any]):
     if not isinstance(features, dict) or not features:
-        st.caption("لا توجد خصائص (Features) مُهيكلة.")
+        st.caption("لا توجد خصائص مُهيكلة.")
         return
 
     rows = [{"feature": str(k), "value": v} for k, v in features.items()]
     df_feat = pd.DataFrame(rows)
-    cols_spec = [("feature", "Feature", "text"), ("value", "Value", "auto")]
-    _render_table_like_trades(df_feat, cols_spec, key="adv_feat")
+    st.dataframe(df_feat, use_container_width=True, hide_index=True)
 
 
 def _render_indicator_block(title: str, res: Dict[str, Any]):
@@ -256,7 +220,7 @@ def _render_indicator_block(title: str, res: Dict[str, Any]):
 
     features = res.get("features", {})
     if isinstance(features, dict) and features:
-        with st.expander("خصائص/Features (تفاصيل رقمية)"):
+        with st.expander("خصائص/خصائص (تفاصيل رقمية)"):
             _render_features_table(features)
 
 
@@ -467,10 +431,7 @@ def view_technical(symbol: str, interval: str = "1d"):
         except Exception as e:
             st.warning(f"تعذر عرض الرسم المرن: {e}")
             if df is not None and not df.empty:
-                # fallback بنفس نمط الجداول الموحد
-                tail = df.tail(10).copy()
-                cols_spec = [(c, c, "auto") for c in tail.columns]
-                _render_table_like_trades(tail, cols_spec, key="ohlcv_tail")
+                st.dataframe(df.tail(10), use_container_width=True)
 
         st.caption("ملاحظة: هذا القسم هو الموجود سابقاً — لم يتم حذفه أو تغييره إلا بقدر تنظيم العرض داخل تبويب.")
 
