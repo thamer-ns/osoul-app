@@ -248,6 +248,82 @@ def fetch_full_statement_records(
     return out
 
 
+def get_full_statements_freshness(
+    symbol: str,
+    *,
+    period_type: str = "Annual",
+    scale: str = "thousands",
+) -> dict:
+    """Return freshness + source summary for stored *full* statements.
+
+    Uses financialstatements_raw.updated_at + source.
+
+    Returns:
+      {"updated_at": str|None, "sources": [..], "completeness": "complete"|"partial"|"none"}
+    """
+    ensure_financialstatements_raw_table()
+
+    sym = get_ticker_symbol(symbol)
+    ptype = str(period_type or "Annual").strip()
+    ptype = "TTM" if ptype.upper() == "TTM" else ptype.title()
+    sc = str(scale or "thousands").strip().lower()
+    if sc not in ("raw", "thousands"):
+        sc = "thousands"
+
+    # latest update + sources
+    q = f"""
+    SELECT
+      MAX(updated_at) AS updated_at,
+      ARRAY_AGG(DISTINCT source) AS sources
+    FROM {_TABLE_NAME}
+    WHERE symbol=%s AND period_type=%s AND scale=%s;
+    """
+    meta = fetch_table(q, (sym, ptype, sc))
+    updated_at = None
+    sources = []
+    try:
+        if meta is not None and (not meta.empty):
+            updated_at = meta.iloc[0].get("updated_at")
+            sources = meta.iloc[0].get("sources") or []
+    except Exception:
+        updated_at, sources = None, []
+
+    # completeness: do we have all 3 statements?
+    try:
+        have_income = has_full_statement(sym, "income", ptype, scale=sc)
+        have_cash = has_full_statement(sym, "cashflow", ptype, scale=sc)
+        have_balance = has_full_statement(sym, "balance", ptype, scale=sc)
+        if have_income and have_cash and have_balance:
+            completeness = "complete"
+        elif have_income or have_cash or have_balance:
+            completeness = "partial"
+        else:
+            completeness = "none"
+    except Exception:
+        completeness = "none"
+
+    # normalize serialization
+    try:
+        if hasattr(updated_at, "isoformat"):
+            updated_at = updated_at.isoformat()
+        elif updated_at is not None:
+            updated_at = str(updated_at)
+    except Exception:
+        updated_at = None
+
+    try:
+        if isinstance(sources, str):
+            sources = [sources]
+        elif sources is None:
+            sources = []
+        else:
+            sources = [str(s) for s in list(sources) if s]
+    except Exception:
+        sources = []
+
+    return {"updated_at": updated_at, "sources": sources, "completeness": completeness}
+
+
 def has_full_statement(symbol: str, statement: str = None, period_type: str = "Annual", *, scale: str = "thousands") -> bool:
     """Return True if there is a stored full statement record.
 
