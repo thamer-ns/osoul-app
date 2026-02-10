@@ -38,6 +38,12 @@ from .technicals import (
 
 from .vsa import analyze_vsa
 
+# مؤشرات إضافية (Advanced) - اختيارية وآمنة (لا تكسر سلوك البرنامج)
+try:
+    from technical_indicators import compute_advanced_technical_pack
+except Exception:  # pragma: no cover
+    compute_advanced_technical_pack = None
+
 
 def _safe_merge_features(*dicts) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
@@ -99,6 +105,32 @@ def build_technical_pack(
             features["atr14"] = float(ind["atr14"].iloc[-1])
     except Exception:
         pass
+
+
+    # -------------------------------
+    # Advanced Technical Indicators (اختياري)
+    # -------------------------------
+    if compute_advanced_technical_pack is not None:
+        try:
+            adv = compute_advanced_technical_pack(df)
+            if isinstance(adv, dict):
+                adv_features = adv.get("features") or {}
+                if isinstance(adv_features, dict):
+                    for k, v in adv_features.items():
+                        if v is None:
+                            continue
+                        # لا نستبدل خصائص موجودة مسبقًا إلا إذا كانت فارغة
+                        if k not in features or features.get(k) is None:
+                            features[k] = v
+                adv_reasons = adv.get("reasons") or []
+                if isinstance(adv_reasons, list):
+                    reasons.extend([str(x) for x in adv_reasons if str(x).strip()])
+                adv_score = adv.get("score")
+                if isinstance(adv_score, (int, float)):
+                    # Boost صغير ومحدود لتجنب "قفزات" غير منطقية
+                    score += max(-3.0, min(3.0, float(adv_score)))
+        except Exception:  # pragma: no cover
+            reasons.append("⚠️ تعذر حساب بعض المؤشرات المتقدمة (تم تجاهلها بأمان).")
 
     # Direction hint
     direction_hint = "neutral"
