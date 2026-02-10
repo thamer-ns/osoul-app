@@ -519,14 +519,42 @@ def get_advanced_fundamental_ratios(symbol):
 
     symbol = get_ticker_symbol(symbol)
 
+    # Prefer Annual. Fallback to Quarterly but mark confidence lower (no mixing silently).
+    period_used = "Annual"
     df = get_stored_financials_df(symbol, "Annual")
     if df.empty:
         df = get_stored_financials_df(symbol, "Quarterly")
+        period_used = "Quarterly"
     if df.empty:
         return metrics
 
     curr = df.iloc[0]
     prev = df.iloc[1] if len(df) > 1 else curr
+
+    # --------------------------
+    # Data Quality / Completeness flags for UI + AI calibration
+    # --------------------------
+    essential = ["revenue", "net_income", "equity", "operating_cash_flow"]
+    missing = []
+    for k in essential:
+        try:
+            if k not in curr.index or curr.get(k) is None:
+                missing.append(k)
+        except Exception:
+            missing.append(k)
+
+    dq_score = 100
+    if period_used == "Quarterly":
+        dq_score -= 10
+    dq_score -= min(40, 10 * len(missing))
+    dq_score = int(max(0, min(100, dq_score)))
+
+    metrics["Data_Period_Used"] = period_used
+    metrics["Data_Confidence"] = dq_score
+    metrics["Data_Issues"] = missing
+    metrics.setdefault("_fund_flags", {})
+    for k in missing:
+        metrics["_fund_flags"][f"missing_{k}"] = 1
 
     info = _fetch_yahoo_info(symbol)
 
