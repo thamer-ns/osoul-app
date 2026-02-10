@@ -1,130 +1,180 @@
 """Database helpers for AI engine outputs.
 
-These functions store and retrieve *derived* indicator results (features/signals)
-so the UI and AI engine can re-use the latest computed results quickly.
-
-Design goals:
-- Work on SQLite and Postgres.
-- No hard dependency on pandas.
-- Never break the main app if DB isn't available.
+This module serves two purposes:
+1) Store/retrieve derived indicator results (advanced indicators) for UI caching.
+2) Provide small compatibility helpers expected by other AI engine modules
+   (user rules + learning logs). These helpers are designed to be safe:
+   - Work with SQLite and Postgres.
+   - Never crash the main app if DB is unavailable.
 """
 
 from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Any, Dict, Optional
-
+from typing import Any, Dict, Optional, Tuple
 
 # ============================================================
-# Compatibility helpers (used by ai_engine_core.user_rules)
+# Generic helpers (compat layer)
 # ============================================================
+
+def _now_iso() -> str:
+    return datetime.utcnow().replace(microsecond=0).isoformat()
 
 
 def _safe_import_db():
-    """Return (execute_query, kind) or (None, 'none') if DB isn't available."""
+    """Return (execute_query, fetch_table) from database.py if available."""
     try:
-        from database import execute_query, get_connection, put_connection
-
-        # Probe connection to infer kind without forcing callers to import database.
-        conn, kind = get_connection()
-        put_connection(conn, kind)
-        return execute_query, kind
+        from database import execute_query, fetch_table  # type: ignore
+        return execute_query, fetch_table
     except Exception:
-        return None, "none"
+        return None, None
 
 
-def _adapt_placeholders(sql: str, kind: str) -> str:
-    """Convert %s placeholders to ? for sqlite."""
-    if kind == "postgres":
-        return sql
-    # sqlite uses qmark style
-    return sql.replace("%s", "?")
-
-
-def _try_exec(sql: str, params: tuple = ()) -> bool:
-    """Execute a parameterized SQL safely across Postgres/SQLite."""
+def _get_db_kind() -> str:
     try:
-        from database import get_connection, put_connection
+        from database import get_connection, put_connection  # type: ignore
 
         conn, kind = get_connection()
         try:
-            cur = conn.cursor()
-            cur.execute(_adapt_placeholders(sql, kind), params or ())
-            conn.commit()
-            return True
-        except Exception:
+            return str(kind or "none")
+        finally:
             try:
-                conn.rollback()
+                put_connection(conn, kind)
             except Exception:
                 pass
-            return False
-        finally:
-            put_connection(conn, kind)
+    except Exception:
+        return "none"
+
+
+def _adapt_sql_placeholders(q: str, kind: str) -> str:
+    """Convert %s placeholders to ? for sqlite."""
+    if (kind or "").lower() == "postgres":
+        return q
+    # sqlite
+    return q.replace("%s", "?")
+
+
+def _try_exec(query: str, params: Optional[Tuple[Any, ...]] = None) -> bool:
+    execute_query, _ = _safe_import_db()
+    if not execute_query:
+        return False
+    kind = _get_db_kind()
+    q = _adapt_sql_placeholders(query, kind)
+    try:
+        return bool(execute_query(q, tuple(params or ())))
     except Exception:
         return False
 
 
-def _safe_fetch_table(table_name: str):
-    """Fetch a whole table as a pandas DataFrame. Returns None if unavailable."""
+def _safe_fetch_table(table: str):
+    _, fetch_table = _safe_import_db()
+    if not fetch_table:
+        return None
     try:
-        from database import fetch_table
-
-        df = fetch_table(table_name)
-        return df
+        return fetch_table(str(table))
     except Exception:
         return None
 
 
 def _ensure_user_rules_table() -> None:
     """Create ai_user_rules table if missing."""
-    try:
-        from database import get_connection, put_connection
-
-        conn, kind = get_connection()
-        try:
-            cur = conn.cursor()
-            if kind == "postgres":
-                cur.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS ai_user_rules (
-                        id TEXT PRIMARY KEY,
-                        created_at TEXT,
-                        title TEXT,
-                        rule_text TEXT,
-                        parsed_json TEXT,
-                        enabled INTEGER DEFAULT 1
-                    );
-                    """
-                )
-            else:
-                cur.execute(
-                    """
-                    CREATE TABLE IF NOT EXISTS ai_user_rules (
-                        id TEXT PRIMARY KEY,
-                        created_at TEXT,
-                        title TEXT,
-                        rule_text TEXT,
-                        parsed_json TEXT,
-                        enabled INTEGER DEFAULT 1
-                    );
-                    """
-                )
-            conn.commit()
-        finally:
-            put_connection(conn, kind)
-    except Exception:
-        return
+    kind = _get_db_kind()
+    if (kind or "").lower() == "postgres":
+        _try_exec(
+            """
+            CREATE TABLE IF NOT EXISTS ai_user_rules (
+                id TEXT PRIMARY KEY,
+                created_at TIMESTAMP,
+                title TEXT,
+                rule_text TEXT,
+                parsed_json JSONB,
+                enabled INTEGER
+            );
+            """
+        )
+    else:
+        _try_exec(
+            """
+            CREATE TABLE IF NOT EXISTS ai_user_rules (
+                id TEXT PRIMARY KEY,
+                created_at TEXT,
+                title TEXT,
+                rule_text TEXT,
+                parsed_json TEXT,
+                enabled INTEGER
+            );
+            """
+        )
 
 
-def _now_iso() -> str:
-    return datetime.utcnow().replace(microsecond=0).isoformat()
+def _ensure_ai_tables() -> None:
+    """Create ai_signals + ai_weights tables used by logging/learning."""
+    kind = _get_db_kind()
+    if (kind or "").lower() == "postgres":
+        _try_exec(
+            """
+            CREATE TABLE IF NOT EXISTS ai_signals (
+                id TEXT PRIMARY KEY,
+                created_at TIMESTAMP,
+                symbol TEXT,
+                sector TEXT,
+                timeframe TEXT,
+                horizon_days INTEGER,
+                strategy_name TEXT,
+                features_json JSONB,
+                report_json JSONB,
+                outcome_return_pct DOUBLE PRECISION,
+                outcome_win INTEGER,
+                exit_features_json JSONB
+            );
+            """
+        )
+        _try_exec(
+            """
+            CREATE TABLE IF NOT EXISTS ai_weights (
+                key TEXT PRIMARY KEY,
+                weight DOUBLE PRECISION,
+                updated_at TIMESTAMP
+            );
+            """
+        )
+    else:
+        _try_exec(
+            """
+            CREATE TABLE IF NOT EXISTS ai_signals (
+                id TEXT PRIMARY KEY,
+                created_at TEXT,
+                symbol TEXT,
+                sector TEXT,
+                timeframe TEXT,
+                horizon_days INTEGER,
+                strategy_name TEXT,
+                features_json TEXT,
+                report_json TEXT,
+                outcome_return_pct REAL,
+                outcome_win INTEGER,
+                exit_features_json TEXT
+            );
+            """
+        )
+        _try_exec(
+            """
+            CREATE TABLE IF NOT EXISTS ai_weights (
+                key TEXT PRIMARY KEY,
+                weight REAL,
+                updated_at TEXT
+            );
+            """
+        )
 
+# ============================================================
+# Advanced indicators storage (optional caching)
+# ============================================================
 
 def _get_conn():
     # Local import to avoid circular dependencies at import time.
-    from database import get_connection
-
+    from database import get_connection  # type: ignore
     return get_connection()
 
 
@@ -134,7 +184,7 @@ def ensure_advanced_indicators_table() -> None:
         conn, kind = _get_conn()
         cur = conn.cursor()
 
-        if kind == "postgres":
+        if str(kind) == "postgres":
             cur.execute(
                 """
                 CREATE TABLE IF NOT EXISTS advanced_indicators (
@@ -190,7 +240,7 @@ def save_advanced_indicators(
 
         asof = asof or _now_iso()
 
-        if kind == "postgres":
+        if str(kind) == "postgres":
             cur.execute(
                 """
                 INSERT INTO advanced_indicators(symbol, asof, interval, payload, confidence)
@@ -218,7 +268,7 @@ def fetch_latest_advanced_indicators(symbol: str, interval: str) -> Optional[Dic
     try:
         conn, kind = _get_conn()
         cur = conn.cursor()
-        if kind == "postgres":
+        if str(kind) == "postgres":
             cur.execute(
                 """
                 SELECT payload, confidence, asof, created_at
