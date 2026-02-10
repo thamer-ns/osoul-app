@@ -10,6 +10,61 @@ from typing import Any, Dict, List, Optional, Tuple
 
 
 # ============================================================
+# ✅ Arabic UI Translation helpers
+# ============================================================
+
+_TR_MAP = {
+    "Score": "الدرجة",
+    "Confidence": "الثقة",
+    "Pass": "ناجح",
+    "Fail": "فشل",
+    "Issues": "المشكلات",
+    "Evidence": "الأدلة",
+    "Source": "المصدر",
+    "Updated": "آخر تحديث",
+    "Last update": "آخر تحديث",
+    "Annual": "سنوي",
+    "Quarterly": "ربع سنوي",
+    "TTM": "آخر 12 شهر (TTM)",
+    "Buy": "شراء",
+    "Sell": "بيع",
+    "Hold": "احتفاظ",
+    "Strong Buy": "شراء قوي",
+    "Strong Sell": "بيع قوي",
+    "Neutral": "محايد",
+    "Bullish": "إيجابي",
+    "Bearish": "سلبي",
+    "Signals": "الإشارات",
+    "Features": "الخصائص",
+    "Backtest": "اختبار رجعي",
+}
+
+def tr(text: str) -> str:
+    """ترجمة خفيفة للنصوص الشائعة (مع fallback)."""
+    if text is None:
+        return ""
+    s = str(text)
+    return _TR_MAP.get(s, s)
+
+def fmt_sar_compact(value: float | int | None, unit: str = "SAR") -> str:
+    """تنسيق رقم مالي بشكل واضح (ألف/مليون/مليار)"""
+    try:
+        if value is None:
+            return "—"
+        v = float(value)
+    except Exception:
+        return "—"
+    sign = "-" if v < 0 else ""
+    v = abs(v)
+    if v >= 1_000_000_000:
+        return f"{sign}{v/1_000_000_000:.2f} مليار {unit}"
+    if v >= 1_000_000:
+        return f"{sign}{v/1_000_000:.2f} مليون {unit}"
+    if v >= 1_000:
+        return f"{sign}{v/1_000:.2f} ألف {unit}"
+    return f"{sign}{v:,.0f} {unit}"
+
+# ============================================================
 # ✅ App Header helpers (Fail-safe)
 # ============================================================
 
@@ -142,56 +197,6 @@ def safe_fmt(val, suffix=""):
         return f"{x:,.2f}{suffix}"
     except Exception:
         return "-"
-
-
-# ============================================================
-# 🌐 ترجمة نصوص الواجهة (Arabic i18n mini)
-# ============================================================
-
-_AR_UI_MAP = {
-    "Score": "الدرجة",
-    "Confidence": "الثقة",
-    "Evidence": "الأدلة",
-    "Issues": "المشاكل",
-    "Pass": "ناجح",
-    "Fail": "فشل",
-    "Annual": "سنوي",
-    "Quarterly": "ربع سنوي",
-    "TTM": "آخر 12 شهر",
-    "Base Interval": "الفاصل الأساسي",
-    "Fib Meta": "بيانات فيبوناتشي",
-    "Fib disabled": "تم إيقاف فيبوناتشي",
-    "Pivots Used": "محاور الارتكاز المستخدمة",
-}
-
-def tr(text: str) -> str:
-    """ترجمة خفيفة للنصوص الشائعة (مع fallback)."""
-    try:
-        if text is None:
-            return ""
-        s = str(text)
-        return _AR_UI_MAP.get(s, s)
-    except Exception:
-        return str(text)
-
-
-def fmt_sar_compact(val, digits: int = 2) -> str:
-    """تنسيق رقم مالي SAR بشكل مختصر: ألف/مليون/مليار."""
-    try:
-        x = _safe_number(val, default=None)
-        if x is None:
-            return "-"
-        ax = abs(float(x))
-        if ax >= 1_000_000_000:
-            return f"{x/1_000_000_000:.{digits}f} مليار"
-        if ax >= 1_000_000:
-            return f"{x/1_000_000:.{digits}f} مليون"
-        if ax >= 1_000:
-            return f"{x/1_000:.{digits}f} ألف"
-        return f"{x:,.{digits}f}"
-    except Exception:
-        return "-"
-
 
 def _fmt_percent(val, digits=2):
     x = _safe_number(val, default=None)
