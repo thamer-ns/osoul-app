@@ -139,7 +139,7 @@ def _render_quick_summary(sym: str, ai_data: dict, tf_label: str):
             f"""
             <div class="os-card">
               <div class="os-card-title">📌 أرقام سريعة</div>
-              <div class="os-kv"><div class="os-k">Score</div><div class="os-v">{score}/100</div></div>
+              <div class="os-kv"><div class="os-k">الدرجة</div><div class="os-v">{score}/100</div></div>
               <div class="os-kv"><div class="os-k">الثقة</div><div class="os-v">{conf}%</div></div>
               <div class="os-kv"><div class="os-k">تحديث</div><div class="os-v">{st.session_state.get("_ai_last_update", "—")}</div></div>
             </div>
@@ -149,7 +149,7 @@ def _render_quick_summary(sym: str, ai_data: dict, tf_label: str):
 
     # Chips row
     st.markdown("<div class='os-card' style='padding:12px;margin-top:10px;'>", unsafe_allow_html=True)
-    _chip(f"Score {score}/100", _tone_for_score(score))
+    _chip(f"الدرجة {score}/100", _tone_for_score(score))
     _chip(f"الثقة {conf}%", _tone_for_conf(conf))
     st.markdown(
         "<span class='os-chip os-chip-blue'><span class='mi'>insights</span>تأكد من الأدلة/المخاطر قبل القرار</span>",
