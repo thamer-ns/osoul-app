@@ -20,7 +20,22 @@ from views.shared import (
 from .advisor import render_advisor_tab
 from .classical import render_classical_tab
 from .financial import render_financial_dashboard_ui
-from .technical import render_technical_tab
+# ========================================================
+# Technical tab import (fail-safe)
+#
+# السبب: بعض الإصدارات/الفروع كانت تُسمي واجهة التحليل الفني `view_technical`
+# ولم تُصدِّر الاسم المتوافق `render_technical_tab`.
+# إذا فشل الاستيراد أو لم يكن الاسم موجودًا، نستخدم fallback آمن بدل كسر التطبيق بالكامل.
+# ========================================================
+try:
+    from .technical import render_technical_tab
+except Exception:
+    try:
+        from .technical import view_technical as render_technical_tab
+    except Exception:
+        def render_technical_tab(symbol: str, interval: str = "1d"):
+            st.error("تعذر تحميل تبويب التحليل الفني (technical).")
+            st.caption("تحقق من: views/analysis/technical.py")
 from .thesis import render_thesis_tab
 
 
