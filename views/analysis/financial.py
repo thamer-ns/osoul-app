@@ -26,6 +26,11 @@ except Exception:
     assess_fundamental_quality = None
 
 try:
+    from financial_analysis.store import get_full_statements_freshness  # type: ignore
+except Exception:
+    get_full_statements_freshness = None
+
+try:
     from views.shared import get_last_yahoo_diagnostics, diagnose_yahoo_quote_summary  # type: ignore
 except Exception:
     get_last_yahoo_diagnostics = None
@@ -48,6 +53,32 @@ def _kv_card(title: str, rows: list):
         html.append(f"<div class='os-kv'><div class='os-k'>{k}</div><div class='os-v'>{v}</div></div>")
     html.append("</div>")
     st.markdown("\n".join(html), unsafe_allow_html=True)
+
+
+def _render_freshness_badge(title: str, updated_at: str | None, sources: list | None, completeness: str | None):
+    """Small UI badge for data freshness."""
+    src = ", ".join([str(s) for s in (sources or []) if s]) or "—"
+    upd = str(updated_at) if updated_at else "—"
+
+    comp_map = {
+        "complete": "كاملة ✅",
+        "partial": "جزئية ⚠️",
+        "none": "غير متوفرة ❌",
+        None: "—",
+    }
+    comp = comp_map.get(completeness, str(completeness or "—"))
+
+    st.markdown(
+        f"""
+        <div class="os-card" style="margin-top:10px;">
+          <div class="os-card-title">{title}</div>
+          <div class="os-kv"><div class="os-k">آخر تحديث</div><div class="os-v">{upd}</div></div>
+          <div class="os-kv"><div class="os-k">المصدر</div><div class="os-v">{src}</div></div>
+          <div class="os-kv"><div class="os-k">الاكتمال</div><div class="os-v">{comp}</div></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def render_data_import_ui_content(symbol):
@@ -130,6 +161,29 @@ def render_financial_dashboard_ui(symbol):
     # Dashboard
     # =====================================================
     with tab_dashboard:
+        # =====================================================
+        # Data Freshness Badge (Full Statements + Summary)
+        # =====================================================
+        try:
+            if callable(get_full_statements_freshness):
+                meta_a = get_full_statements_freshness(symbol, period_type="Annual")
+                meta_q = get_full_statements_freshness(symbol, period_type="Quarterly")
+
+                def _badge_line(lbl, meta):
+                    up = meta.get("updated_at") or "—"
+                    src = ", ".join(meta.get("sources") or []) or "—"
+                    comp = meta.get("completeness") or "none"
+                    comp_ar = {"complete": "كاملة", "partial": "جزئية", "none": "غير متوفرة"}.get(comp, comp)
+                    return f"{lbl}: آخر تحديث **{up}** | المصدر: **{src}** | البيانات: **{comp_ar}**"
+
+                st.caption(
+                    "🕒 حداثة البيانات (القوائم الكاملة):  "
+                    + _badge_line("سنوي", meta_a)
+                    + "  |  "
+                    + _badge_line("ربع سنوي", meta_q)
+                )
+        except Exception:
+            pass
         df_annual = get_financial_statements(symbol, "Annual")
         df_quarter = get_financial_statements(symbol, "Quarterly")
 
@@ -155,22 +209,41 @@ def render_financial_dashboard_ui(symbol):
 
         dashboard_has_data = isinstance(df, pd.DataFrame) and (not df.empty)
 
+        # =====================================================
+        # ✅ Data Quality Gate (Always visible)
+        # =====================================================
+        with st.expander("✅ بوابة جودة البيانات (Pass / Issues / Confidence)", expanded=False):
+            if not callable(assess_fundamental_quality):
+                st.info("وحدة Data Quality غير متاحة في هذه النسخة.")
+            else:
+                try:
+                    q_a = assess_fundamental_quality(symbol, period_type="Annual")
+                    q_q = assess_fundamental_quality(symbol, period_type="Quarterly")
+
+                    def _render_q(title, q):
+                        passed = bool(q.get("pass"))
+                        score = int(q.get("score") or 0)
+                        issues = q.get("issues") or []
+                        tone = "success" if passed else ("warning" if score >= 35 else "danger")
+                        st.markdown(f"**{title}** — Score: **{score}/100**")
+                        if passed:
+                            st.success("PASS ✅")
+                        else:
+                            st.warning("FAIL / Low ✅")
+                        if issues:
+                            st.write("**Issues:**")
+                            for it in issues[:12]:
+                                st.write(f"- {it}")
+
+                    _render_q("سنوي (Annual)", q_a)
+                    st.markdown("---")
+                    _render_q("ربع سنوي (Quarterly)", q_q)
+
+                except Exception as e:
+                    st.error(str(e))
+
         if not dashboard_has_data:
             st.warning("⚠️ لا توجد بيانات مالية محفوظة لهذا السهم.")
-
-
-            with st.expander("✅ بوابة جودة البيانات (Fundamental Data Quality)", expanded=False):
-                if not assess_fundamental_quality:
-                    st.info("وحدة Data Quality غير متاحة في هذه النسخة.")
-                else:
-                    try:
-                        q = assess_fundamental_quality(symbol)
-                        st.json(q)
-                        if isinstance(q, dict) and q.get("pass") is False:
-                            st.warning("البيانات تبدو ناقصة/غير متناسقة — راجع إدارة البيانات أو جرّب مزامنة القوائم الكاملة.")
-                    except Exception as e:
-                        st.error(str(e))
-
             st.info("👈 انتقل لتبويب 'إدارة البيانات' لرفع ملف أو جلب المعلومات.")
 
         else:
@@ -195,7 +268,12 @@ def render_financial_dashboard_ui(symbol):
             with c3:
                 st.metric("الرأي", "جاهز" if opinions and str(opinions).strip() != "-" else "—")
             with c4:
-                st.metric("عدد الأعمدة", str(len(df.columns)))
+                dconf = metrics.get("Data_Confidence", None)
+                issues = metrics.get("Data_Issues", []) or []
+                if dconf is None:
+                    st.metric("عدد الأعمدة", str(len(df.columns)))
+                else:
+                    st.metric("ثقة البيانات", f"{int(dconf)}/100", f"نواقص: {len(issues)}")
 
             st.markdown(
                 f"""
