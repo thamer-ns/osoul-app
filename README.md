@@ -320,3 +320,142 @@ streamlit run app.py
 
 ### تواصل
 إذا احتجت إضافة “نظام ترجمة شامل” أو “توثيق API داخلي” للمؤشرات الجديدة، يمكن توسعة هذه الوثيقة بسهولة.
+
+
+---
+
+## 13) خريطة الدوال المهمة (Function Map)
+
+> هذا القسم يساعدك تعرف: **أين تُحسب الأشياء؟ ومن يستدعي من؟** بسرعة عند أي تعديل.
+
+### 13.1 مسار “تحليل سهم” داخل الواجهة
+- `views/analysis/__init__.py`
+  - ينشئ Tabs التحليل ويستدعي:
+    - `views/analysis/financial.py`
+    - `views/analysis/technical.py`
+    - `views/analysis/classical.py`
+    - `views/analysis/advisor.py`
+    - `views/analysis/thesis.py`
+
+### 13.2 دوال الشارت والسعر (Market)
+- `market_data.get_chart_history(symbol, period, interval)`
+  - **وظيفة:** جلب OHLCV
+  - **يُستدعى من:**
+    - `views/shared.py::_render_technical_chart_flex`
+    - `views/analysis/technical.py` (لبعض الـ fallbacks/advanced packs)
+    - `ai_engine_core/reporting.py` (وقود التقرير الفني)
+
+- `views/shared.py::_render_technical_chart_flex(symbol, period, interval)`
+  - **وظيفة:** رسم شارت مرن + عرض أخطاء بطريقة لطيفة
+  - **ملاحظة:** الأفضل عدم تمرير `df` لها إلا إذا الدالة تدعم ذلك.
+
+### 13.3 المؤشرات المتقدمة (Advanced Pack)
+- `technical_indicators.advanced.compute_advanced_technical_pack(df, symbol, timeframe)`
+  - **وظيفة:** إنتاج Pack قياسي للمؤشرات المتقدمة
+  - **يُعرض في:** `views/analysis/technical.py`
+  - **يُخزن عبر:** `ai_engine_core/db.py::save_advanced_indicators(...)` (إذا تم ربط التخزين)
+
+### 13.4 التحليل المالي + الجودة
+- `financial_analysis/yahoo_data.py` (fetchers)
+  - **وظيفة:** جلب القوائم من Yahoo + تشخيص rate limit
+
+- `financial_analysis/store.py`
+  - **وظيفة:** حفظ/استرجاع القوائم + Freshness
+  - **دوال مهمة شائعة:**
+    - `save_full_statement_record(...)`
+    - `fetch_full_statement_records(...)`
+    - `get_full_statements_freshness(...)`
+
+- `financial_analysis/data_quality.py`
+  - **وظيفة:** بوابة جودة البيانات
+  - **مخرجات نموذجية:** pass/score/issues/confidence
+
+- `financial_analysis/metrics.py`
+  - **وظيفة:** حساب النسب والمؤشرات
+  - **قاعدة:** missing ⇒ None (وليس 0) + issues + خفض ثقة
+
+### 13.5 المستشار (AI Engine)
+- `ai_engine.generate_ai_report(...)`
+  - **وظيفة:** واجهة ثابتة للـ UI (Facade)
+  - **يستدعي:** `ai_engine_core.reporting.generate_ai_report(...)`
+
+- `ai_engine_core/reporting.py::generate_ai_report(...)`
+  - **وظيفة:** بناء تقرير المستشار
+  - **يعتمد على:**
+    - OHLCV + مؤشرات + Structure
+    - Financial packs
+    - Advanced packs (إن تم حفظها/تمريرها)
+
+- `ai_engine_core/risk.py`
+  - **وظيفة:** Risk Gates
+  - **مبدأ:** Data Quality Fail أو Low confidence ⇒ منع توصية قوية
+
+- `ai_engine_core/db.py`
+  - **وظيفة:** جداول ai_signals/ai_weights + user_rules + advanced indicators
+
+- `ai_engine_core/logging_learning.py`
+  - **وظيفة:** تسجيل الإشارات + أوزان بسيطة تتغير مع الزمن
+
+- `ai_engine_core/user_rules.py`
+  - **وظيفة:** قواعد المستخدم، تحميل/تقييم/حفظ
+
+---
+
+## 14) Checklist قبل أي تعديل أو Pull Request (Quality Gate)
+
+> طبق هذه القائمة قبل رفع أي تحديث حتى لا “تصلح خطأ وتكسر مكان ثاني”.
+
+### 14.1 ثوابت لا تُكسر
+- [ ] **لا حذف** دوال/أسماء تُستدعى من الراوتر أو من ملفات أخرى (إلا مع wrapper توافق).
+- [ ] أي تبويب جديد يجب أن يكون **Fail-safe** (try/except + رسالة UI).
+- [ ] لا تخلط Annual/Quarterly/TTM بدون إعلان + خفض ثقة.
+- [ ] missing ≠ 0 في سياق النسب والمؤشرات.
+- [ ] لا تعرض بيانات قديمة بدون **Data Freshness Badge**.
+
+### 14.2 اختبار تشغيل سريع (Smoke Test)
+- [ ] `streamlit run app.py` يعمل بدون Traceback
+- [ ] Dashboard يفتح
+- [ ] Portfolio يفتح + جدول الصفقات يظهر
+- [ ] Analysis يفتح:
+  - [ ] الشارت يظهر (أو fallback لطيف)
+  - [ ] تبويب الفني يعمل
+  - [ ] المؤشرات المتقدمة تعمل (أو تظهر “غير متوفرة” بدون كسر)
+  - [ ] تبويب المالي يعرض بوابة الجودة (Pass/Issues/Confidence)
+  - [ ] المستشار يولد تقرير
+
+### 14.3 جودة البيانات (Data Quality)
+- [ ] إذا القوائم ناقصة: يظهر Fail/Issues بوضوح
+- [ ] إذا Fail: المستشار **لا** يعطي توصية قوية
+- [ ] إذا Low confidence: التوصية تُخفض تلقائيًا + تبرير واضح
+
+### 14.4 توحيد العرض (UI Consistency)
+- [ ] أي جدول جديد في التحليل يُعرض مثل جدول الصفقات عبر `render_custom_table`
+- [ ] الأرقام المالية تُعرض بوحدة واضحة (SAR + ألف/مليون/مليار)
+- [ ] العناوين/الأزرار الرئيسية بالعربي، والاختصارات (RSI/MACD) تُذكر بين قوسين عند الحاجة
+
+### 14.5 الأداء والثبات
+- [ ] لا تضع حسابات ثقيلة داخل render loop بدون caching
+- [ ] لا تسوي requests متكررة في كل rerun (استخدم caching/DB عند الحاجة)
+- [ ] التعامل مع 429 من Yahoo: لا تُخفي المشكلة — اعرض تنبيه واضح + freshness
+
+---
+
+## 15) قوالب جاهزة للاستخدام عند إضافة ميزات
+
+### 15.1 قالب “Pack” لمؤشر جديد
+```python
+def build_my_indicator_pack(df):
+    return {
+        "bias": "bullish",
+        "confidence": 67,
+        "summary": "زخم إيجابي مع تراجع في الضغط البيعي.",
+        "evidence": ["RSI أعلى من 50", "اختراق مقاومة قصيرة"],
+        "signals": [{"signal": "Breakout", "score": 12, "note": "تأكيد بحجم"}],
+        "features": {"rsi": 56.2, "atr": 0.14},
+        "errors": [],
+        "warnings": []
+    }
+```
+
+### 15.2 قالب عرض جدول موحد (مثل جدول الصفقات)
+> الأفضل استخدام: `views.shared.render_custom_table(df, col_types=..., key=...)`
