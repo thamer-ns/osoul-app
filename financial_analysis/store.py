@@ -3,7 +3,7 @@ import pandas as pd
 import json
 from typing import Any, Dict, Optional
 
-from database import execute_query, fetch_table
+from database import execute_query, fetch_table, fetch_df
 from market_data import get_ticker_symbol, _symbol_variants
 from .utils import _safe_float, _safe_date_str
 
@@ -94,19 +94,37 @@ def get_stored_financials_df(symbol, period_type="Annual"):
         variants = _symbol_variants(raw_symbol)
         period_type = str(period_type or "Annual").strip().title()
 
-        df = fetch_table("financialstatements")
+        # ✅ مهم: لا نسحب كامل جدول financialstatements ...
+        # خصوصاً على Supabase/Streamlit Cloud قد يؤدي إلى Timeout أو Memory.
+        # لذلك نقرأ فقط سجلات الرمز المطلوب والفترة المطلوبة.
+        vlist = [str(v) for v in variants if v]
+
+        # Postgres supports = ANY(%s) with array; ...
+        # We'll build a simple IN (...) safely by passing params.
+        placeholders = ",".join(["%s"] * len(vlist)) if vlist else "%s"
+        params = tuple(vlist) + (period_type,)
+        q = f"SELECT * FROM financialstatements WHERE symbol IN ({placeholders}) AND period_type=%s"
+
+        df = fetch_df(q, params=params)
         if df is None or df.empty:
-            return pd.DataFrame()
+            # Fallback: if the DB doesn't like the above for any reason, try legacy full table.
+            df = fetch_table("financialstatements")
+            if df is None or df.empty:
+                return pd.DataFrame()
+            if "symbol" in df.columns:
+                df = df[df["symbol"].astype(str).isin(vlist)]
+            if "period_type" in df.columns:
+                df = df[df["period_type"].astype(str).str.title() == period_type]
 
-        if "symbol" in df.columns:
-            df = df[df["symbol"].astype(str).isin([str(v) for v in variants if v])]
-        if "period_type" in df.columns:
-            df = df[df["period_type"].astype(str).str.title() == period_type]
-
+        # handle both schemas: date (DATE) or date_str (TEXT)
         if "date" in df.columns:
             df["date"] = pd.to_datetime(df["date"], errors="coerce")
+            return df.sort_values("date", ascending=False)
+        if "date_str" in df.columns:
+            df["date"] = pd.to_datetime(df["date_str"], errors="coerce")
+            return df.sort_values("date", ascending=False)
 
-        return df.sort_values("date", ascending=False) if "date" in df.columns else df
+        return df
     except Exception:
         return pd.DataFrame()
 
