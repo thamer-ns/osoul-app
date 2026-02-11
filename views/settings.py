@@ -5,9 +5,75 @@ from feature_flags import get_all_flags, set_flag
 from analytics import create_smart_backup
 from database import db_healthcheck
 
+
+def _render_self_learning_dashboard():
+    """Dashboard to evaluate past AI signals and adapt weights (safe + bounded)."""
+    try:
+        from ai_engine_core.logging_learning import (
+            evaluate_pending_outcomes,
+            learn_from_history,
+            get_calibration_snapshot,
+        )
+    except Exception:
+        st.error("تعذر تحميل وحدة التعلم الذاتي (ai_engine_core/logging_learning.py).")
+        return
+
+    st.subheader("🧠 التعلم الذاتي (تجربة → تقييم لاحق → تكيّف)")
+    st.caption(
+        "الفكرة: يسجل البرنامج الإشارات التي يعطيها، وبعد مرور عدد أيام/شموع محدد يقوم بتقييم النتيجة "
+        "ثم يحدّث أوزان بعض الإشارات (بحدود آمنة) لتحسين الدقة تدريجيًا."  # noqa
+    )
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        max_eval = st.number_input("حد أعلى للتقييم دفعة واحدة", 10, 500, 80, step=10)
+    with c2:
+        strict = st.checkbox("استخدم شموع تداول فقط (أدق)", value=True)
+    with c3:
+        run_learn = st.checkbox("بعد التقييم: حدّث الأوزان تلقائيًا", value=True)
+
+    if st.button("🚀 قيّم الإشارات المستحقة الآن", use_container_width=True):
+        with st.spinner("جاري تقييم الإشارات القديمة بناءً على الحركة السعرية..."):
+            rep = evaluate_pending_outcomes(max_rows=int(max_eval), trading_bars=bool(strict))
+        if not rep.get("ok"):
+            st.error(f"فشل التقييم: {rep.get('reason')}")
+        else:
+            st.success(
+                f"✅ تم تقييم: {rep.get('evaluated', 0)} | تم تخطي: {rep.get('skipped', 0)} | أخطاء: {rep.get('errors', 0)}"
+            )
+            if rep.get("details"):
+                with st.expander("تفاصيل مختصرة", expanded=False):
+                    st.json(rep["details"])
+
+            if run_learn:
+                with st.spinner("جاري تحديث الأوزان بناءً على النتائج..."):
+                    lr = learn_from_history(max_rows=600)
+                if lr.get("ok"):
+                    st.success(f"✅ تم تحديث أوزان: {lr.get('updated', 0)} (من أصل خصائص: {lr.get('features', 0)})")
+                else:
+                    st.warning(f"لم يتم تحديث الأوزان: {lr.get('reason')}")
+
+    st.markdown("---")
+    st.write("### 📊 معايرة الأداء (Calibration)")
+    sym = st.text_input("رمز (اختياري)", value="")
+    tf = st.selectbox("الإطار", options=["1D", "1W", "1H", "30M"], index=0)
+    snap = get_calibration_snapshot(symbol=sym.strip() or None, timeframe=tf)
+    if snap.get("ok"):
+        st.json(snap)
+    else:
+        st.info("لا يوجد بيانات تقييم كافية بعد. استخدم زر التقييم أولاً.")
+
 def view_tools():
     st.header("🛠️ أدوات")
     st.info("حاسبة الزكاة (قريباً)")
+
+    # Self learning dashboard (if enabled)
+    flags = get_all_flags()
+    if bool(flags.get("enable_self_learning", True)):
+        with st.expander("🧠 التعلم الذاتي وتحسين المستشار", expanded=True):
+            _render_self_learning_dashboard()
+    else:
+        st.caption("التعلم الذاتي معطّل من الإعدادات (ميزات تجريبية).")
 
 def view_settings():
     st.header("الإعدادات")
@@ -32,11 +98,14 @@ def view_settings():
             v_wrappers = st.checkbox("🈶 استخدام عناصر عربية محسّنة (placeholders)", value=bool(flags.get("use_ar_wrappers", False)))
             v_compare = st.checkbox("🧠 مقارنة محرك المستشار (قديم/جديد) — متقدم", value=bool(flags.get("enable_engine_compare", False)))
 
+        v_learn = st.checkbox("🧠 تفعيل التعلم الذاتي (يسجل ويقيّم ويكيّف الأوزان)", value=bool(flags.get("enable_self_learning", True)))
+
         # persist to session
         set_flag("enable_xirr", v_xirr)
         set_flag("enable_strategy_notes", v_notes)
         set_flag("use_ar_wrappers", v_wrappers)
         set_flag("enable_engine_compare", v_compare)
+        set_flag("enable_self_learning", v_learn)
 
         st.info("✅ يتم حفظ الاختيارات لهذه الجلسة. إذا أردت جعلها دائمة لاحقًا نربطها بقاعدة البيانات (اختياري).")
 
