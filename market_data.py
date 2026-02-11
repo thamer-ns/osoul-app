@@ -10,6 +10,12 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 
+# --- Unicode cleanup (RTL/LTR marks) ---------------------------------
+_BIDI_STRIP_RE = re.compile(r"[\u200e\u200f\u202a-\u202e\u2066-\u2069]")
+def _clean_symbol_text(s: str) -> str:
+    # Remove invisible direction marks that often appear in RTL UIs
+    return _BIDI_STRIP_RE.sub("", s or "")
+
 # ✅ Optional web deps (avoid crash in some deployments)
 try:
     import requests
@@ -75,9 +81,7 @@ def get_ticker_symbol(symbol: str) -> str:
     - SR.1150 / SR1150 -> 1150.SR  ✅ (كان سبب اختفاء البيانات المخزنة)
     - TASI -> ^TASI.SR
     """
-    s = str(symbol or "").strip().upper()
-    # Remove invisible bidi/control characters that may appear with RTL UIs
-    s = re.sub(r"[\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff]", "", s)
+    s = _clean_symbol_text(str(symbol or "")).strip().upper()
     if not s:
         return ""
 
@@ -110,7 +114,7 @@ def get_ticker_symbol(symbol: str) -> str:
 
 
 def _symbol_variants(symbol: str) -> List[str]:
-    raw = str(symbol or "").strip().upper()
+    raw = _clean_symbol_text(str(symbol or "")).strip().upper()
     if not raw:
         return []
 
@@ -433,7 +437,7 @@ def _extract_argaam_price_from_html(html: str) -> float:
 
 
 def fetch_price_from_argaam(symbol: str) -> float:
-    s = str(symbol or "").strip().upper()
+    s = _clean_symbol_text(str(symbol or "")).strip().upper()
     if not s:
         return 0.0
 
