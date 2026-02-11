@@ -260,6 +260,23 @@ def render_financial_dashboard_ui(symbol):
             fv = metrics.get("Fair_Value_Graham", 0)
             opinions = metrics.get("Opinions", "-")
 
+            # ---- Data Quality Gate
+            dq_pass = metrics.get("Data_Quality_Pass", None)
+            dq_score = metrics.get("Data_Quality_Score", None)
+            dq_issues = metrics.get("Data_Quality_Issues", []) or []
+
+            if dq_pass is not None:
+                if dq_pass:
+                    st.success(f"✅ بوابة جودة البيانات: ناجح (Score={dq_score})")
+                else:
+                    st.error(f"⛔ بوابة جودة البيانات: فشل (Score={dq_score}) — تم حجب الرأي الأساسي.")
+                with st.expander("تفاصيل بوابة الجودة", expanded=not bool(dq_pass)):
+                    if dq_issues:
+                        for it in dq_issues[:25]:
+                            st.write(f"- {it}")
+                    else:
+                        st.write("—")
+
             c1, c2, c3, c4 = st.columns(4)
             with c1:
                 st.metric("المتانة (F-Score)", f"{_to_num(fscore, 0):.0f}/9", str(health))
@@ -268,23 +285,13 @@ def render_financial_dashboard_ui(symbol):
             with c3:
                 st.metric("الرأي", "جاهز" if opinions and str(opinions).strip() != "-" else "—")
             with c4:
-                # ✅ Data Quality Gate (Hard block)
-                dq_pass = metrics.get('Data_Quality_Pass', None)
-                dq_score = metrics.get('Data_Quality_Score', None)
-                dq_issues = metrics.get('Data_Quality_Issues', []) or []
-                if dq_pass is not None:
-                    st.metric('بوابة الجودة', 'ناجحة ✅' if dq_pass else 'فشل ❌', f"{int(dq_score or 0)}/100")
-                    if (not dq_pass) and dq_issues:
-                        with st.expander('عرض أسباب فشل بوابة الجودة', expanded=True):
-                            for it in dq_issues[:20]:
-                                st.write(f"- {it}")
+                dconf = metrics.get("Data_Confidence", None)
+                issues = metrics.get("Data_Issues", []) or []
+                if dconf is None:
+                    st.metric("عدد الأعمدة", str(len(df.columns)))
                 else:
-                    dconf = metrics.get('Data_Confidence', None)
-                    issues = metrics.get('Data_Issues', []) or []
-                    if dconf is None:
-                        st.metric('عدد الأعمدة', str(len(df.columns)))
-                    else:
-                        st.metric('ثقة البيانات', f"{int(dconf)}/100", f"نواقص: {len(issues)}")
+                    st.metric("ثقة البيانات", f"{int(dconf)}/100", f"نواقص: {len(issues)}")
+
             st.markdown(
                 f"""
                 <div class="os-card" style="margin-top:10px;">
