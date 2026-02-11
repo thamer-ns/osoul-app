@@ -393,23 +393,35 @@ def fetch_financials_from_yahoo(symbol: str) -> dict:
 # ==============================================================
 # ✅ Unified Financial Statements (DB cache + Yahoo JSON + fallback)
 # ==============================================================
-@st.cache_data(ttl=60 * 60 * 6, show_spinner=False)  # 6 hours
+# ==============================================================
+# ✅ Unified Financial Statements (DB cache + Yahoo JSON + fallback)
+#
+# ملاحظة مهمة: بعض الواجهات كانت تمرر الرمز بصيغة "SR.1150".
+# هذا كان يؤدي لتوحيد خاطئ مثل "SR.1150.SR" وبالتالي عدم مطابقة الرموز
+# المخزنة في قاعدة البيانات (مثال: "1150.SR").
+# لذلك نُطبّع الرمز *قبل* الكاش حتى لا تتكرر مفاتيح الكاش لنفس السهم.
+# ==============================================================
+
 def get_financial_statements(symbol: str, period_type: str = "Annual", refresh: bool = False) -> pd.DataFrame:
-    """
-    يرجع DataFrame موحّد من جدول financialstatements.
+    sym = get_ticker_symbol(symbol)
+    ptype = str(period_type or "Annual").strip().title()
+    if ptype not in ("Annual", "Quarterly"):
+        ptype = "Annual"
+    return _get_financial_statements_cached(sym, ptype, bool(refresh))
+
+
+@st.cache_data(ttl=60 * 60 * 6, show_spinner=False)  # 6 hours
+def _get_financial_statements_cached(sym: str, ptype: str = "Annual", refresh: bool = False) -> pd.DataFrame:
+    """يرجع DataFrame موحّد من جدول financialstatements.
+
+    - sym/ptype هنا يفترض أنها *مطبّعة*.
     - لو refresh=False: يرجع المخزن إن وجد (سريع)
     - لو refresh=True أو لا يوجد مخزن: يحاول Yahoo JSON ثم بدائل
     """
     from .store import get_stored_financials_df, save_financial_record
     from .parsers import fetch_financials_from_argaam, fetch_financials_from_google_finance
 
-    sym = get_ticker_symbol(symbol)
-    ptype = str(period_type or "Annual").strip().title()
-    if ptype not in ("Annual", "Quarterly"):
-        ptype = "Annual"
-
     stored = get_stored_financials_df(sym, ptype)
-
     if (not refresh) and (stored is not None) and (not stored.empty):
         return stored
 
