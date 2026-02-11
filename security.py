@@ -42,26 +42,29 @@ def _validate_username(u: str):
 
 def _validate_password(p: str):
     p = (p or "")
-    if len(p) < 8:
-        return False, "كلمة المرور يجب أن تكون 8 أحرف على الأقل"
-    # حد أدنى من التعقيد: حرف + رقم (بدون تعقيد مزعج)
-    if not re.search(r"[A-Za-z]", p) or not re.search(r"\d", p):
-        return False, "كلمة المرور يجب أن تحتوي على حرف ورقم على الأقل"
+    if len(p) < 6:
+        return False, "كلمة المرور قصيرة جداً (6 أحرف على الأقل)"
     return True, ""
 
 
 def _user_exists_in_db(username: str):
     """Return True/False if known, or None if DB error."""
     try:
-        exists = db_user_exists(username)
-        if exists is not None:
-            return bool(exists)
+        v = db_user_exists(username)
+        if v is not None:
+            return bool(v)
+    except Exception:
+        pass
+
+    # Fallback (legacy / sqlite)
+    try:
         df = fetch_table("users")
         if df is None or df.empty or "username" not in df.columns:
             return False
         return (df["username"].astype(str) == str(username)).any()
     except Exception:
         return None
+
 
 
 # ============================================================
@@ -93,12 +96,24 @@ def _get_cookie_user(cookie_manager):
 # 2.5) Signed Auth Token (HMAC) for stable login across refresh
 # ============================================================
 
-def _get_auth_secret() -> str:
-    """Prefer st.secrets['AUTH_SECRET'] or env AUTH_SECRET.
+# ============================================================
+# 2.5) Signed Auth Token (HMAC) for stable login across refresh
+# ============================================================
 
-    In production, you SHOULD set a stable secret (Streamlit secrets or env).
-    If missing, we generate a per-server-run random secret (safer than a static fallback).
+# Process-level dev secret (stable across refresh, changes on server reboot).
+_DEV_AUTH_SECRET: str | None = None
+
+
+def _get_auth_secret() -> str:
+    """Return the secret used to sign auth cookies.
+
+    Order:
+    1) Streamlit Secrets: AUTH_SECRET
+    2) Environment: AUTH_SECRET
+    3) Dev fallback: random per server process (NOT a fixed constant)
     """
+    global _DEV_AUTH_SECRET
+
     try:
         s = st.secrets.get("AUTH_SECRET")  # type: ignore[attr-defined]
         if s:
@@ -110,26 +125,22 @@ def _get_auth_secret() -> str:
     if s:
         return s
 
-    # Dev fallback:
-    # نستخدم مفتاحاً ثابتاً على مستوى *السيرفر process* (وليس session_state)
-    # حتى لا تنكسر التوكن عند Refresh (Refresh ينشئ session جديدة).
-    global _PROCESS_DEV_AUTH_SECRET  # type: ignore[name-defined]
+    if _DEV_AUTH_SECRET is None:
+        _DEV_AUTH_SECRET = base64.urlsafe_b64encode(os.urandom(32)).decode("utf-8").rstrip("=")
+    return _DEV_AUTH_SECRET
+
+
+def _b64e(s: str) -> str:
+    return base64.urlsafe_b64encode((s or "").encode("utf-8")).decode("utf-8").rstrip("=")
+
+
+def _b64d(s: str) -> str | None:
     try:
-        _PROCESS_DEV_AUTH_SECRET
+        s = (s or "").strip()
+        pad = "=" * (-len(s) % 4)
+        return base64.urlsafe_b64decode(s + pad).decode("utf-8")
     except Exception:
-        _PROCESS_DEV_AUTH_SECRET = base64.urlsafe_b64encode(os.urandom(32)).decode("utf-8").rstrip("=")
-
-    # تحذير مرة واحدة لكل جلسة
-    if not st.session_state.get("_warned_missing_auth_secret"):
-        st.session_state["_warned_missing_auth_secret"] = True
-        try:
-            st.warning(
-                "تنبيه: AUTH_SECRET غير مضبوط. تم استخدام مفتاح مؤقت للتطوير (ستُسجَّل الخروج عند إعادة تشغيل السيرفر فقط)."
-            )
-        except Exception:
-            pass
-
-    return str(_PROCESS_DEV_AUTH_SECRET)
+        return None
 
 
 def _sign(payload: str) -> str:
@@ -139,28 +150,38 @@ def _sign(payload: str) -> str:
 
 
 def _make_auth_token(username: str, ttl_days: int = 30) -> str:
+    """Create a signed auth token.
+
+    v2 format: v2.<b64(username)>.<exp>.<sig>
+    - Avoids the '.'-in-username bug.
+    """
     u = (username or "").strip()
     exp = int(time.time()) + int(ttl_days * 86400)
-
-    # v2: base64-encode username to avoid delimiter issues (e.g., dot in username)
-    u_b64 = base64.urlsafe_b64encode(u.encode("utf-8")).decode("utf-8").rstrip("=")
+    u_b64 = _b64e(u)
     payload = f"v2.{u_b64}.{exp}"
     sig = _sign(payload)
     return f"{payload}.{sig}"
 
 
 def _verify_auth_token(token: str) -> str | None:
+    """Verify token and return username if valid.
+
+    Supports:
+    - v2 (preferred): v2.<b64(username)>.<exp>.<sig>
+    - legacy v1: v1.<username>.<exp>.<sig> (robustly parsed even if username contains '.')
+    """
     try:
-        parts = (token or "").split(".")
+        raw = (token or "").strip()
+        if not raw:
+            return None
+        parts = raw.split(".")
         if len(parts) < 4:
             return None
 
-        ver = parts[0]
+        ver = parts[0].strip()
 
-        # v2: v2.<u_b64>.<exp>.<sig>
-        if ver == "v2":
-            if len(parts) != 4:
-                return None
+        # v2: exact 4 parts
+        if ver == "v2" and len(parts) == 4:
             _, u_b64, exp_s, sig = parts
             exp = int(exp_s)
             if time.time() > exp:
@@ -169,13 +190,10 @@ def _verify_auth_token(token: str) -> str | None:
             expected = _sign(payload)
             if not hmac.compare_digest(expected, sig):
                 return None
-            pad = "=" * (-len(u_b64) % 4)
-            return base64.urlsafe_b64decode(u_b64 + pad).decode("utf-8")
+            return _b64d(u_b64)
 
-        # v1 (legacy): v1.<username_with_possible_dots>.<exp>.<sig>
+        # v1 legacy: parse from the end to tolerate '.' in username
         if ver == "v1":
-            if len(parts) < 4:
-                return None
             sig = parts[-1]
             exp_s = parts[-2]
             u = ".".join(parts[1:-2])
@@ -189,7 +207,6 @@ def _verify_auth_token(token: str) -> str | None:
         return None
     except Exception:
         return None
-
 
 def _bootstrap_auth_from_cookie():
     """
@@ -225,15 +242,18 @@ def _bootstrap_auth_from_cookie():
     cookie_user = _norm(_get_cookie_user(cm))
 
     # ✅ أولاً: توكن موقّع (لا يعتمد على DB)
-    # ملاحظة: النسخ الجديدة تكتب osoul_auth_v2 بينما بعض النسخ القديمة تكتب osoul_auth
+    # نقرأ v2 أولاً ثم نعود للقديم v1 للتوافق
     cookie_token = None
-    for key in ("osoul_auth_v2", "osoul_auth"):
+    try:
+        cookie_token = _norm(cm.get("osoul_auth_v2"))
+    except Exception:
+        cookie_token = None
+
+    if not cookie_token:
         try:
-            cookie_token = _norm(cm.get(key))
+            cookie_token = _norm(cm.get("osoul_auth"))
         except Exception:
             cookie_token = None
-        if cookie_token:
-            break
 
     if cookie_token:
         u = _verify_auth_token(cookie_token)
@@ -263,12 +283,8 @@ def _bootstrap_auth_from_cookie():
             return
 
     # إذا الكوكي غير جاهزة بعد (None/"") أعط محاولة rerun إضافية (بحد أقصى مرتين)
-    if (cookie_token is None and cookie_user is None) and tries < 5:
+    if (cookie_token is None and cookie_user is None) and tries < 2:
         s["_auth_bootstrap_tries"] = tries + 1
-        try:
-            time.sleep(0.12)
-        except Exception:
-            pass
         st.rerun()
 
     # بعدها نثبت أنها bootstrapped حتى لا نعيد نفس الدوامة
@@ -365,13 +381,7 @@ def login_system():
                         _register_login_attempt()
                         return False
 
-                    try:
-                        _ok = db_verify_user(u, p)
-                    except RuntimeError:
-                        st.error("تعذر الاتصال بقاعدة البيانات الآن. جرّب Reboot app أو تحقق من DATABASE_URL/psycopg2.")
-                        return False
-
-                    if _ok:
+                    if db_verify_user(u, p):
                         st.session_state["username"] = u
                         st.session_state["authenticated"] = True
 
@@ -385,19 +395,13 @@ def login_system():
                             token = _make_auth_token(u)
                             cm = get_manager()
                             cm.set("osoul_auth_v2", token, expires_at=expires)
-                            # ✅ توافق رجعي + ضمان bootstrap حتى لو نسخة قديمة تقرأ osoul_auth
+                            # توافق رجعي: الكوكي القديمة
                             cm.set("osoul_auth", token, expires_at=expires)
-                            # legacy cookies kept for reading only
-                            # توافق رجعي: الاسم القديم
                             cm.set("osoul_user", u, expires_at=expires)
                         except Exception:
                             pass
 
                         st.success("تم الدخول")
-                        try:
-                            time.sleep(0.25)
-                        except Exception:
-                            pass
                         st.rerun()
                     else:
                         st.error("خطأ في البيانات")
@@ -446,7 +450,7 @@ def logout():
     try:
         get_manager().delete("osoul_user")
         get_manager().delete("osoul_auth_v2")
-        get_manager().delete("osoul_auth")  # legacy
+        get_manager().delete("osoul_auth")
     except Exception:
         pass
 
