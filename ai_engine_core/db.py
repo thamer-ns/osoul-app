@@ -108,6 +108,58 @@ def _ensure_user_rules_table() -> None:
         )
 
 
+def _try_add_column(table: str, col: str, col_type_sqlite: str, col_type_pg: str):
+    """Best-effort add column if missing (SQLite/Postgres)."""
+    kind = _get_db_kind()
+    if (kind or "").lower() == "postgres":
+        _try_exec(f'ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {col_type_pg};')
+    else:
+        # SQLite has no IF NOT EXISTS for columns; ignore errors
+        _try_exec(f'ALTER TABLE {table} ADD COLUMN {col} {col_type_sqlite};')
+
+def _ensure_ai_outcomes_table() -> None:
+    """Create ai_outcomes table (multi-horizon + risk outcomes)."""
+    kind = _get_db_kind()
+    if (kind or "").lower() == "postgres":
+        _try_exec(
+            """
+            CREATE TABLE IF NOT EXISTS ai_outcomes (
+                id TEXT PRIMARY KEY,
+                signal_id TEXT,
+                horizon_days INTEGER,
+                return_pct DOUBLE PRECISION,
+                win INTEGER,
+                exit_reason TEXT,
+                hit_tp INTEGER,
+                hit_sl INTEGER,
+                max_dd_pct DOUBLE PRECISION,
+                max_ru_pct DOUBLE PRECISION,
+                exit_price DOUBLE PRECISION,
+                exit_at TIMESTAMP,
+                context_json JSONB
+            );
+            """
+        )
+    else:
+        _try_exec(
+            """
+            CREATE TABLE IF NOT EXISTS ai_outcomes (
+                id TEXT PRIMARY KEY,
+                signal_id TEXT,
+                horizon_days INTEGER,
+                return_pct REAL,
+                win INTEGER,
+                exit_reason TEXT,
+                hit_tp INTEGER,
+                hit_sl INTEGER,
+                max_dd_pct REAL,
+                max_ru_pct REAL,
+                exit_price REAL,
+                exit_at TEXT,
+                context_json TEXT
+            );
+            """
+        )
 def _ensure_ai_tables() -> None:
     """Create ai_signals + ai_weights tables used by logging/learning."""
     kind = _get_db_kind()
@@ -169,6 +221,20 @@ def _ensure_ai_tables() -> None:
         )
 
 # ============================================================
+    # ✅ Add new columns for context-aware learning (best-effort on existing DBs)
+    try:
+        _try_add_column("ai_signals", "market_trend", "TEXT", "TEXT")
+        _try_add_column("ai_signals", "regime", "TEXT", "TEXT")
+        _try_add_column("ai_signals", "ctx_key", "TEXT", "TEXT")
+        _try_add_column("ai_signals", "horizons_json", "TEXT", "JSONB")
+    except Exception:
+        pass
+
+    # ✅ Multi-horizon outcomes table
+    try:
+        _ensure_ai_outcomes_table()
+    except Exception:
+        pass
 # Advanced indicators storage (optional caching)
 # ============================================================
 
