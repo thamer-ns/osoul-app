@@ -13,8 +13,18 @@ import numpy as np
 # --- Unicode cleanup (RTL/LTR marks) ---------------------------------
 _BIDI_STRIP_RE = re.compile(r"[\u200e\u200f\u202a-\u202e\u2066-\u2069]")
 def _clean_symbol_text(s: str) -> str:
-    # Remove invisible direction marks that often appear in RTL UIs
-    return _BIDI_STRIP_RE.sub("", s or "")
+    """Normalize symbol text from RTL UIs / copy-paste.
+
+    - removes invisible direction marks
+    - normalizes several dot-like separators to '.'
+    - strips whitespace
+    """
+    s = str(s or "")
+    s = _BIDI_STRIP_RE.sub("", s)
+    # normalize dot variants (Arabic decimal separator, fullwidth, middle-dot, etc.)
+    for ch in ("٫", "·", "•", "。", "．", "٬"):
+        s = s.replace(ch, ".")
+    return s.strip()
 
 # ✅ Optional web deps (avoid crash in some deployments)
 try:
