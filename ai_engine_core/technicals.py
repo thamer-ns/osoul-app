@@ -411,14 +411,13 @@ def _analyze_financial_golden_rules(symbol):
         metrics = get_advanced_fundamental_ratios(symbol)
         if not isinstance(metrics, dict):
             metrics = {}
+
         # Hard block if Data Quality Gate fails
         if metrics.get("Rating") == "محجوب" or (metrics.get("Data_Quality_Pass") is False):
             obs = []
             msg = metrics.get("Opinions") or "⛔ تم حجب التحليل الأساسي بسبب جودة البيانات."
             obs.append(str(msg))
-            feats = {
-                "fund_data_quality_block": 1,
-            }
+            feats = {"fund_data_quality_block": 1}
             return 0, obs, feats
     except Exception:
         return 0, [], {}
