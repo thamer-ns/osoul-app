@@ -47,6 +47,7 @@ except Exception as e:
     bt_import_error = repr(e)
 
 # 3) Financial Analysis
+financial_import_error = None
 try:
     from financial_analysis import (
         get_thesis, save_thesis,
@@ -59,6 +60,7 @@ try:
         diagnose_yahoo_quote_summary,
     )
 except Exception:
+    financial_import_error = traceback.format_exc()
     def get_thesis(s): return None
     def save_thesis(s, t, tg, r): pass
     def get_stored_financials_df(s, p): return pd.DataFrame()
@@ -75,6 +77,9 @@ except Exception:
     def get_last_yahoo_diagnostics(): return {}
     def diagnose_yahoo_quote_summary(s): return {}
     def get_fundamental_ratios(s): return {}
+
+def get_financial_import_error() -> str | None:
+    return financial_import_error
 
 # 4) Classical Analysis
 try:
