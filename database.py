@@ -42,20 +42,15 @@ def _get_db_url() -> str:
 
 
 def get_connection_pool():
-    """Get or create a Postgres connection pool, if configured.
-
-    Notes:
-    - إذا كان DATABASE_URL مهيأ كـ Postgres، لا نرجع لِـ SQLite بصمت عند فشل الاتصال.
-      هذا كان يسبب: جداول (مثل users) تُقرأ من SQLite الفارغ => "خطأ في البيانات" حتى لو البيانات صحيحة.
-    """
+    """Get or create a Postgres connection pool, if configured."""
     global _POOL, _POOL_LAST_ERR, _POOL_LAST_OK, _POOL_LAST_CHECK
 
+    # rate-limit pool init checks
     now = time.time()
-    # rate-limit pool init checks (خفيف لتجنب ضغط الاتصال)
     if _POOL is not None and (now - _POOL_LAST_CHECK) < 2:
         return _POOL
-    _POOL_LAST_CHECK = now
 
+    _POOL_LAST_CHECK = now
     db_url = _get_db_url()
 
     if not db_url:
@@ -65,7 +60,7 @@ def get_connection_pool():
 
     # If url isn't postgres, we won't create pool
     if not _is_postgres_url(db_url):
-        _POOL_LAST_ERR = "DATABASE_URL is not a Postgres URL"
+        _POOL_LAST_ERR = "DATABASE_URL is not a Postgres URL (expected postgresql://...)"
         _POOL_LAST_OK = False
         return None
 
@@ -88,27 +83,22 @@ def get_connection_pool():
 
 
 def get_connection():
-    """Get a DB connection.
-
-    - إذا كان DATABASE_URL مهيأ كـ Postgres: نحاول Postgres. إذا فشل => نرفع خطأ واضح.
-      (لا fallback إلى SQLite بصمت)
-    - إذا لم يكن هناك DATABASE_URL Postgres: نستخدم SQLite fallback.
     """
-    db_url = _get_db_url()
+    Get a DB connection:
+    - Postgres if DATABASE_URL is set and valid
+    - else SQLite fallback
+    """
     pool = get_connection_pool()
-
-    # Postgres configured path
-    if db_url and _is_postgres_url(db_url):
-        if pool is None:
-            raise RuntimeError(f"Postgres configured but connection pool is unavailable: {_POOL_LAST_ERR or 'unknown error'}")
+    if pool is not None:
         try:
             return pool.getconn(), "postgres"
-        except Exception as e:
-            raise RuntimeError(f"Failed to acquire Postgres connection from pool: {e}") from e
+        except Exception:
+            pass
 
-    # SQLite fallback (local/dev)
+    # SQLite fallback
     try:
         import sqlite3
+
         conn = sqlite3.connect(_SQLITE_PATH, check_same_thread=False)
         return conn, "sqlite"
     except Exception as e:
@@ -184,23 +174,35 @@ def fetch_table(t: str) -> pd.DataFrame:
     finally:
         put_connection(conn, kind)
 
-
 def fetch_df(query: str, params: Optional[Tuple[Any, ...]] = None) -> pd.DataFrame:
-    """Fetch a DataFrame using a SQL query.
-
-    لماذا؟
-    - جلب جداول كبيرة كاملة ثم فلترتها في Pandas يسبب بطء/ذاكرة وقد يرجع DataFrame فاضي في بيئات Streamlit.
-    - نحتاج استعلامات مفلترة (مثل financialstatements) حتى تظهر البيانات دائماً.
-
-    ملاحظة: نستخدم pd.read_sql_query مع params.
-    """
+    """Fetch a dataframe using a parameterized query (safe + faster than fetch_table for large tables)."""
     conn, kind = get_connection()
     try:
-        return pd.read_sql_query(query, conn, params=params or ())
+        return pd.read_sql(query, conn, params=params or ())
     except Exception:
         return pd.DataFrame()
     finally:
         put_connection(conn, kind)
+
+
+def db_user_exists(username: str) -> Optional[bool]:
+    """Return True/False if known, or None if DB error."""
+    u = (username or "").strip()
+    if not u:
+        return False
+    try:
+        df = fetch_df("SELECT 1 AS x FROM users WHERE username = %s LIMIT 1", (u,))
+        if df is None:
+            return None
+        return not df.empty
+    except Exception:
+        # sqlite param placeholder differs, attempt fallback
+        try:
+            df = fetch_df("SELECT 1 AS x FROM users WHERE username = ? LIMIT 1", (u,))
+            return not df.empty
+        except Exception:
+            return None
+
 
 
 def table_exists(table_name: str) -> bool:
@@ -419,11 +421,7 @@ def db_create_user(username: str, password: str, email: str = "") -> bool:
 
 def db_verify_user(username: str, password: str) -> bool:
     ensure_users_table()
-    try:
-        conn, kind = get_connection()
-    except RuntimeError as e:
-        # لا نُرجع False (خطأ بيانات) عندما تكون المشكلة اتصال قاعدة البيانات
-        raise
+    conn, kind = get_connection()
     try:
         cur = conn.cursor()
         cols = _users_columns()
