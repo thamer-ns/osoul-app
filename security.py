@@ -45,16 +45,23 @@ def _validate_password(p: str):
 
 
 def _user_exists_in_db(username: str):
-    """Return True/False if we can check the DB, or None if DB is temporarily unavailable."""
+    """Check if user exists in DB.
+
+    Returns:
+        True  -> user exists
+        False -> user does not exist (definitive)
+        None  -> unknown (DB unavailable / error)
+    """
     try:
         df = fetch_table("users")
         if df is None:
             return None
         if df.empty or "username" not in df.columns:
-            # Table missing/empty is a real negative only if DB responded
+            # DB reachable, table exists but empty/malformed => definitive False
             return False
-        return (df["username"].astype(str) == str(username)).any()
+        return bool((df["username"].astype(str) == str(username)).any())
     except Exception:
+        # Don't force logout on transient DB failures
         return None
 
 
@@ -110,20 +117,25 @@ def _bootstrap_auth_from_cookie():
     # إذا الكوكي موجودة
     if cookie_user:
         exists = _user_exists_in_db(cookie_user)
-        # ✅ إذا قاعدة البيانات غير متاحة مؤقتاً (exists=None) لا نحذف الكوكي ولا نجبر المستخدم على تسجيل دخول متكرر.
-        if exists is True or exists is None:
+
+        if exists is True:
+            # ✅ مستخدم موجود
             s["username"] = cookie_user
             s["authenticated"] = True
-            if exists is None:
-                s["_auth_unverified"] = True
             s["_auth_bootstrapped"] = True
             return
 
-        # exists == False -> كوكي قديمة/غير صالحة
-        try:
-            cookie_manager.delete("osoul_user")
-        except Exception:
-            pass
+        if exists is False:
+            # ✅ كوكي قديمة/غير صالحة: احذفها
+            try:
+                cookie_manager.delete("osoul_user")
+            except Exception:
+                pass
+        else:
+            # ⚠️ DB غير متاحة/خطأ مؤقت: لا تحذف الكوكي ولا تفصل المستخدم قسرياً
+            # نترك صفحة الدخول تظهر، لكن بدون مسح الكوكي حتى تنجح DB لاحقاً.
+            s["_auth_bootstrapped"] = True
+            return
 
     # إذا ما فيه كوكي (أو ما جاهزة)
     # نعطي محاولة rerun واحدة فقط (لتهيئة الكوكي) ثم نوقف
@@ -227,19 +239,16 @@ def login_system():
                     if db_verify_user(u, p):
                         st.session_state["username"] = u
                         st.session_state["authenticated"] = True
-                        st.session_state["_auth_unverified"] = False
 
-                        # ✅ تذكرني:
-                        # - إذا مفعّل: كوكي دائمة 30 يوم
-                        # - إذا غير مفعّل: كوكي جلسة (تنتهي عند إغلاق المتصفح)
+                        # ✅ احفظ جلسة الدخول:
+                        # - إذا "تذكرني" ✅ => كوكي 30 يوم
+                        # - إذا "تذكرني" ❌ => Session cookie (تنتهي عند إغلاق المتصفح)
+                        expires = None
+                        if rem:
+                            expires = datetime.datetime.now() + datetime.timedelta(days=30)
+
                         try:
-                            cm = get_manager()
-                            if rem:
-                                expires = datetime.datetime.now() + datetime.timedelta(days=30)
-                                cm.set("osoul_user", u, expires_at=expires)
-                            else:
-                                # بعض البيئات تحتاج set بدون expires_at لاعتبارها session cookie
-                                cm.set("osoul_user", u)
+                            get_manager().set("osoul_user", u, expires_at=expires)
                         except Exception:
                             pass
 
@@ -302,7 +311,6 @@ def logout():
         "_login_locked_until",
         "_auth_bootstrapped",
         "_auth_bootstrap_tries",
-        "_auth_unverified",
     ]:
         if k in st.session_state:
             del st.session_state[k]
