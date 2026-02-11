@@ -52,8 +52,11 @@ try:
         get_thesis, save_thesis,
         FinancialParser, save_financial_record,
         get_stored_financials_df, get_advanced_fundamental_ratios,
-        sync_auto_yahoo, get_fundamental_ratios,
+        sync_auto_yahoo, sync_full_yahoo,
+        get_fundamental_ratios,
         get_financial_statements,
+        get_last_yahoo_diagnostics,
+        diagnose_yahoo_quote_summary,
     )
 except Exception:
     def get_thesis(s): return None
@@ -68,6 +71,9 @@ except Exception:
 
     def save_financial_record(*args, **kwargs): return False
     def sync_auto_yahoo(s): return False, "Module Missing"
+    def sync_full_yahoo(*args, **kwargs): return False, "Module Missing"
+    def get_last_yahoo_diagnostics(): return {}
+    def diagnose_yahoo_quote_summary(s): return {}
     def get_fundamental_ratios(s): return {}
 
 # 4) Classical Analysis
