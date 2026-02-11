@@ -3,6 +3,8 @@ import streamlit as st
 import pandas as pd
 from datetime import date
 
+from market_data import get_ticker_symbol
+
 from views.shared import (
     FinancialParser,
     save_financial_record,
@@ -157,6 +159,9 @@ def render_financial_dashboard_ui(symbol):
     """
     tab_dashboard, tab_data_mgmt = st.tabs(["📊 لوحة التحليل المالي", "⚙️ إدارة البيانات"])
 
+    canon_sym = get_ticker_symbol(symbol)
+
+
     # =====================================================
     # Dashboard
     # =====================================================
@@ -184,8 +189,8 @@ def render_financial_dashboard_ui(symbol):
                 )
         except Exception:
             pass
-        df_annual = get_financial_statements(symbol, "Annual")
-        df_quarter = get_financial_statements(symbol, "Quarterly")
+        df_annual = get_financial_statements(canon_sym or symbol, "Annual")
+        df_quarter = get_financial_statements(canon_sym or symbol, "Quarterly")
 
         st.markdown("### 💰 لوحة التحليل المالي")
         ptype = st.radio(
@@ -201,6 +206,8 @@ def render_financial_dashboard_ui(symbol):
         _kv_card(
             "🧪 فحص البيانات",
             [
+                ("الرمز", str(symbol)),
+                ("الرمز الموحّد", str(canon_sym) if canon_sym else '—'),
                 ("الفترة", ptype),
                 ("عدد السجلات", str(int(len(df)) if isinstance(df, pd.DataFrame) else 0)),
                 ("حالة البيانات", "متوفرة ✅" if (isinstance(df, pd.DataFrame) and not df.empty) else "غير متوفرة ⚠️"),
@@ -217,8 +224,8 @@ def render_financial_dashboard_ui(symbol):
                 st.info("وحدة Data Quality غير متاحة في هذه النسخة.")
             else:
                 try:
-                    q_a = assess_fundamental_quality(symbol, period_type="Annual")
-                    q_q = assess_fundamental_quality(symbol, period_type="Quarterly")
+                    q_a = assess_fundamental_quality(canon_sym or symbol, period_type="Annual")
+                    q_q = assess_fundamental_quality(canon_sym or symbol, period_type="Quarterly")
 
                     def _render_q(title, q):
                         passed = bool(q.get("pass"))
@@ -251,7 +258,7 @@ def render_financial_dashboard_ui(symbol):
             # ---- Metrics
             metrics = {}
             try:
-                metrics = get_advanced_fundamental_ratios(symbol) or {}
+                metrics = get_advanced_fundamental_ratios(canon_sym or symbol) or {}
             except Exception:
                 metrics = {}
 
@@ -384,7 +391,7 @@ def render_financial_dashboard_ui(symbol):
                     st.warning("ميزة القوائم الكاملة غير متاحة في هذه النسخة.")
                 else:
                     with st.spinner("جاري مزامنة القوائم الكاملة (سنوي).."):
-                        ok, msg = sync_full_yahoo(symbol, period="annual")
+                        ok, msg = sync_full_yahoo(canon_sym or symbol, period="annual")
                     (st.success(msg) if ok else st.error(msg))
                     if ok:
                         st.rerun()
@@ -394,7 +401,7 @@ def render_financial_dashboard_ui(symbol):
                     st.warning("ميزة القوائم الكاملة غير متاحة في هذه النسخة.")
                 else:
                     with st.spinner("جاري مزامنة القوائم الكاملة (ربع سنوي).."):
-                        ok, msg = sync_full_yahoo(symbol, period="quarterly")
+                        ok, msg = sync_full_yahoo(canon_sym or symbol, period="quarterly")
                     (st.success(msg) if ok else st.error(msg))
                     if ok:
                         st.rerun()
@@ -411,7 +418,7 @@ def render_financial_dashboard_ui(symbol):
                     st.json(diag)
             if st.button("بدء المزامنة الآلية", key=f"sync_yahoo_{_sym_key(symbol)}", type="primary"):
                 with st.spinner("جاري الاتصال..."):
-                    ok, msg = sync_auto_yahoo(symbol)
+                    ok, msg = sync_auto_yahoo(canon_sym or symbol)
                 if ok:
                     st.success(msg)
                     st.rerun()
@@ -487,7 +494,7 @@ def render_financial_dashboard_ui(symbol):
                         "total_equity": tot_equity,
                         "long_term_debt": lt_debt,
                     }
-                    if save_financial_record(symbol, str(f_date), data, f_type, "Manual_Full"):
+                    if save_financial_record(canon_sym or symbol, str(f_date), data, f_type, "Manual_Full"):
                         st.success("تم الحفظ بنجاح!")
                         st.rerun()
                     else:
