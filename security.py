@@ -263,8 +263,12 @@ def _bootstrap_auth_from_cookie():
             return
 
     # إذا الكوكي غير جاهزة بعد (None/"") أعط محاولة rerun إضافية (بحد أقصى مرتين)
-    if (cookie_token is None and cookie_user is None) and tries < 2:
+    if (cookie_token is None and cookie_user is None) and tries < 5:
         s["_auth_bootstrap_tries"] = tries + 1
+        try:
+            time.sleep(0.12)
+        except Exception:
+            pass
         st.rerun()
 
     # بعدها نثبت أنها bootstrapped حتى لا نعيد نفس الدوامة
@@ -361,7 +365,13 @@ def login_system():
                         _register_login_attempt()
                         return False
 
-                    if db_verify_user(u, p):
+                    try:
+                        _ok = db_verify_user(u, p)
+                    except RuntimeError:
+                        st.error("تعذر الاتصال بقاعدة البيانات الآن. جرّب Reboot app أو تحقق من DATABASE_URL/psycopg2.")
+                        return False
+
+                    if _ok:
                         st.session_state["username"] = u
                         st.session_state["authenticated"] = True
 
@@ -384,6 +394,10 @@ def login_system():
                             pass
 
                         st.success("تم الدخول")
+                        try:
+                            time.sleep(0.25)
+                        except Exception:
+                            pass
                         st.rerun()
                     else:
                         st.error("خطأ في البيانات")
