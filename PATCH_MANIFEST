@@ -1,0 +1,18 @@
+# Patch manifest
+PATCH_MANIFEST
+## Files modified / added by this patch
+- financial_analysis/sync.py : Fix IndentationError + removed undefined variables inside fallback.
+- .gitignore : Ignore `.streamlit/secrets.toml` and `.env*`.
+- .streamlit/secrets.example.toml : Template to avoid leaking secrets.
+- SECURITY_NOTE.md : Security guidance.
+- legacy/README.md : Notes for legacy folder.
+
+## Files moved (you should delete the old copies if still present)
+Moved into `legacy/`:
+- ai_engine_old_v.py
+- financial_analysis_old_v.py
+- views_legacy.py
+
+## Action required (manual)
+- Remove `.streamlit/secrets.toml` from any repo history / shared archives.
+- Rotate DB password / keys if it was ever shared.
