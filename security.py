@@ -103,8 +103,7 @@ def _bootstrap_auth_from_cookie():
     if s.get("_auth_bootstrapped") is True:
         return
 
-    tries = int(s.get("_auth_bootstrap_tries",
-        "_auth_unverified", 0))
+    tries = int(s.get("_auth_bootstrap_tries", 0))
     cookie_manager = get_manager()
     cookie_user = _get_cookie_user(cookie_manager)
 
