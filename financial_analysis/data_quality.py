@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 
 from osoli_logging import log_exception
-from .store import fetch_full_statement_records, has_full_statement
+from .store import fetch_full_statement_records, has_full_statement, get_stored_financials_df
 from market_data import get_ticker_symbol
 
 
@@ -110,13 +110,45 @@ def assess_fundamental_quality(
         have_income = have_cash = have_balance = False
 
     if not (have_income or have_cash or have_balance):
+        # Fallback to summary table (financialstatements) if full statements are not stored
+        try:
+            sdf = get_stored_financials_df(sym, ptype)
+        except Exception:
+            sdf = pd.DataFrame()
+
+        if sdf is not None and not sdf.empty:
+            # Basic coverage check on required columns
+            req = ["revenue", "net_income", "total_assets", "total_liabilities", "total_equity", "operating_cash_flow"]
+            missing_cols = [c for c in req if c not in sdf.columns]
+            score = 100
+            issues2 = []
+            if missing_cols:
+                issues2.append(f"نقص أعمدة أساسية في جدول الملخص: {', '.join(missing_cols)}")
+                score -= min(60, 10 * len(missing_cols))
+            # last row completeness
+            try:
+                last = sdf.sort_values("date").iloc[-1]
+                miss = [c for c in req if pd.isna(last.get(c, None)) or float(last.get(c, 0) or 0) == 0.0]
+                if miss:
+                    issues2.append(f"نقص/صفر في أحدث فترة (ملخص): {', '.join(miss)}")
+                    score -= min(50, 8 * len(miss))
+            except Exception:
+                pass
+            score = int(max(0, min(100, round(score))))
+            passed = score >= 55
+            return {
+                "score": score,
+                "pass": passed,
+                "issues": issues2[:25] if issues2 else ["بيانات الملخص متوفرة لكن القوائم الكاملة غير مخزنة."],
+                "metrics": {"symbol": sym, "period_type": ptype, "scale": sc, "fallback": "summary"},
+            }
+
         return {
             "score": 0,
             "pass": False,
-            "issues": ["لا توجد بيانات قوائم مالية مخزّنة لهذا الرمز (income/cashflow/balance)."],
+            "issues": ["لا توجد بيانات قوائم مالية مخزّنة لهذا الرمز (income/cashflow/balance) ولا بيانات ملخص."],
             "metrics": {"symbol": sym, "period_type": ptype, "scale": sc},
         }
-
     # fetch
     income = cash = balance = pd.DataFrame()
     try:
@@ -155,12 +187,21 @@ def assess_fundamental_quality(
     ocf_name, ocf = _pick_line_item(cash, ["OperatingCashFlow", "Operating Cash Flow", "NetCashProvidedByOperatingActivities"])
     fcf_name, fcf = _pick_line_item(cash, ["FreeCashFlow", "Free Cash Flow", "FreeCashflow"])
 
+
+    # Balance sheet items (for consistency)
+    assets_name, assets = _pick_line_item(balance, ["TotalAssets", "Total Assets"])
+    liab_name, liab = _pick_line_item(balance, ["TotalLiabilitiesNetMinorityInterest", "Total Liabilities", "TotalLiabilities"])
+    eq_name, eq = _pick_line_item(balance, ["TotalEquityGrossMinorityInterest", "Total Stockholder Equity", "Stockholders Equity", "TotalEquity"])
+
     found.update({
         "revenue_item": rev_name,
         "net_income_item": ni_name,
         "eps_item": eps_name,
         "operating_cf_item": ocf_name,
         "free_cf_item": fcf_name,
+        "assets_item": assets_name,
+        "liabilities_item": liab_name,
+        "equity_item": eq_name,
     })
 
     # compute metrics for each series
@@ -170,6 +211,9 @@ def assess_fundamental_quality(
         "eps": eps,
         "operating_cf": ocf,
         "free_cf": fcf,
+        "assets": assets,
+        "liabilities": liab,
+        "equity": eq,
     }
 
     for k, s in series_map.items():
@@ -192,7 +236,34 @@ def assess_fundamental_quality(
         score -= min(12, max(0, j100 - j300) * 2)
         score -= min(10, flips * 2)
 
-    # cross-consistency: net income vs operating CF
+    
+    # cross-consistency: Assets ≈ Liabilities + Equity (Balance sheet sanity)
+    try:
+        if (assets is not None) and (liab is not None) and (eq is not None):
+            a2 = assets.dropna()
+            l2 = liab.dropna()
+            e2 = eq.dropna()
+            common = a2.index.intersection(l2.index).intersection(e2.index)
+            if len(common) >= 2:
+                # check last 3 periods
+                common = list(common)[-3:]
+                bad = 0
+                for d in common:
+                    A = float(a2.loc[d])
+                    L = float(l2.loc[d])
+                    E = float(e2.loc[d])
+                    if A == 0:
+                        continue
+                    gap = abs(A - (L + E)) / abs(A)
+                    if gap > 0.15:
+                        bad += 1
+                if bad >= 1:
+                    issues.append("عدم اتساق محتمل في الميزانية: الأصول لا تساوي (الالتزامات + حقوق الملكية) ضمن هامش مقبول.")
+                    score -= min(15, bad * 7)
+    except Exception:
+        pass
+
+# cross-consistency: net income vs operating CF
     try:
         if (ni is not None) and (ocf is not None):
             ni2 = ni.dropna()
