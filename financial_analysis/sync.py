@@ -160,9 +160,6 @@ def sync_full_yahoo(symbol: str, period: str = "both") -> Tuple[bool, str]:
 
 
 
-" | ".join(notes)
-
-
 # ==============================================================
 # ⚡ Yahoo Sync (used by views.py)
 # ==============================================================
