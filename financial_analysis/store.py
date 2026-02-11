@@ -4,7 +4,7 @@ import json
 from typing import Any, Dict, Optional
 
 from database import execute_query, fetch_table
-from market_data import get_ticker_symbol
+from market_data import get_ticker_symbol, _symbol_variants
 from .utils import _safe_float, _safe_date_str
 
 
@@ -89,7 +89,9 @@ def get_stored_financials_df(symbol, period_type="Annual"):
     ✅ يرجع DataFrame من financialstatements
     """
     try:
+        raw_symbol = symbol
         symbol = get_ticker_symbol(symbol)
+        variants = _symbol_variants(raw_symbol)
         period_type = str(period_type or "Annual").strip().title()
 
         df = fetch_table("financialstatements")
@@ -97,7 +99,7 @@ def get_stored_financials_df(symbol, period_type="Annual"):
             return pd.DataFrame()
 
         if "symbol" in df.columns:
-            df = df[df["symbol"].astype(str) == symbol]
+            df = df[df["symbol"].astype(str).isin([str(v) for v in variants if v])]
         if "period_type" in df.columns:
             df = df[df["period_type"].astype(str).str.title() == period_type]
 
