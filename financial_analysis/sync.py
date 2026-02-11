@@ -2,6 +2,7 @@
 from typing import Tuple, List
 
 import yfinance as yf
+import pandas as pd
 
 from market_data import get_ticker_symbol
 from .store import save_financial_record
@@ -46,7 +47,120 @@ def sync_auto_multi_sources(symbol: str, prefer: str = "yahoo") -> Tuple[bool, s
 
     if saved > 0:
         return True, f"تم حفظ {saved} سجل من بدائل Yahoo. " + " | ".join(notes)
-    return False, "لم تنجح البدائل. " + " | ".join(notes)
+    return False, "لم تنجح البدائل. " + 
+# ==============================================================
+# 🧾 Full Statements Helpers (Income/Balance/Cashflow)
+# ==============================================================
+def _df_to_dict_for_date(df, d) -> dict:
+    """Convert a yfinance statement DataFrame column into a dict of {line_item: value}."""
+    out = {}
+    if df is None or getattr(df, "empty", True):
+        return out
+    try:
+        if d not in df.columns:
+            return out
+        col = df[d]
+        # df index are line item names
+        for k, v in col.items():
+            try:
+                if pd.isna(v):
+                    continue
+            except Exception:
+                pass
+            try:
+                out[str(k)] = float(v)
+            except Exception:
+                try:
+                    out[str(k)] = float(_safe_float(v))
+                except Exception:
+                    continue
+    except Exception:
+        return {}
+    return out
+
+
+def _save_full_pack(symbol: str, fin, bs, cf, p_type: str, source: str = "yfinance"):
+    """Save full statements raw + thousands for available dates."""
+    symbol = get_ticker_symbol(symbol)
+    try:
+        fin_cols = set(getattr(fin, "columns", []) or [])
+        bs_cols = set(getattr(bs, "columns", []) or [])
+        cf_cols = set(getattr(cf, "columns", []) or [])
+        dates = sorted(list(set(fin_cols) | set(bs_cols) | set(cf_cols)), reverse=True)[:8]
+    except Exception:
+        dates = []
+
+    saved = 0
+    for d in dates:
+        d_str = _safe_date_str(d)
+        inc = _df_to_dict_for_date(fin, d)
+        bal = _df_to_dict_for_date(bs, d)
+        cas = _df_to_dict_for_date(cf, d)
+
+        # raw
+        if inc:
+            if save_full_statement_record(symbol, "income", p_type, d_str, inc, scale="raw", source=source):
+                saved += 1
+            # thousands
+            inc_k = {k: (_safe_float(v) / 1000.0) for k, v in inc.items()}
+            save_full_statement_record(symbol, "income", p_type, d_str, inc_k, scale="thousands", source=source)
+
+        if bal:
+            if save_full_statement_record(symbol, "balance", p_type, d_str, bal, scale="raw", source=source):
+                saved += 1
+            bal_k = {k: (_safe_float(v) / 1000.0) for k, v in bal.items()}
+            save_full_statement_record(symbol, "balance", p_type, d_str, bal_k, scale="thousands", source=source)
+
+        if cas:
+            if save_full_statement_record(symbol, "cashflow", p_type, d_str, cas, scale="raw", source=source):
+                saved += 1
+            cas_k = {k: (_safe_float(v) / 1000.0) for k, v in cas.items()}
+            save_full_statement_record(symbol, "cashflow", p_type, d_str, cas_k, scale="thousands", source=source)
+
+    return saved
+
+
+def sync_full_yahoo(symbol: str, period: str = "both") -> Tuple[bool, str]:
+    """Sync and store *full* statements (income/balance/cashflow) from yfinance.
+
+    period:
+      - "annual" | "quarterly" | "both"
+
+    Saves RAW + THOUSANDS scales to financialstatements_raw.
+    """
+    symbol = get_ticker_symbol(symbol)
+    ensure_financialstatements_raw_table()
+
+    p = str(period or "both").strip().lower()
+    if p not in ("annual", "quarterly", "both"):
+        p = "both"
+
+    try:
+        t = yf.Ticker(symbol)
+        saved = 0
+
+        if p in ("annual", "both"):
+            saved += _save_full_pack(symbol, t.financials, t.balance_sheet, t.cashflow, "Annual", source="yfinance")
+        if p in ("quarterly", "both"):
+            saved += _save_full_pack(
+                symbol,
+                t.quarterly_financials,
+                t.quarterly_balance_sheet,
+                t.quarterly_cashflow,
+                "Quarterly",
+                source="yfinance",
+            )
+
+        if saved <= 0:
+            return False, "لم يتم حفظ أي قوائم كاملة من yfinance (قد تكون غير متاحة أو محجوبة)."
+        label = "سنوي" if p == "annual" else ("ربع سنوي" if p == "quarterly" else "سنوي+ربع سنوي")
+        return True, f"تم حفظ {saved} سجلات قوائم كاملة (RAW+Thousands) — {label}."
+    except Exception as e:
+        return False, f"فشل مزامنة القوائم الكاملة: {e}"
+
+
+
+" | ".join(notes)
 
 
 # ==============================================================
