@@ -1,4 +1,3 @@
-from .yahoo_data import fetch_full_financial_statements_yahoo_json, fetch_full_financial_statements_yahoo_html
 # financial_analysis/sync.py
 from typing import Tuple, List
 
@@ -253,6 +252,10 @@ def sync_full_yahoo(symbol: str, period: str = 'all', *, include_ttm: bool = Tru
             return False, "❌ لم يتم جلب أي بيانات كاملة من Yahoo." + details + "\n"
 
         saved = 0
+        requested = (period or 'all').lower()
+        allow_annual = (requested == 'all') or requested.startswith('a')
+        allow_quarterly = (requested == 'all') or requested.startswith('q')
+        allow_ttm = (requested == 'all') or include_ttm
         for period_type, bundle in data.items():
             if period_type_req != 'All' and period_type != period_type_req and period_type != ('TTM' if period_type_req=='Annual' else ''):
                 continue
