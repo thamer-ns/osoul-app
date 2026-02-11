@@ -79,6 +79,7 @@ except Exception:
     def get_fundamental_ratios(s): return {}
 
 def get_financial_import_error() -> str | None:
+    """Expose last financial_analysis import error for UI debugging."""
     return financial_import_error
 
 # 4) Classical Analysis
