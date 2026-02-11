@@ -3,7 +3,7 @@ import streamlit as st
 import pandas as pd
 from datetime import date
 
-from market_data import get_ticker_symbol
+from market_data import get_ticker_symbol, _symbol_variants
 
 from views.shared import (
     FinancialParser,
@@ -209,19 +209,24 @@ def render_financial_dashboard_ui(symbol):
             [
                 ("الرمز", str(symbol)),
                 ("الرمز الموحّد", str(canon_sym) if canon_sym else '—'),
+                ("بدائل الرمز", ", ".join(_symbol_variants(symbol)) if symbol else "—"),
                 ("الفترة", ptype),
                 ("عدد السجلات", str(int(len(df)) if isinstance(df, pd.DataFrame) else 0)),
                 ("حالة البيانات", "متوفرة ✅" if (isinstance(df, pd.DataFrame) and not df.empty) else "غير متوفرة ⚠️"),
             ],
         )
 
-        dashboard_has_data = isinstance(df, pd.DataFrame) and (not df.empty)
+        # ✅ تشخيص: إذا فشل استيراد financial_analysis داخل views/shared.py سيُعاد دائماً DataFrame فاضي.
+        fin_err = None
+        try:
+            fin_err = get_financial_import_error()
+        except Exception:
+            fin_err = None
+        if fin_err:
+            with st.expander("⚠️ تشخيص: فشل تحميل وحدة التحليل المالي (وهذا يفسّر عدم ظهور القوائم)", expanded=False):
+                st.code(fin_err)
 
-        if not dashboard_has_data:
-            ferr = get_financial_import_error()
-            if ferr:
-                with st.expander("⚠️ تشخيص: تعذر تحميل وحدة التحليل المالي"):
-                    st.code(ferr)
+        dashboard_has_data = isinstance(df, pd.DataFrame) and (not df.empty)
 
         # =====================================================
         # ✅ Data Quality Gate (Always visible)
