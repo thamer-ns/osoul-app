@@ -14,6 +14,27 @@ from config import APP_ICON, APP_NAME
 from database import db_create_user, db_verify_user, db_user_exists, fetch_table
 
 # ============================================================
+# Unicode cleanup (RTL/LTR marks)
+# ============================================================
+_BIDI_STRIP_RE = re.compile(r"[\u200e\u200f\u202a-\u202e\u2066-\u2069]")
+
+
+def _clean_user_text(s: str) -> str:
+    """Remove invisible direction marks and normalize whitespace.
+
+    بعض البيئات (خاصة RTL) قد تُدخل محارف غير مرئية داخل الاسم/الكلمة
+    فتفشل مطابقة المستخدم في قاعدة البيانات ويظهر خطأ "بيانات خاطئة".
+    """
+    s = str(s or "")
+    s = _BIDI_STRIP_RE.sub("", s)
+    return s.strip()
+
+
+# Dev fallback secret should be process-stable (not per-session),
+# otherwise refresh => new session_state => secret changes => token invalid.
+_DEV_AUTH_SECRET_PROCESS: str | None = None
+
+# ============================================================
 # 1) Validation Helpers
 # ============================================================
 
@@ -110,16 +131,17 @@ def _get_auth_secret() -> str:
     if s:
         return s
 
-    # Dev fallback: random secret per server run (invalidates sessions on restart)
-    if "_dev_auth_secret" not in st.session_state:
-        st.session_state["_dev_auth_secret"] = base64.urlsafe_b64encode(os.urandom(32)).decode("utf-8").rstrip("=")
-        if not st.session_state.get("_warned_missing_auth_secret"):
-            st.session_state["_warned_missing_auth_secret"] = True
-            try:
-                st.warning("تنبيه: AUTH_SECRET غير مضبوط. تم استخدام مفتاح مؤقت للتطوير (ستُسجَّل الخروج بعد إعادة تشغيل السيرفر).")
-            except Exception:
-                pass
-    return str(st.session_state["_dev_auth_secret"])
+    # Dev fallback: process-stable secret (persists across refresh/new sessions)
+    # IMPORTANT: لا نستخدم session_state هنا لأن Refresh يخلق Session جديدة => مفتاح جديد => خروج تلقائي.
+    global _DEV_AUTH_SECRET_PROCESS
+    if not _DEV_AUTH_SECRET_PROCESS:
+        _DEV_AUTH_SECRET_PROCESS = base64.urlsafe_b64encode(os.urandom(32)).decode("utf-8").rstrip("=")
+        try:
+            # warning once per process (best effort)
+            st.warning("تنبيه: AUTH_SECRET غير مضبوط. تم استخدام مفتاح مؤقت للتطوير (سيستمر عبر Refresh، لكنه سيبطل بعد إعادة تشغيل السيرفر).")
+        except Exception:
+            pass
+    return str(_DEV_AUTH_SECRET_PROCESS)
 
 
 def _sign(payload: str) -> str:
@@ -215,11 +237,16 @@ def _bootstrap_auth_from_cookie():
     cookie_user = _norm(_get_cookie_user(cm))
 
     # ✅ أولاً: توكن موقّع (لا يعتمد على DB)
+    # مهم: بعض النسخ تكتب التوكن في osoul_auth_v2 بينما نسخ أخرى تستخدم osoul_auth.
+    # لو قرأنا مفتاحاً واحداً فقط، سيظهر للمستخدم "تم تسجيل الخروج" بعد Refresh.
     cookie_token = None
-    try:
-        cookie_token = _norm(cm.get("osoul_auth"))
-    except Exception:
-        cookie_token = None
+    for k in ("osoul_auth_v2", "osoul_auth"):
+        try:
+            cookie_token = _norm(cm.get(k))
+        except Exception:
+            cookie_token = None
+        if cookie_token:
+            break
 
     if cookie_token:
         u = _verify_auth_token(cookie_token)
@@ -339,7 +366,7 @@ def login_system():
                         st.error(msg)
                         return False
 
-                    u = (u or "").strip()
+                    u = _clean_user_text(u)
                     p = (p or "")
 
                     if not u or not p:
@@ -347,7 +374,13 @@ def login_system():
                         _register_login_attempt()
                         return False
 
-                    if db_verify_user(u, p):
+                    # بعض المستخدمين يواجهون إدخال أحرف غير مرئية أو اختلاف حالة الأحرف.
+                    # نحاول التحقق بالصيغة المنظّفة ثم بالصيغة lower كحل احترازي.
+                    ok_login = db_verify_user(u, p)
+                    if (not ok_login) and (u != u.lower()):
+                        ok_login = db_verify_user(u.lower(), p)
+
+                    if ok_login:
                         st.session_state["username"] = u
                         st.session_state["authenticated"] = True
 
@@ -360,7 +393,9 @@ def login_system():
                                 expires = datetime.datetime.now() + datetime.timedelta(days=30)
                             token = _make_auth_token(u)
                             cm = get_manager()
+                            # اكتب في المفتاحين لدعم كل النسخ (قراءة/كتابة)
                             cm.set("osoul_auth_v2", token, expires_at=expires)
+                            cm.set("osoul_auth", token, expires_at=expires)
                             # legacy cookies kept for reading only
                             # توافق رجعي: الاسم القديم
                             cm.set("osoul_user", u, expires_at=expires)
@@ -382,7 +417,7 @@ def login_system():
                 npw = st.text_input("كلمة مرور جديدة", type="password", key="signup_pass")
 
                 if st.form_submit_button("إنشاء"):
-                    nu = (nu or "").strip()
+                    nu = _clean_user_text(nu)
                     npw = (npw or "")
 
                     ok_u, msg_u = _validate_username(nu)
