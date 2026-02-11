@@ -84,7 +84,27 @@ class FinancialParser:
 
         self._compiled = {k: [re.compile(p, flags=re.IGNORECASE) for p in pats] for k, pats in self.mapping.items()}
 
-    def _clean_number(self, val_str):
+
+    def _detect_unit_multiplier(self, text: str) -> float:
+        """Detect global unit scale from headers (e.g., 'بالآلاف', 'بالملايين', 'in thousands')."""
+        t = str(text or "").lower()
+        # Arabic
+        if "بالآلاف" in t or "بالالاف" in t or "بالألف" in t:
+            return 1_000.0
+        if "بالملايين" in t or "بالمليون" in t:
+            return 1_000_000.0
+        if "بالمليارات" in t or "بالمليار" in t:
+            return 1_000_000_000.0
+        # English
+        if "in thousands" in t or "thousands" in t:
+            return 1_000.0
+        if "in millions" in t or "millions" in t:
+            return 1_000_000.0
+        if "in billions" in t or "billions" in t:
+            return 1_000_000_000.0
+        return 1.0
+
+    def _clean_number(self, val_str, global_multiplier: float = 1.0):
         if pd.isna(val_str):
             return 0.0
 
@@ -94,12 +114,18 @@ class FinancialParser:
         s = s.translate(arabic_digits)
 
         multiplier = 1.0
+        gm = float(global_multiplier or 1.0)
+        if gm <= 0:
+            gm = 1.0
         if s.endswith("B") or "مليار" in s:
             multiplier = 1_000_000_000
         elif s.endswith("M") or "مليون" in s:
             multiplier = 1_000_000
         elif s.endswith("K") or "ألف" in s:
             multiplier = 1_000
+
+        if multiplier == 1.0 and gm != 1.0:
+            multiplier = gm
 
         s = re.sub(r"[^\d\.\-\(\)]", "", s)
 
@@ -120,6 +146,7 @@ class FinancialParser:
         return None
 
     def _detect_format_and_parse(self, text):
+        self._global_multiplier = self._detect_unit_multiplier(text)
         lines = (text or "").split("\n")
 
         if any(re.search(r"\[\d{6}\]", line) for line in lines):
@@ -162,7 +189,7 @@ class FinancialParser:
                     if not nums:
                         continue
 
-                    clean_nums = [self._clean_number(n) for n in nums]
+                    clean_nums = [self._clean_number(n, getattr(self,'_global_multiplier', 1.0)) for n in nums]
 
                     for i, d in enumerate(dates):
                         if i < len(clean_nums):
@@ -226,7 +253,7 @@ class FinancialParser:
                     if any(p.search(label) for p in patterns):
                         for col_idx, d in dates:
                             if col_idx < len(row):
-                                v = self._clean_number(row.iloc[col_idx])
+                                v = self._clean_number(row.iloc[col_idx], getattr(self,'_global_multiplier', 1.0))
                                 results_map.setdefault(d, {})
                                 results_map[d][key] = v
                         break
