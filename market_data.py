@@ -67,18 +67,41 @@ def _http_get(url: str, timeout: int = 6, retries: int = 2, sleep: float = 0.6):
 # 🔤 Symbol Normalization (توحيد الرموز)
 # ============================================================
 def get_ticker_symbol(symbol: str) -> str:
-    """توحيد الرموز لتوافق Yahoo Finance"""
+    """توحيد الرموز لتوافق Yahoo Finance.
+
+    يدعم أشكال إدخال شائعة من واجهات مختلفة:
+    - 1150  -> 1150.SR
+    - 1150.SR -> 1150.SR
+    - SR.1150 / SR1150 -> 1150.SR  ✅ (كان سبب اختفاء البيانات المخزنة)
+    - TASI -> ^TASI.SR
+    """
     s = str(symbol or "").strip().upper()
     if not s:
         return ""
 
+    # indices
     if s in ["TASI", ".TASI", "^TASI", "^TASI.SR"]:
         return "^TASI.SR"
 
+    # normalize common UI formats: SR.1150 / SR1150
+    m = re.match(r"^SR\.?([0-9]{1,6})$", s)
+    if m:
+        return f"{m.group(1)}.SR"
+
+    # plain digits
     if s.isdigit():
         return f"{s}.SR"
 
-    if not s.startswith("^") and not s.endswith(".SR"):
+    # allow already-normalized
+    if s.startswith("^"):
+        return s
+
+    # if ends with SR but missing dot
+    if s.endswith("SR") and not s.endswith(".SR"):
+        s = s[:-2] + ".SR"
+
+    # if missing .SR (typical equities)
+    if not s.endswith(".SR") and not s.startswith("^"):
         return f"{s}.SR"
 
     return s
@@ -92,13 +115,21 @@ def _symbol_variants(symbol: str) -> List[str]:
     norm = get_ticker_symbol(raw)
     variants = [raw, norm]
 
+    # strip .SR where applicable
     if norm.endswith(".SR"):
         variants.append(norm.replace(".SR", ""))
     if raw.endswith(".SR"):
         variants.append(raw.replace(".SR", ""))
 
+    # also try SR.#### and SR#### forms (some UIs)
+    m = re.match(r"^([0-9]{1,6})\.SR$", norm)
+    if m:
+        variants.append(f"SR.{m.group(1)}")
+        variants.append(f"SR{m.group(1)}")
+
     out, seen = [], set()
     for x in variants:
+        x = str(x or "").strip().upper()
         if x and x not in seen:
             out.append(x)
             seen.add(x)
