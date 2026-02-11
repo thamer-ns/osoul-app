@@ -133,15 +133,15 @@ def _verify_auth_token(token: str) -> str | None:
         return None
 
 
+
 def _bootstrap_auth_from_cookie():
     """
     الهدف:
-    - بعض بيئات Streamlit ترجع cookie=None في أول تشغيل/أول rerun لأن الكوكي ما تكون جاهزة.
-    - هذا يسبب ظهور شاشة الدخول كل مرة.
+    - بعض بيئات Streamlit/مكوّن الكوكي قد يرجع None أو "" في أول تشغيل/أول rerun (الكوكي غير جاهزة بعد).
+    - هذا يسبب ظهور شاشة الدخول بعد Refresh حتى لو كانت الكوكي موجودة.
     الحل:
-    - نجرب قراءة الكوكي مرة
-    - لو رجعت None في أول محاولة -> rerun واحد فقط
-    - بعدها نعتبر bootstrap انتهى وما نرجع نزعج المستخدم
+    - قراءة (osoul_auth) + (osoul_user) مع تطبيع القيم.
+    - إعطاء 1–2 rerun فقط عند غياب القيم (أو كانت ""/null) ثم إيقاف المحاولة لتجنب حلقة لا نهائية.
     """
     s = st.session_state
 
@@ -150,29 +150,39 @@ def _bootstrap_auth_from_cookie():
         s["_auth_bootstrapped"] = True
         return
 
-    # نفّذ bootstrap مرة واحدة
+    # نفّذ bootstrap مرة واحدة (أو مرتين عند الحاجة للكوكي)
     if s.get("_auth_bootstrapped") is True:
         return
 
     tries = int(s.get("_auth_bootstrap_tries", 0))
-    cookie_manager = get_manager()
-    cookie_user = _get_cookie_user(cookie_manager)
+    cm = get_manager()
+
+    def _norm(v):
+        if v is None:
+            return None
+        v = str(v).strip()
+        if v == "" or v.lower() in {"none", "null", "undefined"}:
+            return None
+        return v
+
+    cookie_user = _norm(_get_cookie_user(cm))
 
     # ✅ أولاً: توكن موقّع (لا يعتمد على DB)
     cookie_token = None
     try:
-        cookie_token = cookie_manager.get("osoul_auth")
+        cookie_token = _norm(cm.get("osoul_auth"))
     except Exception:
         cookie_token = None
+
     if cookie_token:
-        u = _verify_auth_token(str(cookie_token))
+        u = _verify_auth_token(cookie_token)
         if u:
             s["username"] = u
             s["authenticated"] = True
             s["_auth_bootstrapped"] = True
             return
 
-    # توافق رجعي: كوكي اسم المستخدم القديمة
+    # توافق رجعي: كوكي اسم المستخدم القديمة (يتطلب تحقق من وجود المستخدم)
     if cookie_user:
         exists = _user_exists_in_db(cookie_user)
         if exists is True:
@@ -183,7 +193,7 @@ def _bootstrap_auth_from_cookie():
         elif exists is False:
             # كوكي قديمة/غير صالحة: احذفها
             try:
-                cookie_manager.delete("osoul_user")
+                cm.delete("osoul_user")
             except Exception:
                 pass
         else:
@@ -191,11 +201,9 @@ def _bootstrap_auth_from_cookie():
             s["_auth_bootstrapped"] = True
             return
 
-    # إذا ما فيه كوكي (أو ما جاهزة)
-    # نعطي محاولة rerun واحدة فقط (لتهيئة الكوكي) ثم نوقف
-    if cookie_user is None and tries < 1:
+    # إذا الكوكي غير جاهزة بعد (None/"") أعط محاولة rerun إضافية (بحد أقصى مرتين)
+    if (cookie_token is None and cookie_user is None) and tries < 2:
         s["_auth_bootstrap_tries"] = tries + 1
-        # rerun واحد فقط
         st.rerun()
 
     # بعدها نثبت أنها bootstrapped حتى لا نعيد نفس الدوامة
@@ -359,6 +367,7 @@ def login_system():
 def logout():
     try:
         get_manager().delete("osoul_user")
+        get_manager().delete("osoul_auth")
     except Exception:
         pass
 
