@@ -56,6 +56,30 @@ from .risk import (
 from .user_rules import load_user_rules, _eval_user_rule
 from .logging_learning import log_ai_signal, _get_weight
 
+try:
+    from feature_flags import get_flag
+except Exception:
+    get_flag = None
+
+try:
+    from .logging_learning import get_calibration_snapshot
+except Exception:
+    get_calibration_snapshot = None
+
+
+def _default_horizon_days(timeframe: str) -> int:
+    tf = str(timeframe or "").strip().upper()
+    # Default horizon approximations by bar count
+    if tf in ("1D", "D", "1DAY"):
+        return 20   # ~1 month
+    if tf in ("1W", "W"):
+        return 8    # ~2 months of weeks
+    if tf in ("1H", "60M", "H"):
+        return 40   # ~2 trading days worth of hourly bars
+    if tf in ("30M",):
+        return 60
+    return 20
+
 
 def _timeframe_to_interval(timeframe: str) -> str:
     tf = str(timeframe or "").strip().upper()
@@ -532,17 +556,45 @@ def generate_ai_report(symbol, timeframe="1D"):
         except Exception:
             pass
 
-        signal_id = log_ai_signal(
-            symbol,
-            timeframe,
-            features,
-            report,
-            horizon_days=20,
-            sector=sector,
-            strategy_name=strategy_name,
-        )
-        if signal_id:
-            report["signal_id"] = signal_id
+        # =================================
+        # Self-learning: log the signal (optional)
+        # =================================
+        def _default_horizon(tf: str) -> int:
+            t = str(tf or "").upper().strip()
+            if t in ("1W", "W"):
+                return 8
+            if t in ("1H", "60M", "H"):
+                return 60
+            if t in ("30M",):
+                return 90
+            return 20  # 1D
+
+        enable_learning = True
+        try:
+            if callable(get_flag):
+                enable_learning = bool(get_flag("enable_self_learning", True))
+        except Exception:
+            enable_learning = True
+
+        if enable_learning:
+            signal_id = log_ai_signal(
+                symbol,
+                timeframe,
+                features,
+                report,
+                horizon_days=_default_horizon(timeframe),
+                sector=sector,
+                strategy_name=strategy_name,
+            )
+            if signal_id:
+                report["signal_id"] = signal_id
+
+            # Lightweight calibration snapshot (best-effort)
+            try:
+                if callable(get_calibration_snapshot):
+                    report["calibration"] = get_calibration_snapshot(symbol=symbol, timeframe=str(timeframe), max_rows=300)
+            except Exception:
+                pass
 
         return report
 
