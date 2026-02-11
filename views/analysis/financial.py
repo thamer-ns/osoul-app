@@ -402,14 +402,23 @@ def render_financial_dashboard_ui(symbol):
                     st.error(msg)
 
                 # 🩺 Diagnostics (لا يغير أي ميزة — فقط يوضح السبب)
+                # 🩺 Diagnostics (لا يغير أي ميزة — فقط يوضح السبب)
                 with st.expander("🩺 تشخيص Yahoo (لماذا قد تفشل المزامنة؟)", expanded=False):
-                    if diagnose_yahoo_quote_summary:
-                        diag = diagnose_yahoo_quote_summary(symbol)
-                    elif get_last_yahoo_diagnostics:
-                        diag = get_last_yahoo_diagnostics()
+                    st.caption("مهم: التشخيص قد يرسل طلبًا إلى Yahoo. اضغط الزر فقط عند الحاجة لتجنب 429.")
+                    if st.button("تشغيل التشخيص الآن", key=f"run_diag_{_sym_key(symbol)}"):
+                        if diagnose_yahoo_quote_summary:
+                            diag = diagnose_yahoo_quote_summary(symbol)
+                        elif get_last_yahoo_diagnostics:
+                            diag = get_last_yahoo_diagnostics()
+                        else:
+                            diag = {"status": None, "hint": "Diagnostics غير متاحة", "error": None, "url": None, "ts": None}
+                        st.json(diag)
                     else:
-                        diag = {"status": None, "hint": "Diagnostics غير متاحة", "error": None, "url": None, "ts": None}
-                    st.json(diag)
+                        # عرض آخر تشخيص محفوظ (بدون إرسال طلب جديد)
+                        if get_last_yahoo_diagnostics:
+                            st.json(get_last_yahoo_diagnostics())
+                        else:
+                            st.info("لا يوجد تشخيص محفوظ بعد.")
 
 
         with t2:
