@@ -44,14 +44,18 @@ def _validate_password(p: str):
     return True, ""
 
 
-def _user_exists_in_db(username: str) -> bool:
+def _user_exists_in_db(username: str):
+    """Return True/False if we can check the DB, or None if DB is temporarily unavailable."""
     try:
         df = fetch_table("users")
-        if df is None or df.empty or "username" not in df.columns:
+        if df is None:
+            return None
+        if df.empty or "username" not in df.columns:
+            # Table missing/empty is a real negative only if DB responded
             return False
         return (df["username"].astype(str) == str(username)).any()
     except Exception:
-        return False
+        return None
 
 
 # ============================================================
@@ -99,23 +103,28 @@ def _bootstrap_auth_from_cookie():
     if s.get("_auth_bootstrapped") is True:
         return
 
-    tries = int(s.get("_auth_bootstrap_tries", 0))
+    tries = int(s.get("_auth_bootstrap_tries",
+        "_auth_unverified", 0))
     cookie_manager = get_manager()
     cookie_user = _get_cookie_user(cookie_manager)
 
-    # إذا الكوكي موجودة ومستخدمها صحيح
+    # إذا الكوكي موجودة
     if cookie_user:
-        if _user_exists_in_db(cookie_user):
+        exists = _user_exists_in_db(cookie_user)
+        # ✅ إذا قاعدة البيانات غير متاحة مؤقتاً (exists=None) لا نحذف الكوكي ولا نجبر المستخدم على تسجيل دخول متكرر.
+        if exists is True or exists is None:
             s["username"] = cookie_user
             s["authenticated"] = True
+            if exists is None:
+                s["_auth_unverified"] = True
             s["_auth_bootstrapped"] = True
             return
-        else:
-            # كوكي قديمة/غير صالحة: احذفها
-            try:
-                cookie_manager.delete("osoul_user")
-            except Exception:
-                pass
+
+        # exists == False -> كوكي قديمة/غير صالحة
+        try:
+            cookie_manager.delete("osoul_user")
+        except Exception:
+            pass
 
     # إذا ما فيه كوكي (أو ما جاهزة)
     # نعطي محاولة rerun واحدة فقط (لتهيئة الكوكي) ثم نوقف
@@ -200,7 +209,7 @@ def login_system():
             with st.form("login_form"):
                 u = st.text_input("المستخدم", key="login_user")
                 p = st.text_input("كلمة المرور", type="password", key="login_pass")
-                rem = st.checkbox("تذكرني", value=True)
+                rem = st.checkbox("تذكرني", value=True, key="remember_me")
 
                 if st.form_submit_button("دخول", type="primary"):
                     ok, msg = _rate_limit_ok()
@@ -219,13 +228,21 @@ def login_system():
                     if db_verify_user(u, p):
                         st.session_state["username"] = u
                         st.session_state["authenticated"] = True
+                        st.session_state["_auth_unverified"] = False
 
-                        if rem:
-                            expires = datetime.datetime.now() + datetime.timedelta(days=30)
-                            try:
-                                get_manager().set("osoul_user", u, expires_at=expires)
-                            except Exception:
-                                pass
+                        # ✅ تذكرني:
+                        # - إذا مفعّل: كوكي دائمة 30 يوم
+                        # - إذا غير مفعّل: كوكي جلسة (تنتهي عند إغلاق المتصفح)
+                        try:
+                            cm = get_manager()
+                            if rem:
+                                expires = datetime.datetime.now() + datetime.timedelta(days=30)
+                                cm.set("osoul_user", u, expires_at=expires)
+                            else:
+                                # بعض البيئات تحتاج set بدون expires_at لاعتبارها session cookie
+                                cm.set("osoul_user", u)
+                        except Exception:
+                            pass
 
                         st.success("تم الدخول")
                         st.rerun()
@@ -286,6 +303,7 @@ def logout():
         "_login_locked_until",
         "_auth_bootstrapped",
         "_auth_bootstrap_tries",
+        "_auth_unverified",
     ]:
         if k in st.session_state:
             del st.session_state[k]
