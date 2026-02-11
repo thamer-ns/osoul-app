@@ -76,6 +76,8 @@ def get_ticker_symbol(symbol: str) -> str:
     - TASI -> ^TASI.SR
     """
     s = str(symbol or "").strip().upper()
+    # Remove invisible bidi/control characters that may appear with RTL UIs
+    s = re.sub(r"[\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff]", "", s)
     if not s:
         return ""
 
