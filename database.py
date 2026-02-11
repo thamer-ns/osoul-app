@@ -182,11 +182,14 @@ def fetch_table(t: str) -> pd.DataFrame:
         put_connection(conn, kind)
 
 
-def fetch_df(query: str, params: Optional[tuple] = None) -> pd.DataFrame:
-    """Execute a SELECT query and return a DataFrame.
+def fetch_df(query: str, params: Optional[Tuple[Any, ...]] = None) -> pd.DataFrame:
+    """Fetch a DataFrame using a SQL query.
 
-    This is safer than `fetch_table()` for large tables because the caller can
-    filter by symbol/date/... instead of loading the entire table into memory.
+    لماذا؟
+    - جلب جداول كبيرة كاملة ثم فلترتها في Pandas يسبب بطء/ذاكرة وقد يرجع DataFrame فاضي في بيئات Streamlit.
+    - نحتاج استعلامات مفلترة (مثل financialstatements) حتى تظهر البيانات دائماً.
+
+    ملاحظة: نستخدم pd.read_sql_query مع params.
     """
     conn, kind = get_connection()
     try:
