@@ -27,6 +27,9 @@ from .sync import sync_auto_yahoo, sync_auto_multi_sources, sync_full_yahoo
 # metrics
 from .metrics import get_advanced_fundamental_ratios, get_fundamental_ratios
 
+# data quality gate
+from .quality_gate import evaluate_financial_data_quality
+
 # thesis
 from .thesis import get_thesis, save_thesis
 
