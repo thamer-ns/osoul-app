@@ -3,6 +3,9 @@ import datetime
 import os
 import re
 import time
+import hmac
+import hashlib
+import base64
 
 import extra_streamlit_components as stx
 import streamlit as st
@@ -45,23 +48,13 @@ def _validate_password(p: str):
 
 
 def _user_exists_in_db(username: str):
-    """Check if user exists in DB.
-
-    Returns:
-        True  -> user exists
-        False -> user does not exist (definitive)
-        None  -> unknown (DB unavailable / error)
-    """
+    """Return True/False if known, or None if DB error."""
     try:
         df = fetch_table("users")
-        if df is None:
-            return None
-        if df.empty or "username" not in df.columns:
-            # DB reachable, table exists but empty/malformed => definitive False
+        if df is None or df.empty or "username" not in df.columns:
             return False
-        return bool((df["username"].astype(str) == str(username)).any())
+        return (df["username"].astype(str) == str(username)).any()
     except Exception:
-        # Don't force logout on transient DB failures
         return None
 
 
@@ -89,6 +82,57 @@ def _get_cookie_user(cookie_manager):
 # ============================================================
 
 
+
+# ============================================================
+# 2.5) Signed Auth Token (HMAC) for stable login across refresh
+# ============================================================
+
+def _get_auth_secret() -> str:
+    """Prefer st.secrets['AUTH_SECRET'] or env AUTH_SECRET."""
+    try:
+        s = st.secrets.get("AUTH_SECRET")  # type: ignore[attr-defined]
+        if s:
+            return str(s)
+    except Exception:
+        pass
+    s = os.environ.get("AUTH_SECRET", "")
+    if s:
+        return s
+    return f"{APP_NAME}_AUTH_SECRET_FALLBACK"
+
+
+def _sign(payload: str) -> str:
+    key = _get_auth_secret().encode("utf-8")
+    sig = hmac.new(key, payload.encode("utf-8"), hashlib.sha256).digest()
+    return base64.urlsafe_b64encode(sig).decode("utf-8").rstrip("=")
+
+
+def _make_auth_token(username: str, ttl_days: int = 30) -> str:
+    u = (username or "").strip()
+    exp = int(time.time()) + int(ttl_days * 86400)
+    payload = f"v1.{u}.{exp}"
+    sig = _sign(payload)
+    return f"{payload}.{sig}"
+
+
+def _verify_auth_token(token: str) -> str | None:
+    try:
+        parts = (token or "").split(".")
+        if len(parts) != 4:
+            return None
+        ver, u, exp_s, sig = parts
+        if ver != "v1":
+            return None
+        exp = int(exp_s)
+        if time.time() > exp:
+            return None
+        payload = f"{ver}.{u}.{exp}"
+        expected = _sign(payload)
+        return u if hmac.compare_digest(expected, sig) else None
+    except Exception:
+        return None
+
+
 def _bootstrap_auth_from_cookie():
     """
     الهدف:
@@ -114,26 +158,36 @@ def _bootstrap_auth_from_cookie():
     cookie_manager = get_manager()
     cookie_user = _get_cookie_user(cookie_manager)
 
-    # إذا الكوكي موجودة
-    if cookie_user:
-        exists = _user_exists_in_db(cookie_user)
-
-        if exists is True:
-            # ✅ مستخدم موجود
-            s["username"] = cookie_user
+    # ✅ أولاً: توكن موقّع (لا يعتمد على DB)
+    cookie_token = None
+    try:
+        cookie_token = cookie_manager.get("osoul_auth")
+    except Exception:
+        cookie_token = None
+    if cookie_token:
+        u = _verify_auth_token(str(cookie_token))
+        if u:
+            s["username"] = u
             s["authenticated"] = True
             s["_auth_bootstrapped"] = True
             return
 
-        if exists is False:
-            # ✅ كوكي قديمة/غير صالحة: احذفها
+    # توافق رجعي: كوكي اسم المستخدم القديمة
+    if cookie_user:
+        exists = _user_exists_in_db(cookie_user)
+        if exists is True:
+            s["username"] = cookie_user
+            s["authenticated"] = True
+            s["_auth_bootstrapped"] = True
+            return
+        elif exists is False:
+            # كوكي قديمة/غير صالحة: احذفها
             try:
                 cookie_manager.delete("osoul_user")
             except Exception:
                 pass
         else:
-            # ⚠️ DB غير متاحة/خطأ مؤقت: لا تحذف الكوكي ولا تفصل المستخدم قسرياً
-            # نترك صفحة الدخول تظهر، لكن بدون مسح الكوكي حتى تنجح DB لاحقاً.
+            # DB غير متاح مؤقتاً: لا نحذف الكوكي ولا نكرر محاولة مزعجة
             s["_auth_bootstrapped"] = True
             return
 
@@ -204,12 +258,14 @@ def login_system():
                 f"<h1 style='text-align:center;color:#0052CC;margin-top:-10px'>{APP_NAME}</h1>",
                 unsafe_allow_html=True,
             )
+            st.caption("Auth v3")
         else:
             # إذا كان APP_ICON إيموجي أو نص قصير
             st.markdown(
                 f"<h1 style='text-align:center;color:#0052CC'>{APP_ICON} {APP_NAME}</h1>",
                 unsafe_allow_html=True,
             )
+            st.caption("Auth v3")
 
         t1, t2 = st.tabs(["🔒 دخول", "👤 تسجيل"])
 
@@ -240,15 +296,18 @@ def login_system():
                         st.session_state["username"] = u
                         st.session_state["authenticated"] = True
 
-                        # ✅ احفظ جلسة الدخول:
-                        # - إذا "تذكرني" ✅ => كوكي 30 يوم
-                        # - إذا "تذكرني" ❌ => Session cookie (تنتهي عند إغلاق المتصفح)
-                        expires = None
-                        if rem:
-                            expires = datetime.datetime.now() + datetime.timedelta(days=30)
-
+                        # ✅ حفظ الجلسة عبر الكوكي:
+                        # - إذا "تذكرني" مفعّل: كوكي 30 يوم
+                        # - إذا غير مفعّل: Session cookie (تبقى بعد Refresh وتختفي عند إغلاق المتصفح)
                         try:
-                            get_manager().set("osoul_user", u, expires_at=expires)
+                            expires = None
+                            if rem:
+                                expires = datetime.datetime.now() + datetime.timedelta(days=30)
+                            token = _make_auth_token(u)
+                            cm = get_manager()
+                            cm.set("osoul_auth", token, expires_at=expires)
+                            # توافق رجعي: الاسم القديم
+                            cm.set("osoul_user", u, expires_at=expires)
                         except Exception:
                             pass
 
