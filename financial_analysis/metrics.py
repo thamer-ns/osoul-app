@@ -528,6 +528,33 @@ def get_advanced_fundamental_ratios(symbol):
     if df.empty:
         return metrics
 
+    # --------------------------
+    # ✅ Data Quality Gate (Hard block for Advisor)
+    # --------------------------
+    try:
+        from .quality_gate import evaluate_financial_data_quality
+        dq = evaluate_financial_data_quality(symbol, preferred_period=period_used, min_rows=2)
+        metrics["Data_Quality_Pass"] = bool(dq.get("pass"))
+        metrics["Data_Quality_Score"] = int(dq.get("score") or 0)
+        metrics["Data_Quality_Issues"] = dq.get("issues") or []
+        metrics["Data_Quality_Missing"] = dq.get("missing_fields") or []
+        metrics["Data_Quality_Period_Used"] = dq.get("period_used") or period_used
+        metrics["Data_Quality_Coverage"] = dq.get("coverage") or {}
+        if not metrics["Data_Quality_Pass"]:
+            # Block: prevent misleading ratios/opinions
+            metrics["Rating"] = "محجوب"
+            metrics["Score"] = 0
+            msg = " ⛔ تم حجب الرأي: بيانات القوائم ناقصة/غير متسقة. راجع بوابة الجودة."
+            issues_txt = " | ".join([str(x) for x in (metrics.get("Data_Quality_Issues") or []) if str(x).strip()])
+            metrics["Opinions"] = (issues_txt + msg)[:1200]
+            # add flags for AI pack consumers
+            metrics.setdefault("_fund_flags", {})
+            metrics["_fund_flags"]["data_quality_block"] = 1
+            return metrics
+    except Exception:
+        # If gate fails unexpectedly, do NOT block; fall back to previous behavior.
+        pass
+
     curr = df.iloc[0]
     prev = df.iloc[1] if len(df) > 1 else curr
 
