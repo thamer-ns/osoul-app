@@ -182,6 +182,21 @@ def fetch_table(t: str) -> pd.DataFrame:
         put_connection(conn, kind)
 
 
+def fetch_df(query: str, params: Optional[tuple] = None) -> pd.DataFrame:
+    """Execute a SELECT query and return a DataFrame.
+
+    This is safer than `fetch_table()` for large tables because the caller can
+    filter by symbol/date/... instead of loading the entire table into memory.
+    """
+    conn, kind = get_connection()
+    try:
+        return pd.read_sql_query(query, conn, params=params or ())
+    except Exception:
+        return pd.DataFrame()
+    finally:
+        put_connection(conn, kind)
+
+
 def table_exists(table_name: str) -> bool:
     conn, kind = get_connection()
     try:
