@@ -47,7 +47,7 @@ def sync_auto_multi_sources(symbol: str, prefer: str = "yahoo") -> Tuple[bool, s
 
     if saved > 0:
         return True, f"تم حفظ {saved} سجل من بدائل Yahoo. " + " | ".join(notes)
-    return False, "لم تنجح البدائل. " + 
+    return False, "لم تنجح البدائل. " + (" | ".join(notes) if notes else "")
 # ==============================================================
 # 🧾 Full Statements Helpers (Income/Balance/Cashflow)
 # ==============================================================
