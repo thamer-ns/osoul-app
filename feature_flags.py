@@ -23,6 +23,13 @@ DEFAULT_FLAGS: Dict[str, bool] = {
 
     # Compare engines / legacy
     "enable_engine_compare": False,
+
+    # 🧠 Self-learning (log predictions -> evaluate later -> adapt weights)
+    # Safe by design: it does not change calculations, only adds:
+    # - logging of signals
+    # - evaluation of outcomes after N bars
+    # - bounded weight updates for boolean features
+    "enable_self_learning": True,
 }
 
 
