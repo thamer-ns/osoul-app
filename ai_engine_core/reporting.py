@@ -1,6 +1,7 @@
 # ai_engine_core/reporting.py
 
 import traceback
+from feature_flags import get_flag
 import pandas as pd
 
 from .config import AI_ENGINE_NAME, AI_ENGINE_VERSION
@@ -54,31 +55,7 @@ from .risk import (
 )
 
 from .user_rules import load_user_rules, _eval_user_rule
-from .logging_learning import log_ai_signal, _get_weight
-
-try:
-    from feature_flags import get_flag
-except Exception:
-    get_flag = None
-
-try:
-    from .logging_learning import get_calibration_snapshot
-except Exception:
-    get_calibration_snapshot = None
-
-
-def _default_horizon_days(timeframe: str) -> int:
-    tf = str(timeframe or "").strip().upper()
-    # Default horizon approximations by bar count
-    if tf in ("1D", "D", "1DAY"):
-        return 20   # ~1 month
-    if tf in ("1W", "W"):
-        return 8    # ~2 months of weeks
-    if tf in ("1H", "60M", "H"):
-        return 40   # ~2 trading days worth of hourly bars
-    if tf in ("30M",):
-        return 60
-    return 20
+from .logging_learning import log_ai_signal, _get_weight, get_effective_weight
 
 
 def _timeframe_to_interval(timeframe: str) -> str:
@@ -336,11 +313,69 @@ def generate_ai_report(symbol, timeframe="1D"):
             except Exception:
                 pass
 
+
+        # =========================================================
+        # 🧠 Learning context (Market trend + ADX regime + Sector)
+        # =========================================================
+        market_trend = None
+        regime = None
+        ctx_key = None
+        horizons = None
+        try:
+            from market_data import get_tasi_history
+            tasi = get_tasi_history(period=None, interval=str(interval))
+            if tasi is not None and (not tasi.empty) and "Close" in tasi.columns and len(tasi) >= 80:
+                c = pd.to_numeric(tasi["Close"], errors="coerce").dropna()
+                ma50 = c.rolling(50).mean()
+                # slope over last 20 bars
+                slope20 = float((ma50.iloc[-1] - ma50.iloc[-21]) / ma50.iloc[-21]) if len(ma50.dropna()) > 21 and float(ma50.iloc[-21] or 0) != 0 else 0.0
+                last = float(c.iloc[-1])
+                last_ma = float(ma50.iloc[-1]) if pd.notna(ma50.iloc[-1]) else last
+                if last > last_ma and slope20 > 0.01:
+                    market_trend = "bull"
+                elif last < last_ma and slope20 < -0.01:
+                    market_trend = "bear"
+                else:
+                    market_trend = "sideways"
+            else:
+                market_trend = "UNK"
+        except Exception:
+            market_trend = "UNK"
+
+        try:
+            adxv = None
+            if isinstance(ind, dict) and "adx14" in ind:
+                adx = ind.get("adx14")
+                if isinstance(adx, pd.Series) and len(adx) and pd.notna(adx.iloc[-1]):
+                    adxv = float(adx.iloc[-1])
+            if adxv is None:
+                regime = "UNK"
+            else:
+                regime = "trend" if adxv >= 25 else "range"
+        except Exception:
+            regime = "UNK"
+
+        try:
+            sec = str(sector) if sector else "UNK"
+            ctx_key = f"mkt={market_trend}|reg={regime}|sec={sec}"
+        except Exception:
+            ctx_key = None
+
+        # Multi-horizon evaluation defaults by timeframe
+        try:
+            tf = str(timeframe).lower().strip()
+            if "wk" in tf or "week" in tf:
+                horizons = [4, 8, 13, 26]
+            else:
+                horizons = [5, 10, 20, 60]
+        except Exception:
+            horizons = [5, 10, 20, 60]
+
         # Weighted bonus on boolean flags only
         weighted_bonus = 0.0
         for k, v in features.items():
             if isinstance(v, (bool, int)) and int(v) == 1:
-                weighted_bonus += (0.2 * (_get_weight(k, 1.0) - 1.0))
+                weighted_bonus += (0.2 * (get_effective_weight(k, ctx_key, 1.0) - 1.0))
 
         tech_score = float(base_tech + weighted_bonus)
         fund_score = float(s_fund)
@@ -534,6 +569,7 @@ def generate_ai_report(symbol, timeframe="1D"):
             "strategy_name": strategy_name,
             "sector": sector,
             "risk_plan": risk_plan,
+            "learning_context": {"market_trend": market_trend, "regime": regime, "ctx_key": ctx_key},
             "engine_meta": {
                 "engine": AI_ENGINE_NAME,
                 "version": AI_ENGINE_VERSION,
@@ -556,45 +592,27 @@ def generate_ai_report(symbol, timeframe="1D"):
         except Exception:
             pass
 
-        # =================================
-        # Self-learning: log the signal (optional)
-        # =================================
-        def _default_horizon(tf: str) -> int:
-            t = str(tf or "").upper().strip()
-            if t in ("1W", "W"):
-                return 8
-            if t in ("1H", "60M", "H"):
-                return 60
-            if t in ("30M",):
-                return 90
-            return 20  # 1D
-
-        enable_learning = True
+        signal_id = None
         try:
-            if callable(get_flag):
-                enable_learning = bool(get_flag("enable_self_learning", True))
+            if get_flag("enable_self_learning", True):
+                signal_id = log_ai_signal(
+            symbol,
+            timeframe,
+            features,
+            report,
+            horizon_days=20,
+            sector=sector,
+            strategy_name=strategy_name,
+            market_trend=market_trend,
+            regime=regime,
+            ctx_key=ctx_key,
+            horizons=horizons,
+                )
         except Exception:
-            enable_learning = True
+            signal_id = None
 
-        if enable_learning:
-            signal_id = log_ai_signal(
-                symbol,
-                timeframe,
-                features,
-                report,
-                horizon_days=_default_horizon(timeframe),
-                sector=sector,
-                strategy_name=strategy_name,
-            )
-            if signal_id:
-                report["signal_id"] = signal_id
-
-            # Lightweight calibration snapshot (best-effort)
-            try:
-                if callable(get_calibration_snapshot):
-                    report["calibration"] = get_calibration_snapshot(symbol=symbol, timeframe=str(timeframe), max_rows=300)
-            except Exception:
-                pass
+        if signal_id:
+            report["signal_id"] = signal_id
 
         return report
 
