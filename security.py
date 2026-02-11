@@ -11,7 +11,7 @@ import extra_streamlit_components as stx
 import streamlit as st
 
 from config import APP_ICON, APP_NAME
-from database import db_create_user, db_verify_user, fetch_table
+from database import db_create_user, db_verify_user, db_user_exists, fetch_table
 
 # ============================================================
 # 1) Validation Helpers
@@ -42,14 +42,20 @@ def _validate_username(u: str):
 
 def _validate_password(p: str):
     p = (p or "")
-    if len(p) < 6:
-        return False, "كلمة المرور قصيرة جداً (6 أحرف على الأقل)"
+    if len(p) < 8:
+        return False, "كلمة المرور يجب أن تكون 8 أحرف على الأقل"
+    # حد أدنى من التعقيد: حرف + رقم (بدون تعقيد مزعج)
+    if not re.search(r"[A-Za-z]", p) or not re.search(r"\d", p):
+        return False, "كلمة المرور يجب أن تحتوي على حرف ورقم على الأقل"
     return True, ""
 
 
 def _user_exists_in_db(username: str):
     """Return True/False if known, or None if DB error."""
     try:
+        exists = db_user_exists(username)
+        if exists is not None:
+            return bool(exists)
         df = fetch_table("users")
         if df is None or df.empty or "username" not in df.columns:
             return False
@@ -88,17 +94,32 @@ def _get_cookie_user(cookie_manager):
 # ============================================================
 
 def _get_auth_secret() -> str:
-    """Prefer st.secrets['AUTH_SECRET'] or env AUTH_SECRET."""
+    """Prefer st.secrets['AUTH_SECRET'] or env AUTH_SECRET.
+
+    In production, you SHOULD set a stable secret (Streamlit secrets or env).
+    If missing, we generate a per-server-run random secret (safer than a static fallback).
+    """
     try:
         s = st.secrets.get("AUTH_SECRET")  # type: ignore[attr-defined]
         if s:
             return str(s)
     except Exception:
         pass
+
     s = os.environ.get("AUTH_SECRET", "")
     if s:
         return s
-    return f"{APP_NAME}_AUTH_SECRET_FALLBACK"
+
+    # Dev fallback: random secret per server run (invalidates sessions on restart)
+    if "_dev_auth_secret" not in st.session_state:
+        st.session_state["_dev_auth_secret"] = base64.urlsafe_b64encode(os.urandom(32)).decode("utf-8").rstrip("=")
+        if not st.session_state.get("_warned_missing_auth_secret"):
+            st.session_state["_warned_missing_auth_secret"] = True
+            try:
+                st.warning("تنبيه: AUTH_SECRET غير مضبوط. تم استخدام مفتاح مؤقت للتطوير (ستُسجَّل الخروج بعد إعادة تشغيل السيرفر).")
+            except Exception:
+                pass
+    return str(st.session_state["_dev_auth_secret"])
 
 
 def _sign(payload: str) -> str:
@@ -110,7 +131,10 @@ def _sign(payload: str) -> str:
 def _make_auth_token(username: str, ttl_days: int = 30) -> str:
     u = (username or "").strip()
     exp = int(time.time()) + int(ttl_days * 86400)
-    payload = f"v1.{u}.{exp}"
+
+    # v2: base64-encode username to avoid delimiter issues (e.g., dot in username)
+    u_b64 = base64.urlsafe_b64encode(u.encode("utf-8")).decode("utf-8").rstrip("=")
+    payload = f"v2.{u_b64}.{exp}"
     sig = _sign(payload)
     return f"{payload}.{sig}"
 
@@ -118,20 +142,43 @@ def _make_auth_token(username: str, ttl_days: int = 30) -> str:
 def _verify_auth_token(token: str) -> str | None:
     try:
         parts = (token or "").split(".")
-        if len(parts) != 4:
+        if len(parts) < 4:
             return None
-        ver, u, exp_s, sig = parts
-        if ver != "v1":
-            return None
-        exp = int(exp_s)
-        if time.time() > exp:
-            return None
-        payload = f"{ver}.{u}.{exp}"
-        expected = _sign(payload)
-        return u if hmac.compare_digest(expected, sig) else None
+
+        ver = parts[0]
+
+        # v2: v2.<u_b64>.<exp>.<sig>
+        if ver == "v2":
+            if len(parts) != 4:
+                return None
+            _, u_b64, exp_s, sig = parts
+            exp = int(exp_s)
+            if time.time() > exp:
+                return None
+            payload = f"v2.{u_b64}.{exp}"
+            expected = _sign(payload)
+            if not hmac.compare_digest(expected, sig):
+                return None
+            pad = "=" * (-len(u_b64) % 4)
+            return base64.urlsafe_b64decode(u_b64 + pad).decode("utf-8")
+
+        # v1 (legacy): v1.<username_with_possible_dots>.<exp>.<sig>
+        if ver == "v1":
+            if len(parts) < 4:
+                return None
+            sig = parts[-1]
+            exp_s = parts[-2]
+            u = ".".join(parts[1:-2])
+            exp = int(exp_s)
+            if time.time() > exp:
+                return None
+            payload = f"v1.{u}.{exp}"
+            expected = _sign(payload)
+            return u if hmac.compare_digest(expected, sig) else None
+
+        return None
     except Exception:
         return None
-
 
 
 def _bootstrap_auth_from_cookie():
@@ -313,7 +360,8 @@ def login_system():
                                 expires = datetime.datetime.now() + datetime.timedelta(days=30)
                             token = _make_auth_token(u)
                             cm = get_manager()
-                            cm.set("osoul_auth", token, expires_at=expires)
+                            cm.set("osoul_auth_v2", token, expires_at=expires)
+                            # legacy cookies kept for reading only
                             # توافق رجعي: الاسم القديم
                             cm.set("osoul_user", u, expires_at=expires)
                         except Exception:
@@ -367,7 +415,8 @@ def login_system():
 def logout():
     try:
         get_manager().delete("osoul_user")
-        get_manager().delete("osoul_auth")
+        get_manager().delete("osoul_auth_v2")
+        get_manager().delete("osoul_auth")  # legacy
     except Exception:
         pass
 
