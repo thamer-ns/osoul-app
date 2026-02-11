@@ -13,6 +13,7 @@ from views.shared import (
     get_advanced_fundamental_ratios,
     _sym_key,
     _render_table_like_trades,
+    get_financial_import_error,
 )
 
 
@@ -215,6 +216,12 @@ def render_financial_dashboard_ui(symbol):
         )
 
         dashboard_has_data = isinstance(df, pd.DataFrame) and (not df.empty)
+
+        if not dashboard_has_data:
+            ferr = get_financial_import_error()
+            if ferr:
+                with st.expander("⚠️ تشخيص: تعذر تحميل وحدة التحليل المالي"):
+                    st.code(ferr)
 
         # =====================================================
         # ✅ Data Quality Gate (Always visible)
