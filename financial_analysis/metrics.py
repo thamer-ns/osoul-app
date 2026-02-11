@@ -9,6 +9,11 @@ from market_data import get_ticker_symbol
 from .store import get_stored_financials_df
 from .utils import _safe_float, _safe_div, _safe_float_none, _safe_div_none, _is_missing
 
+try:
+    from .data_quality import assess_fundamental_quality
+except Exception:
+    assess_fundamental_quality = None
+
 
 # ==============================================================
 # 📐 Fundamental Ratios (Piotroski + Graham + Advanced Pack)
@@ -516,6 +521,38 @@ def get_advanced_fundamental_ratios(symbol):
         # optional flags (for gates later)
         "_fund_flags": {},
     }
+    # ==============================================================
+    # 🛡️ Data Quality Gate (Hard Block)
+    # - يمنع إعطاء "رأي نهائي" إذا القوائم ناقصة/غير متسقة
+    # ==============================================================
+    dq = None
+    try:
+        if assess_fundamental_quality:
+            dq = assess_fundamental_quality(symbol, period_type="Annual", scale="raw")
+    except Exception:
+        dq = None
+
+    if isinstance(dq, dict):
+        metrics["Data_Quality_Score"] = int(dq.get("score", 0) or 0)
+        metrics["Data_Quality_Pass"] = bool(dq.get("pass", False))
+        metrics["Data_Quality_Issues"] = dq.get("issues", []) or []
+        metrics["Data_Quality_Metrics"] = dq.get("metrics", {}) or {}
+    else:
+        metrics["Data_Quality_Score"] = 0
+        metrics["Data_Quality_Pass"] = False
+        metrics["Data_Quality_Issues"] = ["تعذر تقييم جودة البيانات (تعطل/غياب وحدة الجودة)."]
+        metrics["Data_Quality_Metrics"] = {}
+
+    # Hard block if fail
+    if not metrics.get("Data_Quality_Pass", False):
+        issues_txt = " | ".join([str(x) for x in (metrics.get("Data_Quality_Issues") or [])][:6])
+        metrics["Rating"] = "محجوب"
+        metrics["Score"] = 0
+        metrics["Financial_Health"] = "محجوب بسبب جودة البيانات"
+        metrics["Opinions"] = f"⛔ تم حجب التحليل الأساسي: بيانات القوائم المالية ناقصة/غير متسقة. الأسباب: {issues_txt}"
+        return metrics
+
+
 
     symbol = get_ticker_symbol(symbol)
 
@@ -527,33 +564,6 @@ def get_advanced_fundamental_ratios(symbol):
         period_used = "Quarterly"
     if df.empty:
         return metrics
-
-    # --------------------------
-    # ✅ Data Quality Gate (Hard block for Advisor)
-    # --------------------------
-    try:
-        from .quality_gate import evaluate_financial_data_quality
-        dq = evaluate_financial_data_quality(symbol, preferred_period=period_used, min_rows=2)
-        metrics["Data_Quality_Pass"] = bool(dq.get("pass"))
-        metrics["Data_Quality_Score"] = int(dq.get("score") or 0)
-        metrics["Data_Quality_Issues"] = dq.get("issues") or []
-        metrics["Data_Quality_Missing"] = dq.get("missing_fields") or []
-        metrics["Data_Quality_Period_Used"] = dq.get("period_used") or period_used
-        metrics["Data_Quality_Coverage"] = dq.get("coverage") or {}
-        if not metrics["Data_Quality_Pass"]:
-            # Block: prevent misleading ratios/opinions
-            metrics["Rating"] = "محجوب"
-            metrics["Score"] = 0
-            msg = " ⛔ تم حجب الرأي: بيانات القوائم ناقصة/غير متسقة. راجع بوابة الجودة."
-            issues_txt = " | ".join([str(x) for x in (metrics.get("Data_Quality_Issues") or []) if str(x).strip()])
-            metrics["Opinions"] = (issues_txt + msg)[:1200]
-            # add flags for AI pack consumers
-            metrics.setdefault("_fund_flags", {})
-            metrics["_fund_flags"]["data_quality_block"] = 1
-            return metrics
-    except Exception:
-        # If gate fails unexpectedly, do NOT block; fall back to previous behavior.
-        pass
 
     curr = df.iloc[0]
     prev = df.iloc[1] if len(df) > 1 else curr
