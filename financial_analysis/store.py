@@ -94,35 +94,37 @@ def get_stored_financials_df(symbol, period_type="Annual"):
         variants = _symbol_variants(raw_symbol)
         period_type = str(period_type or "Annual").strip().title()
 
-        # ✅ مهم: لا نسحب كامل جدول financialstatements ...
-        # خصوصاً على Supabase/Streamlit Cloud قد يؤدي إلى Timeout أو Memory.
-        # لذلك نقرأ فقط سجلات الرمز المطلوب والفترة المطلوبة.
-        vlist = [str(v) for v in variants if v]
+        # ✅ لا تجلب الجدول كامل. استخدم استعلام مفلتر لضمان ظهور البيانات حتى مع كبر الجدول.
+        vs = [str(v) for v in variants if v]
+        if not vs:
+            vs = [symbol]
 
-        # Postgres supports = ANY(%s) with array; ...
-        # We'll build a simple IN (...) safely by passing params.
-        placeholders = ",".join(["%s"] * len(vlist)) if vlist else "%s"
-        params = tuple(vlist) + (period_type,)
-        q = f"SELECT * FROM financialstatements WHERE symbol IN ({placeholders}) AND period_type=%s"
-
-        df = fetch_df(q, params=params)
+        # build WHERE symbol = %s OR ...
+        sym_clause = " OR ".join(["symbol=%s"] * len(vs))
+        q = f"""
+        SELECT *
+        FROM financialstatements
+        WHERE ({sym_clause}) AND LOWER(TRIM(period_type)) = LOWER(TRIM(%s))
+        ORDER BY date DESC;
+        """
+        df = fetch_df(q, tuple(vs + [period_type]))
         if df is None or df.empty:
-            # Fallback: if the DB doesn't like the above for any reason, try legacy full table.
+            # fallback (older behavior)
             df = fetch_table("financialstatements")
             if df is None or df.empty:
                 return pd.DataFrame()
             if "symbol" in df.columns:
-                df = df[df["symbol"].astype(str).isin(vlist)]
+                df = df[df["symbol"].astype(str).isin(vs)]
             if "period_type" in df.columns:
                 df = df[df["period_type"].astype(str).str.title() == period_type]
 
-        # handle both schemas: date (DATE) or date_str (TEXT)
+        # normalize date columns
         if "date" in df.columns:
             df["date"] = pd.to_datetime(df["date"], errors="coerce")
-            return df.sort_values("date", ascending=False)
-        if "date_str" in df.columns:
-            df["date"] = pd.to_datetime(df["date_str"], errors="coerce")
-            return df.sort_values("date", ascending=False)
+            df = df.sort_values("date", ascending=False)
+        elif "date_str" in df.columns:
+            df["date_str"] = pd.to_datetime(df["date_str"], errors="coerce")
+            df = df.sort_values("date_str", ascending=False)
 
         return df
     except Exception:
@@ -245,7 +247,7 @@ def fetch_full_statement_records(
     WHERE symbol = %s AND statement = %s AND period_type = %s AND scale = %s
     ORDER BY as_of DESC;
     """
-    df = fetch_table(query, (sym, st, ptype, sc))
+    df = fetch_df(query, (sym, st, ptype, sc))
     if df is None or df.empty:
         return pd.DataFrame()
 
@@ -298,7 +300,7 @@ def get_full_statements_freshness(
     FROM {_TABLE_NAME}
     WHERE symbol=%s AND period_type=%s AND scale=%s;
     """
-    meta = fetch_table(q, (sym, ptype, sc))
+    meta = fetch_df(q, (sym, ptype, sc))
     updated_at = None
     sources = []
     try:
