@@ -268,13 +268,23 @@ def render_financial_dashboard_ui(symbol):
             with c3:
                 st.metric("الرأي", "جاهز" if opinions and str(opinions).strip() != "-" else "—")
             with c4:
-                dconf = metrics.get("Data_Confidence", None)
-                issues = metrics.get("Data_Issues", []) or []
-                if dconf is None:
-                    st.metric("عدد الأعمدة", str(len(df.columns)))
+                # ✅ Data Quality Gate (Hard block)
+                dq_pass = metrics.get('Data_Quality_Pass', None)
+                dq_score = metrics.get('Data_Quality_Score', None)
+                dq_issues = metrics.get('Data_Quality_Issues', []) or []
+                if dq_pass is not None:
+                    st.metric('بوابة الجودة', 'ناجحة ✅' if dq_pass else 'فشل ❌', f"{int(dq_score or 0)}/100")
+                    if (not dq_pass) and dq_issues:
+                        with st.expander('عرض أسباب فشل بوابة الجودة', expanded=True):
+                            for it in dq_issues[:20]:
+                                st.write(f"- {it}")
                 else:
-                    st.metric("ثقة البيانات", f"{int(dconf)}/100", f"نواقص: {len(issues)}")
-
+                    dconf = metrics.get('Data_Confidence', None)
+                    issues = metrics.get('Data_Issues', []) or []
+                    if dconf is None:
+                        st.metric('عدد الأعمدة', str(len(df.columns)))
+                    else:
+                        st.metric('ثقة البيانات', f"{int(dconf)}/100", f"نواقص: {len(issues)}")
             st.markdown(
                 f"""
                 <div class="os-card" style="margin-top:10px;">
