@@ -42,23 +42,21 @@ def _get_db_url() -> str:
 
 
 def get_connection_pool():
-    """Get or create a Postgres connection pool, if configured."""
+    """Get or create a Postgres connection pool, if configured.
+
+    Notes:
+    - إذا كان DATABASE_URL مهيأ كـ Postgres، لا نرجع لِـ SQLite بصمت عند فشل الاتصال.
+      هذا كان يسبب: جداول (مثل users) تُقرأ من SQLite الفارغ => "خطأ في البيانات" حتى لو البيانات صحيحة.
+    """
     global _POOL, _POOL_LAST_ERR, _POOL_LAST_OK, _POOL_LAST_CHECK
 
-    # rate-limit pool init checks
     now = time.time()
+    # rate-limit pool init checks (خفيف لتجنب ضغط الاتصال)
     if _POOL is not None and (now - _POOL_LAST_CHECK) < 2:
         return _POOL
-
     _POOL_LAST_CHECK = now
-    db_url = _get_db_url()
 
-    # مصدر الرابط: Streamlit Secrets (DATABASE_URL) أو متغيرات البيئة.
-    # نعرض رسالة عامة بدون افتراض وجود secrets.toml داخل المستودع.
-    if not getattr(config, "DB_CONNECTION_URL", None):
-        st.error("⚠️ لم يتم العثور على رابط قاعدة البيانات (DATABASE_URL) في Secrets/Env.")
-        _POOL_LAST_OK = False
-        return None
+    db_url = _get_db_url()
 
     if not db_url:
         _POOL_LAST_ERR = "Missing DATABASE_URL"
@@ -67,7 +65,7 @@ def get_connection_pool():
 
     # If url isn't postgres, we won't create pool
     if not _is_postgres_url(db_url):
-        _POOL_LAST_ERR = "DATABASE_URL is not a Postgres URL (expected postgresql://...)"
+        _POOL_LAST_ERR = "DATABASE_URL is not a Postgres URL"
         _POOL_LAST_OK = False
         return None
 
@@ -90,22 +88,27 @@ def get_connection_pool():
 
 
 def get_connection():
+    """Get a DB connection.
+
+    - إذا كان DATABASE_URL مهيأ كـ Postgres: نحاول Postgres. إذا فشل => نرفع خطأ واضح.
+      (لا fallback إلى SQLite بصمت)
+    - إذا لم يكن هناك DATABASE_URL Postgres: نستخدم SQLite fallback.
     """
-    Get a DB connection:
-    - Postgres if DATABASE_URL is set and valid
-    - else SQLite fallback
-    """
+    db_url = _get_db_url()
     pool = get_connection_pool()
-    if pool is not None:
+
+    # Postgres configured path
+    if db_url and _is_postgres_url(db_url):
+        if pool is None:
+            raise RuntimeError(f"Postgres configured but connection pool is unavailable: {_POOL_LAST_ERR or 'unknown error'}")
         try:
             return pool.getconn(), "postgres"
-        except Exception:
-            pass
+        except Exception as e:
+            raise RuntimeError(f"Failed to acquire Postgres connection from pool: {e}") from e
 
-    # SQLite fallback
+    # SQLite fallback (local/dev)
     try:
         import sqlite3
-
         conn = sqlite3.connect(_SQLITE_PATH, check_same_thread=False)
         return conn, "sqlite"
     except Exception as e:
@@ -416,7 +419,11 @@ def db_create_user(username: str, password: str, email: str = "") -> bool:
 
 def db_verify_user(username: str, password: str) -> bool:
     ensure_users_table()
-    conn, kind = get_connection()
+    try:
+        conn, kind = get_connection()
+    except RuntimeError as e:
+        # لا نُرجع False (خطأ بيانات) عندما تكون المشكلة اتصال قاعدة البيانات
+        raise
     try:
         cur = conn.cursor()
         cols = _users_columns()
