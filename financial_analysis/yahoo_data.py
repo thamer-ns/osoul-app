@@ -470,3 +470,153 @@ def diagnose_quote_summary(symbol: str) -> Dict[str, Any]:
         elif status == 404:
             diag["hint"] = "Symbol not found / endpoint changed"
         return diag
+
+
+# ==============================================================
+# 📦 Full Statements (ALL line-items) via QuoteSummary
+# ==============================================================
+_FULL_QS_CACHE = {}  # key -> (ts, data)
+_FULL_QS_TTL_SEC = 12 * 60 * 60  # 12h
+
+
+def _qs_cached(symbol: str, modules: List[str]) -> dict:
+    """
+    Cached wrapper around _yahoo_quote_summary to reduce repeated hits (Streamlit reruns).
+    Cache is process-local (in-memory).
+    """
+    key = f"{get_ticker_symbol(symbol)}::" + ",".join(modules or [])
+    now = time.time()
+    ts, data = _FULL_QS_CACHE.get(key, (0.0, None))
+    if data is not None and ts and (now - ts) < _FULL_QS_TTL_SEC:
+        return data
+    data = _yahoo_quote_summary(symbol, modules=modules) or {}
+    # Cache even empty response for a short time to avoid hammering on 429
+    _FULL_QS_CACHE[key] = (now, data)
+    return data
+
+
+def _flatten_stmt_item(item: dict, as_thousands: bool = True) -> Dict[str, float]:
+    """
+    Convert a single Yahoo statement dict to {line_item: value} with safe raw extraction.
+    """
+    out: Dict[str, float] = {}
+    if not isinstance(item, dict):
+        return out
+    for k, v in item.items():
+        if k in ("endDate", "maxAge", "periodType"):
+            continue
+        # Values often like {"raw":123,"fmt":"123"}
+        val = _yf_raw(v, default=0.0)
+        if as_thousands:
+            val = val / 1000.0
+        out[str(k)] = float(val)
+    return out
+
+
+def fetch_full_financial_statements_yahoo_json(
+    symbol: str,
+    period_type: str = "All",
+    *,
+    as_thousands: bool = True,
+    include_ttm: bool = True,
+) -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
+    """
+    Fetch and return *all* line-items for Income/Balance/Cashflow statements.
+
+    Returns:
+      {
+        "Annual": {"income": [{"date": "...", "data": {...}}, ...],
+                   "balance": [...],
+                   "cashflow": [...]},
+        "Quarterly": {...},
+        "TTM": {"income":[...], "cashflow":[...]}  # derived from Quarterly (optional)
+      }
+
+    Notes:
+    - Uses QuoteSummary modules which can be rate-limited (429). We cache per-process.
+    - If Yahoo blocks, returns {} and diagnostics can be read via get_last_yahoo_diagnostics().
+    """
+    sym = get_ticker_symbol(symbol)
+    if not sym:
+        return {}
+
+    period_norm = (period_type or "All").strip().lower()
+    want_a = period_norm in ("all", "annual", "a", "year", "yearly")
+    want_q = period_norm in ("all", "quarterly", "q", "quarter", "quarters")
+
+    out: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
+
+    # Annual
+    if want_a:
+        mods = ["incomeStatementHistory", "balanceSheetHistory", "cashflowStatementHistory"]
+        root = _qs_cached(sym, mods)
+        if root:
+            inc = _extract_stmt_list(root, "incomeStatementHistory")
+            bal = _extract_stmt_list(root, "balanceSheetHistory")
+            cf = _extract_stmt_list(root, "cashflowStatementHistory")
+
+            out["Annual"] = {
+                "income": [{"date": _yf_date_str(x.get("endDate")), "data": _flatten_stmt_item(x, as_thousands)} for x in inc or []],
+                "balance": [{"date": _yf_date_str(x.get("endDate")), "data": _flatten_stmt_item(x, as_thousands)} for x in bal or []],
+                "cashflow": [{"date": _yf_date_str(x.get("endDate")), "data": _flatten_stmt_item(x, as_thousands)} for x in cf or []],
+            }
+
+    # Quarterly
+    if want_q:
+        mods = ["incomeStatementHistoryQuarterly", "balanceSheetHistoryQuarterly", "cashflowStatementHistoryQuarterly"]
+        root = _qs_cached(sym, mods)
+        if root:
+            inc = _extract_stmt_list(root, "incomeStatementHistoryQuarterly")
+            bal = _extract_stmt_list(root, "balanceSheetHistoryQuarterly")
+            cf = _extract_stmt_list(root, "cashflowStatementHistoryQuarterly")
+
+            out["Quarterly"] = {
+                "income": [{"date": _yf_date_str(x.get("endDate")), "data": _flatten_stmt_item(x, as_thousands)} for x in inc or []],
+                "balance": [{"date": _yf_date_str(x.get("endDate")), "data": _flatten_stmt_item(x, as_thousands)} for x in bal or []],
+                "cashflow": [{"date": _yf_date_str(x.get("endDate")), "data": _flatten_stmt_item(x, as_thousands)} for x in cf or []],
+            }
+
+    # Derive TTM from quarterly income/cashflow (best-effort)
+    if include_ttm and "Quarterly" in out and out["Quarterly"].get("income"):
+        try:
+            q_inc = out["Quarterly"]["income"][:4]
+            q_cf = out["Quarterly"]["cashflow"][:4] if out["Quarterly"].get("cashflow") else []
+
+            def sum_last4(recs: List[Dict[str, Any]]) -> Dict[str, float]:
+                acc: Dict[str, float] = {}
+                for r in recs or []:
+                    d = (r or {}).get("data") or {}
+                    for k, v in d.items():
+                        try:
+                            acc[k] = float(acc.get(k, 0.0) + float(v or 0.0))
+                        except Exception:
+                            pass
+                return acc
+
+            ttm_date = (q_inc[0].get("date") if q_inc else datetime.utcnow().strftime("%Y-%m-%d"))
+            out["TTM"] = {
+                "income": [{"date": ttm_date, "data": sum_last4(q_inc)}],
+                "cashflow": [{"date": ttm_date, "data": sum_last4(q_cf)}] if q_cf else [],
+            }
+        except Exception:
+            # ignore TTM failures
+            pass
+
+    # Remove empty
+    out = {k: v for k, v in out.items() if v and any((v.get("income") or v.get("balance") or v.get("cashflow")))}
+    return out
+
+
+def fetch_full_financial_statements_yahoo_html(*args, **kwargs) -> Dict[str, Any]:
+    """
+    HTML fallback placeholder.
+    بعض البيئات تُحظر JSON (429) لكن تسمح HTML. إذا احتجنا لاحقًا،
+    نضيف scraper خفيف هنا. حاليًا نرجع {} بشكل آمن.
+    """
+    return {}
+
+
+# Alias used by UI
+def diagnose_yahoo_quote_summary(symbol: str) -> Dict[str, Any]:
+    return diagnose_quote_summary(symbol)
+
