@@ -46,17 +46,46 @@ def _validate_username(u: str):
     return True, ""
 
 
-def _validate_password(p: str):
+def _validate_password_login(p: str):
+    """Validation for *login* only.
+
+    Why separate?
+    - We may have **existing accounts** created with a legacy policy (e.g. 6 chars).
+    - Enforcing a new stronger policy at login would lock out those users.
+
+    So login validation is minimal (non-empty + sane max length).
+    Strong policy is enforced for registration.
+    """
     p = (p or "").strip()
-    if len(p) < 8:
-        return False, "كلمة المرور قصيرة جداً (8 أحرف على الأقل)"
+    if len(p) < 1:
+        return False, "الرجاء إدخال كلمة المرور"
     if len(p) > 200:
         return False, "كلمة المرور طويلة جداً"
-    # يجب أن تحتوي على حرف ورقم (لرفع الأمان)
-    if not re.search(r"[A-Za-z]", p):
-        return False, "كلمة المرور يجب أن تحتوي على حرف (A-Z)"
-    if not re.search(r"\d", p):
-        return False, "كلمة المرور يجب أن تحتوي على رقم (0-9)"
+    return True, ""
+
+
+def _validate_password_strong(p: str):
+    """Registration password policy.
+
+    Supports two modes to keep backward compatibility with existing UX:
+    1) PIN: 6+ digits (numeric only)
+    2) Password: 8+ chars with at least one letter and one digit
+    """
+    p = (p or "").strip()
+    if len(p) > 200:
+        return False, "كلمة المرور طويلة جداً"
+
+    # Mode 1: numeric PIN
+    if re.fullmatch(r"\d+", p or ""):
+        if len(p) < 6:
+            return False, "الرمز قصير جداً (6 أرقام على الأقل)"
+        return True, ""
+
+    # Mode 2: regular password
+    if len(p) < 8:
+        return False, "كلمة المرور قصيرة جداً (8 أحرف على الأقل)"
+    if not re.search(r"[A-Za-z]", p) or not re.search(r"\d", p):
+        return False, "كلمة المرور يجب أن تحتوي حرفًا ورقمًا على الأقل"
     return True, ""
 
 
@@ -343,7 +372,9 @@ def login_user(username: str, password: str, remember_me: bool = False):
     if not ok_u:
         return False, msg_u
 
-    ok_p, msg_p = _validate_password(password)
+    # NOTE: Do NOT enforce strong password policy at login.
+    # This keeps older accounts (created with a previous policy) working.
+    ok_p, msg_p = _validate_password_login(password)
     if not ok_p:
         return False, msg_p
 
@@ -385,7 +416,8 @@ def register_user(username: str, password: str):
     if not ok_u:
         return False, msg_u
 
-    ok_p, msg_p = _validate_password(password)
+    # Strong policy is enforced on registration.
+    ok_p, msg_p = _validate_password_strong(password)
     if not ok_p:
         return False, msg_p
 
