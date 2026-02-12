@@ -13,3 +13,5 @@ pdfplumber
 xlsxwriter
 SQLAlchemy
 yfinance
+pytimeparse
+websocket-client
