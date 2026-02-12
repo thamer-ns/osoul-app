@@ -1376,3 +1376,41 @@ def diagnose_yahoo_quote_summary(symbol: str):
     except Exception:
         return {"error": "diagnostics unavailable", "hint": "Diagnostics غير متاحة"}
 
+
+
+# ==============================================================
+# 🕯️ Twelve Data Diagnostics (UI-safe wrappers)
+# ==============================================================
+
+def get_twelvedata_usage():
+    """UI wrapper: return Twelve Data API usage info (if key configured)."""
+    try:
+        from twelvedata_provider import get_api_usage  # type: ignore
+        d = get_api_usage()
+        return dict(d) if isinstance(d, dict) else {"ok": False, "error": "invalid usage type"}
+    except Exception:
+        return {"ok": False, "error": "usage unavailable", "hint": "تأكد من TWELVEDATA_API_KEY"}
+
+
+def diagnose_twelvedata_symbol(symbol: str):
+    """UI wrapper: quick quote + small candles sample to validate symbol coverage."""
+    out = {"symbol": symbol}
+    try:
+        from twelvedata_provider import get_quote, get_time_series  # type: ignore
+
+        q = get_quote(symbol)
+        out["quote"] = dict(q) if isinstance(q, dict) else {"ok": False, "error": "invalid quote"}
+
+        df = get_time_series(symbol, interval="1d", years=1, outputsize=120)
+        out["candles"] = {
+            "ok": bool(df is not None and not df.empty),
+            "rows": int(len(df)) if df is not None else 0,
+            "from": str(df.index.min().date()) if df is not None and not df.empty else "",
+            "to": str(df.index.max().date()) if df is not None and not df.empty else "",
+        }
+        out["ok"] = bool(out["quote"].get("ok") or out["candles"].get("ok"))
+        return out
+    except Exception as e:
+        out["ok"] = False
+        out["error"] = str(e)
+        return out
