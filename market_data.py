@@ -732,13 +732,14 @@ def get_tasi_data():
     """TASI snapshot without Yahoo.
 
     Priority:
-    1) Twelve Data (quote endpoint) — usually best for indices
-    2) TradingView index page (best-effort)
+    1) Twelve Data (quote endpoint)
+    2) Twelve Data (time_series fallback)
+    3) TradingView index page (best-effort)
 
     Returns:
       (tasi_value, change_percent)
     """
-    # Twelve Data quote
+    # 1) Twelve Data quote
     try:
         from twelvedata_provider import get_quote
 
@@ -754,7 +755,23 @@ def get_tasi_data():
     except Exception:
         pass
 
-    # TradingView best-effort
+    # 2) Twelve Data time_series fallback
+    try:
+        from twelvedata_provider import get_time_series
+
+        df = get_time_series("TASI", interval="1d", years=2, outputsize=600)
+        if isinstance(df, pd.DataFrame) and (not df.empty) and "Close" in df.columns:
+            s_close = pd.to_numeric(df["Close"], errors="coerce").dropna()
+            if len(s_close) >= 1:
+                curr = float(s_close.iloc[-1])
+                prev = float(s_close.iloc[-2]) if len(s_close) >= 2 else 0.0
+                chg = ((curr - prev) / prev) * 100.0 if prev > 0 else 0.0
+                if _is_reasonable_price(curr):
+                    return float(curr), round(_safe_float(chg), 2)
+    except Exception:
+        pass
+
+    # 3) TradingView best-effort
     try:
         if requests:
             url = "https://www.tradingview.com/symbols/TADAWUL-TASI/"
