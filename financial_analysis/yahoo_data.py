@@ -28,6 +28,26 @@ _LAST_YAHOO_DIAGNOSTICS = {
 }
 
 
+# ==============================
+# Throttle (تقليل 429 بسبب إعادة تشغيل Streamlit)
+# ==============================
+def _yahoo_throttle_wait(url: str):
+    """Global throttle to avoid spamming Yahoo endpoints on Streamlit reruns."""
+    try:
+        if not url:
+            return
+        key = "quoteSummary" if "quoteSummary" in url else "yahoo_generic"
+        min_interval = 15.0 if key == "quoteSummary" else 6.0
+        store = st.session_state.get("_yahoo_last_call_ts", {})
+        last = float(store.get(key, 0.0) or 0.0)
+        now = time.time()
+        if last > 0 and (now - last) < min_interval:
+            time.sleep(min_interval - (now - last))
+        store[key] = time.time()
+        st.session_state["_yahoo_last_call_ts"] = store
+    except Exception:
+        pass
+
 def _set_last_diag(url=None, status=None, error=None, snippet=None, hint=None):
     try:
         _LAST_YAHOO_DIAGNOSTICS.update(
@@ -92,6 +112,8 @@ def _http_get_json(url: str, timeout: int = 8, retries: int = 2, sleep: float = 
     last_status = None
     last_snippet = None
     last_err = None
+
+    _yahoo_throttle_wait(url)
 
     for i in range(retries + 1):
         try:
