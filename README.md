@@ -1003,5 +1003,37 @@ TWELVEDATA_API_KEY = "YOUR_KEY"
   - `twelvedata_provider.py`
   - `twelvedata/` (vendored SDK)
   - `PATCH_NOTES_TWELVEDATA_MERGE.md`
+# Twelve Data Integration Patch Notes (2026-02-12)
+
+هذا الملف يوثّق الدمج الذي تم بين النسخ، بهدف تحسين مصدر البيانات وتخفيف مشاكل Yahoo (429/Rate Limit).
+
+## أهم التغييرات
+- إضافة طبقة تكامل مستقرة: `twelvedata_provider.py`
+- إضافة مجلد `twelvedata/` (SDK مُضمَّن داخل المشروع) مع تصحيح أسماء الملفات لتعمل على أنظمة Linux/Mac/Windows:
+  - `__init__.py`
+  - `exceptions.py`
+  - `time_series.py`
+- تحديث `market_data.py` لدعم:
+  - Twelve Data Quote لالتقاط أسعار فورية (TASI/Stocks) مع fallback
+  - Twelve Data Time Series لجلب شموع OHLCV (Daily/Weekly/Monthly) مع throttle + backoff
+- تحديث `financial_analysis/yahoo_data.py` بإضافة throttle لتقليل 429 بسبب إعادة تشغيل Streamlit
+- تحديث `ai_engine_core/reporting.py` لإرجاع أخطاء بشكل structured بدل رمي Exceptions في الحالات الشائعة (no data / insufficient candles)
+- إضافة دوال تشخيص بسيطة في `views/shared.py`:
+  - `get_twelvedata_usage()`
+  - `diagnose_twelvedata_symbol(symbol)`
+
+## الإعدادات المطلوبة
+ضع المفتاح في Streamlit Secrets أو متغير بيئة:
+
+```toml
+TWELVEDATA_API_KEY = "YOUR_KEY"
+```
+
+أو:
+- env: `TWELVEDATA_API_KEY`
+
+## ملاحظة أمنية
+لا تضع بيانات قاعدة البيانات/الأسرار داخل الملفات عند مشاركة المشروع.
+ملف `.streamlit/secrets.toml` موجود لأجل التشغيل المحلي فقط وهو ضمن `.gitignore`.
 
 
