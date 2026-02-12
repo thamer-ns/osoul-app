@@ -12,6 +12,40 @@ import os
 from typing import Optional
 
 _LOGGER_NAME = "osoli"
+# ============================================================
+# Redaction (avoid leaking secrets in logs/UI)
+# ============================================================
+
+_REDACT_PATTERNS = [
+    # postgres URLs with password: postgresql://user:pass@host/db -> postgresql://user:***@host/db
+    (re.compile(r'(?i)(postgres(?:ql)?://[^\s:/@]+:)([^@\s]+)(@)'), r'\1***\3'),
+    # common key=value secrets
+    (re.compile(r'(?i)(AUTH_SECRET\s*[:=]\s*)([^\s\n\r]+)'), r'\1***'),
+    (re.compile(r'(?i)(TWELVEDATA_API_KEY\s*[:=]\s*)([^\s\n\r]+)'), r'\1***'),
+    (re.compile(r'(?i)(DATABASE_URL\s*[:=]\s*)([^\s\n\r]+)'), r'\1***'),
+]
+
+def redact_text(text: str) -> str:
+    """Best-effort redaction for secrets in text."""
+    s = str(text or "")
+    for pat, rep in _REDACT_PATTERNS:
+        s = pat.sub(rep, s)
+    return s
+
+
+class RedactionFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            if isinstance(record.msg, str):
+                record.msg = redact_text(record.msg)
+            if record.args:
+                if isinstance(record.args, tuple):
+                    record.args = tuple(redact_text(a) for a in record.args)
+                else:
+                    record.args = redact_text(record.args)
+        except Exception:
+            pass
+        return True
 
 def get_logger() -> logging.Logger:
     logger = logging.getLogger(_LOGGER_NAME)
@@ -29,6 +63,7 @@ def get_logger() -> logging.Logger:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
     handler.setFormatter(fmt)
+    handler.addFilter(RedactionFilter())
     logger.addHandler(handler)
     logger.propagate = False
     return logger
@@ -55,7 +90,7 @@ def streamlit_alert(message: str, details: Optional[str] = None, *, kind: str = 
         if details:
             fn(message)
             with st.expander("التفاصيل", expanded=False):
-                st.code(details)
+                st.code(redact_text(details))
         else:
             fn(message)
     except Exception:
