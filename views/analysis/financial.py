@@ -1,5 +1,6 @@
 #views/analysis/financial.py
 import streamlit as st
+from osoli_logging import redact_text
 import pandas as pd
 from datetime import date
 
@@ -259,7 +260,7 @@ def render_financial_dashboard_ui(symbol):
                     _render_q("ربع سنوي (Quarterly)", q_q)
 
                 except Exception as e:
-                    st.error(str(e))
+                    st.error(redact_text(str(e)))
 
         if not dashboard_has_data:
             st.warning("⚠️ لا توجد بيانات مالية محفوظة لهذا السهم.")
