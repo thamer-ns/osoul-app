@@ -517,7 +517,7 @@ def _render_targets(targets):
         render_custom_table(df, cols_spec)
     except Exception:
         # fallback آمن
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(df, width='stretch', hide_index=True)
 
 def _render_entry_risk_levels(entry: dict, risk: dict, levels: dict, score: int):
     st.markdown("### 🧭 خطة الدخول والمخاطر")
@@ -1272,7 +1272,7 @@ def _render_tv_like_chart(symbol: str, period: str, interval: str, show_rangesli
         fig = _build_tv_like_plot(df, title=f"{symbol} | {period} | {interval}", show_rangeslider=show_rangeslider)
         st.plotly_chart(
             fig,
-            use_container_width=True,
+            width='stretch',
             config={
                 "scrollZoom": True,
                 "displaylogo": False,
