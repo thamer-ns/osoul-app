@@ -37,23 +37,6 @@ from config import APP_NAME, APP_ICON
 from database import init_db
 from styles import apply_custom_css
 
-# ✅ (اختياري) إذا ضفت apply_ui_css داخل styles.py
-try:
-    from styles import apply_ui_css
-except Exception:
-    apply_ui_css = None
-
-try:
-    from components import inject_component_styles
-except Exception:
-    inject_component_styles = None
-
-# ✅ (اختياري) هيدر احترافي (شعار + اسم + وصف + شريط حالة) بدون لمس منطق التحليل
-try:
-    from components import render_app_header
-except Exception:
-    render_app_header = None
-
 
 def _safe_image(path: str, width: Optional[int] = None):
     try:
@@ -80,31 +63,11 @@ def main():
         layout="wide",
     )
 
-    # CSS (آمن)
+    # CSS
     try:
         apply_custom_css()
     except Exception:
         pass
-
-    # CSS إضافي (اختياري)
-    if apply_ui_css:
-        try:
-            apply_ui_css()
-        except Exception:
-            pass
-
-    if inject_component_styles:
-        try:
-            inject_component_styles()
-        except Exception:
-            pass
-
-    # Header (اختياري)
-    if render_app_header:
-        try:
-            render_app_header()
-        except Exception:
-            pass
 
     # -------------------------
     # DB Init
@@ -119,7 +82,11 @@ def main():
     # Auth Gate (من security.py)
     # -------------------------
     try:
-        from security import login_system
+        # ✅ بعض النسخ تستخدم login_system وبعضها require_login
+        try:
+            from security import login_system
+        except Exception:
+            from security import require_login as login_system
     except Exception as e:
         st.error("فشل تحميل نظام تسجيل الدخول (security.py).")
         st.code(str(e))
