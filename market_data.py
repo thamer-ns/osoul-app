@@ -475,81 +475,25 @@ def fetch_price_from_argaam(symbol: str) -> float:
 # ============================================================
 # 🟨 Yahoo Finance - المصدر الأساسي
 # ============================================================
-def fetch_price_from_yahoo(symbol: str) -> Dict[str, float]:
+def fetch_price_from_yahoo(symbol: str) -> Dict[str, Any]:
+    """Disabled for price retrieval.
+
+    Policy: Yahoo is used for financial statements only.
+    (Yahoo price endpoints are rate-limited and duplicate Google/other sources.)
+    """
     sym = get_ticker_symbol(symbol)
-    default_res = {"price": 0.0, "prev_close": 0.0, "year_high": 0.0, "year_low": 0.0}
-
-    if not sym:
-        return default_res
-
-    try:
-        t = yf.Ticker(sym)
-        fi = getattr(t, "fast_info", None)
-
-        last_price = 0.0
-        prev_close = 0.0
-        year_high = 0.0
-        year_low = 0.0
-
-        if fi:
-            last_price = _safe_float(getattr(fi, "last_price", None))
-            prev_close = _safe_float(getattr(fi, "previous_close", None))
-            year_high = _safe_float(getattr(fi, "year_high", None))
-            year_low = _safe_float(getattr(fi, "year_low", None))
-
-        if last_price <= 0 or prev_close <= 0:
-            try:
-                h = t.history(period="5d", interval="1d")
-                h = _normalize_ohlcv_columns(h)
-                if not h.empty and "Close" in h.columns:
-                    if last_price <= 0:
-                        last_price = _safe_float(h["Close"].iloc[-1])
-                    if prev_close <= 0 and len(h) >= 2:
-                        prev_close = _safe_float(h["Close"].iloc[-2])
-            except Exception:
-                pass
-
-        return {
-            "price": float(last_price) if _is_reasonable_price(last_price) else 0.0,
-            "prev_close": float(prev_close) if _is_reasonable_price(prev_close) else 0.0,
-            "year_high": float(year_high) if _is_reasonable_price(year_high) else 0.0,
-            "year_low": float(year_low) if _is_reasonable_price(year_low) else 0.0,
-        }
-    except Exception:
-        return default_res
+    return {
+        "source": "yahoo",
+        "symbol": sym,
+        "price": 0.0,
+        "prev_close": 0.0,
+        "year_high": 0.0,
+        "year_low": 0.0,
+        "ok": False,
+        "note": "Yahoo price fetching is disabled (statements-only mode).",
+    }
 
 
-# ============================================================
-# 📌 TASI Data (المؤشر العام)
-# ============================================================
-@st.cache_data(ttl=300, show_spinner=False)
-def get_tasi_data():
-    try:
-        tick = yf.Ticker("^TASI.SR")
-        fi = getattr(tick, "fast_info", None)
-        curr = _safe_float(getattr(fi, "last_price", None)) if fi else 0.0
-        prev = _safe_float(getattr(fi, "previous_close", None)) if fi else 0.0
-
-        if curr <= 0:
-            hist = tick.history(period="5d", interval="1d")
-            hist = _normalize_ohlcv_columns(hist)
-            if not hist.empty and "Close" in hist.columns:
-                curr = _safe_float(hist["Close"].iloc[-1])
-                prev = _safe_float(hist["Close"].iloc[-2]) if len(hist) > 1 else curr
-
-        if _is_reasonable_price(curr):
-            chg = ((curr - prev) / prev) * 100.0 if prev > 0 else 0.0
-            return float(curr), round(_safe_float(chg), 2)
-    except Exception:
-        pass
-
-    return 0.0, 0.0
-
-
-# ============================================================
-# 📉 Chart History (للرسم البياني والذكاء الاصطناعي)
-# ============================================================
-@st.cache_data(ttl=900, show_spinner=False)
 def get_chart_history(symbol: str, period: str = None, interval: str = "1d", years: int = 5) -> pd.DataFrame:
     sym = get_ticker_symbol(symbol)
     if not sym:
@@ -586,6 +530,35 @@ def get_chart_history(symbol: str, period: str = None, interval: str = "1d", yea
 
 
 @st.cache_data(ttl=900, show_spinner=False)
+def get_tasi_data():
+    """Return (index_level, percent_change) for TASI.
+
+    Prices source policy:
+    - Use Google Finance first for TASI snapshot (TASI:TADAWUL / ^TASI.SR).
+    - Then TradingView / Investing snapshots.
+    - Avoid Yahoo endpoints for prices to reduce 429 and comply with statements-only mode.
+    """
+    # Google Finance
+    snap = fetch_google_finance_snapshot("^TASI.SR")
+    curr = _safe_float((snap or {}).get("price", 0.0)) if isinstance(snap, dict) else 0.0
+    if curr > 0:
+        # Google Finance HTML does not reliably expose previous close in a stable selector.
+        return curr, 0.0
+
+    # Fallbacks (snapshot-only)
+    tv = fetch_tradingview_snapshot("^TASI.SR")
+    curr2 = _safe_float((tv or {}).get("price", 0.0)) if isinstance(tv, dict) else 0.0
+    if curr2 > 0:
+        return curr2, 0.0
+
+    inv = fetch_investing_snapshot("^TASI.SR")
+    curr3 = _safe_float((inv or {}).get("price", 0.0)) if isinstance(inv, dict) else 0.0
+    if curr3 > 0:
+        return curr3, 0.0
+
+    return 0.0, 0.0
+
+
 def get_tasi_history(period: str = None, interval: str = "1d") -> pd.DataFrame:
     return get_chart_history("^TASI.SR", period=period, interval=interval, years=5)
 
@@ -668,109 +641,84 @@ def get_relative_strength_vs_tasi(symbol: str, period: str = None, interval: str
 @st.cache_data(ttl=120, show_spinner=False)
 def fetch_batch_data(symbols_list: list):
     """
-    تحسينات:
-    - يقلل الضغط على yf.Tickers
-    - يضمن always mapping variants
+    Batch snapshot fetch (NO Yahoo for prices).
+
+    Source order:
+      1) Google Finance
+      2) TradingView (public snapshot)
+      3) Investing (public snapshot)
+      4) Argaam (best-effort HTML)
+    Notes:
+      - prev_close / year_high / year_low may be unavailable from non-Yahoo snapshots.
+      - This function focuses on *current price* for portfolio/tiles without hitting Yahoo.
     """
     results = {}
     if not symbols_list:
         return results
 
     input_symbols = [str(s).strip().upper() for s in symbols_list if str(s).strip()]
-    norm_map = {s: get_ticker_symbol(s) for s in input_symbols}
-    clean_syms = sorted(list(set([v for v in norm_map.values() if v])))
-
-    yahoo_data_by_norm = {}
-
-    # ✅ best-effort batch
-    try:
-        if len(clean_syms) == 1:
-            sym = clean_syms[0]
-            yahoo_data_by_norm[sym] = fetch_price_from_yahoo(sym)
-        else:
-            tickers = yf.Tickers(" ".join(clean_syms))
-            for sym in clean_syms:
-                try:
-                    sub_ticker = tickers.tickers.get(sym)
-                    if not sub_ticker:
-                        yahoo_data_by_norm[sym] = {"price": 0.0, "prev_close": 0.0, "year_high": 0.0, "year_low": 0.0}
-                        continue
-
-                    fi = getattr(sub_ticker, "fast_info", None)
-                    price = _safe_float(getattr(fi, "last_price", 0.0)) if fi else 0.0
-                    prev_close = _safe_float(getattr(fi, "previous_close", 0.0)) if fi else 0.0
-
-                    yahoo_data_by_norm[sym] = {
-                        "price": float(price) if _is_reasonable_price(price) else 0.0,
-                        "prev_close": float(prev_close) if _is_reasonable_price(prev_close) else 0.0,
-                        "year_high": _safe_float(getattr(fi, "year_high", 0.0)) if fi else 0.0,
-                        "year_low": _safe_float(getattr(fi, "year_low", 0.0)) if fi else 0.0,
-                    }
-                except Exception:
-                    yahoo_data_by_norm[sym] = {"price": 0.0, "prev_close": 0.0, "year_high": 0.0, "year_low": 0.0}
-    except Exception:
-        for sym in clean_syms:
-            yahoo_data_by_norm[sym] = fetch_price_from_yahoo(sym)
-
     for raw_sym in input_symbols:
-        norm = norm_map.get(raw_sym) or get_ticker_symbol(raw_sym)
-        d = yahoo_data_by_norm.get(norm, {"price": 0.0, "prev_close": 0.0, "year_high": 0.0, "year_low": 0.0})
+        norm = get_ticker_symbol(raw_sym) or raw_sym
+        out = {
+            "symbol": norm,
+            "price": 0.0,
+            "prev_close": 0.0,
+            "year_high": 0.0,
+            "year_low": 0.0,
+            "source": "",
+            "ok": False,
+        }
 
-        price = _safe_float(d.get("price", 0.0))
-        prev_close = _safe_float(d.get("prev_close", 0.0))
-        year_high = _safe_float(d.get("year_high", 0.0))
-        year_low = _safe_float(d.get("year_low", 0.0))
-        source = "yahoo"
+        # 1) Google Finance
+        try:
+            g = fetch_google_finance_snapshot(norm)
+            if isinstance(g, dict):
+                p = _safe_float(g.get("price", 0.0))
+                if _is_reasonable_price(p):
+                    out.update({"price": float(p), "source": "google", "ok": True})
+        except Exception:
+            pass
 
-        # ✅ Yahoo history fallback before Argaam
-        if price <= 0:
+        # 2) Investing
+        if out["price"] <= 0:
             try:
-                h = yf.download(
-                    norm,
-                    period="5d",
-                    interval="1d",
-                    progress=False,
-                    threads=False,
-                    group_by="column",
-                )
-                h = _normalize_ohlcv_columns(h)
-                if not h.empty and "Close" in h.columns:
-                    price = float(_safe_float(h["Close"].iloc[-1]))
-                    if prev_close <= 0 and len(h) >= 2:
-                        prev_close = float(_safe_float(h["Close"].iloc[-2]))
-                    source = "yahoo_history"
+                inv = fetch_investing_snapshot(norm)
+                if isinstance(inv, dict):
+                    p = _safe_float(inv.get("price", 0.0))
+                    if _is_reasonable_price(p):
+                        out.update({"price": float(p), "source": "investing", "ok": True})
             except Exception:
                 pass
 
-        # ✅ Argaam fallback
-        if price <= 0:
-            p2 = fetch_price_from_argaam(raw_sym)
-            if _is_reasonable_price(p2):
-                price = float(p2)
-                if prev_close <= 0:
-                    prev_close = float(p2)
-                source = "argaam"
-            else:
-                source = "failed"
+        # 3) TradingView
+        if out["price"] <= 0:
+            try:
+                tv = fetch_tradingview_snapshot(norm)
+                if isinstance(tv, dict):
+                    p = _safe_float(tv.get("price", 0.0))
+                    if _is_reasonable_price(p):
+                        out.update({"price": float(p), "source": "tradingview", "ok": True})
+            except Exception:
+                pass
 
-        res_entry = {
-            "price": price,
-            "prev_close": prev_close,
-            "year_high": year_high,
-            "year_low": year_low,
-            "source": source,
-        }
+        # 4) Argaam
+        if out["price"] <= 0:
+            try:
+                ar = fetch_price_from_argaam(norm)
+                if isinstance(ar, dict):
+                    p = _safe_float(ar.get("price", 0.0))
+                    if _is_reasonable_price(p):
+                        out.update({"price": float(p), "source": "argaam", "ok": True})
+            except Exception:
+                pass
 
-        results[raw_sym] = res_entry
-
-        # variants mapping
-        for v in _symbol_variants(raw_sym):
-            results.setdefault(v, res_entry)
+        results[raw_sym] = out
 
     return results
 
 
-def get_static_info(symbol: str) -> Dict[str, Any]:
+def get_static_info(symbol: str) -> dict:
+(symbol: str) -> Dict[str, Any]:
     sym = get_ticker_symbol(symbol) or str(symbol or "").strip().upper()
     name = sym
     sector = "Unknown"
