@@ -965,4 +965,43 @@ Score مرتفع + Confidence منخفض ⇒ *لا توصية قوية*.
 - استعمل نفس المصطلحات في كل مكان (لا “Score” مرة و“Rating” مرة)
 
 ---
+# Osoli – Twelve Data Merge Patch (2026-02-12)
+
+## What was improved
+
+### Prices (NO Yahoo)
+- **Stock snapshot prices**: Google Finance → TradingView → Investing → Argaam → **Twelve Data (fallback)**.
+- **TASI snapshot**: **Twelve Data Quote** first, then TradingView fallback.
+
+### Candles / History (Japanese candlesticks)
+- **OHLCV candles 5+ years** are fetched via **Twelve Data Time Series** (daily/weekly/monthly supported).
+- Cached + throttled + backoff to reduce rate-limit errors.
+
+### Diagnostics
+- Added UI-safe wrappers:
+  - `get_twelvedata_usage()`
+  - `diagnose_twelvedata_symbol(symbol)`
+
+### SDK merge
+- Vendored the official **twelvedata-python** SDK into the project under `osoul-app-main/twelvedata/`.
+- Added `twelvedata_provider.py` as a stable integration layer.
+
+## Configuration (required)
+Add to Streamlit Secrets:
+
+```toml
+TWELVEDATA_API_KEY = "YOUR_KEY"
+```
+
+(or env var `TWELVEDATA_API_KEY`)
+
+## Files changed / added
+- Modified:
+  - `market_data.py`
+  - `views/shared.py`
+- Added:
+  - `twelvedata_provider.py`
+  - `twelvedata/` (vendored SDK)
+  - `PATCH_NOTES_TWELVEDATA_MERGE.md`
+
 
