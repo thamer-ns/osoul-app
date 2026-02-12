@@ -728,50 +728,39 @@ def fetch_price_from_yahoo(symbol: str) -> Dict[str, float]:
 # 📌 TASI Data (المؤشر العام)
 # ============================================================
 @st.cache_data(ttl=300, show_spinner=False)
-def get_tasi_data():
-    """TASI snapshot without Yahoo.
 
-    Priority:
-    1) Twelve Data (quote endpoint)
-    2) Twelve Data (time_series fallback)
-    3) TradingView index page (best-effort)
+def get_tasi_data():
+    """جلب مؤشر تاسي (TASI) بأولوية Twelve Data ثم بقية المصادر.
 
     Returns:
       (tasi_value, change_percent)
     """
-    # 1) Twelve Data quote
+    # 1) Twelve Data Quote (أفضلية)
     try:
-        from twelvedata_provider import get_quote
+        from twelvedata_provider import get_quote, get_time_series
 
         q = get_quote("TASI")
         if isinstance(q, dict) and q.get("ok"):
-            curr = float(q.get("price") or 0.0)
-            prev = float(q.get("prev_close") or 0.0)
-            chg = float(q.get("chg_pct") or 0.0)
-            if chg == 0.0 and prev > 0:
-                chg = ((curr - prev) / prev) * 100.0
+            curr = _safe_float(q.get("price") or 0.0)
+            prev = _safe_float(q.get("prev_close") or 0.0)
+            chg = _safe_float(q.get("chg_pct") or 0.0)
+
+            # Compute prev/percent from candles if missing
+            if (prev <= 0 or chg == 0.0) and curr > 0:
+                h = get_time_series("TASI", interval="1d", years=1, outputsize=10)
+                if isinstance(h, pd.DataFrame) and not h.empty and "Close" in h.columns:
+                    closes = h["Close"].dropna()
+                    if len(closes) >= 2:
+                        prev = float(closes.iloc[-2])
+                        if prev > 0:
+                            chg = ((curr - prev) / prev) * 100.0
+
             if _is_reasonable_price(curr):
                 return float(curr), round(_safe_float(chg), 2)
     except Exception:
         pass
 
-    # 2) Twelve Data time_series fallback
-    try:
-        from twelvedata_provider import get_time_series
-
-        df = get_time_series("TASI", interval="1d", years=2, outputsize=600)
-        if isinstance(df, pd.DataFrame) and (not df.empty) and "Close" in df.columns:
-            s_close = pd.to_numeric(df["Close"], errors="coerce").dropna()
-            if len(s_close) >= 1:
-                curr = float(s_close.iloc[-1])
-                prev = float(s_close.iloc[-2]) if len(s_close) >= 2 else 0.0
-                chg = ((curr - prev) / prev) * 100.0 if prev > 0 else 0.0
-                if _is_reasonable_price(curr):
-                    return float(curr), round(_safe_float(chg), 2)
-    except Exception:
-        pass
-
-    # 3) TradingView best-effort
+    # 2) TradingView best-effort
     try:
         if requests:
             url = "https://www.tradingview.com/symbols/TADAWUL-TASI/"
@@ -785,52 +774,145 @@ def get_tasi_data():
     except Exception:
         pass
 
+    # 3) Yahoo (yfinance) كحل أخير
+    try:
+        # بعض البيئات تستخدم ^TASI أو ^TASI.SR غير ثابت — نجرب عدة أشكال
+        for ysym in ("^TASI", "^TASI.SR", "TASI.SR"):
+            try:
+                t = yf.Ticker(ysym)
+                info = getattr(t, "fast_info", None) or {}
+                p = _safe_float(info.get("lastPrice", 0.0) if isinstance(info, dict) else 0.0)
+                if _is_reasonable_price(p):
+                    return float(p), 0.0
+            except Exception:
+                continue
+    except Exception:
+        pass
+
     return 0.0, 0.0
 
+# ============================================================
+# 📉 Chart History (للرسم البياني والذكاء الاصطناعي)
+# ============================================================
+# ============================================================
+# 📉 Chart History (للرسم البياني والذكاء الاصطناعي)
+# ============================================================
 
-# ============================================================
-# 📉 Chart History (للرسم البياني والذكاء الاصطناعي)
-# ============================================================
-# ============================================================
-# 📉 Chart History (للرسم البياني والذكاء الاصطناعي)
-# ============================================================
 @st.cache_data(ttl=60 * 30, show_spinner=False)
 def get_chart_history(symbol: str, period: str = None, interval: str = "1d", years: int = 5) -> pd.DataFrame:
-    """جلب شموع OHLCV (يابانية) بدون Yahoo عبر Twelve Data.
+    """جلب شموع OHLCV (يابانية) بأولوية Twelve Data ثم بقية المصادر.
 
-    - يدعم 5 سنوات+ (daily/weekly/monthly) عادة عبر outputsize=5000
-    - يحافظ على نفس مخرجات الدالة السابقة (DataFrame بفهارس زمنية)
+    الهدف: توفير بيانات كافية للرسوم/المؤشرات/المستشار بدون انهيار.
+    - Twelve Data أولاً (Daily خام) ثم نقوم بعمل Resample للفواصل Weekly/Monthly لضمان توفر 10+ سنوات عند الحاجة.
+    - Yahoo/yfinance كحل أخير فقط.
     """
     sym = get_ticker_symbol(symbol) or str(symbol or "").strip().upper()
     if not sym:
         return pd.DataFrame()
 
+    # Normalize interval
+    itv = (interval or "1d").strip().lower()
+    if itv in ("d", "1day", "day"):
+        itv = "1d"
+    if itv in ("w", "1week", "week"):
+        itv = "1wk"
+    if itv in ("m", "1month", "month"):
+        itv = "1mo"
+
+    # Choose span: monthly/weekly require longer history to meet min candles
+    years_needed = int(years or 5)
+    if itv in ("1wk", "1mo"):
+        years_needed = max(years_needed, 15)
+
+    # --- Twelve Data first ---
+    df = pd.DataFrame()
     try:
-        from twelvedata_provider import get_time_series
+        from twelvedata_provider import get_time_series as td_get_ts
 
-        df = get_time_series(sym, interval=interval, years=int(years or 5), outputsize=5000)
-        df = _ensure_datetime_index(df)
-        return df
+        # Fetch DAILY always then resample if needed
+        base = td_get_ts(sym, interval="1d", years=years_needed, outputsize=5000)
+        if isinstance(base, pd.DataFrame) and not base.empty:
+            df = base.copy()
     except Exception:
-        # fallback to old internal implementation if present
-        try:
-            itv = _td_interval(interval)
-            resolved = _td_resolve_symbol(sym)
-            if not resolved:
-                return pd.DataFrame()
-            data = _td_request({"symbol": resolved, "interval": itv, "outputsize": 5000}, timeout=12, max_retries=3)
-            if not isinstance(data, dict) or not data.get("values"):
-                return pd.DataFrame()
-            df = _td_values_to_ohlcv(data.get("values") or [])
-            if df.empty:
-                return df
-            if years and isinstance(df.index, pd.DatetimeIndex):
-                cutoff = pd.Timestamp.utcnow() - pd.DateOffset(years=int(years))
-                df = df[df.index >= cutoff]
-            return _ensure_datetime_index(df)
-        except Exception:
-            return pd.DataFrame()
+        df = pd.DataFrame()
 
+    # Resample for weekly/monthly if needed
+    try:
+        if isinstance(df, pd.DataFrame) and not df.empty and itv in ("1wk", "1mo"):
+            d = df.copy()
+            # ensure datetime index
+            if not isinstance(d.index, pd.DatetimeIndex):
+                if "Date" in d.columns:
+                    d["Date"] = pd.to_datetime(d["Date"], errors="coerce")
+                    d = d.set_index("Date")
+                else:
+                    d.index = pd.to_datetime(d.index, errors="coerce")
+            d = d.sort_index()
+            o = d["Open"]
+            h = d["High"]
+            l = d["Low"]
+            c = d["Close"]
+            v = d["Volume"] if "Volume" in d.columns else None
+
+            rule = "W-FRI" if itv == "1wk" else "M"
+            out = pd.DataFrame(
+                {
+                    "Open": o.resample(rule).first(),
+                    "High": h.resample(rule).max(),
+                    "Low": l.resample(rule).min(),
+                    "Close": c.resample(rule).last(),
+                }
+            )
+            if v is not None:
+                out["Volume"] = v.resample(rule).sum()
+            out = out.dropna(subset=["Open", "High", "Low", "Close"])
+            df = out
+    except Exception:
+        pass
+
+    # --- Fallback: yfinance (last resort) ---
+    if df is None or df.empty:
+        try:
+            yf_sym = sym if sym.endswith(".SR") else f"{sym}.SR"
+            prd = period or (f"{years_needed}y" if years_needed else "5y")
+            d2 = yf.download(yf_sym, period=prd, interval=("1d" if itv in ("1wk", "1mo") else itv), progress=False)
+            if isinstance(d2, pd.DataFrame) and not d2.empty:
+                d2 = d2.rename(columns={"open": "Open", "high": "High", "low": "Low", "close": "Close", "volume": "Volume"})
+                # if need resample
+                if itv in ("1wk", "1mo"):
+                    d2 = d2.sort_index()
+                    rule = "W-FRI" if itv == "1wk" else "M"
+                    out = pd.DataFrame(
+                        {
+                            "Open": d2["Open"].resample(rule).first(),
+                            "High": d2["High"].resample(rule).max(),
+                            "Low": d2["Low"].resample(rule).min(),
+                            "Close": d2["Close"].resample(rule).last(),
+                            "Volume": d2["Volume"].resample(rule).sum() if "Volume" in d2.columns else np.nan,
+                        }
+                    )
+                    out = out.dropna(subset=["Open", "High", "Low", "Close"])
+                    df = out
+                else:
+                    df = d2
+        except Exception:
+            pass
+
+    # Final normalize columns
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    # Ensure standard columns exist
+    cols = ["Open", "High", "Low", "Close", "Volume"]
+    for c in cols:
+        if c not in df.columns:
+            if c == "Volume":
+                df[c] = 0.0
+            else:
+                df[c] = np.nan
+    df = df[cols].copy()
+    df = df.dropna(subset=["Open", "High", "Low", "Close"])
+    return df
 
 @st.cache_data(ttl=60 * 30, show_spinner=False)
 def get_tasi_history(period: str = None, interval: str = "1d") -> pd.DataFrame:
@@ -914,85 +996,130 @@ def get_relative_strength_vs_tasi(symbol: str, period: str = None, interval: str
 
 
 @st.cache_data(ttl=120, show_spinner=False)
+
 def fetch_batch_data(symbols_list: list):
-    """جلب الأسعار (Snapshot) بدون Yahoo.
+    """جلب الأسعار (Snapshot) بأولوية Twelve Data ثم بقية المصادر.
 
     الترتيب:
-    1) Google Finance
-    2) TradingView
-    3) Investing
-    4) Argaam
+    1) Twelve Data (Quote/آخر إغلاق)  ✅
+    2) Google Finance
+    3) TradingView
+    4) Investing
+    5) Argaam
+    6) Yahoo (yfinance) كحل أخير جدًا (قد يسبب 429/حظر)
     """
     results: Dict[str, Dict[str, Any]] = {}
     if not symbols_list:
         return results
 
+    # Try import Twelve Data provider
+    try:
+        from twelvedata_provider import get_quote as td_get_quote, get_time_series as td_get_ts
+    except Exception:
+        td_get_quote, td_get_ts = None, None
+
     input_symbols = [str(s).strip().upper() for s in symbols_list if str(s).strip()]
     for raw_sym in input_symbols:
         norm = get_ticker_symbol(raw_sym) or raw_sym
+
         price = 0.0
         prev_close = 0.0
         year_high = 0.0
         year_low = 0.0
         source = "failed"
 
-        g = fetch_google_finance_snapshot(norm) or {}
-        p = _safe_float(g.get("price", 0.0))
-        if _is_reasonable_price(p):
-            price = float(p)
-            prev_close = float(p)
-            source = "google_finance"
+        # 1) Twelve Data (أفضلية)
+        if td_get_quote:
+            try:
+                q = td_get_quote(norm)
+                if isinstance(q, dict) and q.get("ok"):
+                    p = _safe_float(q.get("price", 0.0))
+                    pc = _safe_float(q.get("prev_close", 0.0))
+                    if _is_reasonable_price(p):
+                        price = float(p)
+                        prev_close = float(pc) if pc > 0 else float(p)
+                        source = "twelvedata"
+            except Exception:
+                pass
 
+            # لو prev_close غير متوفر نحسبه من آخر شمعتين
+            if price > 0 and prev_close <= 0 and td_get_ts:
+                try:
+                    h = td_get_ts(norm, interval="1d", years=1, outputsize=10)
+                    if isinstance(h, pd.DataFrame) and not h.empty and "Close" in h.columns:
+                        closes = h["Close"].dropna()
+                        if len(closes) >= 2:
+                            prev_close = float(closes.iloc[-2])
+                except Exception:
+                    pass
+
+        # 2) Google Finance
+        if price <= 0:
+            g = fetch_google_finance_snapshot(norm) or {}
+            p = _safe_float(g.get("price", 0.0))
+            if _is_reasonable_price(p):
+                price = float(p)
+                prev_close = float(_safe_float(g.get("prev_close", p))) or float(p)
+                year_high = float(_safe_float(g.get("year_high", 0.0)))
+                year_low = float(_safe_float(g.get("year_low", 0.0)))
+                source = "google_finance"
+
+        # 3) TradingView
         if price <= 0:
             tv = fetch_tradingview_snapshot(norm) or {}
             p = _safe_float(tv.get("price", 0.0))
             if _is_reasonable_price(p):
                 price = float(p)
-                prev_close = float(p)
+                prev_close = float(_safe_float(tv.get("prev_close", p))) or float(p)
                 source = "tradingview"
 
+        # 4) Investing
         if price <= 0:
             inv = fetch_investing_snapshot(norm) or {}
             p = _safe_float(inv.get("price", 0.0))
             if _is_reasonable_price(p):
                 price = float(p)
-                prev_close = float(p)
+                prev_close = float(_safe_float(inv.get("prev_close", p))) or float(p)
                 source = "investing"
 
+        # 5) Argaam
         if price <= 0:
-            p2 = fetch_price_from_argaam(raw_sym)
-            if _is_reasonable_price(p2):
-                price = float(p2)
-                prev_close = float(p2)
+            ar = fetch_argaam_snapshot(norm) or {}
+            p = _safe_float(ar.get("price", 0.0))
+            if _is_reasonable_price(p):
+                price = float(p)
+                prev_close = float(_safe_float(ar.get("prev_close", p))) or float(p)
                 source = "argaam"
 
+        # 6) Yahoo (yfinance) آخر شيء
         if price <= 0:
-            # Twelve Data (last resort, still NOT Yahoo)
             try:
-                from twelvedata_provider import get_quote
-
-                q = get_quote(norm)
-                p3 = float(q.get("price") or 0.0) if isinstance(q, dict) else 0.0
-                if _is_reasonable_price(p3):
-                    price = float(p3)
-                    prev_close = float(q.get("prev_close") or p3) if isinstance(q, dict) else float(p3)
-                    source = "twelvedata"
+                yf_sym = norm if norm.endswith(".SR") else f"{norm}.SR"
+                t = yf.Ticker(yf_sym)
+                info = getattr(t, "fast_info", None) or {}
+                p = _safe_float(info.get("lastPrice", 0.0) if isinstance(info, dict) else 0.0)
+                if _is_reasonable_price(p):
+                    price = float(p)
+                    prev_close = float(price)
+                    source = "yahoo_yfinance"
             except Exception:
                 pass
 
-        res_entry = {
-            "price": float(price),
-            "prev_close": float(prev_close),
-            "year_high": float(year_high),
-            "year_low": float(year_low),
+        change_pct = 0.0
+        if prev_close > 0 and price > 0:
+            change_pct = ((price - prev_close) / prev_close) * 100.0
+
+        results[norm] = {
+            "symbol": norm,
+            "price": float(price) if price else 0.0,
+            "previous_close": float(prev_close) if prev_close else 0.0,
+            "change_percent": float(round(_safe_float(change_pct), 2)) if price and prev_close else 0.0,
+            "year_high": float(year_high) if year_high else 0.0,
+            "year_low": float(year_low) if year_low else 0.0,
             "source": source,
         }
-        results[raw_sym] = res_entry
-        for v in _symbol_variants(raw_sym):
-            results.setdefault(v, res_entry)
 
     return results
-
 
 def get_static_info(symbol: str) -> Dict[str, Any]:
     sym = get_ticker_symbol(symbol) or str(symbol or "").strip().upper()
