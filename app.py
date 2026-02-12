@@ -82,7 +82,7 @@ def main():
     # Auth Gate (من security.py)
     # -------------------------
     try:
-        # ✅ بعض النسخ تستخدم login_system وبعضها require_login
+        # ✅ توافق مع النسخ المختلفة: login_system أو require_login
         try:
             from security import login_system
         except Exception:
