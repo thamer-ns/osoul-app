@@ -365,7 +365,7 @@ def render_financial_dashboard_ui(symbol):
                         barmode="group",
                         title="الأداء المالي التاريخي",
                     )
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width='stretch')
                 else:
                     st.info("اختر مؤشرًا واحدًا على الأقل لعرض الرسم.")
             except Exception:
