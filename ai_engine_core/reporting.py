@@ -127,9 +127,18 @@ def generate_ai_report(symbol, timeframe="1D"):
 
         # Fetch history with interval support (fallback for older signatures)
         try:
-            df = get_chart_history(symbol, period=period, interval=interval)
-        except TypeError:
-            df = get_chart_history(symbol, period)
+            try:
+                df = get_chart_history(symbol, period=period, interval=interval)
+            except TypeError:
+                df = get_chart_history(symbol, period)
+        except Exception as e:
+            return {
+                "ok": False,
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "error": "history_error",
+                "message": f"تعذر جلب البيانات السعرية: {type(e).__name__}. جرّب لاحقاً أو غيّر الفاصل.",
+            }
 
         if df is None or (isinstance(df, pd.DataFrame) and df.empty):
             return {
