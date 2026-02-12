@@ -1,5 +1,6 @@
 # views/shared.py
 import streamlit as st
+from osoli_logging import redact_text
 import pandas as pd
 import plotly.express as px  # موجود لأن views.py كان يستورده (حتى لو ما يُستخدم هنا)
 import plotly.graph_objects as go
@@ -1124,7 +1125,7 @@ def render_osoli_report(rep: dict, title: str = "🤖 تقرير أصولي", *a
         _render_ai_report_readable(rep, show_debug=False, compact=False)
     except Exception as e:
         st.warning("⚠️ تعذر عرض البطاقات المحسّنة، سيتم استخدام العرض الأصلي.")
-        st.code(str(e))
+        st.code(redact_text(str(e)))
 
     # النسخة الأصلية (كما هي) لضمان عدم فقد أي تفاصيل/مزايا
     with st.expander("🧩 عرض أصولي (النسخة الأصلية)"):
@@ -1412,5 +1413,5 @@ def diagnose_twelvedata_symbol(symbol: str):
         return out
     except Exception as e:
         out["ok"] = False
-        out["error"] = str(e)
+        out["error"] = redact_text(str(e))
         return out
