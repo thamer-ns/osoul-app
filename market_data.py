@@ -3,6 +3,7 @@
 import re
 import time
 import json
+import os
 from typing import List, Dict, Any, Optional
 
 import streamlit as st
@@ -33,6 +34,185 @@ try:
 except Exception:
     requests = None
     BeautifulSoup = None
+
+# ============================================================
+# 🕯️ Twelve Data (OHLCV History)  — بديل Yahoo للتاريخ/الشموع
+# ============================================================
+
+def _get_twelvedata_key() -> str:
+    try:
+        k = st.secrets.get("TWELVEDATA_API_KEY", "")  # type: ignore
+        if k:
+            return str(k).strip()
+    except Exception:
+        pass
+    return str(os.environ.get("TWELVEDATA_API_KEY", "")).strip()
+
+
+def _td_interval(interval: str) -> str:
+    itv = (interval or "1d").strip().lower()
+    mapping = {
+        "1d": "1day",
+        "1day": "1day",
+        "1wk": "1week",
+        "1w": "1week",
+        "1week": "1week",
+        "1mo": "1month",
+        "1m": "1month",
+        "1month": "1month",
+        "1h": "1h",
+        "60m": "1h",
+        "30m": "30min",
+        "15m": "15min",
+        "5m": "5min",
+        "1m": "1min",
+    }
+    return mapping.get(itv, "1day")
+
+
+def _td_request(params: Dict[str, Any], timeout: int = 10, max_retries: int = 3) -> Optional[Dict[str, Any]]:
+    if not requests:
+        return None
+    api_key = _get_twelvedata_key()
+    if not api_key:
+        return {"ok": False, "error": "missing_api_key"}
+
+    url = "https://api.twelvedata.com/time_series"
+    params = dict(params or {})
+    params["apikey"] = api_key
+    params.setdefault("format", "JSON")
+
+    # Backoff + Throttle (مهم لتجنب 429)
+    # نستخدم session_state لتحديد آخر وقت طلب
+    now = time.time()
+    last = float(st.session_state.get("_td_last_call_ts", 0.0) or 0.0)
+    min_gap = float(st.session_state.get("_td_min_gap", 1.2) or 1.2)
+    if now - last < min_gap:
+        time.sleep(min_gap - (now - last))
+    st.session_state["_td_last_call_ts"] = time.time()
+
+    for attempt in range(max_retries):
+        try:
+            r = requests.get(url, params=params, timeout=timeout, headers={"User-Agent": "Mozilla/5.0"})
+            # Twelve Data يرسل JSON حتى في الأخطاء
+            try:
+                data = r.json()
+            except Exception:
+                data = {"ok": False, "status": r.status_code, "text": (r.text or "")[:300]}
+
+            # Success structure عادة يحتوي "values"
+            if isinstance(data, dict) and data.get("values"):
+                return data
+
+            status = int(getattr(r, "status_code", 0) or 0)
+            msg = ""
+            try:
+                msg = str(data.get("message") or data.get("error") or "")
+            except Exception:
+                msg = ""
+
+            # 429 or temp errors -> backoff
+            if status in (429, 500, 502, 503, 504) or ("rate" in msg.lower()):
+                sleep_s = min(8.0, 1.5 * (2 ** attempt))
+                time.sleep(sleep_s)
+                continue
+
+            return data if isinstance(data, dict) else None
+        except Exception:
+            time.sleep(min(6.0, 1.2 * (2 ** attempt)))
+
+    return None
+
+
+@st.cache_data(ttl=60 * 60, show_spinner=False)
+def _td_symbol_search(query: str, exchange: str = "") -> Optional[str]:
+    """Resolve a symbol for Twelve Data using symbol_search.
+    For Saudi stocks prefer exchange XSAU when possible.
+    """
+    if not requests:
+        return None
+    api_key = _get_twelvedata_key()
+    if not api_key:
+        return None
+
+    q = (query or "").strip()
+    if not q:
+        return None
+
+    url = "https://api.twelvedata.com/symbol_search"
+    params = {"symbol": q, "apikey": api_key}
+    if exchange:
+        params["exchange"] = exchange
+
+    try:
+        r = requests.get(url, params=params, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+        data = r.json()
+        # expected: {"data":[{"symbol":"7203","exchange":"Tadawul",...}, ...]}
+        arr = data.get("data") if isinstance(data, dict) else None
+        if not isinstance(arr, list) or not arr:
+            return None
+
+        # choose best match:
+        # 1) exact symbol match
+        for row in arr:
+            s = str(row.get("symbol") or "").strip()
+            if s.upper() == q.upper():
+                return s
+
+        # 2) first item
+        s0 = str(arr[0].get("symbol") or "").strip()
+        return s0 or None
+    except Exception:
+        return None
+
+
+def _td_resolve_symbol(symbol: str) -> Optional[str]:
+    """Best effort resolve for Saudi stocks + indices."""
+    sym = str(symbol or "").strip().upper()
+    if not sym:
+        return None
+
+    # Normalizations
+    sym = sym.replace("^", "")
+    sym = sym.replace(".SR", "")
+
+    # If already numeric code (Saudi stocks) -> search within XSAU
+    if sym.isdigit():
+        s = _td_symbol_search(sym, exchange="XSAU")
+        return s or sym
+
+    # If it's TASI or INDEX
+    if sym in ("TASI", "TADAWUL", "TADAWUL ALL SHARE", "TADAWUL ALL SHARE INDEX"):
+        s = _td_symbol_search("TASI")
+        return s or "TASI"
+
+    # Otherwise attempt search without exchange
+    s = _td_symbol_search(sym)
+    return s or sym
+
+
+def _td_values_to_ohlcv(values: List[Dict[str, Any]]) -> pd.DataFrame:
+    if not values:
+        return pd.DataFrame()
+    df = pd.DataFrame(values)
+    # values come newest->oldest; reverse
+    if "datetime" in df.columns:
+        df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
+        df = df.sort_values("datetime")
+        df = df.set_index("datetime")
+    rename = {
+        "open": "Open",
+        "high": "High",
+        "low": "Low",
+        "close": "Close",
+        "volume": "Volume",
+    }
+    for k, v in rename.items():
+        if k in df.columns and v not in df.columns:
+            df[v] = pd.to_numeric(df[k], errors="coerce")
+    df = df[[c for c in ["Open", "High", "Low", "Close", "Volume"] if c in df.columns]]
+    df = df.dropna(subset=[c for c in ["Open", "High", "Low", "Close"] if c in df.columns], how="any")
+    return df
 
 
 # ============================================================
@@ -396,11 +576,36 @@ def fetch_google_finance_snapshot(symbol: str) -> Dict[str, Any]:
 # 📊 TradingView / Investing (Placeholders)
 # ============================================================
 def fetch_tradingview_snapshot(symbol: str) -> Dict[str, Any]:
-    return {"source": "tradingview", "ok": False, "note": "Disabled by default."}
+    """Best-effort snapshot from TradingView public symbol page.
+    ملاحظة: قد تفشل على بعض البيئات بسبب الحماية/الـ Cloudflare.
+    """
+    sym = str(symbol or "").strip().upper()
+    norm = get_ticker_symbol(sym)
+    if not norm:
+        return {"source": "tradingview", "ok": False, "price": 0.0}
+
+    code = norm.replace(".SR", "").replace("^", "")
+    if not code or not code.isdigit():
+        return {"source": "tradingview", "ok": False, "price": 0.0}
+
+    url = f"https://www.tradingview.com/symbols/TADAWUL-{code}/"
+    r = _http_get(url, timeout=8, retries=1)
+    if not r:
+        return {"source": "tradingview", "ok": False, "price": 0.0, "url": url}
+
+    text = r.text or ""
+    m = re.search(r'property="og:price:amount"\s+content="([0-9]+(?:\.[0-9]+)?)"', text)
+    if not m:
+        m = re.search(r'"last_price"\s*:\s*([0-9]+(?:\.[0-9]+)?)', text)
+    price = _safe_float(m.group(1)) if m else 0.0
+    return {"source": "tradingview", "ok": _is_reasonable_price(price), "price": float(price), "url": url}
 
 
 def fetch_investing_snapshot(symbol: str) -> Dict[str, Any]:
-    return {"source": "investing", "ok": False, "note": "Disabled by default."}
+    """Best-effort snapshot from Investing.com.
+    غالبًا يحتاج ربط ID/slug، لذلك نتركه كـ best-effort بسيط.
+    """
+    return {"source": "investing", "ok": False, "price": 0.0, "note": "Needs symbol mapping (slug)."}
 
 
 # ============================================================
@@ -475,92 +680,131 @@ def fetch_price_from_argaam(symbol: str) -> float:
 # ============================================================
 # 🟨 Yahoo Finance - المصدر الأساسي
 # ============================================================
-def fetch_price_from_yahoo(symbol: str) -> Dict[str, Any]:
-    """Disabled for price retrieval.
-
-    Policy: Yahoo is used for financial statements only.
-    (Yahoo price endpoints are rate-limited and duplicate Google/other sources.)
-    """
+def fetch_price_from_yahoo(symbol: str) -> Dict[str, float]:
     sym = get_ticker_symbol(symbol)
-    return {
-        "source": "yahoo",
-        "symbol": sym,
-        "price": 0.0,
-        "prev_close": 0.0,
-        "year_high": 0.0,
-        "year_low": 0.0,
-        "ok": False,
-        "note": "Yahoo price fetching is disabled (statements-only mode).",
-    }
+    default_res = {"price": 0.0, "prev_close": 0.0, "year_high": 0.0, "year_low": 0.0}
 
-
-def get_chart_history(symbol: str, period: str = None, interval: str = "1d", years: int = 5) -> pd.DataFrame:
-    sym = get_ticker_symbol(symbol)
     if not sym:
-        return pd.DataFrame()
+        return default_res
 
-    itv = _normalize_interval(interval)
-    tries = _build_period_fallbacks(itv, period=period, years=years)
+    try:
+        t = yf.Ticker(sym)
+        fi = getattr(t, "fast_info", None)
 
-    for p in tries:
-        try:
-            df = yf.download(
-                sym,
-                period=p,
-                interval=itv,
-                auto_adjust=False,
-                progress=False,
-                threads=False,
-                group_by="column",
-            )
-            df = _normalize_ohlcv_columns(df)
+        last_price = 0.0
+        prev_close = 0.0
+        year_high = 0.0
+        year_low = 0.0
 
-            if df is not None and not df.empty:
-                df = df.dropna(subset=[c for c in ["Open", "High", "Low", "Close"] if c in df.columns], how="any")
-                df = _ensure_datetime_index(df)
-                if not df.empty and "Close" in df.columns:
-                    return df
-        except Exception:
-            pass
-        finally:
-            # ✅ Gentle backoff to reduce rate-limit pressure
-            time.sleep(0.25)
+        if fi:
+            last_price = _safe_float(getattr(fi, "last_price", None))
+            prev_close = _safe_float(getattr(fi, "previous_close", None))
+            year_high = _safe_float(getattr(fi, "year_high", None))
+            year_low = _safe_float(getattr(fi, "year_low", None))
 
-    return pd.DataFrame()
+        if last_price <= 0 or prev_close <= 0:
+            try:
+                h = t.history(period="5d", interval="1d")
+                h = _normalize_ohlcv_columns(h)
+                if not h.empty and "Close" in h.columns:
+                    if last_price <= 0:
+                        last_price = _safe_float(h["Close"].iloc[-1])
+                    if prev_close <= 0 and len(h) >= 2:
+                        prev_close = _safe_float(h["Close"].iloc[-2])
+            except Exception:
+                pass
+
+        return {
+            "price": float(last_price) if _is_reasonable_price(last_price) else 0.0,
+            "prev_close": float(prev_close) if _is_reasonable_price(prev_close) else 0.0,
+            "year_high": float(year_high) if _is_reasonable_price(year_high) else 0.0,
+            "year_low": float(year_low) if _is_reasonable_price(year_low) else 0.0,
+        }
+    except Exception:
+        return default_res
 
 
-@st.cache_data(ttl=900, show_spinner=False)
+# ============================================================
+# 📌 TASI Data (المؤشر العام)
+# ============================================================
+@st.cache_data(ttl=300, show_spinner=False)
 def get_tasi_data():
-    """Return (index_level, percent_change) for TASI.
+    try:
+        tick = yf.Ticker("^TASI.SR")
+        fi = getattr(tick, "fast_info", None)
+        curr = _safe_float(getattr(fi, "last_price", None)) if fi else 0.0
+        prev = _safe_float(getattr(fi, "previous_close", None)) if fi else 0.0
 
-    Prices source policy:
-    - Use Google Finance first for TASI snapshot (TASI:TADAWUL / ^TASI.SR).
-    - Then TradingView / Investing snapshots.
-    - Avoid Yahoo endpoints for prices to reduce 429 and comply with statements-only mode.
-    """
-    # Google Finance
-    snap = fetch_google_finance_snapshot("^TASI.SR")
-    curr = _safe_float((snap or {}).get("price", 0.0)) if isinstance(snap, dict) else 0.0
-    if curr > 0:
-        # Google Finance HTML does not reliably expose previous close in a stable selector.
-        return curr, 0.0
+        if curr <= 0:
+            hist = tick.history(period="5d", interval="1d")
+            hist = _normalize_ohlcv_columns(hist)
+            if not hist.empty and "Close" in hist.columns:
+                curr = _safe_float(hist["Close"].iloc[-1])
+                prev = _safe_float(hist["Close"].iloc[-2]) if len(hist) > 1 else curr
 
-    # Fallbacks (snapshot-only)
-    tv = fetch_tradingview_snapshot("^TASI.SR")
-    curr2 = _safe_float((tv or {}).get("price", 0.0)) if isinstance(tv, dict) else 0.0
-    if curr2 > 0:
-        return curr2, 0.0
-
-    inv = fetch_investing_snapshot("^TASI.SR")
-    curr3 = _safe_float((inv or {}).get("price", 0.0)) if isinstance(inv, dict) else 0.0
-    if curr3 > 0:
-        return curr3, 0.0
+        if _is_reasonable_price(curr):
+            chg = ((curr - prev) / prev) * 100.0 if prev > 0 else 0.0
+            return float(curr), round(_safe_float(chg), 2)
+    except Exception:
+        pass
 
     return 0.0, 0.0
 
 
+# ============================================================
+# 📉 Chart History (للرسم البياني والذكاء الاصطناعي)
+# ============================================================
+# ============================================================
+# 📉 Chart History (للرسم البياني والذكاء الاصطناعي)
+# ============================================================
+@st.cache_data(ttl=60 * 30, show_spinner=False)
+def get_chart_history(symbol: str, period: str = None, interval: str = "1d", years: int = 5) -> pd.DataFrame:
+    """جلب شموع OHLCV (يابانية) بدون Yahoo عبر Twelve Data.
+
+    - يدعم 5 سنوات+ (daily/weekly/monthly) عادة عبر outputsize=5000
+    - يحافظ على نفس مخرجات الدالة السابقة (DataFrame بفهارس زمنية)
+    """
+    sym = get_ticker_symbol(symbol) or str(symbol or "").strip().upper()
+    if not sym:
+        return pd.DataFrame()
+
+    itv = _td_interval(interval)
+    resolved = _td_resolve_symbol(sym)
+    if not resolved:
+        return pd.DataFrame()
+
+    data = _td_request(
+        {
+            "symbol": resolved,
+            "interval": itv,
+            "outputsize": 5000,
+        },
+        timeout=12,
+        max_retries=3,
+    )
+
+    if not isinstance(data, dict) or not data.get("values"):
+        return pd.DataFrame()
+
+    df = _td_values_to_ohlcv(data.get("values") or [])
+    if df.empty:
+        return df
+
+    try:
+        if years and isinstance(df.index, pd.DatetimeIndex):
+            cutoff = pd.Timestamp.utcnow() - pd.DateOffset(years=int(years))
+            df = df[df.index >= cutoff]
+    except Exception:
+        pass
+
+    df = _ensure_datetime_index(df)
+    return df
+
+
+@st.cache_data(ttl=60 * 30, show_spinner=False)
 def get_tasi_history(period: str = None, interval: str = "1d") -> pd.DataFrame:
-    return get_chart_history("^TASI.SR", period=period, interval=interval, years=5)
+    # TASI index on Twelve Data is عادة "TASI"
+    return get_chart_history("TASI", period=period, interval=interval, years=10)
 
 
 def get_multi_interval_history(symbol: str, intervals=("1d", "1wk"), years: int = 5) -> Dict[str, pd.DataFrame]:
@@ -640,85 +884,72 @@ def get_relative_strength_vs_tasi(symbol: str, period: str = None, interval: str
 
 @st.cache_data(ttl=120, show_spinner=False)
 def fetch_batch_data(symbols_list: list):
-    """
-    Batch snapshot fetch (NO Yahoo for prices).
+    """جلب الأسعار (Snapshot) بدون Yahoo.
 
-    Source order:
-      1) Google Finance
-      2) TradingView (public snapshot)
-      3) Investing (public snapshot)
-      4) Argaam (best-effort HTML)
-    Notes:
-      - prev_close / year_high / year_low may be unavailable from non-Yahoo snapshots.
-      - This function focuses on *current price* for portfolio/tiles without hitting Yahoo.
+    الترتيب:
+    1) Google Finance
+    2) TradingView
+    3) Investing
+    4) Argaam
     """
-    results = {}
+    results: Dict[str, Dict[str, Any]] = {}
     if not symbols_list:
         return results
 
     input_symbols = [str(s).strip().upper() for s in symbols_list if str(s).strip()]
     for raw_sym in input_symbols:
         norm = get_ticker_symbol(raw_sym) or raw_sym
-        out = {
-            "symbol": norm,
-            "price": 0.0,
-            "prev_close": 0.0,
-            "year_high": 0.0,
-            "year_low": 0.0,
-            "source": "",
-            "ok": False,
+        price = 0.0
+        prev_close = 0.0
+        year_high = 0.0
+        year_low = 0.0
+        source = "failed"
+
+        g = fetch_google_finance_snapshot(norm) or {}
+        p = _safe_float(g.get("price", 0.0))
+        if _is_reasonable_price(p):
+            price = float(p)
+            prev_close = float(p)
+            source = "google_finance"
+
+        if price <= 0:
+            tv = fetch_tradingview_snapshot(norm) or {}
+            p = _safe_float(tv.get("price", 0.0))
+            if _is_reasonable_price(p):
+                price = float(p)
+                prev_close = float(p)
+                source = "tradingview"
+
+        if price <= 0:
+            inv = fetch_investing_snapshot(norm) or {}
+            p = _safe_float(inv.get("price", 0.0))
+            if _is_reasonable_price(p):
+                price = float(p)
+                prev_close = float(p)
+                source = "investing"
+
+        if price <= 0:
+            p2 = fetch_price_from_argaam(raw_sym)
+            if _is_reasonable_price(p2):
+                price = float(p2)
+                prev_close = float(p2)
+                source = "argaam"
+
+        res_entry = {
+            "price": float(price),
+            "prev_close": float(prev_close),
+            "year_high": float(year_high),
+            "year_low": float(year_low),
+            "source": source,
         }
-
-        # 1) Google Finance
-        try:
-            g = fetch_google_finance_snapshot(norm)
-            if isinstance(g, dict):
-                p = _safe_float(g.get("price", 0.0))
-                if _is_reasonable_price(p):
-                    out.update({"price": float(p), "source": "google", "ok": True})
-        except Exception:
-            pass
-
-        # 2) Investing
-        if out["price"] <= 0:
-            try:
-                inv = fetch_investing_snapshot(norm)
-                if isinstance(inv, dict):
-                    p = _safe_float(inv.get("price", 0.0))
-                    if _is_reasonable_price(p):
-                        out.update({"price": float(p), "source": "investing", "ok": True})
-            except Exception:
-                pass
-
-        # 3) TradingView
-        if out["price"] <= 0:
-            try:
-                tv = fetch_tradingview_snapshot(norm)
-                if isinstance(tv, dict):
-                    p = _safe_float(tv.get("price", 0.0))
-                    if _is_reasonable_price(p):
-                        out.update({"price": float(p), "source": "tradingview", "ok": True})
-            except Exception:
-                pass
-
-        # 4) Argaam
-        if out["price"] <= 0:
-            try:
-                ar = fetch_price_from_argaam(norm)
-                if isinstance(ar, dict):
-                    p = _safe_float(ar.get("price", 0.0))
-                    if _is_reasonable_price(p):
-                        out.update({"price": float(p), "source": "argaam", "ok": True})
-            except Exception:
-                pass
-
-        results[raw_sym] = out
+        results[raw_sym] = res_entry
+        for v in _symbol_variants(raw_sym):
+            results.setdefault(v, res_entry)
 
     return results
 
 
-def get_static_info(symbol: str) -> dict:
-(symbol: str) -> Dict[str, Any]:
+def get_static_info(symbol: str) -> Dict[str, Any]:
     sym = get_ticker_symbol(symbol) or str(symbol or "").strip().upper()
     name = sym
     sector = "Unknown"
@@ -752,7 +983,7 @@ def get_analysis_sources(symbol: str) -> Dict[str, Any]:
     sym = get_ticker_symbol(symbol)
     out = {"symbol": sym, "sources": {}}
 
-    out["sources"]["yahoo"] = {"price_pack": fetch_price_from_yahoo(sym), "ok": True}
+    out["sources"]["yahoo"] = {"ok": False, "note": "Disabled for prices (used only for statements)."}
     out["sources"]["google_finance"] = fetch_google_finance_snapshot(sym)
     out["sources"]["tradingview"] = fetch_tradingview_snapshot(sym)
     out["sources"]["investing"] = fetch_investing_snapshot(sym)
