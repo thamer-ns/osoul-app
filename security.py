@@ -48,10 +48,15 @@ def _validate_username(u: str):
 
 def _validate_password(p: str):
     p = (p or "").strip()
-    if len(p) < 6:
-        return False, "كلمة المرور قصيرة جداً (6 أحرف على الأقل)"
+    if len(p) < 8:
+        return False, "كلمة المرور قصيرة جداً (8 أحرف على الأقل)"
     if len(p) > 200:
         return False, "كلمة المرور طويلة جداً"
+    # يجب أن تحتوي على حرف ورقم (لرفع الأمان)
+    if not re.search(r"[A-Za-z]", p):
+        return False, "كلمة المرور يجب أن تحتوي على حرف (A-Z)"
+    if not re.search(r"\d", p):
+        return False, "كلمة المرور يجب أن تحتوي على رقم (0-9)"
     return True, ""
 
 
