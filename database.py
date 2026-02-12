@@ -17,6 +17,7 @@ except Exception:
     SimpleConnectionPool = None
 
 import config
+from osoli_logging import redact_text
 
 # ============================================================
 # DB Pool (Postgres) + Fallback (SQLite)
@@ -78,7 +79,7 @@ def get_connection_pool():
     except Exception as e:
         _POOL = None
         _POOL_LAST_OK = False
-        _POOL_LAST_ERR = str(e)
+        _POOL_LAST_ERR = redact_text(str(e))
         return None
 
 
@@ -141,7 +142,7 @@ def db_healthcheck() -> Dict[str, Any]:
         finally:
             put_connection(conn, kind)
     except Exception as e:
-        return {"ok": False, "kind": "none", "error": str(e)}
+        return {"ok": False, "kind": "none", "error": redact_text(str(e))}
 
 
 # ============================================================
