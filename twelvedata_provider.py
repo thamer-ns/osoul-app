@@ -121,6 +121,12 @@ def resolve_symbol_meta(symbol: str, default_exchange: str = "XSAU") -> Dict[str
     if not key:
         return {"symbol": s_up, "exchange": (default_exchange if is_numeric else "")}
 
+    # ⚡ Performance: For Saudi numeric tickers (e.g., 2270), Twelve Data غالباً يقبلها مع exchange=XSAU.
+    # نتجنب symbol_search لأنه يستهلك وقت/كوتا، ونستخدمه فقط للرموز غير الرقمية/المؤشرات.
+    if is_numeric:
+        return {"symbol": s_up, "exchange": default_exchange}
+
+
     # For indices (TASI), do NOT hardcode early; search to get correct exchange
     query_symbol = "TASI" if s_up in ("TASI", "TADAWUL", "TADAWUL ALL SHARE", "TADAWUL ALL SHARE INDEX") else s_up
 
@@ -199,6 +205,64 @@ def resolve_symbol(symbol: str, exchange: str = "XSAU") -> str:
     meta = resolve_symbol_meta(symbol, default_exchange=exchange)
     return str(meta.get("symbol") or "").strip()
 
+
+def _values_to_ohlcv(values) -> pd.DataFrame:
+    """Convert Twelve Data `values` payload to standardized OHLCV dataframe.
+
+    Input: list[dict] with keys like datetime/open/high/low/close/volume (strings).
+    Output: DataFrame indexed by datetime with columns: Open, High, Low, Close, Volume.
+    """
+    try:
+        if not values or not isinstance(values, list):
+            return pd.DataFrame()
+        df = pd.DataFrame(values)
+        if df.empty:
+            return pd.DataFrame()
+
+        # Detect datetime column
+        dt_col = None
+        for c in ("datetime", "date", "time", "timestamp"):
+            if c in df.columns:
+                dt_col = c
+                break
+        if not dt_col:
+            return pd.DataFrame()
+
+        df[dt_col] = pd.to_datetime(df[dt_col], errors="coerce")
+        df = df.dropna(subset=[dt_col])
+        if df.empty:
+            return pd.DataFrame()
+
+        # Normalize column names (case-insensitive)
+        cols_lower = {str(c).strip().lower(): c for c in df.columns}
+        mapping = {"open": "Open", "high": "High", "low": "Low", "close": "Close", "volume": "Volume"}
+        for k, v in mapping.items():
+            if k in cols_lower and v not in df.columns:
+                df[v] = pd.to_numeric(df[cols_lower[k]], errors="coerce")
+
+        if "Volume" not in df.columns:
+            df["Volume"] = 0.0
+        else:
+            df["Volume"] = pd.to_numeric(df["Volume"], errors="coerce").fillna(0.0)
+
+        for c in ("Open", "High", "Low", "Close"):
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors="coerce")
+
+        df = df.set_index(dt_col).sort_index()
+
+        keep = ["Open", "High", "Low", "Close", "Volume"]
+        for c in keep:
+            if c not in df.columns:
+                df[c] = (0.0 if c == "Volume" else pd.NA)
+        df = df[keep]
+        df = df.dropna(subset=["Open", "High", "Low", "Close"], how="any")
+        df = df[pd.to_numeric(df["Close"], errors="coerce").fillna(0) > 0]
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=60 * 20, show_spinner=False)
 def get_time_series(symbol: str, interval: str = "1d", years: int = 5, outputsize: int = 5000) -> pd.DataFrame:
     """Fetch OHLCV candles from Twelve Data.
 
@@ -217,6 +281,19 @@ def get_time_series(symbol: str, interval: str = "1d", years: int = 5, outputsiz
         return pd.DataFrame()
 
     itv = _interval_map(interval)
+
+    # Reduce payload size (faster + أقل استهلاك ذاكرة) مع الحفاظ على تغطية السنوات المطلوبة.
+    try:
+        outputsize = int(outputsize or 0) or 5000
+        if years:
+            y = int(years)
+            # Approx trading days/year for daily candles
+            est = max(200, min(5000, y * 260 + 50))
+            outputsize = min(outputsize, est)
+        outputsize = max(100, min(5000, int(outputsize)))
+    except Exception:
+        outputsize = 5000
+
 
     # ---------- SDK path ----------
     if _HAS_SDK and TDClient is not None:
