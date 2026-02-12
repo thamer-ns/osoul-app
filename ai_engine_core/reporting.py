@@ -132,16 +132,37 @@ def generate_ai_report(symbol, timeframe="1D"):
             df = get_chart_history(symbol, period)
 
         if df is None or (isinstance(df, pd.DataFrame) and df.empty):
-            raise ValueError("no data")
+            return {
+                "ok": False,
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "error": "no_data",
+                "message": "لا توجد بيانات سعرية كافية لهذا الرمز/الفاصل. تأكد من مفتاح Twelve Data أو جرّب فاصل زمني مختلف.",
+            }
 
         df = _ensure_ohlcv_columns(df)
         if df is None or df.empty:
-            raise ValueError("no ohlcv")
+            return {
+                "ok": False,
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "error": "no_ohlcv",
+                "message": "لم نستطع بناء بيانات OHLCV (شموع) بشكل صحيح.",
+            }
 
         # Minimum candles based on interval
         min_rows = 60 if interval in ("1d", "1wk", "1mo") else 120
         if len(df) < min_rows:
-            raise ValueError(f"insufficient candles ({len(df)}<{min_rows})")
+            return {
+                "ok": False,
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "error": "insufficient_candles",
+                "have": int(len(df)),
+                "need": int(min_rows),
+                "message": f"بيانات غير كافية لهذا الفاصل (تحتاج تقريباً {min_rows} شمعة أو أكثر).",
+            }
+
 
         # Indicators pack
         ind = _compute_indicators(df)
