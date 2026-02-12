@@ -1,0 +1,8 @@
+# Deleted items (to apply manually if you are patching an existing repo)
+- .streamlit/secrets.toml
+- Legacy/  (duplicate with legacy/; causes issues on Linux/CI)
+
+ملاحظة: إذا كانت الأسرار التي في secrets.toml تم مشاركتها أو رُفعت سابقًا، لازم تعمل Rotate فورًا:
+- DATABASE_URL (تغيير كلمة مرور DB)
+- AUTH_SECRET
+- TWELVEDATA_API_KEY
