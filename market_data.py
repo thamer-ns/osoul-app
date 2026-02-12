@@ -836,10 +836,13 @@ def get_chart_history(symbol: str, period: str = None, interval: str = "1d", yea
     except Exception:
         df = pd.DataFrame()
 
+    # Normalize Twelve Data output (fix casing / MultiIndex / tuple columns)
+    df = _normalize_ohlcv_columns(df) if isinstance(df, pd.DataFrame) else pd.DataFrame()
+
     # Resample for weekly/monthly if needed
     try:
         if isinstance(df, pd.DataFrame) and not df.empty and itv in ("1wk", "1mo"):
-            d = df.copy()
+            d = _normalize_ohlcv_columns(df).copy()
             # ensure datetime index
             if not isinstance(d.index, pd.DatetimeIndex):
                 if "Date" in d.columns:
@@ -898,21 +901,24 @@ def get_chart_history(symbol: str, period: str = None, interval: str = "1d", yea
         except Exception:
             pass
 
-    # Final normalize columns
+    # Final normalize columns (robust)
+    df = _normalize_ohlcv_columns(df) if isinstance(df, pd.DataFrame) else pd.DataFrame()
     if df is None or df.empty:
         return pd.DataFrame()
 
-    # Ensure standard columns exist
+    # Ensure standard columns exist (and avoid KeyError)
     cols = ["Open", "High", "Low", "Close", "Volume"]
-    for c in cols:
-        if c not in df.columns:
-            if c == "Volume":
-                df[c] = 0.0
-            else:
-                df[c] = np.nan
+    if "Volume" not in df.columns:
+        df["Volume"] = 0.0
+
+    needed = ["Open", "High", "Low", "Close"]
+    if not all(c in df.columns for c in needed):
+        return pd.DataFrame()
+
     df = df[cols].copy()
-    df = df.dropna(subset=["Open", "High", "Low", "Close"])
+    df = df.dropna(subset=needed, how="any")
     return df
+
 
 @st.cache_data(ttl=60 * 30, show_spinner=False)
 def get_tasi_history(period: str = None, interval: str = "1d") -> pd.DataFrame:
