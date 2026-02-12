@@ -99,95 +99,71 @@ def _interval_map(interval: str) -> str:
     return mapping.get(itv, "1day")
 
 
-
 @st.cache_data(ttl=60 * 60, show_spinner=False)
-def resolve_symbol(symbol: str, exchange: str = "XSAU") -> str:
-    """Best-effort resolve for Saudi symbols.
 
-    - Saudi stocks: prefer exchange=XSAU
-    - Indices: allow free search
+def resolve_symbol_meta(symbol: str, default_exchange: str = "XSAU") -> Dict[str, str]:
+    """Resolve symbol and exchange for Twelve Data endpoints.
 
-    Returns a symbol string usable by Twelve Data.
+    Returns dict: {"symbol": "...", "exchange": "..."} (exchange may be empty).
+    Why: For Saudi stocks, Twelve Data often needs `exchange=XSAU` even if symbol is numeric.
     """
-    s = str(symbol or "").strip().upper()
+    s = str(symbol or "").strip()
+    s_up = s.upper()
     if not s:
-        return ""
+        return {"symbol": "", "exchange": ""}
 
     # normalize common forms
-    s = s.replace("^", "")
-    s = s.replace(".SR", "")
+    s_up = s_up.replace("^", "").replace(".SR", "")
+    # if user passed 2270.SR / 2270 -> keep numeric
+    is_numeric = s_up.isdigit()
 
     key = get_api_key()
     if not key:
-        # Without key we can't resolve; return normalized input
-        return s
+        return {"symbol": s_up, "exchange": (default_exchange if is_numeric else "")}
+
+    # For indices (TASI), do NOT hardcode early; search to get correct exchange
+    query_symbol = "TASI" if s_up in ("TASI", "TADAWUL", "TADAWUL ALL SHARE", "TADAWUL ALL SHARE INDEX") else s_up
 
     def _pick_best(arr):
+        # Prefer exact symbol match first
         if not isinstance(arr, list) or not arr:
-            return ""
-
-        def _score(row):
-            ex = str(row.get("exchange") or "").lower()
-            country = str(row.get("country") or "").lower()
-            it = str(row.get("instrument_type") or row.get("type") or "").lower()
-            sym0 = str(row.get("symbol") or "").upper()
+            return None
+        # Normalize fields
+        def score(row):
+            sym = str(row.get("symbol") or "").strip().upper()
+            exch = str(row.get("exchange") or "").strip().upper()
+            name = str(row.get("name") or "").strip().upper()
+            inst = str(row.get("instrument_type") or row.get("type") or "").strip().upper()
             sc = 0
-            if "tadawul" in ex or "saudi" in ex:
-                sc += 3
-            if "saudi" in country:
-                sc += 3
-            if "index" in it:
-                sc += 2
-            if sym0 == s:
-                sc += 1
+            if sym == query_symbol:
+                sc += 50
+            if is_numeric and exch in ("XSAU", "TADAWUL"):
+                sc += 30
+            if (not is_numeric) and ("INDEX" in inst or "INDEX" in name or "TADAWUL ALL SHARE" in name):
+                sc += 30
+            if exch in ("XSAU", "TADAWUL"):
+                sc += 10
             return sc
 
-        arr_sorted = sorted(arr, key=_score, reverse=True)
-        return str(arr_sorted[0].get("symbol") or "").strip()
-
-    # If TASI alias, try symbol_search without exchange constraint
-    if s in ("TASI", "TADAWUL", "TADAWUL ALL SHARE", "TADAWUL ALL SHARE INDEX"):
-        target = "TASI"
-        # SDK path
-        if _HAS_SDK and TDClient is not None:
-            try:
-                client = TDClient(apikey=key)
-                _throttle(min_gap_s=0.8)
-                data = client.custom_endpoint(endpoint="symbol_search", symbol=target).as_json()
-                best = _pick_best(data.get("data") if isinstance(data, dict) else None)
-                return best or target
-            except Exception:
-                pass
-        # HTTP fallback
-        if requests:
-            try:
-                url = "https://api.twelvedata.com/symbol_search"
-                params = {"symbol": target, "apikey": key}
-                _throttle(min_gap_s=0.8)
-                r = requests.get(url, params=params, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
-                data = r.json()
-                best = _pick_best(data.get("data") if isinstance(data, dict) else None)
-                return best or target
-            except Exception:
-                pass
-        return target
-
-    # ---------- general resolution ----------
-    # For Saudi numeric tickers: restrict to XSAU
-    params = {"symbol": s}
-    if exchange and s.isdigit():
-        params["exchange"] = exchange
+        best = sorted(arr, key=score, reverse=True)[0]
+        return best
 
     # SDK path
     if _HAS_SDK and TDClient is not None:
         try:
             client = TDClient(apikey=key)
+            params = {"symbol": query_symbol}
+            if is_numeric:
+                params["exchange"] = default_exchange
             _throttle(min_gap_s=0.8)
             data = client.custom_endpoint(endpoint="symbol_search", **params).as_json()
             arr = data.get("data") if isinstance(data, dict) else None
             best = _pick_best(arr)
             if best:
-                return best
+                return {
+                    "symbol": str(best.get("symbol") or query_symbol).strip(),
+                    "exchange": str(best.get("exchange") or (default_exchange if is_numeric else "")).strip(),
+                }
         except Exception:
             pass
 
@@ -195,52 +171,34 @@ def resolve_symbol(symbol: str, exchange: str = "XSAU") -> str:
     if requests:
         try:
             url = "https://api.twelvedata.com/symbol_search"
-            params2 = dict(params)
-            params2["apikey"] = key
+            params = {"symbol": query_symbol, "apikey": key}
+            if is_numeric:
+                params["exchange"] = default_exchange
             _throttle(min_gap_s=0.8)
-            r = requests.get(url, params=params2, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
+            r = requests.get(url, params=params, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
             data = r.json()
             arr = data.get("data") if isinstance(data, dict) else None
             best = _pick_best(arr)
             if best:
-                return best
+                return {
+                    "symbol": str(best.get("symbol") or query_symbol).strip(),
+                    "exchange": str(best.get("exchange") or (default_exchange if is_numeric else "")).strip(),
+                }
         except Exception:
             pass
 
-    return s
+    return {"symbol": query_symbol if query_symbol else s_up, "exchange": (default_exchange if is_numeric else "")}
 
 
-def _values_to_ohlcv(values: Any) -> pd.DataFrame:
-    if not isinstance(values, (list, tuple)) or not values:
-        return pd.DataFrame()
 
-    df = pd.DataFrame(values)
-    if "datetime" in df.columns:
-        df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
-        df = df.sort_values("datetime")
-        df = df.set_index("datetime")
+def resolve_symbol(symbol: str, exchange: str = "XSAU") -> str:
+    """Return a symbol string usable by Twelve Data.
 
-    # standardize columns
-    rename = {
-        "open": "Open",
-        "high": "High",
-        "low": "Low",
-        "close": "Close",
-        "volume": "Volume",
-    }
-    for src, dst in rename.items():
-        if src in df.columns and dst not in df.columns:
-            df[dst] = pd.to_numeric(df[src], errors="coerce")
+    This wraps `resolve_symbol_meta` and keeps backward compatibility.
+    """
+    meta = resolve_symbol_meta(symbol, default_exchange=exchange)
+    return str(meta.get("symbol") or "").strip()
 
-    keep = [c for c in ["Open", "High", "Low", "Close", "Volume"] if c in df.columns]
-    if keep:
-        df = df[keep]
-
-    df = df.dropna(subset=[c for c in ["Open", "High", "Low", "Close"] if c in df.columns], how="any")
-    return df
-
-
-@st.cache_data(ttl=60 * 30, show_spinner=False)
 def get_time_series(symbol: str, interval: str = "1d", years: int = 5, outputsize: int = 5000) -> pd.DataFrame:
     """Fetch OHLCV candles from Twelve Data.
 
@@ -252,7 +210,9 @@ def get_time_series(symbol: str, interval: str = "1d", years: int = 5, outputsiz
     if not key:
         return pd.DataFrame()
 
-    sym = resolve_symbol(symbol)
+    meta = resolve_symbol_meta(symbol)
+    sym = meta.get('symbol','')
+    exch = meta.get('exchange','')
     if not sym:
         return pd.DataFrame()
 
@@ -264,12 +224,15 @@ def get_time_series(symbol: str, interval: str = "1d", years: int = 5, outputsiz
             try:
                 _throttle(min_gap_s=1.2)
                 client = TDClient(apikey=key)
-                ts = client.time_series(
-                    symbol=sym,
-                    interval=itv,
-                    outputsize=outputsize,
-                    format="JSON",
-                )
+                kwargs = {
+                    'symbol': sym,
+                    'interval': itv,
+                    'outputsize': outputsize,
+                    'format': 'JSON',
+                }
+                if exch:
+                    kwargs['exchange'] = exch
+                ts = client.time_series(**kwargs)
                 data = ts.as_json()
 
                 # SDK returns dict with values sometimes; or direct list
@@ -367,6 +330,8 @@ def get_api_usage() -> Dict[str, Any]:
         except Exception as e:
             return {"ok": False, "reason": str(e)}
 
+    return {"ok": False, "reason": "no_requests"}
+
 
 def get_quote(symbol: str) -> Dict[str, Any]:
     """Get real-time quote via Twelve Data.
@@ -415,25 +380,5 @@ def get_quote(symbol: str) -> Dict[str, Any]:
             return {"ok": False, "reason": str(data.get("message") or data.get("error") or "quote_error"), "raw": data}
         except Exception as e:
             return {"ok": False, "reason": str(e)}
-
-
-    # Fallback: compute last close and prev close from time_series (works for indices too)
-    try:
-        df = get_time_series(symbol, interval="1d", years=1, outputsize=400)
-        if isinstance(df, pd.DataFrame) and (not df.empty) and "Close" in df.columns:
-            s_close = pd.to_numeric(df["Close"], errors="coerce").dropna()
-            if len(s_close) >= 1:
-                curr = float(s_close.iloc[-1])
-                prev = float(s_close.iloc[-2]) if len(s_close) >= 2 else 0.0
-                chg_pct = ((curr - prev) / prev) * 100.0 if prev > 0 else 0.0
-                return {
-                    "ok": curr > 0,
-                    "price": curr,
-                    "prev_close": prev,
-                    "chg_pct": chg_pct,
-                    "raw": {"fallback": "time_series"},
-                }
-    except Exception:
-        pass
 
     return {"ok": False, "reason": "no_requests"}
