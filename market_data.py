@@ -729,22 +729,42 @@ def fetch_price_from_yahoo(symbol: str) -> Dict[str, float]:
 # ============================================================
 @st.cache_data(ttl=300, show_spinner=False)
 def get_tasi_data():
+    """TASI snapshot without Yahoo.
+
+    Priority:
+    1) Twelve Data (quote endpoint) — usually best for indices
+    2) TradingView index page (best-effort)
+
+    Returns:
+      (tasi_value, change_percent)
+    """
+    # Twelve Data quote
     try:
-        tick = yf.Ticker("^TASI.SR")
-        fi = getattr(tick, "fast_info", None)
-        curr = _safe_float(getattr(fi, "last_price", None)) if fi else 0.0
-        prev = _safe_float(getattr(fi, "previous_close", None)) if fi else 0.0
+        from twelvedata_provider import get_quote
 
-        if curr <= 0:
-            hist = tick.history(period="5d", interval="1d")
-            hist = _normalize_ohlcv_columns(hist)
-            if not hist.empty and "Close" in hist.columns:
-                curr = _safe_float(hist["Close"].iloc[-1])
-                prev = _safe_float(hist["Close"].iloc[-2]) if len(hist) > 1 else curr
+        q = get_quote("TASI")
+        if isinstance(q, dict) and q.get("ok"):
+            curr = float(q.get("price") or 0.0)
+            prev = float(q.get("prev_close") or 0.0)
+            chg = float(q.get("chg_pct") or 0.0)
+            if chg == 0.0 and prev > 0:
+                chg = ((curr - prev) / prev) * 100.0
+            if _is_reasonable_price(curr):
+                return float(curr), round(_safe_float(chg), 2)
+    except Exception:
+        pass
 
-        if _is_reasonable_price(curr):
-            chg = ((curr - prev) / prev) * 100.0 if prev > 0 else 0.0
-            return float(curr), round(_safe_float(chg), 2)
+    # TradingView best-effort
+    try:
+        if requests:
+            url = "https://www.tradingview.com/symbols/TADAWUL-TASI/"
+            r = _http_get(url, timeout=8, retries=1)
+            if r:
+                txt = r.text or ""
+                m2 = re.search(r'property="og:price:amount"\s+content="([0-9]+(?:\.[0-9]+)?)"', txt)
+                curr = _safe_float(m2.group(1)) if m2 else 0.0
+                if _is_reasonable_price(curr):
+                    return float(curr), 0.0
     except Exception:
         pass
 
@@ -768,37 +788,31 @@ def get_chart_history(symbol: str, period: str = None, interval: str = "1d", yea
     if not sym:
         return pd.DataFrame()
 
-    itv = _td_interval(interval)
-    resolved = _td_resolve_symbol(sym)
-    if not resolved:
-        return pd.DataFrame()
-
-    data = _td_request(
-        {
-            "symbol": resolved,
-            "interval": itv,
-            "outputsize": 5000,
-        },
-        timeout=12,
-        max_retries=3,
-    )
-
-    if not isinstance(data, dict) or not data.get("values"):
-        return pd.DataFrame()
-
-    df = _td_values_to_ohlcv(data.get("values") or [])
-    if df.empty:
-        return df
-
     try:
-        if years and isinstance(df.index, pd.DatetimeIndex):
-            cutoff = pd.Timestamp.utcnow() - pd.DateOffset(years=int(years))
-            df = df[df.index >= cutoff]
-    except Exception:
-        pass
+        from twelvedata_provider import get_time_series
 
-    df = _ensure_datetime_index(df)
-    return df
+        df = get_time_series(sym, interval=interval, years=int(years or 5), outputsize=5000)
+        df = _ensure_datetime_index(df)
+        return df
+    except Exception:
+        # fallback to old internal implementation if present
+        try:
+            itv = _td_interval(interval)
+            resolved = _td_resolve_symbol(sym)
+            if not resolved:
+                return pd.DataFrame()
+            data = _td_request({"symbol": resolved, "interval": itv, "outputsize": 5000}, timeout=12, max_retries=3)
+            if not isinstance(data, dict) or not data.get("values"):
+                return pd.DataFrame()
+            df = _td_values_to_ohlcv(data.get("values") or [])
+            if df.empty:
+                return df
+            if years and isinstance(df.index, pd.DatetimeIndex):
+                cutoff = pd.Timestamp.utcnow() - pd.DateOffset(years=int(years))
+                df = df[df.index >= cutoff]
+            return _ensure_datetime_index(df)
+        except Exception:
+            return pd.DataFrame()
 
 
 @st.cache_data(ttl=60 * 30, show_spinner=False)
@@ -934,6 +948,20 @@ def fetch_batch_data(symbols_list: list):
                 price = float(p2)
                 prev_close = float(p2)
                 source = "argaam"
+
+        if price <= 0:
+            # Twelve Data (last resort, still NOT Yahoo)
+            try:
+                from twelvedata_provider import get_quote
+
+                q = get_quote(norm)
+                p3 = float(q.get("price") or 0.0) if isinstance(q, dict) else 0.0
+                if _is_reasonable_price(p3):
+                    price = float(p3)
+                    prev_close = float(q.get("prev_close") or p3) if isinstance(q, dict) else float(p3)
+                    source = "twelvedata"
+            except Exception:
+                pass
 
         res_entry = {
             "price": float(price),
