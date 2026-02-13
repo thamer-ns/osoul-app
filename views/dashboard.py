@@ -120,7 +120,7 @@ def view_dashboard(fin):
         with c_ch1:
             st.subheader("توزيع الأصول")
             if not alloc_df.empty:
-                st.plotly_chart(px.pie(alloc_df, values="Value", names="Asset", hole=0.4), use_container_width=True)
+                st.plotly_chart(px.pie(alloc_df, values="Value", names="Asset", hole=0.4), width="stretch")
             else:
                 st.info("لا توجد أصول")
         with c_ch2:
@@ -128,7 +128,7 @@ def view_dashboard(fin):
             crv = generate_equity_curve(df)
             if isinstance(crv, pd.DataFrame) and not crv.empty and "date" in crv.columns:
                 ycol = "cumulative_invested" if "cumulative_invested" in crv.columns else crv.columns[-1]
-                st.plotly_chart(px.line(crv, x="date", y=ycol), use_container_width=True)
+                st.plotly_chart(px.line(crv, x="date", y=ycol), width="stretch")
             else:
                 st.info("لا توجد بيانات تاريخية")
     else:
