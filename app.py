@@ -33,9 +33,8 @@ for _p in _candidates:
         pass
 
 # الآن imports
-from config import APP_NAME, APP_ICON, LOGO_MARK_PATH, REQUIRE_DB, DATABASE_URL
-from database import init_db, db_healthcheck
-from osoli_logging import redact_text, install_redaction_filter
+from config import APP_NAME, APP_ICON
+from database import init_db
 from styles import apply_custom_css
 
 # ✅ (اختياري) إذا ضفت apply_ui_css داخل styles.py
@@ -64,85 +63,6 @@ def _safe_image(path: str, width: Optional[int] = None):
         pass
 
 
-
-
-# -----------------------------
-# 🔧 DB Setup / Warning Page
-# -----------------------------
-def render_db_setup_page(err: str = "") -> None:
-    """Show a single page when DB is required but not connected."""
-    st.set_page_config(
-        page_title=f"{APP_NAME} — إعداد قاعدة البيانات",
-        page_icon=APP_ICON,
-        layout="wide",
-        initial_sidebar_state="expanded",
-    )
-    apply_custom_css()
-
-    st.markdown(
-        """
-<div style="padding:14px 18px; border-radius:14px; background: linear-gradient(90deg, rgba(0,82,204,0.16), rgba(0,0,0,0.03));">
-  <div style="text-align:right;">
-    <div style="font-size:32px; font-weight:800;">تنبيه: قاعدة البيانات غير متصلة</div>
-    <div style="opacity:.85; margin-top:6px;">التطبيق مُهيّأ للعمل على Postgres فقط. لن يتم تشغيل بقية النظام حتى يتم إصلاح الاتصال.</div>
-  </div>
-</div>
-""",
-        unsafe_allow_html=True,
-    )
-
-    # Logo (optional)
-    try:
-        if LOGO_MARK_PATH and os.path.exists(LOGO_MARK_PATH):
-            st.image(LOGO_MARK_PATH, width=80)
-    except Exception:
-        pass
-
-    col1, col2 = st.columns([1.2, 1], gap="large")
-
-    with col1:
-        st.subheader("✅ ما المطلوب؟")
-        st.markdown(
-            """
-- تأكد أن **DATABASE_URL** موجود في *Streamlit Cloud → App → Settings → Secrets*.
-- تأكد أن رابط Postgres صحيح ويحتوي بيانات الدخول.
-- (Supabase/Neon غالباً) أضف `?sslmode=require` إذا كان الخادم يتطلب SSL.
-"""
-        )
-        st.code(
-            """DATABASE_URL = "postgresql://USER:PASSWORD@HOST:5432/DBNAME?sslmode=require"
-TWELVEDATA_API_KEY = "YOUR_KEY"
-AUTH_SECRET = "YOUR_LONG_RANDOM_SECRET""",
-            language="toml",
-        )
-        st.caption("بعد تعديل Secrets: اضغط Rerun أو أعد تشغيل التطبيق من Streamlit Cloud.")
-
-    with col2:
-        st.subheader("🧪 فحص سريع")
-        status = db_healthcheck()
-        has_db_url = bool(status.get("has_db_url"))
-        ok = bool(status.get("ok"))
-        kind = status.get("kind") or "none"
-
-        st.write({"has_db_url": has_db_url, "ok": ok, "kind": kind})
-
-        if err:
-            st.error(f"الخطأ: {redact_text(err)}")
-
-        if not has_db_url and not DATABASE_URL:
-            st.warning("لم يتم العثور على DATABASE_URL في Secrets/Env.")
-
-        st.markdown(
-            """**خطوات سريعة للإصلاح**
-1) افتح Manage app → Settings → Secrets
-2) أضف DATABASE_URL
-3) احفظ
-4) Restart/Reboot
-"""
-        )
-
-    st.info("تم تعطيل SQLite fallback افتراضياً لمنع فقدان/تباعد البيانات.")
-
 @st.cache_data(show_spinner=False)
 def _init_db_once():
     """تهيئة DB مرة واحدة (خاصة في Streamlit Cloud)."""
@@ -150,7 +70,7 @@ def _init_db_once():
         init_db()
         return True, ""
     except Exception as e:
-        return False, redact_text(e)
+        return False, str(e)
 
 
 def main():
@@ -183,9 +103,11 @@ def main():
     # Header (اختياري)
     if render_app_header:
         try:
-            render_app_header()
+            render_app_header("أصولي", "منصة الذكاء الكمي للأسواق")
         except Exception:
             pass
+
+
 
     # -------------------------
     # DB Init
