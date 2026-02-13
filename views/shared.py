@@ -1,6 +1,5 @@
 # views/shared.py
 import streamlit as st
-from osoli_logging import redact_text
 import pandas as pd
 import plotly.express as px  # موجود لأن views.py كان يستورده (حتى لو ما يُستخدم هنا)
 import plotly.graph_objects as go
@@ -517,7 +516,7 @@ def _render_targets(targets):
         render_custom_table(df, cols_spec)
     except Exception:
         # fallback آمن
-        st.dataframe(df, width='stretch', hide_index=True)
+        st.dataframe(df, width="stretch", hide_index=True)
 
 def _render_entry_risk_levels(entry: dict, risk: dict, levels: dict, score: int):
     st.markdown("### 🧭 خطة الدخول والمخاطر")
@@ -1125,7 +1124,7 @@ def render_osoli_report(rep: dict, title: str = "🤖 تقرير أصولي", *a
         _render_ai_report_readable(rep, show_debug=False, compact=False)
     except Exception as e:
         st.warning("⚠️ تعذر عرض البطاقات المحسّنة، سيتم استخدام العرض الأصلي.")
-        st.code(redact_text(str(e)))
+        st.code(str(e))
 
     # النسخة الأصلية (كما هي) لضمان عدم فقد أي تفاصيل/مزايا
     with st.expander("🧩 عرض أصولي (النسخة الأصلية)"):
@@ -1272,7 +1271,7 @@ def _render_tv_like_chart(symbol: str, period: str, interval: str, show_rangesli
         fig = _build_tv_like_plot(df, title=f"{symbol} | {period} | {interval}", show_rangeslider=show_rangeslider)
         st.plotly_chart(
             fig,
-            width='stretch',
+            width="stretch",
             config={
                 "scrollZoom": True,
                 "displaylogo": False,
@@ -1413,5 +1412,5 @@ def diagnose_twelvedata_symbol(symbol: str):
         return out
     except Exception as e:
         out["ok"] = False
-        out["error"] = redact_text(str(e))
+        out["error"] = str(e)
         return out
