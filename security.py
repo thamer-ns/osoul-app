@@ -16,6 +16,7 @@ except Exception:
 
 import streamlit as st
 
+import config
 from config import APP_ICON, APP_NAME
 from database import db_create_user, db_verify_user, db_user_exists, fetch_table
 
@@ -46,15 +47,40 @@ def _validate_username(u: str):
     return True, ""
 
 
-def _validate_password(p: str):
-    p = (p or "").strip()
-    if len(p) < 6:
-        return False, "كلمة المرور قصيرة جداً (6 أحرف على الأقل)"
+def _validate_password(password: str, mode: str = "login"):
+    """Password policy.
+    - login: accept legacy passwords/PINs without forcing new length.
+    - register/change: prefer strong password (MIN_PASSWORD_LEN) or legacy numeric PIN (>=6) if enabled.
+    """
+    p = _norm(password)
+
+    if len(p) < 1:
+        return False, "أدخل كلمة المرور"
     if len(p) > 200:
         return False, "كلمة المرور طويلة جداً"
+
+    allow_legacy = getattr(config, "ALLOW_LEGACY_PIN", True)
+
+    if mode == "login":
+        # لا نكسر الحسابات القديمة: نقبل كلمة المرور كما هي ثم نتحقق من الهاش في قاعدة البيانات
+        return True, ""
+
+    # register / change
+    if allow_legacy and p.isdigit():
+        if len(p) < 6:
+            return False, "الرمز قصير جداً (6 أرقام على الأقل)"
+        return True, ""
+
+    min_len = int(getattr(config, "MIN_PASSWORD_LEN", 8) or 8)
+    if len(p) < min_len:
+        extra = " (أو استخدم PIN رقمي 6 أرقام للحسابات القديمة)" if allow_legacy else ""
+        return False, f"كلمة المرور قصيرة جداً ({min_len} أحرف على الأقل){extra}"
+
+    # توجيه بسيط لتحسين الأمان (بدون كسر المستخدمين)
+    if not re.search(r"[A-Za-z]", p) or not re.search(r"\d", p):
+        return False, "يفضّل أن تحتوي كلمة المرور على حروف وأرقام لزيادة الأمان"
+
     return True, ""
-
-
 def _norm(s):
     return (s or "").strip()
 
@@ -202,9 +228,12 @@ def _make_auth_token(username: str, days: int = 30) -> str:
     return f"{payload}.{sig}"
 
 
+
 def _verify_auth_token(token: str):
-    """
-    Returns username if valid else None
+    """Verify signed auth token.
+
+    Returns (username, exp_ts) if valid else None.
+    Token format: v3.<exp>.<username>.<sig>
     """
     try:
         token = _norm(token)
@@ -223,14 +252,14 @@ def _verify_auth_token(token: str):
         good = _sign(payload)
         if not hmac.compare_digest(good, sig):
             return None
-        return _norm(username)
+        u = _norm(username)
+        if not u:
+            return None
+        return u, exp
     except Exception:
         return None
 
 
-# ============================================================
-# 4) DB Helpers
-# ============================================================
 
 def _user_exists_in_db(username: str) -> bool:
     try:
@@ -290,10 +319,12 @@ def _bootstrap_auth_from_cookie():
             cookie_token = None
 
     if cookie_token:
-        u = _verify_auth_token(cookie_token)
-        if u and _user_exists_in_db(u):
+        ver = _verify_auth_token(cookie_token)
+        if ver and _user_exists_in_db(ver[0]):
+            u, exp = ver
             s["logged_in"] = True
             s["username"] = u
+            s["auth_exp"] = int(exp)
             return
 
     if cookie_user:
@@ -301,6 +332,7 @@ def _bootstrap_auth_from_cookie():
         if exists:
             s["logged_in"] = True
             s["username"] = cookie_user
+            s["auth_exp"] = int(time.time()) + 4*3600
             return
 
     # if we have cookies but cannot validate, clear them (avoid loop)
@@ -320,6 +352,8 @@ def _bootstrap_auth_from_cookie():
 def logout_user():
     st.session_state["logged_in"] = False
     st.session_state["username"] = None
+    st.session_state.pop("auth_exp", None)
+    st.session_state.pop("last_seen", None)
 
     cm = _get_cookie_manager()
     if cm:
@@ -330,7 +364,10 @@ def logout_user():
     st.success("✅ تم تسجيل الخروج")
 
 
-def login_user(username: str, password: str, remember_me: bool = False):
+def login_user(username: str, password: str, remember_me: bool = False, **kwargs):
+    # Backward-compatible: callers may pass remember=<bool> instead of remember_me
+    if 'remember' in kwargs and kwargs['remember'] is not None:
+        remember_me = bool(kwargs['remember'])
     username = _norm(username)
     password = _norm(password)
 
@@ -338,7 +375,7 @@ def login_user(username: str, password: str, remember_me: bool = False):
     if not ok_u:
         return False, msg_u
 
-    ok_p, msg_p = _validate_password(password)
+    ok_p, msg_p = _validate_password(password, mode="login")
     if not ok_p:
         return False, msg_p
 
@@ -359,6 +396,7 @@ def login_user(username: str, password: str, remember_me: bool = False):
         # If remember_me -> persistent 30 days with signed token
         if remember_me:
             token = _make_auth_token(username, days=30)
+            st.session_state["auth_exp"] = int(time.time()) + 30*86400
             _set_cookie(cm, "osoul_user", username, days=30)
             _set_cookie(cm, "osoul_auth_v2", token, days=30)
         else:
@@ -366,6 +404,7 @@ def login_user(username: str, password: str, remember_me: bool = False):
             # Some browsers treat cookies without expires as session cookies.
             # We'll keep short expiry for stability.
             token = _make_auth_token(username, days=1)
+            st.session_state["auth_exp"] = int(time.time()) + 1*86400
             _set_cookie(cm, "osoul_user", username, days=1)
             _set_cookie(cm, "osoul_auth_v2", token, days=1)
 
@@ -380,7 +419,7 @@ def register_user(username: str, password: str):
     if not ok_u:
         return False, msg_u
 
-    ok_p, msg_p = _validate_password(password)
+    ok_p, msg_p = _validate_password(password, mode="login")
     if not ok_p:
         return False, msg_p
 
@@ -395,35 +434,71 @@ def register_user(username: str, password: str):
 
 
 def require_login():
+    """Ensure authentication before continuing.
+
+    Returns True if authenticated, otherwise renders login/register UI and returns False.
     """
-    Helper: if not logged in -> show login UI
-    Returns True if logged in else False.
-    """
-    # ✅ bootstrap cookies once (prevents relogin on refresh)
     _bootstrap_auth_from_cookie()
 
-    if st.session_state.get("logged_in"):
-        return True
+    from datetime import datetime, timedelta
 
+    # ✅ session idle timeout
+    if st.session_state.get("logged_in"):
+        # ✅ hard token expiry (even if session is active)
+        exp = st.session_state.get("auth_exp")
+        if exp and int(time.time()) > int(exp):
+            logout_user()
+            st.warning("انتهت صلاحية الجلسة. الرجاء تسجيل الدخول مرة أخرى.")
+        now = datetime.utcnow()
+        last = st.session_state.get("last_seen")
+        idle_minutes = int(getattr(config, "SESSION_IDLE_MINUTES", 120) or 120)
+        if last and isinstance(last, datetime) and (now - last) > timedelta(minutes=idle_minutes):
+            logout_user()
+            st.warning("انتهت الجلسة بسبب عدم النشاط. الرجاء تسجيل الدخول مرة أخرى.")
+        else:
+            st.session_state["last_seen"] = now
+            return True
+
+    # ===== Landing / Auth UI =====
+    # Render icon (emoji or logo path)
     try:
-        if LOGO_MARK_PATH and os.path.exists(LOGO_MARK_PATH):
-            st.image(LOGO_MARK_PATH, width=80)
+        if isinstance(APP_ICON, str) and (APP_ICON.lower().endswith((".png",".jpg",".jpeg",".webp")) or "/" in APP_ICON):
+            b64 = None
+            try:
+                with open(APP_ICON, "rb") as f:
+                    import base64
+                    b64 = base64.b64encode(f.read()).decode("utf-8")
+            except Exception:
+                b64 = None
+            icon_html = f"<img src=\"data:image/png;base64,{b64}\" style=\"width:28px;height:28px;vertical-align:middle;border-radius:8px;\"/>" if b64 else "📈"
+        else:
+            icon_html = str(APP_ICON)
     except Exception:
-        pass
-    st.markdown(f"## {APP_ICON} {APP_NAME}")
-    st.info("الرجاء تسجيل الدخول للمتابعة.")
+        icon_html = "📈"
+
+    st.markdown(
+        f"""
+        <div class="landing-hero">
+          <div class="landing-title">{icon_html} {APP_NAME}</div>
+          <div class="landing-sub">منصة عربية لتحليل المحافظ، إدارة المخاطر، والباكتيست — بواجهة احترافية وواضحة.</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     tab1, tab2 = st.tabs(["تسجيل الدخول", "إنشاء حساب"])
 
     with tab1:
+        st.subheader("تسجيل الدخول")
+
         u = st.text_input("اسم المستخدم", key="login_username")
         p = st.text_input("كلمة المرور", type="password", key="login_password")
+        if getattr(config, "ALLOW_LEGACY_PIN", True):
+            st.caption("إذا كانت كلمة مرورك القديمة PIN رقمي (6 أرقام أو أكثر)، اكتبها كما هي وسيتم قبولها.")
 
-        # - إذا مفعّل: Persistent 30d
-        # - إذا غير مفعّل: Session cookie (تبقى بعد Refresh وتختفي عند إغلاق المتصفح)
-        remember = st.checkbox("تذكرني", value=True, key="login_remember_me")
+        remember = st.checkbox("تذكرني", value=True, key="remember_me")
 
-        if st.button("تسجيل الدخول", key="btn_login"):
+        if st.button("دخول", width="stretch"):
             ok, msg = login_user(u, p, remember_me=remember)
             if ok:
                 st.success(msg)
@@ -432,17 +507,24 @@ def require_login():
                 st.error(msg)
 
     with tab2:
+        st.subheader("إنشاء حساب جديد")
+
         u2 = st.text_input("اسم المستخدم", key="reg_username")
         p2 = st.text_input("كلمة المرور", type="password", key="reg_password")
-        if st.button("إنشاء حساب", key="btn_register"):
+
+        if getattr(config, "ALLOW_LEGACY_PIN", True):
+            st.caption("للإصدار القديم: يمكنك استخدام PIN رقمي (6 أرقام+). أو استخدم كلمة مرور قوية (8 أحرف+ حروف/أرقام).")
+        else:
+            st.caption("يفضل كلمة مرور قوية (8 أحرف+ حروف/أرقام).")
+
+        if st.button("إنشاء الحساب", width="stretch"):
             ok, msg = register_user(u2, p2)
             if ok:
-                st.success(msg)
+                st.success(msg + " يمكنك الآن تسجيل الدخول.")
             else:
                 st.error(msg)
 
     return False
-
 # ============================================================
 # 8) Backward-compatible alias
 # ============================================================
