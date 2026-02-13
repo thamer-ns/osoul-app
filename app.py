@@ -33,6 +33,7 @@ for _p in _candidates:
         pass
 
 # الآن imports
+import config
 from config import APP_NAME, APP_ICON, LOGO_MARK_PATH, REQUIRE_DB, DATABASE_URL
 from database import init_db, db_healthcheck
 from osoli_logging import redact_text, install_redaction_filter
@@ -71,11 +72,14 @@ def _safe_image(path: str, width: Optional[int] = None):
 # -----------------------------
 def render_db_setup_page(err: str = "") -> None:
     """Show a single page when DB is required but not connected."""
-    st.set_page_config(
-        page_title=f"{APP_NAME} — إعداد قاعدة البيانات",
-        page_icon=APP_ICON,
-        layout="wide",
-    )
+    try:
+        st.set_page_config(
+            page_title=f"{APP_NAME} — إعداد قاعدة البيانات",
+            page_icon=APP_ICON,
+            layout="wide",
+        )
+    except Exception:
+        pass
     apply_custom_css()
 
     st.markdown(
