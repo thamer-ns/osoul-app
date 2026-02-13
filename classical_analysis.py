@@ -5,6 +5,7 @@ import numpy as np
 import plotly.graph_objects as go
 
 from market_data import get_chart_history
+from data_normalizer import normalize_ohlcv
 
 # Optional: unify tables with the app's table renderer
 try:
@@ -55,101 +56,11 @@ def _fetch_history(symbol: str, interval: str, years: int = 5, period=None) -> p
 
 
 def _ensure_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    تنظيف أعمدة OHLCV:
-    Open, High, Low, Close, Volume
-    + التعامل مع MultiIndex وlowercase وأعمدة غير نصية.
-    """
-    if df is None or df.empty:
-        return pd.DataFrame()
-
-    d = df.copy()
-
-    # MultiIndex -> خذ level المناسب
-    if isinstance(d.columns, pd.MultiIndex):
-        # غالباً المستوى 0 هو OHLCV
-        d.columns = d.columns.get_level_values(0)
-
-    # اجعل الأعمدة نصية
-    d.columns = [str(c[0] if isinstance(c, (tuple, list)) and len(c) else c) for c in d.columns]
-
-    def pick(name: str):
-        target = name.lower().replace("_", "").replace("-", "").strip()
-        for cand in d.columns:
-            key = str(cand).lower().replace("_", "").replace("-", "").strip()
-            if key == target:
-                return cand
-        return None
-
-    o = pick("open")
-    h = pick("high")
-    l = pick("low")
-    c = pick("close")
-    v = pick("volume")
-
-    # Adj Close fallback
-    if c is None:
-        adj = pick("adj close") or pick("adjclose")
-        if adj is not None:
-            c = adj
-
-    if c is None:
-        return pd.DataFrame()
-
-    if o is None:
-        d["Open"] = d[c]
-        o = "Open"
-    if h is None:
-        d["High"] = d[c]
-        h = "High"
-    if l is None:
-        d["Low"] = d[c]
-        l = "Low"
-    if v is None:
-        d["Volume"] = 0.0
-        v = "Volume"
-
-    out = d.rename(columns={o: "Open", h: "High", l: "Low", c: "Close", v: "Volume"})
-
-    # Sort index
-    try:
-        if not isinstance(out.index, pd.DatetimeIndex):
-            out.index = pd.to_datetime(out.index, errors="coerce")
-        out = out.sort_index()
-    except Exception:
-        pass
-
-    # Cast numeric
-    for col in ["Open", "High", "Low", "Close", "Volume"]:
-        out[col] = pd.to_numeric(out[col], errors="coerce")
-
-    out = out.dropna(subset=["Open", "High", "Low", "Close"])
-    return out
+    """Backwards-compatible wrapper around shared normalizer."""
+    return normalize_ohlcv(df)
 
 
 
-# ============================================================
-# ✅ UI Helpers (Cards/Tables) - Additive only
-# ============================================================
-def _os_card(title: str, rows: list, icon: str = "insights"):
-    """Small card using the CSS already defined in styles.py (.os-card / .os-kv)."""
-    try:
-        body = ""
-        for k, v in (rows or []):
-            body += f"""<div class='os-kv'><div class='os-k'>{k}</div><div class='os-v'>{v}</div></div>"""
-        st.markdown(
-            f"""
-            <div class="os-card">
-              <div class="os-card-title"><span class="mi">{icon}</span>{title}</div>
-              {body}
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-    except Exception:
-        st.markdown(f"**{title}**")
-        for k, v in (rows or []):
-            st.write(f"- {k}: {v}")
 
 def _render_levels_table(rows: list):
     """Render levels table with unified styling."""
