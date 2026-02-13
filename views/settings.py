@@ -28,7 +28,7 @@ def view_tools():
 
         b1, b2 = st.columns(2)
         with b1:
-            if st.button("✅ قيّم الإشارات المستحقة الآن", use_container_width=True):
+            if st.button("✅ قيّم الإشارات المستحقة الآن", width="stretch"):
                 try:
                     from ai_engine_core.logging_learning import evaluate_pending_outcomes_pro
                     res = evaluate_pending_outcomes_pro(horizons=horizons or None, max_rows=int(max_rows), interval=str(interval))
@@ -39,7 +39,7 @@ def view_tools():
         with b2:
             target_h = st.selectbox("الأفق المستهدف للتعلّم", options=[5,10,20,60,4,8,13,26], index=2)
             min_samples = st.number_input("أقل عدد عينات لكل ميزة/سياق", min_value=10, max_value=500, value=40, step=5)
-            if st.button("🧠 حدّث الأوزان (تعلم) الآن", use_container_width=True):
+            if st.button("🧠 حدّث الأوزان (تعلم) الآن", width="stretch"):
                 try:
                     from ai_engine_core.logging_learning import learn_from_history_pro
                     res = learn_from_history_pro(target_horizon=int(target_h), min_samples=int(min_samples))
@@ -169,15 +169,15 @@ def view_settings():
                 with cols[0]:
                     if isinstance(LOGO_FULL_PATH, str) and os.path.exists(LOGO_FULL_PATH):
                         st.caption("logo_full.png")
-                        st.image(LOGO_FULL_PATH, use_container_width=True)
+                        st.image(LOGO_FULL_PATH, width="stretch")
                 with cols[1]:
                     if isinstance(LOGO_MARK_PATH, str) and os.path.exists(LOGO_MARK_PATH):
                         st.caption("logo_mark.png")
-                        st.image(LOGO_MARK_PATH, use_container_width=True)
+                        st.image(LOGO_MARK_PATH, width="stretch")
                 with cols[2]:
                     if isinstance(LOGO_APP_PATH, str) and os.path.exists(LOGO_APP_PATH):
                         st.caption("logo_app.png")
-                        st.image(LOGO_APP_PATH, use_container_width=True)
+                        st.image(LOGO_APP_PATH, width="stretch")
 
                 # تنبيه إرشادي فقط إذا كانت بعض الملفات ناقصة
                 if not (os.path.exists(LOGO_FULL_PATH) and os.path.exists(LOGO_MARK_PATH) and os.path.exists(LOGO_APP_PATH)):
