@@ -79,80 +79,58 @@ def _img_to_base64(path: str) -> Optional[str]:
         return None
 
 
-
 def render_app_header(
-    title: str = None,
-    subtitle: str = None,
+    title: str,
+    subtitle: str = "منصة تحليل الأسهم — مالي، فني، كلاسيكي، وإدارة مخاطر",
     logo_full_path: str = "assets/logo_full.png",
     logo_mark_path: str = "assets/logo_mark.png",
-    right_badges: Optional[List[Tuple[str, str]]] = None,
+    # ⚠️ السايدبار ملغي من التطبيق بالكامل
     show_in_sidebar: bool = False,
 ):
-    """Render institutional top header (branding + status badges).
+    """Render a lightweight, professional header.
 
-    - Defaults to app name from config.APP_NAME.
-    - Uses CSS classes defined in styles.py (.os-app-header ...).
-    - Never raises (fail-safe).
+    - Uses CSS classes from styles.py (.os-app-header ...)
+    - Never raises (fail-safe)
     """
     try:
-        # Backward compatible arg (sidebar may be enabled/disabled by CSS).
+        # Sidebar is removed: keep argument for backward compatibility, but do nothing.
         _ = show_in_sidebar
 
-        try:
-            import config as _cfg  # local import to avoid cycles
-            app_name = getattr(_cfg, "APP_NAME", "أصولي")
-            tagline = "منصة الذكاء الكمي للأسواق"
-            mark = getattr(_cfg, "LOGO_MARK_PATH", logo_mark_path) or logo_mark_path
-            full = getattr(_cfg, "LOGO_FULL_PATH", logo_full_path) or logo_full_path
-        except Exception:
-            app_name = "أصولي"
-            tagline = "منصة الذكاء الكمي للأسواق"
-            mark = logo_mark_path
-            full = logo_full_path
-
-        title = (title or app_name).strip()
-        subtitle = (subtitle or tagline).strip()
-
-        # Prefer mark; fallback full; fallback none
-        img_b64 = _img_to_base64(mark) or _img_to_base64(full)
-
-        img_html = ""
-        if img_b64:
-            img_html = f"<img src=\"data:image/png;base64,{img_b64}\" alt=\"logo\" />"
-
-        badges_html = ""
-        if right_badges:
-            for text, tone in right_badges[:6]:
-                tone = (tone or "neutral").strip().lower()
-                cls = "os-pill hold"
-                if tone in ("success", "green", "ok"):
-                    cls = "os-pill buy"
-                elif tone in ("danger", "red", "bad"):
-                    cls = "os-pill sell"
-                elif tone in ("warning", "amber", "warn"):
-                    cls = "os-pill hold"
-                badges_html += f"<span class=\"{cls}\">{html.escape(str(text))}</span>"
+        # Main header
+        # ⚠️ بناءً على طلبك: إلغاء أيقونة (logo_mark) نهائيًا.
+        # نُبقي خيار تمرير المسار للتماسك الخلفي فقط.
+        logo_html = ""
 
         st.markdown(
             f"""
-            <div class=\"os-app-header\">
-              <div class=\"os-h-left\">
-                <div class=\"os-h-logo\">{img_html}</div>
-                <div style=\"min-width:0;\">
-                  <div class=\"os-h-title\">{html.escape(title)}</div>
-                  <div class=\"os-h-sub\">{html.escape(subtitle)}</div>
+            <div class='os-app-header'>
+              <div class='os-app-left'>
+                {logo_html}
+                <div>
+                  <div class='os-app-title'>{html.escape(title)}</div>
+                  <div class='os-app-sub'>{html.escape(subtitle)}</div>
                 </div>
               </div>
-              <div class=\"os-h-right\">{badges_html}</div>
+              <div class='os-app-right'>
+                <span class='os-chip os-chip-blue'><span class='mi'>insights</span>تحليل</span>
+                <span class='os-chip os-chip-gray'><span class='mi'>shield</span>مخاطر</span>
+              </div>
             </div>
             """,
             unsafe_allow_html=True,
         )
     except Exception:
-        # Fail-safe: avoid breaking the app for any reason
-        pass
+        # Absolute fallback
+        try:
+            st.markdown(f"### {title}")
+        except Exception:
+            pass
 
+# ============================================================
+# 🧼 Helpers: Safe parsing/formatting
+# ============================================================
 
+_NUM_RE = re.compile(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?")
 
 def _is_nan(x) -> bool:
     try:
@@ -209,6 +187,14 @@ def _safe_number(val, default=None):
         return default
 
 def safe_fmt(val, suffix=""):
+    # Defensive: بعض البيئات قد تعيد تحميل الموديول جزئياً
+    global _NUM_RE
+    try:
+        _NUM_RE
+    except NameError:
+        import re as _re
+        _NUM_RE = _re.compile(r"^-?\\d+(?:\\.\\d+)?$")
+
     """
     موجودة سابقاً — تم تحسينها بدون تغيير توقيعها.
     """
