@@ -356,7 +356,10 @@ def logout_user():
     st.success("✅ تم تسجيل الخروج")
 
 
-def login_user(username: str, password: str, remember_me: bool = False):
+def login_user(username: str, password: str, remember_me: bool = False, **kwargs):
+    # Backward-compatible: callers may pass remember=<bool> instead of remember_me
+    if 'remember' in kwargs and kwargs['remember'] is not None:
+        remember_me = bool(kwargs['remember'])
     username = _norm(username)
     password = _norm(password)
 
@@ -465,7 +468,7 @@ def require_login():
         remember = st.checkbox("تذكرني", value=True, key="remember_me")
 
         if st.button("دخول", width="stretch"):
-            ok, msg = login_user(u, p, remember=remember)
+            ok, msg = login_user(u, p, remember_me=remember)
             if ok:
                 st.success(msg)
                 st.rerun()
