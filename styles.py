@@ -32,6 +32,11 @@ def apply_custom_css():
             --red: #F87171;
             --blue: #60A5FA;
             --amber: #FBBF24;
+            --text: var(--txt);
+            --bg-elev: var(--card-bg);
+            --success: var(--green);
+            --danger: var(--red);
+            --warning: var(--amber);
         """
     else:
         var_css = """
@@ -50,6 +55,11 @@ def apply_custom_css():
             --red: #DC2626;
             --blue: #2563EB;
             --amber: #F59E0B;
+            --text: var(--txt);
+            --bg-elev: var(--card-bg);
+            --success: var(--green);
+            --danger: var(--red);
+            --warning: var(--amber);
         """
 
     css = """
@@ -76,13 +86,20 @@ def apply_custom_css():
         .stApp { background: var(--app-bg) !important; }
 
         /* =====================================================
-           Base RTL + Cairo (بدون كسر الأيقونات)
+           Base Font (بدون قلب تخطيط Streamlit)
            ===================================================== */
         html, body, [class*="css"], p, div, label, input, button, textarea, h1,h2,h3,h4,h5,h6 {
             font-family: 'Cairo', sans-serif !important;
+            color: var(--txt);
+        }
+
+        /* =====================================================
+           RTL (للمحتوى فقط) — حتى لا تتعطل الـ Sidebar/الـ Layout
+           ===================================================== */
+        div[data-testid="stAppViewContainer"] .main,
+        section[data-testid="stSidebar"] {
             direction: rtl !important;
             text-align: right !important;
-            color: var(--txt);
         }
 
         /* ✅ طبّق Cairo على span لكن استثنِ أيقونات Material */
@@ -93,8 +110,6 @@ def apply_custom_css():
             :not([class*="material-symbols"])
         {
             font-family: 'Cairo', sans-serif !important;
-            direction: rtl !important;
-            text-align: right !important;
         }
 
         /* =====================================================
@@ -138,30 +153,42 @@ def apply_custom_css():
            ===================================================== */
         footer, header, #MainMenu { display: none !important; }
 
-        /* Streamlit hamburger / collapsed sidebar control (keep app truly sidebar-less) */
-        /* Sidebar toggle control (do NOT hide; users need it to open/close) */
-div[data-testid="stSidebarCollapsedControl"]{
-    display: flex !important;
-    position: fixed;
-    top: 12px;
-    right: 14px;
-    z-index: 10000;
-}
-div[data-testid="stSidebarCollapsedControl"] button{
-    background: var(--bg-elev) !important;
-    border: 1px solid var(--border) !important;
-    border-radius: 12px !important;
-    box-shadow: 0 10px 25px rgba(0,0,0,0.18) !important;
-}
-div[data-testid="stSidebarCollapsedControl"] button:hover{
-    border-color: var(--accent) !important;
-}
+        /* Streamlit toolbars */
         [data-testid="stElementToolbar"] { display: none !important; }
         div[role="tooltip"] { display: none !important; opacity: 0 !important; visibility: hidden !important; }
         button[title="View fullscreen"] { display: none !important; }
 
+        /* =====================================================
+           Sidebar (يمين + قابل للفتح/الإغلاق)
+           ===================================================== */
+        /* انقل الـ Sidebar لليمين بدون كسر سلوك Streamlit */
+        div[data-testid="stAppViewContainer"] {
+            flex-direction: row-reverse !important;
+        }
+
+        /* اخفِ خط السحب/المقسم الذي يظهر كخط في منتصف الصفحة */
+        div[data-testid="stSidebarResizer"] { display: none !important; }
+
+        /* اجعل زر فتح الـ Sidebar (hamburger) ظاهر ومرتّب */
+        div[data-testid="stSidebarCollapsedControl"] {
+            left: auto !important;
+            right: 14px !important;
+        }
+        div[data-testid="stSidebarCollapsedControl"] button {
+            border-radius: 14px !important;
+            border: 1px solid var(--border2) !important;
+            background: var(--card-bg) !important;
+            box-shadow: var(--shadow) !important;
+        }
+        div[data-testid="stSidebarCollapsedControl"] button:hover {
+            border-color: var(--primary) !important;
+        }
+
         section[data-testid="stSidebar"] {
+            border-right: none !important;
+            border-left: 1px solid var(--border) !important;
             box-shadow: none !important;
+            background: var(--app-bg) !important;
         }
 
         /* =====================================================
@@ -570,17 +597,7 @@ div[data-testid="stSidebarCollapsedControl"] button:hover{
 ---------------------------------*/
 section[data-testid="stSidebar"]{
   background: var(--bg-elev) !important;
-  border-left: none !important;
-  border-right: none !important;
-}
-section[data-testid="stSidebar"][aria-expanded="true"],
-section[data-testid="stSidebar"][data-expanded="true"]{
-  border-left: 1px solid var(--border) !important; /* RTL: sidebar on right -> left border is divider */
-}
-section[data-testid="stSidebar"][aria-expanded="false"],
-section[data-testid="stSidebar"][data-expanded="false"]{
-  border-left: none !important;
-  border-right: none !important;
+  border-left: 1px solid var(--border);
 }
 section[data-testid="stSidebar"] .block-container{
   padding-top: 1rem !important;
