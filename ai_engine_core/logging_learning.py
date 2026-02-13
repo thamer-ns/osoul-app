@@ -523,3 +523,28 @@ def learn_from_history_pro(
         return {"ok": True, "updated": updated, "skipped": skipped, "learned": len(stats), "horizon": int(target_horizon)}
     except Exception as e:
         return {"ok": False, "reason": str(e)}
+
+
+# ============================================================
+# Backwards-compatible API
+# ============================================================
+def update_ai_outcome(signal_id: str, outcome: dict | None = None, **kwargs) -> bool:
+    """تحديث نتيجة توصية/إشارة (Backwards compatibility).
+
+    بعض الصفحات/الموديولات القديمة تتوقع وجود update_ai_outcome.
+    هذه الدالة تجمع المدخلات ثم تسجّل outcome داخل SQLite إن توفر.
+    """
+    try:
+        payload = {}
+        if isinstance(outcome, dict):
+            payload.update(outcome)
+        payload.update(kwargs or {})
+        payload.setdefault("signal_id", signal_id)
+
+        # نستخدم نفس جدول outcomes عبر _insert_outcome
+        _insert_outcome(payload)
+        return True
+    except Exception:
+        # لا نكسر التطبيق إذا لم تتوفر قاعدة البيانات أو كانت البيئة Read-only
+        return False
+
