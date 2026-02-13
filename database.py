@@ -99,8 +99,9 @@ def _get_engine():
         from sqlalchemy import create_engine  # type: ignore
 
         _ENGINE = create_engine(db_url, pool_pre_ping=True, future=True)
-    except Exception:
+    except Exception as e:
         _ENGINE = None
+        _set_last_db_error(f"sqlalchemy_engine_failed: {redact_text(e)}")
 
     return _ENGINE
 
@@ -282,14 +283,71 @@ def execute_query(query: str, params: Optional[Tuple[Any, ...]] = None) -> bool:
         put_connection(conn, kind)
 
 
+def _safe_ident(name: str) -> str:
+    """Allow only simple SQL identifiers to avoid injection."""
+    n = (name or "").strip()
+    if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", n):
+        raise ValueError("Invalid identifier")
+    return n
+
+
 def fetch_table(t: str) -> pd.DataFrame:
+    """Read an entire table from the configured DB.
+
+    ✅ Fixes the common 'data disappeared' issue by trying:
+      1) unquoted name (Postgres folds to lower-case)
+      2) quoted name (case-sensitive) if needed
+      3) public.<name> as a fallback in Postgres
+    """
+    t = _safe_ident(t)
     conn, kind = get_connection()
     try:
         if kind == "postgres":
             engine = _get_engine()
+            # Prefer SQLAlchemy engine for pandas
             if engine is not None:
-                return pd.read_sql(f"SELECT * FROM {t}", engine)
+                try:
+                    df = pd.read_sql(f"SELECT * FROM {t}", engine)
+                    if not df.empty:
+                        return df
+                except Exception as e:
+                    _set_last_db_error(redact_text(e))
+
+                # Try quoted identifier (handles tables created with quoted CamelCase)
+                try:
+                    df = pd.read_sql(f'SELECT * FROM "{t}"', engine)
+                    if not df.empty:
+                        return df
+                except Exception:
+                    pass
+
+                # Try explicit public schema
+                try:
+                    df = pd.read_sql(f"SELECT * FROM public.{t}", engine)
+                    if not df.empty:
+                        return df
+                except Exception:
+                    pass
+
+            # Fallback to raw connection (still works, but pandas warns)
+            try:
+                df = pd.read_sql(f"SELECT * FROM {t}", conn)
+                if not df.empty:
+                    return df
+            except Exception:
+                pass
+
+            # Quoted fallback on raw conn
+            try:
+                df = pd.read_sql(f'SELECT * FROM "{t}"', conn)
+                return df
+            except Exception as e:
+                _set_last_db_error(redact_text(e))
+                return pd.DataFrame()
+
+        # SQLite
         return pd.read_sql(f"SELECT * FROM {t}", conn)
+
     except Exception as e:
         _set_last_db_error(redact_text(e))
         return pd.DataFrame()
@@ -301,13 +359,20 @@ def fetch_df(query: str, params: Optional[Tuple[Any, ...]] = None) -> pd.DataFra
     conn, kind = get_connection()
     try:
         q = _adapt_query_for_kind(query, kind)
+        if kind == "postgres":
+            engine = _get_engine()
+            # For Postgres + simple SELECTs, engine is usually more stable with pandas.
+            if engine is not None and (params is None or params == ()):
+                try:
+                    return pd.read_sql(q, engine)
+                except Exception:
+                    pass
         return pd.read_sql(q, conn, params=params or ())
     except Exception as e:
         _set_last_db_error(redact_text(e))
         return pd.DataFrame()
     finally:
         put_connection(conn, kind)
-
 
 def db_user_exists(username: str) -> Optional[bool]:
     """Return True/False if known, or None if DB error."""
