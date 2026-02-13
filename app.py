@@ -33,7 +33,6 @@ for _p in _candidates:
         pass
 
 # الآن imports
-import config
 from config import APP_NAME, APP_ICON, LOGO_MARK_PATH, REQUIRE_DB, DATABASE_URL
 from database import init_db, db_healthcheck
 from osoli_logging import redact_text, install_redaction_filter
@@ -72,14 +71,12 @@ def _safe_image(path: str, width: Optional[int] = None):
 # -----------------------------
 def render_db_setup_page(err: str = "") -> None:
     """Show a single page when DB is required but not connected."""
-    try:
-        st.set_page_config(
-            page_title=f"{APP_NAME} — إعداد قاعدة البيانات",
-            page_icon=APP_ICON,
-            layout="wide",
-        )
-    except Exception:
-        pass
+    st.set_page_config(
+        page_title=f"{APP_NAME} — إعداد قاعدة البيانات",
+        page_icon=APP_ICON,
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
     apply_custom_css()
 
     st.markdown(
@@ -194,19 +191,6 @@ def main():
     # DB Init
     # -------------------------
     ok, err = _init_db_once()
-    # ✅ مهم: لا نسمح باستمرار التطبيق على SQLite بالخطأ في الإنتاج
-    try:
-        from database import db_healthcheck
-    except Exception:
-        db_healthcheck = None
-
-    if db_healthcheck is not None:
-        hc = db_healthcheck()
-        if getattr(config, "REQUIRE_DB", True) and (not hc.get("ok") or hc.get("kind") != "postgres"):
-            # اعرض صفحة إعداد قاعدة البيانات وانهِ التنفيذ (بدون عرض أرقام 0.00 مضللة)
-            render_db_setup_page(hc.get("error") or hc.get("pool_error") or err)
-            st.stop()
-
     if not ok:
         st.error("❌ فشل تهيئة قاعدة البيانات. تأكد من DATABASE_URL في Secrets/Env.")
         if err:
