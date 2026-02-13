@@ -119,7 +119,7 @@ def render_navbar():
     for i, (label, key) in enumerate(NAV_MAIN):
         is_active = (key == current)
         text = f"✅ {label}" if is_active else label
-        if cols[i].button(text, use_container_width=True, key=f"nav_main_{key}"):
+        if cols[i].button(text, width="stretch", key=f"nav_main_{key}"):
             _go(key)
 
     # -------------------------------
@@ -131,5 +131,5 @@ def render_navbar():
             c = cols2[idx % 4]
             is_active = (key == current)
             text = f"✅ {label}" if is_active else label
-            if c.button(text, use_container_width=True, key=f"nav_more_{key}"):
+            if c.button(text, width="stretch", key=f"nav_more_{key}"):
                 _go(key)
