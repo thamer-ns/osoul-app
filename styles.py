@@ -139,14 +139,28 @@ def apply_custom_css():
         footer, header, #MainMenu { display: none !important; }
 
         /* Streamlit hamburger / collapsed sidebar control (keep app truly sidebar-less) */
-        div[data-testid="stSidebarCollapsedControl"] { display: none !important; }
+        /* Sidebar toggle control (do NOT hide; users need it to open/close) */
+div[data-testid="stSidebarCollapsedControl"]{
+    display: flex !important;
+    position: fixed;
+    top: 12px;
+    right: 14px;
+    z-index: 10000;
+}
+div[data-testid="stSidebarCollapsedControl"] button{
+    background: var(--bg-elev) !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 12px !important;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.18) !important;
+}
+div[data-testid="stSidebarCollapsedControl"] button:hover{
+    border-color: var(--accent) !important;
+}
         [data-testid="stElementToolbar"] { display: none !important; }
         div[role="tooltip"] { display: none !important; opacity: 0 !important; visibility: hidden !important; }
         button[title="View fullscreen"] { display: none !important; }
 
         section[data-testid="stSidebar"] {
-            border-right: none !important;
-            border-left: none !important;
             box-shadow: none !important;
         }
 
@@ -556,7 +570,17 @@ def apply_custom_css():
 ---------------------------------*/
 section[data-testid="stSidebar"]{
   background: var(--bg-elev) !important;
-  border-left: 1px solid var(--border);
+  border-left: none !important;
+  border-right: none !important;
+}
+section[data-testid="stSidebar"][aria-expanded="true"],
+section[data-testid="stSidebar"][data-expanded="true"]{
+  border-left: 1px solid var(--border) !important; /* RTL: sidebar on right -> left border is divider */
+}
+section[data-testid="stSidebar"][aria-expanded="false"],
+section[data-testid="stSidebar"][data-expanded="false"]{
+  border-left: none !important;
+  border-right: none !important;
 }
 section[data-testid="stSidebar"] .block-container{
   padding-top: 1rem !important;
