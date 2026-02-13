@@ -19,9 +19,9 @@ def apply_custom_css():
         var_css = """
             --app-bg: #071018;
             --txt: #E5E7EB;
-            --muted: #94A3B8;
-            --primary: #38BDF8;
-            --primary2: #0EA5E9;
+            --muted: #9CA3AF;
+            --primary: #2D5BFF;
+            --accent: #00D4FF;
             --border: rgba(148,163,184,0.18);
             --border2: rgba(148,163,184,0.28);
             --card-bg: #0B1220;
@@ -37,9 +37,9 @@ def apply_custom_css():
         var_css = """
             --app-bg: #F6F8FB;
             --txt: #0F172A;
-            --muted: #64748B;
-            --primary: #0B57D0;
-            --primary2: #083A9B;
+            --muted: #9CA3AF;
+            --primary: #2D5BFF;
+            --accent: #00D4FF;
             --border: rgba(15,23,42,0.12);
             --border2: rgba(15,23,42,0.18);
             --card-bg: #ffffff;
@@ -299,6 +299,7 @@ def apply_custom_css():
         }
 
         .os-card{
+            transition: transform .15s ease, box-shadow .15s ease;
             background: var(--card-bg);
             border: 1px solid var(--border2);
             border-radius: 16px;
@@ -526,7 +527,31 @@ def apply_custom_css():
             .kpi-card{ padding: 18px 16px !important; border-radius: 18px !important; }
             .kpi-value{ font-size: 1.85rem !important; }
         }
-        </style>
+        /* Card hover */
+.os-card:hover{transform: translateY(-2px); box-shadow: 0 12px 30px rgba(0,0,0,.35);}
+
+/* Landing hero */
+.landing-hero{
+    background: linear-gradient(135deg, rgba(45,91,255,.25), rgba(139,92,246,.18));
+    border: 1px solid rgba(255,255,255,.08);
+    border-radius: 20px;
+    padding: 22px 22px;
+    margin: 8px 0 14px 0;
+}
+.landing-title{
+    font-size: 28px;
+    font-weight: 800;
+    letter-spacing: .2px;
+    margin-bottom: 6px;
+}
+.landing-sub{
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.9;
+    max-width: 820px;
+}
+
+</style>
         """
 
     # Insert theme variables safely without turning the whole CSS into an f-string.
