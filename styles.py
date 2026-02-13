@@ -75,26 +75,44 @@ def apply_custom_css():
         /* ✅ App background for both themes */
         .stApp { background: var(--app-bg) !important; }
 
+        
         /* =====================================================
-           Base RTL + Cairo (بدون كسر الأيقونات)
+           Base Font + RTL (مركزي وثابت)
            ===================================================== */
-        html, body, [class*="css"], p, div, label, input, button, textarea, h1,h2,h3,h4,h5,h6 {
+        html, body, [class*="css"], p, label, input, button, textarea, h1,h2,h3,h4,h5,h6 {
             font-family: 'Cairo', sans-serif !important;
-            
-            
-            color: var(--txt);
+            color: var(--txt) !important;
+        }
+
+        /* ✅ RTL على حاويات Streamlit الأساسية فقط (بدون تكسير الرسوم/الأيقونات) */
+        div[data-testid="stAppViewContainer"],
+        section[data-testid="stMain"],
+        section[data-testid="stSidebar"],
+        [data-testid="block-container"] {
+            direction: rtl !important;
+            text-align: right !important;
+        }
+
+        /* ✅ ضع القائمة الجانبية يمين الشاشة بشكل ثابت */
+        div[data-testid="stAppViewContainer"]{
+            flex-direction: row-reverse !important;
+        }
+
+        /* ✅ تحسين محاذاة عناصر الإدخال */
+        div[role="radiogroup"], div[role="listbox"], div[role="combobox"]{
+            direction: rtl !important;
+            text-align: right !important;
+        }
+
+        /* ✅ الأرقام تظل LTR لعرض صحيح */
+        .kpi-value, .kpi-diff, code, pre {
+            direction: ltr !important;
+            text-align: left !important;
         }
 
         /* ✅ طبّق Cairo على span لكن استثنِ أيقونات Material */
-        span:not(.material-icons)
-            :not(.material-symbols-outlined)
-            :not(.material-symbols-rounded)
-            :not(.material-symbols-sharp)
-            :not([class*="material-symbols"])
-        {
+        span:not(.material-icons):not(.material-symbols-outlined):not(.material-symbols-rounded):not(.material-symbols-sharp):not([class*="material-symbols"]) {
             font-family: 'Cairo', sans-serif !important;
-            
-            
         }
 
         /* =====================================================
@@ -133,20 +151,34 @@ def apply_custom_css():
             -webkit-font-smoothing: antialiased !important;
         }
 
+        
         /* =====================================================
            UI Cleanup
            ===================================================== */
-        footer, header, #MainMenu { display: none !important; }
+        /* أخفِ عناصر القائمة العلوية فقط، وخلّ التحكم بالسايدبار يعمل */
+        #MainMenu { visibility: hidden !important; }
+        footer { visibility: hidden !important; }
 
-        /* Streamlit hamburger / collapsed sidebar control (keep app truly sidebar-less) */
+        /* اجعل الهيدر شفاف بدل إخفائه (حتى لا يتعطل زر طيّ القائمة) */
+        header[data-testid="stHeader"]{
+            background: transparent !important;
+            box-shadow: none !important;
+        }
+
+        /* إخفاء أدوات Streamlit الصغيرة */
         [data-testid="stElementToolbar"] { display: none !important; }
         div[role="tooltip"] { display: none !important; opacity: 0 !important; visibility: hidden !important; }
         button[title="View fullscreen"] { display: none !important; }
 
-        section[data-testid="stSidebar"] {
-            border-right: none !important;
-            border-left: none !important;
-            box-shadow: none !important;
+        /* =====================================================
+           Sidebar styling (يمين + بدون خطوط عشوائية)
+           ===================================================== */
+        section[data-testid="stSidebar"]{
+            border: none !important;
+            box-shadow: -10px 0 25px rgba(0,0,0,0.08) !important;
+        }
+        section[data-testid="stSidebar"] > div{
+            background: var(--soft-bg) !important;
         }
 
         /* =====================================================
@@ -398,7 +430,7 @@ def apply_custom_css():
             color: #1E40AF !important;
             font-weight: 900 !important;
             border-bottom: 2px solid rgba(37,99,235,0.18) !important;
-            
+            text-align: right !important;
             white-space: nowrap !important;
         }
 
@@ -408,7 +440,7 @@ def apply_custom_css():
             color: #0F172A !important;
             font-weight: 700 !important;
             border-bottom: 1px solid rgba(15,23,42,0.08) !important;
-            
+            text-align: right !important;
             white-space: nowrap !important;
         }
 
@@ -548,40 +580,6 @@ def apply_custom_css():
     line-height: 1.9;
     max-width: 820px;
 }
-
-
-        /* ===================== OSOOLI RTL + SIDEBAR FIX ===================== */
-        /* Keep layout stable (LTR), but render content RTL */
-        html, body { direction: ltr; }
-
-        section.main, .main, [data-testid="stSidebar"] {
-            direction: rtl;
-            text-align: right;
-        }
-
-        /* Put sidebar on the RIGHT */
-        [data-testid="stAppViewContainer"] { flex-direction: row-reverse; }
-
-        /* Sidebar borders / divider */
-        section[data-testid="stSidebar"] {
-            border-left: 1px solid rgba(0,0,0,0.08);
-            border-right: none;
-        }
-
-        /* Make the collapse/expand control visible and align it to the right */
-        div[data-testid="stSidebarCollapsedControl"] {
-            display: flex !important;
-            right: 0.25rem !important;
-            left: auto !important;
-            z-index: 1002 !important;
-        }
-
-        /* Hide the vertical resizer line that appears in the middle */
-        div[data-testid="stSidebarResizer"] { display: none !important; }
-
-        /* Ensure sidebar remains clickable (avoid accidental overlays) */
-        section[data-testid="stSidebar"] { z-index: 1001 !important; }
-        /* =================== /OSOOLI RTL + SIDEBAR FIX =================== */
 
 </style>
         """
