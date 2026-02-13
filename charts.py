@@ -452,7 +452,7 @@ def render_technical_chart(symbol, period=None, interval="1d"):
         "modeBarButtonsToAdd": ["drawline", "drawrect", "drawcircle", "eraseshape"],
     }
 
-    st.plotly_chart(fig, use_container_width=True, config=config)
+    st.plotly_chart(fig, width="stretch", config=config)
 
     # ========================================================
     # ✅ التقرير الفني
