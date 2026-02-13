@@ -6,6 +6,7 @@ import numpy as np
 from datetime import datetime
 
 from config import COMMISSION_RATE
+from ai_engine_core.portfolio_risk import compute_perf_metrics
 
 # DB (Fail-safe)
 try:
@@ -414,8 +415,16 @@ def run_backtest(
             shares = 0
 
         # Mark-to-market على Close
-        port_val = cash + shares * float(row["Close"])
-        equity_rows.append({"ts": ts, "close_price": float(row["Close"]), "portfolio_value": float(port_val)})
+        close_price = float(row["Close"])
+        position_value = shares * close_price
+        port_val = cash + position_value
+        exposure = (position_value / port_val) if port_val > 0 else 0.0
+        equity_rows.append({
+            "ts": ts,
+            "close_price": close_price,
+            "portfolio_value": float(port_val),
+            "exposure": float(exposure),
+        })
 
         if log_rows and log_rows[-1]["ts"] == ts and log_rows[-1]["portfolio_value"] is None:
             log_rows[-1]["portfolio_value"] = float(port_val)
@@ -433,8 +442,21 @@ def run_backtest(
     out_df = df.copy()
     out_df["Portfolio_Value"] = pv_series[:len(out_df)]
 
+    # Metrics
+    try:
+        equity_series = pd.Series(pv_series, name="portfolio_value")
+        date_series = pd.Series([x.get("ts") for x in equity_rows], name="date")
+        metrics = compute_perf_metrics(equity_series, date_series)
+        exp = pd.Series([x.get("exposure", 0.0) for x in equity_rows], name="exposure")
+        metrics["avg_exposure"] = float(exp.mean()) if len(exp) else 0.0
+        metrics["max_exposure"] = float(exp.max()) if len(exp) else 0.0
+    except Exception:
+        metrics = {}
+
+
     result = {
         "run_id": run_id,
+        "metrics": metrics,
         "created_at": created_at,
         "strategy_key": strategy,
         "strategy_name_ar": get_strategy_label(strategy),
