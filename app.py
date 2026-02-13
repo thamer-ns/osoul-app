@@ -5,8 +5,6 @@ from typing import Optional
 
 import streamlit as st
 
-from osoli_logging import redact_text
-
 # Arabic UI: translate Streamlit default placeholders
 try:
     from components import inject_streamlit_ar_i18n
@@ -72,7 +70,7 @@ def _init_db_once():
         init_db()
         return True, ""
     except Exception as e:
-        return False, redact_text(str(e))
+        return False, str(e)
 
 
 def main():
@@ -128,7 +126,7 @@ def main():
             from security import require_login as login_system
     except Exception as e:
         st.error("فشل تحميل نظام تسجيل الدخول (security.py).")
-        st.code(redact_text(str(e)))
+        st.code(str(e))
         st.stop()
 
     auth_ok = False
@@ -136,7 +134,7 @@ def main():
         auth_ok = bool(login_system())
     except Exception as e:
         st.error("حدث خطأ أثناء نظام تسجيل الدخول.")
-        st.code(redact_text(str(e)))
+        st.code(str(e))
         st.stop()
 
     if not auth_ok:
@@ -149,14 +147,14 @@ def main():
         from views import router
     except Exception as e:
         st.error("فشل تحميل واجهات التطبيق (views).")
-        st.code(redact_text(str(e)))
+        st.code(str(e))
         st.stop()
 
     try:
         router()
     except Exception as e:
         st.error("حدث خطأ غير متوقع في التطبيق.")
-        st.code(redact_text(str(e)))
+        st.code(str(e))
         st.stop()
 
 
