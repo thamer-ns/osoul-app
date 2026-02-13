@@ -45,12 +45,12 @@ def render_financial_dashboard_ui(symbol):
                 cols = [c for c in ["revenue", "net_income", "operating_cash_flow"] if c in plot_df.columns]
                 if cols:
                     fig = px.bar(plot_df.sort_values("date"), x="Year", y=cols, barmode="group")
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width="stretch")
             except Exception:
                 pass
 
             with st.expander("البيانات التفصيلية"):
-                st.dataframe(df, use_container_width=True)
+                st.dataframe(df, width="stretch")
 
             with st.expander("📌 مؤشرات متقدمة (DuPont / Altman / Valuation / SGR)"):
                 try:
@@ -109,7 +109,7 @@ def render_financial_dashboard_ui(symbol):
                         target_symbol = detected_symbol
 
                 preview_df = pd.DataFrame([{"Date": r["date"], **(r["data"] or {})} for r in results])
-                st.dataframe(preview_df, use_container_width=True)
+                st.dataframe(preview_df, width="stretch")
 
                 if st.button("💾 حفظ البيانات", key=f"fin_save_{symbol}"):
                     saved = 0
