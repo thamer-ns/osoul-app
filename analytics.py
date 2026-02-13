@@ -596,3 +596,159 @@ def create_smart_backup():
     except Exception as e:
         st.error(f"فشل النسخ الاحتياطي: {e}")
         return None, None
+
+
+# ============================================================
+# 📈 Equity Curve (Portfolio NAV) - institutional v2
+# ============================================================
+@st.cache_data(ttl=600, show_spinner=False)
+def compute_portfolio_equity_curve(
+    trades: pd.DataFrame,
+    deposits: pd.DataFrame,
+    withdrawals: pd.DataFrame,
+    returnsgrants: pd.DataFrame,
+    days: int = 365,
+    interval: str = "1d",
+) -> pd.DataFrame:
+    """Compute daily NAV (cash + holdings) from trades + cashflows.
+
+    - Uses price history per symbol (market_data.get_chart_history).
+    - Works best when you have at least trade dates + entry/exit prices.
+    - Fail-safe: returns empty df on any fatal error.
+    """
+    try:
+        import numpy as np
+        from datetime import datetime, timedelta
+        from market_data import get_chart_history, get_ticker_symbol
+        from data_normalizer import normalize_ohlcv
+
+        if trades is None:
+            trades = pd.DataFrame()
+        if deposits is None:
+            deposits = pd.DataFrame()
+        if withdrawals is None:
+            withdrawals = pd.DataFrame()
+        if returnsgrants is None:
+            returnsgrants = pd.DataFrame()
+
+        end = pd.Timestamp(datetime.utcnow().date())
+        start = end - pd.Timedelta(days=int(max(30, days)))
+
+        # Gather symbols from trades only
+        symbols = []
+        if not trades.empty and "symbol" in trades.columns:
+            symbols = sorted(set(get_ticker_symbol(s) for s in trades["symbol"].astype(str).tolist() if str(s).strip()))
+
+        # Build daily index
+        idx = pd.date_range(start=start, end=end, freq="D")
+        if len(idx) < 5:
+            return pd.DataFrame()
+
+        # Price panels
+        prices = {}
+        for sym in symbols:
+            try:
+                years = int(max(1, np.ceil(days / 365) + 1))
+                hist = get_chart_history(sym, years=years, interval=interval)
+                hist = normalize_ohlcv(hist)
+                if hist is None or hist.empty or "Close" not in hist.columns:
+                    continue
+                close = hist["Close"].copy()
+                close.index = pd.to_datetime(close.index, errors="coerce")
+                close = close.dropna()
+                close = close[close.index >= (start - pd.Timedelta(days=7))]
+                if close.empty:
+                    continue
+                close = close.reindex(idx, method="ffill")
+                prices[sym] = close
+            except Exception:
+                continue
+
+        # Event helpers
+        def _as_dt(x):
+            try:
+                return pd.to_datetime(x, errors="coerce").normalize()
+            except Exception:
+                return pd.NaT
+
+        events = []
+        # deposits (+)
+        if not deposits.empty and "date" in deposits.columns and "amount" in deposits.columns:
+            for _, r in deposits.iterrows():
+                dt = _as_dt(r.get("date"))
+                amt = pd.to_numeric(r.get("amount"), errors="coerce")
+                if pd.notna(dt) and pd.notna(amt):
+                    events.append((dt, "cash", float(amt)))
+        # withdrawals (-)
+        if not withdrawals.empty and "date" in withdrawals.columns and "amount" in withdrawals.columns:
+            for _, r in withdrawals.iterrows():
+                dt = _as_dt(r.get("date"))
+                amt = pd.to_numeric(r.get("amount"), errors="coerce")
+                if pd.notna(dt) and pd.notna(amt):
+                    events.append((dt, "cash", -float(amt)))
+        # returns (+)
+        if not returnsgrants.empty and "date" in returnsgrants.columns and "amount" in returnsgrants.columns:
+            for _, r in returnsgrants.iterrows():
+                dt = _as_dt(r.get("date"))
+                amt = pd.to_numeric(r.get("amount"), errors="coerce")
+                if pd.notna(dt) and pd.notna(amt):
+                    events.append((dt, "cash", float(amt)))
+
+        # trades: buy/sell
+        if not trades.empty and "date" in trades.columns and "quantity" in trades.columns:
+            for _, r in trades.iterrows():
+                sym = get_ticker_symbol(r.get("symbol"))
+                qty = pd.to_numeric(r.get("quantity"), errors="coerce")
+                entry = pd.to_numeric(r.get("entry_price"), errors="coerce")
+                exit_p = pd.to_numeric(r.get("exit_price"), errors="coerce")
+                stt = str(r.get("status") or "").lower()
+                dt_buy = _as_dt(r.get("date"))
+                if pd.notna(dt_buy) and pd.notna(qty) and pd.notna(entry):
+                    events.append((dt_buy, "buy", (sym, float(qty), float(entry))))
+                dt_sell = _as_dt(r.get("exit_date"))
+                if pd.notna(dt_sell) and pd.notna(qty) and pd.notna(exit_p) and stt in ("closed", "close", "sell", "sold", "تم الإغلاق", "مغلق"):
+                    events.append((dt_sell, "sell", (sym, float(qty), float(exit_p))))
+
+        events.sort(key=lambda x: x[0])
+
+        cash = 0.0
+        pos = {}  # sym -> qty
+        # Build quick map day->events
+        ev_by_day = {}
+        for dt, typ, val in events:
+            ev_by_day.setdefault(dt, []).append((typ, val))
+
+        rows = []
+        for day in idx:
+            d = day.normalize()
+            for typ, val in ev_by_day.get(d, []):
+                if typ == "cash":
+                    cash += float(val)
+                elif typ == "buy":
+                    sym, qty, px = val
+                    pos[sym] = pos.get(sym, 0.0) + qty
+                    cash -= qty * px
+                elif typ == "sell":
+                    sym, qty, px = val
+                    pos[sym] = pos.get(sym, 0.0) - qty
+                    if abs(pos.get(sym, 0.0)) < 1e-9:
+                        pos.pop(sym, None)
+                    cash += qty * px
+
+            holdings = 0.0
+            for sym, qty in pos.items():
+                series = prices.get(sym)
+                if series is None or series.empty:
+                    continue
+                px = float(series.loc[day]) if day in series.index else float(series.iloc[-1])
+                holdings += qty * px
+
+            equity = cash + holdings
+            rows.append({"date": day, "cash": cash, "holdings": holdings, "equity": equity})
+
+        out = pd.DataFrame(rows).set_index("date")
+        out["returns"] = out["equity"].pct_change().fillna(0.0)
+        return out
+    except Exception:
+        return pd.DataFrame()
+
