@@ -16,7 +16,6 @@ except Exception:
 
 import streamlit as st
 
-import config
 from config import APP_ICON, APP_NAME
 from database import db_create_user, db_verify_user, db_user_exists, fetch_table
 
@@ -47,40 +46,15 @@ def _validate_username(u: str):
     return True, ""
 
 
-def _validate_password(password: str, mode: str = "login"):
-    """Password policy.
-    - login: accept legacy passwords/PINs without forcing new length.
-    - register/change: prefer strong password (MIN_PASSWORD_LEN) or legacy numeric PIN (>=6) if enabled.
-    """
-    p = _norm(password)
-
-    if len(p) < 1:
-        return False, "أدخل كلمة المرور"
+def _validate_password(p: str):
+    p = (p or "").strip()
+    if len(p) < 6:
+        return False, "كلمة المرور قصيرة جداً (6 أحرف على الأقل)"
     if len(p) > 200:
         return False, "كلمة المرور طويلة جداً"
-
-    allow_legacy = getattr(config, "ALLOW_LEGACY_PIN", True)
-
-    if mode == "login":
-        # لا نكسر الحسابات القديمة: نقبل كلمة المرور كما هي ثم نتحقق من الهاش في قاعدة البيانات
-        return True, ""
-
-    # register / change
-    if allow_legacy and p.isdigit():
-        if len(p) < 6:
-            return False, "الرمز قصير جداً (6 أرقام على الأقل)"
-        return True, ""
-
-    min_len = int(getattr(config, "MIN_PASSWORD_LEN", 8) or 8)
-    if len(p) < min_len:
-        extra = " (أو استخدم PIN رقمي 6 أرقام للحسابات القديمة)" if allow_legacy else ""
-        return False, f"كلمة المرور قصيرة جداً ({min_len} أحرف على الأقل){extra}"
-
-    # توجيه بسيط لتحسين الأمان (بدون كسر المستخدمين)
-    if not re.search(r"[A-Za-z]", p) or not re.search(r"\d", p):
-        return False, "يفضّل أن تحتوي كلمة المرور على حروف وأرقام لزيادة الأمان"
-
     return True, ""
+
+
 def _norm(s):
     return (s or "").strip()
 
@@ -356,10 +330,7 @@ def logout_user():
     st.success("✅ تم تسجيل الخروج")
 
 
-def login_user(username: str, password: str, remember_me: bool = False, **kwargs):
-    # Backward-compatible: callers may pass remember=<bool> instead of remember_me
-    if 'remember' in kwargs and kwargs['remember'] is not None:
-        remember_me = bool(kwargs['remember'])
+def login_user(username: str, password: str, remember_me: bool = False):
     username = _norm(username)
     password = _norm(password)
 
@@ -367,7 +338,7 @@ def login_user(username: str, password: str, remember_me: bool = False, **kwargs
     if not ok_u:
         return False, msg_u
 
-    ok_p, msg_p = _validate_password(password, mode="login")
+    ok_p, msg_p = _validate_password(password)
     if not ok_p:
         return False, msg_p
 
@@ -409,7 +380,7 @@ def register_user(username: str, password: str):
     if not ok_u:
         return False, msg_u
 
-    ok_p, msg_p = _validate_password(password, mode="login")
+    ok_p, msg_p = _validate_password(password)
     if not ok_p:
         return False, msg_p
 
@@ -424,50 +395,35 @@ def register_user(username: str, password: str):
 
 
 def require_login():
-    """Ensure authentication before continuing.
-
-    Returns True if authenticated, otherwise renders login/register UI and returns False.
     """
+    Helper: if not logged in -> show login UI
+    Returns True if logged in else False.
+    """
+    # ✅ bootstrap cookies once (prevents relogin on refresh)
     _bootstrap_auth_from_cookie()
 
-    from datetime import datetime, timedelta
-
-    # ✅ session idle timeout
     if st.session_state.get("logged_in"):
-        now = datetime.utcnow()
-        last = st.session_state.get("last_seen")
-        idle_minutes = int(getattr(config, "SESSION_IDLE_MINUTES", 120) or 120)
-        if last and isinstance(last, datetime) and (now - last) > timedelta(minutes=idle_minutes):
-            logout_user()
-            st.warning("انتهت الجلسة بسبب عدم النشاط. الرجاء تسجيل الدخول مرة أخرى.")
-        else:
-            st.session_state["last_seen"] = now
-            return True
+        return True
 
-    # ===== Landing / Auth UI =====
-    st.markdown(
-        f"""
-        <div class="landing-hero">
-          <div class="landing-title">{APP_ICON} {APP_NAME}</div>
-          <div class="landing-sub">منصة عربية لتحليل المحافظ، إدارة المخاطر، والباكتيست — بواجهة احترافية وواضحة.</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    try:
+        if LOGO_MARK_PATH and os.path.exists(LOGO_MARK_PATH):
+            st.image(LOGO_MARK_PATH, width=80)
+    except Exception:
+        pass
+    st.markdown(f"## {APP_ICON} {APP_NAME}")
+    st.info("الرجاء تسجيل الدخول للمتابعة.")
 
     tab1, tab2 = st.tabs(["تسجيل الدخول", "إنشاء حساب"])
 
     with tab1:
-        st.subheader("تسجيل الدخول")
-
         u = st.text_input("اسم المستخدم", key="login_username")
         p = st.text_input("كلمة المرور", type="password", key="login_password")
-        if getattr(config, "ALLOW_LEGACY_PIN", True):
-            st.caption("إذا كانت كلمة مرورك القديمة PIN رقمي (6 أرقام أو أكثر)، اكتبها كما هي وسيتم قبولها.")
 
-        remember = st.checkbox("تذكرني", value=True, key="remember_me")
+        # - إذا مفعّل: Persistent 30d
+        # - إذا غير مفعّل: Session cookie (تبقى بعد Refresh وتختفي عند إغلاق المتصفح)
+        remember = st.checkbox("تذكرني", value=True, key="login_remember_me")
 
-        if st.button("دخول", width="stretch"):
+        if st.button("تسجيل الدخول", key="btn_login"):
             ok, msg = login_user(u, p, remember_me=remember)
             if ok:
                 st.success(msg)
@@ -476,24 +432,17 @@ def require_login():
                 st.error(msg)
 
     with tab2:
-        st.subheader("إنشاء حساب جديد")
-
         u2 = st.text_input("اسم المستخدم", key="reg_username")
         p2 = st.text_input("كلمة المرور", type="password", key="reg_password")
-
-        if getattr(config, "ALLOW_LEGACY_PIN", True):
-            st.caption("للإصدار القديم: يمكنك استخدام PIN رقمي (6 أرقام+). أو استخدم كلمة مرور قوية (8 أحرف+ حروف/أرقام).")
-        else:
-            st.caption("يفضل كلمة مرور قوية (8 أحرف+ حروف/أرقام).")
-
-        if st.button("إنشاء الحساب", width="stretch"):
+        if st.button("إنشاء حساب", key="btn_register"):
             ok, msg = register_user(u2, p2)
             if ok:
-                st.success(msg + " يمكنك الآن تسجيل الدخول.")
+                st.success(msg)
             else:
                 st.error(msg)
 
     return False
+
 # ============================================================
 # 8) Backward-compatible alias
 # ============================================================
