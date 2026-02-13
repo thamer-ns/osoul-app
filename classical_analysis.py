@@ -166,7 +166,7 @@ def _render_levels_table(rows: list):
             cols_spec.append((c, lbl, typ))
         render_custom_table(df, cols_spec)
     else:
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(df, width="stretch", hide_index=True)
 
 
 def _atr(df: pd.DataFrame, n: int = 14) -> pd.Series:
@@ -652,7 +652,7 @@ def render_classical_analysis(symbol: str, interval: str = "1d"):
         margin=dict(l=10, r=10, t=30, b=10),
         hovermode="x unified",
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # --------------------------------------------------------
     # ✅ Levels Snapshot (Unified cards + table) - Additive only
