@@ -61,7 +61,7 @@ def view_backtester_ui(fin):
                     else:
                         if not isinstance(runs, pd.DataFrame):
                             runs = pd.DataFrame(runs)
-                        st.dataframe(runs, use_container_width=True, hide_index=True)
+                        st.dataframe(runs, width="stretch", hide_index=True)
                 except Exception as e:
                     st.error(f"تعذر عرض سجل التجارب: {e}")
             else:
@@ -160,7 +160,7 @@ def view_backtester_ui(fin):
                 st.markdown("---")
                 st.markdown("**📌 مؤشرات إضافية**")
                 mdf = pd.DataFrame([{"Metric": k, "Value": v} for k, v in res["metrics"].items()])
-                st.dataframe(mdf, use_container_width=True)
+                st.dataframe(mdf, width="stretch")
 
         with t_curve:
             df_curve = res.get("df")
@@ -174,14 +174,14 @@ def view_backtester_ui(fin):
                     st.line_chart(df_curve[col])
                 else:
                     st.info("لا يوجد عمود منحنى واضح داخل df.")
-                    st.dataframe(df_curve.head(50), use_container_width=True)
+                    st.dataframe(df_curve.head(50), width="stretch")
             else:
                 st.info("لا يوجد DataFrame منحنى داخل النتيجة.")
 
         with t_trades:
             trades_df = res.get("trades") or res.get("trades_df")
             if isinstance(trades_df, pd.DataFrame) and not trades_df.empty:
-                st.dataframe(trades_df, use_container_width=True)
+                st.dataframe(trades_df, width="stretch")
             else:
                 st.info("لا توجد صفقات مسجلة داخل نتيجة الاختبار (أو الاستراتيجية لا ترجعها).")
 
