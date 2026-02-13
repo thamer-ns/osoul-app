@@ -1,7 +1,7 @@
 #views/__init__.py
 import streamlit as st
 
-from analytics import calculate_portfolio_metrics, update_prices
+from analytics import calculate_portfolio_metrics, update_prices, get_portfolio_cache_key
 
 from views.shared import _ensure_ui_once
 from views.navbar import render_navbar
@@ -12,6 +12,7 @@ from views.cash import view_cash_log
 from views.lab import view_backtester_ui
 from views.settings import view_settings, view_tools
 from views.analysis import view_analysis
+from views.signals import view_signals
 
 def router():
     _ensure_ui_once()
@@ -22,7 +23,8 @@ def router():
     render_navbar()
     pg = st.session_state.page
 
-    fin = calculate_portfolio_metrics()
+    with st.spinner("جارٍ تحميل بيانات المحفظة..."):
+        fin = calculate_portfolio_metrics(cache_key=get_portfolio_cache_key())
 
     if pg == "home":
         view_dashboard(fin)
@@ -32,6 +34,9 @@ def router():
         view_portfolio(fin, "invest")
     elif pg == "sukuk":
         view_sukuk_portfolio(fin)
+    elif pg == "signals":
+        view_signals(fin)
+
     elif pg == "analysis":
         view_analysis(fin)
     elif pg == "cash":
