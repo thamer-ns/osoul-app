@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 import warnings
 from typing import Any, Dict, Optional, Tuple
@@ -18,6 +19,14 @@ warnings.filterwarnings(
     message=r"pandas only supports SQLAlchemy connectable",
     category=UserWarning,
 )
+
+
+def _set_last_db_error(msg: str) -> None:
+    """Store last DB error for UI debugging without crashing the app."""
+    try:
+        st.session_state["_db_last_error"] = (msg or "")[:2000]
+    except Exception:
+        pass
 
 try:
     import psycopg2
@@ -37,9 +46,16 @@ _POOL_LAST_ERR: Optional[str] = None
 _POOL_LAST_OK: bool = False
 _POOL_LAST_CHECK: float = 0.0
 
-# SQLite fallback (dev only). Disabled by default to avoid accidental divergent state when Postgres is down.
-_SQLITE_PATH = os.getenv("SQLITE_PATH", os.path.join("data", "osooli.db"))
-_ALLOW_SQLITE_FALLBACK = str(os.getenv("OSOUL_ALLOW_SQLITE_FALLBACK", "0")).strip().lower() in ("1","true","yes","y","on")
+# Optional SQLAlchemy engine for pandas (avoid repeated imports). If SQLAlchemy
+# is not installed, we keep this as None and fall back to raw DB-API.
+_ENGINE: Any | None = None
+
+# If Postgres is not configured, fallback to sqlite for basic local usage
+_SQLITE_PATH = os.getenv("SQLITE_PATH", "osoul_local.db")
+
+# Production safety defaults (configurable via config.py/env)
+_ALLOW_SQLITE_FALLBACK: bool = bool(getattr(config, "ALLOW_SQLITE_FALLBACK", False))
+_REQUIRE_DB: bool = bool(getattr(config, "REQUIRE_DB", True))
 
 
 def _is_postgres_url(url: str) -> bool:
@@ -61,17 +77,31 @@ def _get_engine():
     Removes pandas warnings that occur with raw DB-API connections.
     """
     global _ENGINE
-    if _ENGINE is not None:
-        return _ENGINE
+    # If we already attempted engine init, reuse the result (even if None).
+    if "_ENGINE" in globals():
+        try:
+            if _ENGINE is not None:
+                return _ENGINE
+        except Exception:
+            _ENGINE = None
+
     if _get_db_kind() != "postgres":
         _ENGINE = None
         return None
+
     db_url = _get_db_url()
+    if not db_url:
+        _ENGINE = None
+        return None
+
+    # SQLAlchemy is optional; if missing we simply use raw DB-API.
     try:
         from sqlalchemy import create_engine  # type: ignore
+
         _ENGINE = create_engine(db_url, pool_pre_ping=True, future=True)
     except Exception:
         _ENGINE = None
+
     return _ENGINE
 
 
@@ -113,7 +143,7 @@ def get_connection_pool():
     except Exception as e:
         _POOL = None
         _POOL_LAST_OK = False
-        _POOL_LAST_ERR = str(e)
+        _POOL_LAST_ERR = redact_text(e)
         return None
 
 
@@ -121,32 +151,28 @@ def get_connection() -> Tuple[Any, str]:
     """Get a DB connection.
 
     Priority:
-    - Postgres (DATABASE_URL)
-    - Optional SQLite fallback ONLY if OSOUL_ALLOW_SQLITE_FALLBACK=1
+    1) Postgres (DATABASE_URL)
+    2) Optional SQLite fallback ONLY if OSOUL_ALLOW_SQLITE_FALLBACK=1
 
-    In production we *disable* SQLite fallback by default to prevent accidental
-    divergent state when Postgres is down/misconfigured.
+    In production we disable SQLite fallback by default to prevent accidental
+    data loss / divergent state when Postgres is down.
     """
+    db_url = _get_db_url()
+
     # 1) Postgres pool
     pool = get_connection_pool()
     if pool is not None:
         try:
-            conn = pool.getconn()
-            return conn, "postgres"
+            return pool.getconn(), "postgres"
         except Exception as e:
             # keep last error and proceed to fallback only if explicitly allowed
             global _POOL_LAST_ERR
             _POOL_LAST_ERR = redact_text(e)
 
     # 2) Optional SQLite fallback (dev only)
-    if _ALLOW_SQLITE_FALLBACK:
+    if _ALLOW_SQLITE_FALLBACK or (not db_url and not _REQUIRE_DB):
         try:
             import sqlite3
-
-            # ensure folder exists if path includes a directory
-            d = os.path.dirname(_SQLITE_PATH)
-            if d:
-                os.makedirs(d, exist_ok=True)
 
             conn = sqlite3.connect(_SQLITE_PATH, check_same_thread=False)
             try:
@@ -158,18 +184,13 @@ def get_connection() -> Tuple[Any, str]:
             raise RuntimeError(f"Failed to open sqlite fallback: {e}") from e
 
     # 3) Strict mode: no fallback
-    url = _get_db_url()
-    if not url:
-        hint = "DATABASE_URL غير موجود أو فارغ في Secrets/Env."
-    elif not _is_postgres_url(url):
-        hint = "DATABASE_URL ليس رابط Postgres صحيح (postgresql://...)."
-    else:
-        hint = "تعذر الاتصال بقاعدة البيانات (Postgres)."
-
-    if _POOL_LAST_ERR:
-        raise RuntimeError(f"{hint}\nتفاصيل: {_POOL_LAST_ERR}")
-
+    hint = "DATABASE_URL غير مضبوط أو تعذر الاتصال بقاعدة البيانات."
+    if not db_url:
+        hint = "DATABASE_URL غير موجود في Secrets/Env."
+    elif _POOL_LAST_ERR:
+        hint = f"تعذر الاتصال بقاعدة البيانات: {_POOL_LAST_ERR}"
     raise RuntimeError(hint)
+
 
 def put_connection(conn, kind: str):
     """Return connection to pool if postgres, otherwise close sqlite."""
@@ -195,6 +216,15 @@ def db_healthcheck() -> Dict[str, Any]:
     Returns:
       { ok: bool, kind: 'postgres'|'sqlite'|..., error: str }
     """
+    db_url = _get_db_url()
+    out: Dict[str, Any] = {
+        "ok": False,
+        "kind": "none",
+        "error": "",
+        "has_db_url": bool(db_url),
+        "pool_ok": bool(_POOL_LAST_OK),
+        "pool_error": _POOL_LAST_ERR or "",
+    }
     try:
         conn, kind = get_connection()
         try:
@@ -203,11 +233,16 @@ def db_healthcheck() -> Dict[str, Any]:
             if cur:
                 cur.execute("SELECT 1")
                 _ = cur.fetchone()
-            return {"ok": True, "kind": kind, "error": ""}
+            out["ok"] = True
+            out["kind"] = kind
+            return out
         finally:
             put_connection(conn, kind)
     except Exception as e:
-        return {"ok": False, "kind": "none", "error": str(e)}
+        out["ok"] = False
+        out["kind"] = "none"
+        out["error"] = redact_text(e)
+        return out
 
 
 # ============================================================
@@ -236,7 +271,8 @@ def execute_query(query: str, params: Optional[Tuple[Any, ...]] = None) -> bool:
         cur.execute(q, params or ())
         conn.commit()
         return True
-    except Exception:
+    except Exception as e:
+        _set_last_db_error(redact_text(e))
         try:
             conn.rollback()
         except Exception:
@@ -254,7 +290,8 @@ def fetch_table(t: str) -> pd.DataFrame:
             if engine is not None:
                 return pd.read_sql(f"SELECT * FROM {t}", engine)
         return pd.read_sql(f"SELECT * FROM {t}", conn)
-    except Exception:
+    except Exception as e:
+        _set_last_db_error(redact_text(e))
         return pd.DataFrame()
     finally:
         put_connection(conn, kind)
@@ -265,7 +302,8 @@ def fetch_df(query: str, params: Optional[Tuple[Any, ...]] = None) -> pd.DataFra
     try:
         q = _adapt_query_for_kind(query, kind)
         return pd.read_sql(q, conn, params=params or ())
-    except Exception:
+    except Exception as e:
+        _set_last_db_error(redact_text(e))
         return pd.DataFrame()
     finally:
         put_connection(conn, kind)
