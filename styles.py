@@ -78,21 +78,24 @@ def apply_custom_css():
         /* =====================================================
            Base RTL + Cairo (بدون كسر الأيقونات)
            ===================================================== */
-        html, body{
+        html, body, [class*="css"], p, div, label, input, button, textarea, h1,h2,h3,h4,h5,h6 {
             font-family: 'Cairo', sans-serif !important;
-            direction: ltr !important; /* keep Streamlit layout stable */
+            
+            
             color: var(--txt);
-        }
-        /* RTL for app content (Arabic UI) */
-        .stApp, section.main, section[data-testid="stSidebar"], .stMarkdown, .stMarkdown *{
-            font-family: 'Cairo', sans-serif !important;
-            direction: rtl !important;
-            text-align: right !important;
         }
 
         /* ✅ طبّق Cairo على span لكن استثنِ أيقونات Material */
-        /* (removed broken span RTL selector) */
-
+        span:not(.material-icons)
+            :not(.material-symbols-outlined)
+            :not(.material-symbols-rounded)
+            :not(.material-symbols-sharp)
+            :not([class*="material-symbols"])
+        {
+            font-family: 'Cairo', sans-serif !important;
+            
+            
+        }
 
         /* =====================================================
            Material Icons / Symbols fixes
@@ -135,48 +138,16 @@ def apply_custom_css():
            ===================================================== */
         footer, header, #MainMenu { display: none !important; }
 
-        /* =====================================================
-           RTL Layout & Sidebar placement (Right sidebar)
-           ===================================================== */
-        /* Move Streamlit sidebar to the RIGHT without breaking layout */
-        div[data-testid="stAppViewContainer"]{
-            flex-direction: row-reverse !important;
-        }
-
-        /* Sidebar border on the inner side + hide resizer line */
-        section[data-testid="stSidebar"]{
-            border-right: 1px solid var(--border) !important;
-            border-left: none !important;
-        }
-        div[data-testid="stSidebarResizer"]{ display:none !important; }
-
-        /* Make the collapse/expand control visible + place it top-right */
-        div[data-testid="stSidebarCollapsedControl"]{
-            position: fixed !important;
-            top: 12px !important;
-            right: 12px !important;
-            left: auto !important;
-            z-index: 10002 !important;
-        }
-        div[data-testid="stSidebarCollapsedControl"] button{
-            border-radius: 12px !important;
-            border: 1px solid var(--border) !important;
-            background: var(--card-bg) !important;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.15) !important;
-        }
-        /* Remove the "middle line" when sidebar is collapsed */
-        section[data-testid="stSidebar"][aria-expanded="false"]{
-            border-right: none !important;
-        }
-
-
         /* Streamlit hamburger / collapsed sidebar control (keep app truly sidebar-less) */
-        div[data-testid="stSidebarCollapsedControl"] { display: block !important; }
         [data-testid="stElementToolbar"] { display: none !important; }
         div[role="tooltip"] { display: none !important; opacity: 0 !important; visibility: hidden !important; }
         button[title="View fullscreen"] { display: none !important; }
 
-        section[data-testid="stSidebar"] { box-shadow: none !important; }
+        section[data-testid="stSidebar"] {
+            border-right: none !important;
+            border-left: none !important;
+            box-shadow: none !important;
+        }
 
         /* =====================================================
            Expander (رفع التباين)
@@ -427,7 +398,7 @@ def apply_custom_css():
             color: #1E40AF !important;
             font-weight: 900 !important;
             border-bottom: 2px solid rgba(37,99,235,0.18) !important;
-            text-align: right !important;
+            
             white-space: nowrap !important;
         }
 
@@ -437,7 +408,7 @@ def apply_custom_css():
             color: #0F172A !important;
             font-weight: 700 !important;
             border-bottom: 1px solid rgba(15,23,42,0.08) !important;
-            text-align: right !important;
+            
             white-space: nowrap !important;
         }
 
@@ -579,99 +550,38 @@ def apply_custom_css():
 }
 
 
-/* -------------------------------
-   Sidebar (Institutional)
----------------------------------*/
-section[data-testid="stSidebar"]{
-  background: var(--bg-elev) !important;
-  border-right: 1px solid var(--border);
-  border-left: none;
-}
-section[data-testid="stSidebar"] .block-container{
-  padding-top: 1rem !important;
-}
-.os-sidebar-brand{
-  display:flex; align-items:center; gap:10px;
-  padding: 10px 12px; margin-bottom: 10px;
-  border-radius: 12px;
-  background: rgba(255,255,255,0.03);
-  border: 1px solid var(--border);
-}
-.os-sidebar-brand img{ width:34px; height:34px; }
-.os-sidebar-brand .t{ font-weight:900; color: var(--text); font-size: 16px; }
-.os-sidebar-brand .s{ color: var(--muted); font-size: 12px; margin-top:-2px; }
-section[data-testid="stSidebar"] hr{ border-color: var(--border) !important; }
+        /* ===================== OSOOLI RTL + SIDEBAR FIX ===================== */
+        /* Keep layout stable (LTR), but render content RTL */
+        html, body { direction: ltr; }
 
-/* Radio / buttons look */
-section[data-testid="stSidebar"] div[role="radiogroup"] > label{
-  padding: 6px 8px !important;
-  border-radius: 10px !important;
-}
-section[data-testid="stSidebar"] div[role="radiogroup"] > label:hover{
-  background: rgba(22,192,200,0.10) !important;
-}
-section[data-testid="stSidebar"] .stButton button{
-  width:100%;
-}
+        section.main, .main, [data-testid="stSidebar"] {
+            direction: rtl;
+            text-align: right;
+        }
 
-/* -------------------------------
-   Signal cards
----------------------------------*/
-.os-signal-card{
-  background: var(--bg-elev);
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 16px;
-  transition: all .22s ease;
-}
-.os-signal-card:hover{
-  transform: translateY(-3px);
-  box-shadow: 0 10px 25px rgba(0,0,0,0.35);
-  border-color: rgba(22,192,200,0.55);
-}
-.os-signal-head{
-  display:flex; justify-content:space-between; align-items:center;
-  margin-bottom: 10px;
-}
-.os-signal-title{
-  font-weight: 900;
-  font-size: 16px;
-  color: var(--text);
-}
-.os-pill{
-  display:inline-flex; align-items:center; gap:6px;
-  padding: 6px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  font-weight: 800;
-  font-size: 12px;
-}
-.os-pill.buy{ background: rgba(22,199,132,.12); color: var(--success); }
-.os-pill.sell{ background: rgba(234,57,67,.12); color: var(--danger); }
-.os-pill.hold{ background: rgba(124,58,237,.12); color: var(--accent); }
+        /* Put sidebar on the RIGHT */
+        [data-testid="stAppViewContainer"] { flex-direction: row-reverse; }
 
-/* -------------------------------
-   Skeleton loader
----------------------------------*/
-.os-skeleton{
-  position: relative;
-  overflow: hidden;
-  background: rgba(255,255,255,0.05);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  height: 140px;
-}
-.os-skeleton::after{
-  content:"";
-  position:absolute; top:0; left:-60%;
-  width: 60%; height:100%;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,.10), transparent);
-  animation: os_shimmer 1.5s infinite;
-}
-@keyframes os_shimmer{
-  0%{ left:-60%; }
-  100%{ left:120%; }
-}
+        /* Sidebar borders / divider */
+        section[data-testid="stSidebar"] {
+            border-left: 1px solid rgba(0,0,0,0.08);
+            border-right: none;
+        }
+
+        /* Make the collapse/expand control visible and align it to the right */
+        div[data-testid="stSidebarCollapsedControl"] {
+            display: flex !important;
+            right: 0.25rem !important;
+            left: auto !important;
+            z-index: 1002 !important;
+        }
+
+        /* Hide the vertical resizer line that appears in the middle */
+        div[data-testid="stSidebarResizer"] { display: none !important; }
+
+        /* Ensure sidebar remains clickable (avoid accidental overlays) */
+        section[data-testid="stSidebar"] { z-index: 1001 !important; }
+        /* =================== /OSOOLI RTL + SIDEBAR FIX =================== */
 
 </style>
         """
