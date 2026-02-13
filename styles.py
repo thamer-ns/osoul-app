@@ -65,6 +65,11 @@ def apply_custom_css():
         @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
         @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Sharp:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
 
+        :root {
+            --font-ar: 'IBM Plex Sans Arabic', 'Cairo', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+        }
+
+
         /* =====================================================
            Theme variables (لتحسين الوضوح)
            ===================================================== */
@@ -75,44 +80,26 @@ def apply_custom_css():
         /* ✅ App background for both themes */
         .stApp { background: var(--app-bg) !important; }
 
-        
         /* =====================================================
-           Base Font + RTL (مركزي وثابت)
+           Base RTL + Cairo (بدون كسر الأيقونات)
            ===================================================== */
-        html, body, [class*="css"], p, label, input, button, textarea, h1,h2,h3,h4,h5,h6 {
+        html, body, [class*="css"], p, div, label, input, button, textarea, h1,h2,h3,h4,h5,h6 {
             font-family: 'Cairo', sans-serif !important;
-            color: var(--txt) !important;
-        }
-
-        /* ✅ RTL على حاويات Streamlit الأساسية فقط (بدون تكسير الرسوم/الأيقونات) */
-        div[data-testid="stAppViewContainer"],
-        section[data-testid="stMain"],
-        section[data-testid="stSidebar"],
-        [data-testid="block-container"] {
             direction: rtl !important;
             text-align: right !important;
-        }
-
-        /* ✅ ضع القائمة الجانبية يمين الشاشة بشكل ثابت */
-        div[data-testid="stAppViewContainer"]{
-            flex-direction: row-reverse !important;
-        }
-
-        /* ✅ تحسين محاذاة عناصر الإدخال */
-        div[role="radiogroup"], div[role="listbox"], div[role="combobox"]{
-            direction: rtl !important;
-            text-align: right !important;
-        }
-
-        /* ✅ الأرقام تظل LTR لعرض صحيح */
-        .kpi-value, .kpi-diff, code, pre {
-            direction: ltr !important;
-            text-align: left !important;
+            color: var(--txt);
         }
 
         /* ✅ طبّق Cairo على span لكن استثنِ أيقونات Material */
-        span:not(.material-icons):not(.material-symbols-outlined):not(.material-symbols-rounded):not(.material-symbols-sharp):not([class*="material-symbols"]) {
+        span:not(.material-icons)
+            :not(.material-symbols-outlined)
+            :not(.material-symbols-rounded)
+            :not(.material-symbols-sharp)
+            :not([class*="material-symbols"])
+        {
             font-family: 'Cairo', sans-serif !important;
+            direction: rtl !important;
+            text-align: right !important;
         }
 
         /* =====================================================
@@ -151,34 +138,22 @@ def apply_custom_css():
             -webkit-font-smoothing: antialiased !important;
         }
 
-        
         /* =====================================================
            UI Cleanup
            ===================================================== */
-        /* أخفِ عناصر القائمة العلوية فقط، وخلّ التحكم بالسايدبار يعمل */
-        #MainMenu { visibility: hidden !important; }
-        footer { visibility: hidden !important; }
+        footer, header, #MainMenu { display: none !important; }
 
-        /* اجعل الهيدر شفاف بدل إخفائه (حتى لا يتعطل زر طيّ القائمة) */
-        header[data-testid="stHeader"]{
-            background: transparent !important;
-            box-shadow: none !important;
-        }
-
-        /* إخفاء أدوات Streamlit الصغيرة */
+        /* Streamlit hamburger / collapsed sidebar control (keep app truly sidebar-less) */
+        div[data-testid="stSidebarCollapsedControl"] { display: none !important; }
+        div[data-testid="stSidebar"] { display: none !important; }
         [data-testid="stElementToolbar"] { display: none !important; }
         div[role="tooltip"] { display: none !important; opacity: 0 !important; visibility: hidden !important; }
         button[title="View fullscreen"] { display: none !important; }
 
-        /* =====================================================
-           Sidebar styling (يمين + بدون خطوط عشوائية)
-           ===================================================== */
-        section[data-testid="stSidebar"]{
-            border: none !important;
-            box-shadow: -10px 0 25px rgba(0,0,0,0.08) !important;
-        }
-        section[data-testid="stSidebar"] > div{
-            background: var(--soft-bg) !important;
+        section[data-testid="stSidebar"] {
+            border-right: none !important;
+            border-left: none !important;
+            box-shadow: none !important;
         }
 
         /* =====================================================
@@ -580,6 +555,29 @@ def apply_custom_css():
     line-height: 1.9;
     max-width: 820px;
 }
+
+
+        /* =====================================================
+           Sidebar on the RIGHT (RTL)
+        ===================================================== */
+        div[data-testid="stAppViewContainer"] > div:first-child {
+            flex-direction: row-reverse !important;
+        }
+
+        section[data-testid="stSidebar"] {
+            right: 0 !important;
+            left: auto !important;
+        }
+
+        [data-testid="collapsedControl"] {
+            right: 0.75rem !important;
+            left: auto !important;
+        }
+
+        div[data-baseweb="select"], div[data-baseweb="popover"] {
+            direction: rtl !important;
+            text-align: right !important;
+        }
 
 </style>
         """
