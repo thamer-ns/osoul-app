@@ -171,7 +171,7 @@ def view_analysis(fin):
             with c_stress:
                 sdf = pd.DataFrame(res["scenarios"])
                 if not sdf.empty and "scenario" in sdf.columns and "impact_pct" in sdf.columns:
-                    st.plotly_chart(px.bar(sdf, x="scenario", y="impact_pct"), use_container_width=True)
+                    st.plotly_chart(px.bar(sdf, x="scenario", y="impact_pct"), width="stretch")
             with c_insight:
                 st.info(res.get("insight", ""))
         st.markdown("---")
