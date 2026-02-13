@@ -1,5 +1,7 @@
 import streamlit as st
 import plotly.graph_objects as go
+
+from data_normalizer import normalize_ohlcv
 from plotly.subplots import make_subplots
 import numpy as np
 import pandas as pd
@@ -65,88 +67,10 @@ def _ensure_datetime_index(df: pd.DataFrame) -> pd.DataFrame:
 # ✅ Data Normalizer (Fix Yahoo MultiIndex / lowercase / non-string cols)
 # ============================================================
 def _normalize_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    يضمن وجود أعمدة OHLC بأسماء:
-    Open, High, Low, Close
-    وVolume اختياري (لا نفشل إذا غير موجود)
-    ويتعامل مع:
-    - أعمدة lowercase (open/close...)
-    - MultiIndex من yfinance
-    - أعمدة غير نصية
-    """
-    if df is None or df.empty:
-        return pd.DataFrame()
-
-    d = df.copy()
-
-    # Fix MultiIndex columns (sometimes from yfinance)
-    if isinstance(d.columns, pd.MultiIndex):
-        d.columns = [
-            c[0] if isinstance(c, tuple) and len(c) > 0 else str(c)
-            for c in d.columns
-        ]
-
-    # Make all columns strings safely
-    d.columns = [str(c) for c in d.columns]
-
-    def pick(name: str):
-        target = name.lower().replace("_", "").replace("-", "").replace(" ", "").strip()
-        for cand in d.columns:
-            key = str(cand).lower().replace("_", "").replace("-", "").replace(" ", "").strip()
-            if key == target:
-                return cand
-        return None
-
-    o = pick("open")
-    h = pick("high")
-    l = pick("low")
-    c = pick("close")
-    v = pick("volume")
-
-    # If "Adj Close" exists but no Close, fallback
-    if c is None:
-        adj = pick("adjclose") or pick("adj close")
-        if adj is not None:
-            c = adj
-
-    # If open missing, fallback close (أحياناً لبعض الداتا)
-    if o is None and c is not None:
-        d["Open"] = d[c]
-        o = "Open"
-
-    # Require OHLC only
-    needed = [o, h, l, c]
-    if any(x is None for x in needed):
-        return pd.DataFrame()
-
-    rename_map = {o: "Open", h: "High", l: "Low", c: "Close"}
-    if v is not None:
-        rename_map[v] = "Volume"
-
-    out = d.rename(columns=rename_map)
-
-    for col in ["Open", "High", "Low", "Close", "Volume"]:
-        if col in out.columns:
-            out[col] = pd.to_numeric(out[col], errors="coerce")
-
-    out = out.dropna(subset=["Open", "High", "Low", "Close"])
-    return out
+    """Backwards-compatible wrapper around shared normalizer."""
+    return normalize_ohlcv(df)
 
 
-# ============================================================
-# ⏱️ Interval Helpers (for UI + sane defaults)
-# ============================================================
-def _norm_interval(interval: str) -> str:
-    itv = str(interval or "").strip().lower()
-    if itv in ["ساعة", "1h", "hour", "1hour", "60m"]:
-        return "60m"
-    if itv in ["يوم", "daily", "day", "1d"]:
-        return "1d"
-    if itv in ["أسبوع", "اسبوع", "week", "weekly", "1w", "1wk"]:
-        return "1wk"
-    if itv in ["شهر", "month", "monthly", "1mo"]:
-        return "1mo"
-    return itv or "1d"
 
 
 def _plot_tail_bars(interval: str) -> int:
