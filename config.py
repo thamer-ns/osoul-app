@@ -61,13 +61,9 @@ DB_CONNECTION_URL = os.getenv("DB_CONNECTION_URL") or DATABASE_URL
 # ============================================================
 APP_NAME = os.getenv("APP_NAME", "أصولي")
 
-# APP_ICON يمكن أن يكون إيموجي أو مسار صورة.
-# نفضّل assets/logo_mark.png إن كان موجودًا.
-_DEFAULT_ICON_PATH = "assets/logo_mark.png"
-if os.path.exists(_DEFAULT_ICON_PATH):
-    APP_ICON = _DEFAULT_ICON_PATH
-else:
-    APP_ICON = os.getenv("APP_ICON", "📈")
+# APP_ICON: استخدم Emoji فقط داخل النصوص/العناوين (توافق Streamlit).
+# لا نضع مسار ملف هنا حتى لا يظهر كنص داخل الواجهة.
+APP_ICON = os.getenv("APP_ICON", "📈")
 
 
 # ============================================================
@@ -81,16 +77,6 @@ DEFAULT_COLORS = {
     "info": "#1E88E5",
     "muted": "#6B7280",
 }
-
-
-# ============================================================
-# 🔐 Auth Policy
-# ============================================================
-# allow legacy numeric PIN passwords for existing deployments
-ALLOW_LEGACY_PIN = os.getenv("ALLOW_LEGACY_PIN", "1").lower() in ("1", "true", "yes")
-MIN_PASSWORD_LEN = int(os.getenv("MIN_PASSWORD_LEN", "8"))
-SESSION_IDLE_MINUTES = int(os.getenv("SESSION_IDLE_MINUTES", "120"))
-
 
 
 # ============================================================
@@ -109,3 +95,13 @@ try:
     COMMISSION_RATE = float(os.getenv("COMMISSION_RATE", "0.0015"))
 except Exception:
     COMMISSION_RATE = 0.0015
+
+
+# ============================================================
+# ⚙️ خيارات التشغيل (Production / Dev)
+# ============================================================
+# افتراضياً: نمنع أي SQLite fallback لتفادي "فقدان البيانات" عند سقوط DB.
+ALLOW_SQLITE_FALLBACK = (os.getenv("OSOUL_ALLOW_SQLITE_FALLBACK", "0").strip().lower() in ("1","true","yes","on"))
+
+# افتراضياً: التطبيق يتوقف ويعرض صفحة تنبيه إذا لم تتصل قاعدة البيانات.
+REQUIRE_DB = (os.getenv("OSOUL_REQUIRE_DB", "1").strip().lower() in ("1","true","yes","on"))
