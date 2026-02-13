@@ -4,7 +4,7 @@ import re
 import time
 import json
 import os
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 
 import streamlit as st
 import yfinance as yf
@@ -656,6 +656,24 @@ def fetch_price_from_argaam(symbol: str) -> float:
     if not s:
         return 0.0
 
+
+
+def fetch_argaam_snapshot(symbol: str) -> Dict[str, object]:
+    """Snapshot بسيط من أرقـام (Fallback).
+
+    يُستخدم فقط عندما لا تتوفر بيانات أفضل من TwelveData/Yahoo.
+    يعيد dict ثابت لتفادي كسر الصفحات عند غياب الدالة.
+    """
+    try:
+        price = float(fetch_price_from_argaam(symbol))
+    except Exception:
+        price = 0.0
+
+    return {
+        "symbol": str(symbol or ""),
+        "price": price,
+        "source": "argaam",
+    }
     code = s.replace(".SR", "").replace("^", "")
     if not code.isdigit():
         return 0.0
@@ -729,46 +747,76 @@ def fetch_price_from_yahoo(symbol: str) -> Dict[str, float]:
 # ============================================================
 @st.cache_data(ttl=300, show_spinner=False)
 
-def get_tasi_data() -> Tuple[Optional[float], Optional[float]]:
-    """Get TASI index current value and % change.
+def get_tasi_data():
+    """جلب مؤشر تاسي (TASI) بأولوية Twelve Data ثم بقية المصادر.
 
-    Returns (price, percent_change) or (None, None) if unavailable.
+    Returns:
+      (tasi_value, change_percent)
     """
-    # 1) TwelveData (try a few common variants)
-    if twelvedata_provider is not None and twelvedata_provider.is_enabled():
-        for sym in ("TASI", "TASI:IDX", "TASI:SA", "TASI.SR"):
+    # 1) Twelve Data Quote (أفضلية)
+    try:
+        from twelvedata_provider import get_quote, get_time_series
+
+        q = get_quote("TASI")
+        if isinstance(q, dict) and q.get("ok"):
+            curr = _safe_float(q.get("price") or 0.0)
+            prev = _safe_float(q.get("prev_close") or 0.0)
+            chg = _safe_float(q.get("chg_pct") or 0.0)
+
+            # Compute prev/percent from candles if missing
+            if (prev <= 0 or chg == 0.0) and curr > 0:
+                h = get_time_series("TASI", interval="1d", years=1, outputsize=10)
+                if isinstance(h, pd.DataFrame) and not h.empty and "Close" in h.columns:
+                    closes = h["Close"].dropna()
+                    if len(closes) >= 2:
+                        prev = float(closes.iloc[-2])
+                        if prev > 0:
+                            chg = ((curr - prev) / prev) * 100.0
+
+            if _is_reasonable_price(curr):
+                return float(curr), round(_safe_float(chg), 2)
+    except Exception:
+        pass
+
+    # 2) TradingView best-effort
+    try:
+        if requests:
+            url = "https://www.tradingview.com/symbols/TADAWUL-TASI/"
+            r = _http_get(url, timeout=8, retries=1)
+            if r:
+                txt = r.text or ""
+                m2 = re.search(r'property="og:price:amount"\s+content="([0-9]+(?:\.[0-9]+)?)"', txt)
+                curr = _safe_float(m2.group(1)) if m2 else 0.0
+                if _is_reasonable_price(curr):
+                    return float(curr), 0.0
+    except Exception:
+        pass
+
+    # 3) Yahoo (yfinance) كحل أخير
+    try:
+        # بعض البيئات تستخدم ^TASI أو ^TASI.SR غير ثابت — نجرب عدة أشكال
+        for ysym in ("^TASI", "^TASI.SR", "TASI.SR"):
             try:
-                q = twelvedata_provider.get_quote(sym)
-                if q and q.get("close") not in (None, "", "0", 0):
-                    price = float(q.get("close"))
-                    # percent_change may appear as "percent_change" or "change_percent"
-                    pc = q.get("percent_change") or q.get("change_percent")
-                    pct = float(pc) if pc not in (None, "") else None
-                    return price, pct
+                t = yf.Ticker(ysym)
+                info = getattr(t, "fast_info", None) or {}
+                p = _safe_float(info.get("lastPrice", 0.0) if isinstance(info, dict) else 0.0)
+                if _is_reasonable_price(p):
+                    return float(p), 0.0
             except Exception:
                 continue
-
-    # 2) TradingView fallback
-    try:
-        return get_index_from_tradingview("TADAWUL", "TASI")
     except Exception:
         pass
 
-    # 3) yfinance fallback (may be rate-limited)
-    try:
-        import yfinance as yf
-        data = yf.Ticker("^TASI.SR")  # sometimes works, depending on provider
-        hist = data.history(period="5d")
-        if hist is not None and not hist.empty:
-            close = float(hist["Close"].iloc[-1])
-            prev = float(hist["Close"].iloc[-2]) if len(hist) > 1 else close
-            pct = ((close - prev) / prev * 100.0) if prev else None
-            return close, pct
-    except Exception:
-        pass
+    return 0.0, 0.0
 
-    return None, None
+# ============================================================
+# 📉 Chart History (للرسم البياني والذكاء الاصطناعي)
+# ============================================================
+# ============================================================
+# 📉 Chart History (للرسم البياني والذكاء الاصطناعي)
+# ============================================================
 
+@st.cache_data(ttl=60 * 30, show_spinner=False)
 def get_chart_history(symbol: str, period: str = None, interval: str = "1d", years: int = 5) -> pd.DataFrame:
     """جلب شموع OHLCV (يابانية) بأولوية Twelve Data ثم بقية المصادر.
 
