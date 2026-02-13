@@ -140,7 +140,6 @@ def apply_custom_css():
 
         /* Streamlit hamburger / collapsed sidebar control (keep app truly sidebar-less) */
         div[data-testid="stSidebarCollapsedControl"] { display: none !important; }
-        div[data-testid="stSidebar"] { display: none !important; }
         [data-testid="stElementToolbar"] { display: none !important; }
         div[role="tooltip"] { display: none !important; opacity: 0 !important; visibility: hidden !important; }
         button[title="View fullscreen"] { display: none !important; }
@@ -549,6 +548,100 @@ def apply_custom_css():
     font-size: 14px;
     line-height: 1.9;
     max-width: 820px;
+}
+
+
+/* -------------------------------
+   Sidebar (Institutional)
+---------------------------------*/
+section[data-testid="stSidebar"]{
+  background: var(--bg-elev) !important;
+  border-left: 1px solid var(--border);
+}
+section[data-testid="stSidebar"] .block-container{
+  padding-top: 1rem !important;
+}
+.os-sidebar-brand{
+  display:flex; align-items:center; gap:10px;
+  padding: 10px 12px; margin-bottom: 10px;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid var(--border);
+}
+.os-sidebar-brand img{ width:34px; height:34px; }
+.os-sidebar-brand .t{ font-weight:900; color: var(--text); font-size: 16px; }
+.os-sidebar-brand .s{ color: var(--muted); font-size: 12px; margin-top:-2px; }
+section[data-testid="stSidebar"] hr{ border-color: var(--border) !important; }
+
+/* Radio / buttons look */
+section[data-testid="stSidebar"] div[role="radiogroup"] > label{
+  padding: 6px 8px !important;
+  border-radius: 10px !important;
+}
+section[data-testid="stSidebar"] div[role="radiogroup"] > label:hover{
+  background: rgba(22,192,200,0.10) !important;
+}
+section[data-testid="stSidebar"] .stButton button{
+  width:100%;
+}
+
+/* -------------------------------
+   Signal cards
+---------------------------------*/
+.os-signal-card{
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 16px;
+  transition: all .22s ease;
+}
+.os-signal-card:hover{
+  transform: translateY(-3px);
+  box-shadow: 0 10px 25px rgba(0,0,0,0.35);
+  border-color: rgba(22,192,200,0.55);
+}
+.os-signal-head{
+  display:flex; justify-content:space-between; align-items:center;
+  margin-bottom: 10px;
+}
+.os-signal-title{
+  font-weight: 900;
+  font-size: 16px;
+  color: var(--text);
+}
+.os-pill{
+  display:inline-flex; align-items:center; gap:6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  font-weight: 800;
+  font-size: 12px;
+}
+.os-pill.buy{ background: rgba(22,199,132,.12); color: var(--success); }
+.os-pill.sell{ background: rgba(234,57,67,.12); color: var(--danger); }
+.os-pill.hold{ background: rgba(124,58,237,.12); color: var(--accent); }
+
+/* -------------------------------
+   Skeleton loader
+---------------------------------*/
+.os-skeleton{
+  position: relative;
+  overflow: hidden;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  height: 140px;
+}
+.os-skeleton::after{
+  content:"";
+  position:absolute; top:0; left:-60%;
+  width: 60%; height:100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.10), transparent);
+  animation: os_shimmer 1.5s infinite;
+}
+@keyframes os_shimmer{
+  0%{ left:-60%; }
+  100%{ left:120%; }
 }
 
 </style>
