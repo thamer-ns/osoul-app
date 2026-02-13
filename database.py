@@ -4,10 +4,20 @@ from __future__ import annotations
 
 import os
 import time
+import warnings
 from typing import Any, Dict, Optional, Tuple
 
 import pandas as pd
 import streamlit as st
+
+from osoli_logging import redact_text
+
+# Silence pandas warning about DB-API connections (we still use parameterized queries safely)
+warnings.filterwarnings(
+    "ignore",
+    message=r"pandas only supports SQLAlchemy connectable",
+    category=UserWarning,
+)
 
 try:
     import psycopg2
@@ -17,7 +27,6 @@ except Exception:
     SimpleConnectionPool = None
 
 import config
-from osoli_logging import redact_text
 
 # ============================================================
 # DB Pool (Postgres) + Fallback (SQLite)
@@ -40,6 +49,30 @@ def _is_postgres_url(url: str) -> bool:
 def _get_db_url() -> str:
     """Return DB URL from config/env/secrets (preferred)."""
     return (getattr(config, "DB_CONNECTION_URL", None) or getattr(config, "DATABASE_URL", None) or "").strip()
+
+def _get_db_kind() -> str:
+    url = _get_db_url()
+    return "postgres" if _is_postgres_url(url) else "sqlite"
+
+
+def _get_engine():
+    """Create a SQLAlchemy engine for pandas read_sql_* calls.
+    Removes pandas warnings that occur with raw DB-API connections.
+    """
+    global _ENGINE
+    if _ENGINE is not None:
+        return _ENGINE
+    if _get_db_kind() != "postgres":
+        _ENGINE = None
+        return None
+    db_url = _get_db_url()
+    try:
+        from sqlalchemy import create_engine  # type: ignore
+        _ENGINE = create_engine(db_url, pool_pre_ping=True, future=True)
+    except Exception:
+        _ENGINE = None
+    return _ENGINE
+
 
 
 def get_connection_pool():
@@ -79,45 +112,32 @@ def get_connection_pool():
     except Exception as e:
         _POOL = None
         _POOL_LAST_OK = False
-        _POOL_LAST_ERR = redact_text(e)
+        _POOL_LAST_ERR = str(e)
         return None
 
 
-def get_connection() -> Tuple[Any, str]:
-    """Get a DB connection.
-
-    Priority:
-    - Postgres (DATABASE_URL)
-    - Optional SQLite fallback ONLY if OSOUL_ALLOW_SQLITE_FALLBACK=1
-
-    In production we *disable* SQLite fallback by default to prevent accidental
-    data loss / divergent state when Postgres is down.
+def get_connection():
     """
-    # 1) Postgres pool
+    Get a DB connection:
+    - Postgres if DATABASE_URL is set and valid
+    - else SQLite fallback
+    """
     pool = get_connection_pool()
     if pool is not None:
         try:
-            conn = pool.getconn()
-            return conn, "postgres"
-        except Exception as e:
-            # keep last error and proceed to fallback only if explicitly allowed
-            global _POOL_LAST_ERR
-            _POOL_LAST_ERR = redact_text(e)
-
-    # 2) Optional SQLite fallback (dev only)
-    if _ALLOW_SQLITE_FALLBACK:
-        conn = sqlite3.connect(SQLITE_PATH, check_same_thread=False)
-        try:
-            conn.execute("PRAGMA foreign_keys = ON;")
+            return pool.getconn(), "postgres"
         except Exception:
             pass
-        return conn, "sqlite"
 
-    # 3) Strict mode: no fallback
-    hint = "DATABASE_URL غير مضبوط أو تعذر الاتصال بقاعدة البيانات."
-    if not getattr(config, "DATABASE_URL", ""):
-        hint = "DATABASE_URL غير موجود في Secrets/Env."
-    raise RuntimeError(hint)
+    # SQLite fallback
+    try:
+        import sqlite3
+
+        conn = sqlite3.connect(_SQLITE_PATH, check_same_thread=False)
+        return conn, "sqlite"
+    except Exception as e:
+        raise RuntimeError(f"Failed to open sqlite fallback: {e}") from e
+
 
 def put_connection(conn, kind: str):
     """Return connection to pool if postgres, otherwise close sqlite."""
@@ -162,11 +182,26 @@ def db_healthcheck() -> Dict[str, Any]:
 # Helpers
 # ============================================================
 
+
+def _adapt_query_for_kind(query: str, kind: str) -> str:
+    """Make SQL portable between Postgres (%s) and SQLite (?) and strip dialect-only syntax."""
+    q = str(query or "")
+    if kind == "sqlite":
+        # placeholder style
+        q = q.replace("%s", "?")
+        # postgres casts
+        q = re.sub(r"::\s*\w+", "", q)
+        # NOW() -> CURRENT_TIMESTAMP
+        q = q.replace("NOW()", "CURRENT_TIMESTAMP")
+        q = q.replace("now()", "CURRENT_TIMESTAMP")
+    return q
+
 def execute_query(query: str, params: Optional[Tuple[Any, ...]] = None) -> bool:
     conn, kind = get_connection()
     try:
         cur = conn.cursor()
-        cur.execute(query, params or ())
+        q = _adapt_query_for_kind(query, kind)
+        cur.execute(q, params or ())
         conn.commit()
         return True
     except Exception:
@@ -182,6 +217,10 @@ def execute_query(query: str, params: Optional[Tuple[Any, ...]] = None) -> bool:
 def fetch_table(t: str) -> pd.DataFrame:
     conn, kind = get_connection()
     try:
+        if kind == "postgres":
+            engine = _get_engine()
+            if engine is not None:
+                return pd.read_sql(f"SELECT * FROM {t}", engine)
         return pd.read_sql(f"SELECT * FROM {t}", conn)
     except Exception:
         return pd.DataFrame()
@@ -189,10 +228,11 @@ def fetch_table(t: str) -> pd.DataFrame:
         put_connection(conn, kind)
 
 def fetch_df(query: str, params: Optional[Tuple[Any, ...]] = None) -> pd.DataFrame:
-    """Fetch a dataframe using a parameterized query (safe + faster than fetch_table for large tables)."""
+    """Fetch a dataframe using a parameterized query (portable + safe)."""
     conn, kind = get_connection()
     try:
-        return pd.read_sql(query, conn, params=params or ())
+        q = _adapt_query_for_kind(query, kind)
+        return pd.read_sql(q, conn, params=params or ())
     except Exception:
         return pd.DataFrame()
     finally:
@@ -456,6 +496,160 @@ def db_verify_user(username: str, password: str) -> bool:
         put_connection(conn, kind)
 
 
+
+# ============================================================
+# Portfolio / Cashflow tables (Trades, Deposits, Withdrawals, Returns, Watchlist, Thesis)
+# ============================================================
+
+def ensure_portfolio_tables() -> bool:
+    """Create all core portfolio tables if missing (portable Postgres/SQLite)."""
+    is_pg = bool(psycopg2 is not None and _is_postgres_url(_get_db_url()))
+    # Trades
+    q_trades = """
+    CREATE TABLE IF NOT EXISTS trades (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol TEXT,
+        company_name TEXT,
+        sector TEXT,
+        asset_type TEXT,
+        quantity REAL,
+        entry_price REAL,
+        exit_price REAL,
+        current_price REAL,
+        strategy TEXT,
+        status TEXT,
+        date TEXT,
+        exit_date TEXT,
+        created_at TEXT,
+        updated_at TEXT
+    );
+    """
+    if is_pg:
+        q_trades = """
+        CREATE TABLE IF NOT EXISTS trades (
+            id SERIAL PRIMARY KEY,
+            symbol TEXT,
+            company_name TEXT,
+            sector TEXT,
+            asset_type TEXT,
+            quantity DOUBLE PRECISION,
+            entry_price DOUBLE PRECISION,
+            exit_price DOUBLE PRECISION,
+            current_price DOUBLE PRECISION,
+            strategy TEXT,
+            status TEXT,
+            date TEXT,
+            exit_date TEXT,
+            created_at TEXT,
+            updated_at TEXT
+        );
+        """
+
+    q_deposits = """
+    CREATE TABLE IF NOT EXISTS deposits (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date TEXT,
+        amount REAL,
+        note TEXT,
+        created_at TEXT
+    );
+    """
+    if is_pg:
+        q_deposits = """
+        CREATE TABLE IF NOT EXISTS deposits (
+            id SERIAL PRIMARY KEY,
+            date TEXT,
+            amount DOUBLE PRECISION,
+            note TEXT,
+            created_at TEXT
+        );
+        """
+
+    q_withdrawals = """
+    CREATE TABLE IF NOT EXISTS withdrawals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date TEXT,
+        amount REAL,
+        note TEXT,
+        created_at TEXT
+    );
+    """
+    if is_pg:
+        q_withdrawals = """
+        CREATE TABLE IF NOT EXISTS withdrawals (
+            id SERIAL PRIMARY KEY,
+            date TEXT,
+            amount DOUBLE PRECISION,
+            note TEXT,
+            created_at TEXT
+        );
+        """
+
+    q_returns = """
+    CREATE TABLE IF NOT EXISTS returnsgrants (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date TEXT,
+        symbol TEXT,
+        amount REAL,
+        note TEXT,
+        created_at TEXT
+    );
+    """
+    if is_pg:
+        q_returns = """
+        CREATE TABLE IF NOT EXISTS returnsgrants (
+            id SERIAL PRIMARY KEY,
+            date TEXT,
+            symbol TEXT,
+            amount DOUBLE PRECISION,
+            note TEXT,
+            created_at TEXT
+        );
+        """
+
+    q_watch = """
+    CREATE TABLE IF NOT EXISTS watchlist (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol TEXT UNIQUE,
+        created_at TEXT
+    );
+    """
+    if is_pg:
+        q_watch = """
+        CREATE TABLE IF NOT EXISTS watchlist (
+            id SERIAL PRIMARY KEY,
+            symbol TEXT UNIQUE,
+            created_at TEXT
+        );
+        """
+
+    # thesis: one row per symbol
+    q_thesis = """
+    CREATE TABLE IF NOT EXISTS investmentthesis (
+        symbol TEXT PRIMARY KEY,
+        thesis_text TEXT,
+        target_price REAL,
+        recommendation TEXT,
+        last_updated TEXT
+    );
+    """
+    if is_pg:
+        q_thesis = """
+        CREATE TABLE IF NOT EXISTS investmentthesis (
+            symbol TEXT PRIMARY KEY,
+            thesis_text TEXT,
+            target_price DOUBLE PRECISION,
+            recommendation TEXT,
+            last_updated TEXT
+        );
+        """
+
+    ok = True
+    for q in (q_trades, q_deposits, q_withdrawals, q_returns, q_watch, q_thesis):
+        ok = execute_query(q) and ok
+    return ok
+
+
 # ============================================================
 # Financial statements storage (light + raw json)
 # ============================================================
@@ -469,6 +663,9 @@ def init_db():
     """
     # users
     ensure_users_table()
+
+    # core portfolio tables
+    ensure_portfolio_tables()
 
     # lightweight financial table
     if not table_exists("financialstatements"):
