@@ -37,8 +37,9 @@ _POOL_LAST_ERR: Optional[str] = None
 _POOL_LAST_OK: bool = False
 _POOL_LAST_CHECK: float = 0.0
 
-# If Postgres is not configured, fallback to sqlite for basic local usage
-_SQLITE_PATH = os.getenv("SQLITE_PATH", "osoul_local.db")
+# SQLite fallback (dev only). Disabled by default to avoid accidental divergent state when Postgres is down.
+_SQLITE_PATH = os.getenv("SQLITE_PATH", os.path.join("data", "osooli.db"))
+_ALLOW_SQLITE_FALLBACK = str(os.getenv("OSOUL_ALLOW_SQLITE_FALLBACK", "0")).strip().lower() in ("1","true","yes","y","on")
 
 
 def _is_postgres_url(url: str) -> bool:
@@ -116,28 +117,59 @@ def get_connection_pool():
         return None
 
 
-def get_connection():
+def get_connection() -> Tuple[Any, str]:
+    """Get a DB connection.
+
+    Priority:
+    - Postgres (DATABASE_URL)
+    - Optional SQLite fallback ONLY if OSOUL_ALLOW_SQLITE_FALLBACK=1
+
+    In production we *disable* SQLite fallback by default to prevent accidental
+    divergent state when Postgres is down/misconfigured.
     """
-    Get a DB connection:
-    - Postgres if DATABASE_URL is set and valid
-    - else SQLite fallback
-    """
+    # 1) Postgres pool
     pool = get_connection_pool()
     if pool is not None:
         try:
-            return pool.getconn(), "postgres"
-        except Exception:
-            pass
+            conn = pool.getconn()
+            return conn, "postgres"
+        except Exception as e:
+            # keep last error and proceed to fallback only if explicitly allowed
+            global _POOL_LAST_ERR
+            _POOL_LAST_ERR = redact_text(e)
 
-    # SQLite fallback
-    try:
-        import sqlite3
+    # 2) Optional SQLite fallback (dev only)
+    if _ALLOW_SQLITE_FALLBACK:
+        try:
+            import sqlite3
 
-        conn = sqlite3.connect(_SQLITE_PATH, check_same_thread=False)
-        return conn, "sqlite"
-    except Exception as e:
-        raise RuntimeError(f"Failed to open sqlite fallback: {e}") from e
+            # ensure folder exists if path includes a directory
+            d = os.path.dirname(_SQLITE_PATH)
+            if d:
+                os.makedirs(d, exist_ok=True)
 
+            conn = sqlite3.connect(_SQLITE_PATH, check_same_thread=False)
+            try:
+                conn.execute("PRAGMA foreign_keys = ON;")
+            except Exception:
+                pass
+            return conn, "sqlite"
+        except Exception as e:
+            raise RuntimeError(f"Failed to open sqlite fallback: {e}") from e
+
+    # 3) Strict mode: no fallback
+    url = _get_db_url()
+    if not url:
+        hint = "DATABASE_URL غير موجود أو فارغ في Secrets/Env."
+    elif not _is_postgres_url(url):
+        hint = "DATABASE_URL ليس رابط Postgres صحيح (postgresql://...)."
+    else:
+        hint = "تعذر الاتصال بقاعدة البيانات (Postgres)."
+
+    if _POOL_LAST_ERR:
+        raise RuntimeError(f"{hint}\nتفاصيل: {_POOL_LAST_ERR}")
+
+    raise RuntimeError(hint)
 
 def put_connection(conn, kind: str):
     """Return connection to pool if postgres, otherwise close sqlite."""
