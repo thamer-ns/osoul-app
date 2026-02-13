@@ -84,6 +84,16 @@ DEFAULT_COLORS = {
 
 
 # ============================================================
+# 🔐 Auth Policy
+# ============================================================
+# allow legacy numeric PIN passwords for existing deployments
+ALLOW_LEGACY_PIN = os.getenv("ALLOW_LEGACY_PIN", "1").lower() in ("1", "true", "yes")
+MIN_PASSWORD_LEN = int(os.getenv("MIN_PASSWORD_LEN", "8"))
+SESSION_IDLE_MINUTES = int(os.getenv("SESSION_IDLE_MINUTES", "120"))
+
+
+
+# ============================================================
 # 🖼️ مسارات الشعارات (تُستخدم في settings و CSS)
 # ============================================================
 LOGO_FULL_PATH = os.getenv("LOGO_FULL_PATH", "assets/logo_full.png")
