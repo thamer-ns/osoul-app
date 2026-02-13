@@ -12,9 +12,10 @@ def view_dashboard(fin):
     try:
         tp, tc = get_tasi_data()
     except Exception:
-        tp, tc = 0, 0
+        tp, tc = (None, None)
 
-    ar = "🔼" if tc >= 0 else "🔽"
+    ar = "" if tc is None else ("🔼" if tc >= 0 else "🔽")
+    tc_str = "-" if tc is None else f"{tc:.2f}%"
     df = fin.get("all_trades", pd.DataFrame())
 
     total_assets = float(fin.get("market_val_open", 0)) + float(fin.get("cash", 0))
@@ -40,7 +41,7 @@ def view_dashboard(fin):
                     <div style="font-size:2.5rem; font-weight:900;">{safe_fmt(tp)}</div>
                 </div>
                 <div style="background:rgba(255,255,255,0.2); padding:5px 15px; border-radius:10px; font-weight:bold; direction:ltr;">
-                    {ar} {tc:.2f}%
+                    {ar} {tc_str}
                 </div>
             </div>
             """,
@@ -120,7 +121,7 @@ def view_dashboard(fin):
         with c_ch1:
             st.subheader("توزيع الأصول")
             if not alloc_df.empty:
-                st.plotly_chart(px.pie(alloc_df, values="Value", names="Asset", hole=0.4), width="stretch")
+                st.plotly_chart(px.pie(alloc_df, values="Value", names="Asset", hole=0.4), use_container_width=True)
             else:
                 st.info("لا توجد أصول")
         with c_ch2:
@@ -128,7 +129,7 @@ def view_dashboard(fin):
             crv = generate_equity_curve(df)
             if isinstance(crv, pd.DataFrame) and not crv.empty and "date" in crv.columns:
                 ycol = "cumulative_invested" if "cumulative_invested" in crv.columns else crv.columns[-1]
-                st.plotly_chart(px.line(crv, x="date", y=ycol), width="stretch")
+                st.plotly_chart(px.line(crv, x="date", y=ycol), use_container_width=True)
             else:
                 st.info("لا توجد بيانات تاريخية")
     else:
