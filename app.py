@@ -75,6 +75,7 @@ def render_db_setup_page(err: str = "") -> None:
         page_title=f"{APP_NAME} — إعداد قاعدة البيانات",
         page_icon=APP_ICON,
         layout="wide",
+        initial_sidebar_state="expanded",
     )
     apply_custom_css()
 
@@ -157,6 +158,7 @@ def main():
         page_title=APP_NAME,
         page_icon=APP_ICON if isinstance(APP_ICON, str) and len(APP_ICON) <= 4 else "📈",
         layout="wide",
+        initial_sidebar_state="expanded",
     )
 
     # CSS (آمن)
