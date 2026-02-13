@@ -4,10 +4,20 @@ from __future__ import annotations
 
 import os
 import time
+import warnings
 from typing import Any, Dict, Optional, Tuple
 
 import pandas as pd
 import streamlit as st
+
+from osoli_logging import redact_text
+
+# Silence pandas warning about DB-API connections (we still use parameterized queries safely)
+warnings.filterwarnings(
+    "ignore",
+    message=r"pandas only supports SQLAlchemy connectable",
+    category=UserWarning,
+)
 
 try:
     import psycopg2
@@ -17,7 +27,6 @@ except Exception:
     SimpleConnectionPool = None
 
 import config
-from osoli_logging import redact_text
 
 # ============================================================
 # DB Pool (Postgres) + Fallback (SQLite)
@@ -40,6 +49,30 @@ def _is_postgres_url(url: str) -> bool:
 def _get_db_url() -> str:
     """Return DB URL from config/env/secrets (preferred)."""
     return (getattr(config, "DB_CONNECTION_URL", None) or getattr(config, "DATABASE_URL", None) or "").strip()
+
+def _get_db_kind() -> str:
+    url = _get_db_url()
+    return "postgres" if _is_postgres_url(url) else "sqlite"
+
+
+def _get_engine():
+    """Create a SQLAlchemy engine for pandas read_sql_* calls.
+    Removes pandas warnings that occur with raw DB-API connections.
+    """
+    global _ENGINE
+    if _ENGINE is not None:
+        return _ENGINE
+    if _get_db_kind() != "postgres":
+        _ENGINE = None
+        return None
+    db_url = _get_db_url()
+    try:
+        from sqlalchemy import create_engine  # type: ignore
+        _ENGINE = create_engine(db_url, pool_pre_ping=True, future=True)
+    except Exception:
+        _ENGINE = None
+    return _ENGINE
+
 
 
 def get_connection_pool():
@@ -79,7 +112,7 @@ def get_connection_pool():
     except Exception as e:
         _POOL = None
         _POOL_LAST_OK = False
-        _POOL_LAST_ERR = redact_text(str(e))
+        _POOL_LAST_ERR = str(e)
         return None
 
 
@@ -142,7 +175,7 @@ def db_healthcheck() -> Dict[str, Any]:
         finally:
             put_connection(conn, kind)
     except Exception as e:
-        return {"ok": False, "kind": "none", "error": redact_text(str(e))}
+        return {"ok": False, "kind": "none", "error": str(e)}
 
 
 # ============================================================
@@ -169,6 +202,10 @@ def execute_query(query: str, params: Optional[Tuple[Any, ...]] = None) -> bool:
 def fetch_table(t: str) -> pd.DataFrame:
     conn, kind = get_connection()
     try:
+        if kind == "postgres":
+            engine = _get_engine()
+            if engine is not None:
+                return pd.read_sql(f"SELECT * FROM {t}", engine)
         return pd.read_sql(f"SELECT * FROM {t}", conn)
     except Exception:
         return pd.DataFrame()
