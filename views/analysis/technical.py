@@ -154,9 +154,9 @@ def _render_quality_badge(df: pd.DataFrame):
 def _render_table_like_trades(df: pd.DataFrame, columns_config, *, key: str):
     """عرض جدول بنفس ستايل جدول الصفقات (finance-table)."""
     try:
-        render_custom_table(df, columns_config=columns_config, key=key, use_container_width=True)
+        render_custom_table(df, columns_config=columns_config, key=key, width="stretch")
     except Exception:
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.dataframe(df, width="stretch", hide_index=True)
 
 
 def _render_signals_table(signals: List[Any], title: str = "الإشارات"):
@@ -476,7 +476,7 @@ def view_technical(symbol: str, interval: str = "1d"):
         except Exception as e:
             st.warning(f"تعذر عرض الرسم المرن: {e}")
             if df is not None and not df.empty:
-                st.dataframe(df.tail(10), use_container_width=True)
+                st.dataframe(df.tail(10), width="stretch")
 
         st.caption("ملاحظة: هذا القسم هو الموجود سابقاً — لم يتم حذفه أو تغييره إلا بقدر تنظيم العرض داخل تبويب.")
 
