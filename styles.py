@@ -685,6 +685,44 @@ section[data-testid="stSidebar"] .stButton button{
   100%{ left:120%; }
 }
 
+
+        /* =====================================================
+           Sidebar UX fixes (Streamlit Cloud / RTL)
+           ===================================================== */
+
+        /* ✅ لا تخفي زر فتح/إغلاق القائمة */
+        div[data-testid="stSidebarCollapsedControl"]{
+            display:flex !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            pointer-events: auto !important;
+        }
+
+        /* ✅ تأكد أن السايدبار نفسه لا يتم إخفاؤه */
+        section[data-testid="stSidebar"], div[data-testid="stSidebar"]{
+            display:block !important;
+        }
+
+        /* ✅ اخفِ خط السحب (المسبب لخط في منتصف الصفحة عند بعض الثيمات/RTL) */
+        div[data-testid="stSidebarResizer"],
+        div[data-testid="stSidebarResizeHandle"],
+        div[data-testid="stSidebarResizerContainer"],
+        div[role="separator"][data-testid="stSidebarResizer"]{
+            display:none !important;
+            width:0 !important;
+            min-width:0 !important;
+        }
+
+        /* ✅ تثبيت السايدبار في اليمين بدون كسر الواجهة */
+        div[data-testid="stAppViewContainer"]{
+            flex-direction: row-reverse !important;
+        }
+
+        section[data-testid="stSidebar"]{
+            border-right: none !important;
+            border-left: 1px solid var(--border) !important;
+        }
+
 </style>
         """
 
