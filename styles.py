@@ -32,11 +32,6 @@ def apply_custom_css():
             --red: #F87171;
             --blue: #60A5FA;
             --amber: #FBBF24;
-            --text: var(--txt);
-            --bg-elev: var(--card-bg);
-            --success: var(--green);
-            --danger: var(--red);
-            --warning: var(--amber);
         """
     else:
         var_css = """
@@ -55,11 +50,6 @@ def apply_custom_css():
             --red: #DC2626;
             --blue: #2563EB;
             --amber: #F59E0B;
-            --text: var(--txt);
-            --bg-elev: var(--card-bg);
-            --success: var(--green);
-            --danger: var(--red);
-            --warning: var(--amber);
         """
 
     css = """
@@ -86,31 +76,23 @@ def apply_custom_css():
         .stApp { background: var(--app-bg) !important; }
 
         /* =====================================================
-           Base Font (بدون قلب تخطيط Streamlit)
+           Base RTL + Cairo (بدون كسر الأيقونات)
            ===================================================== */
-        html, body, [class*="css"], p, div, label, input, button, textarea, h1,h2,h3,h4,h5,h6 {
+        html, body{
             font-family: 'Cairo', sans-serif !important;
+            direction: ltr !important; /* keep Streamlit layout stable */
             color: var(--txt);
         }
-
-        /* =====================================================
-           RTL (للمحتوى فقط) — حتى لا تتعطل الـ Sidebar/الـ Layout
-           ===================================================== */
-        div[data-testid="stAppViewContainer"] .main,
-        section[data-testid="stSidebar"] {
+        /* RTL for app content (Arabic UI) */
+        .stApp, section.main, section[data-testid="stSidebar"], .stMarkdown, .stMarkdown *{
+            font-family: 'Cairo', sans-serif !important;
             direction: rtl !important;
             text-align: right !important;
         }
 
         /* ✅ طبّق Cairo على span لكن استثنِ أيقونات Material */
-        span:not(.material-icons)
-            :not(.material-symbols-outlined)
-            :not(.material-symbols-rounded)
-            :not(.material-symbols-sharp)
-            :not([class*="material-symbols"])
-        {
-            font-family: 'Cairo', sans-serif !important;
-        }
+        /* (removed broken span RTL selector) */
+
 
         /* =====================================================
            Material Icons / Symbols fixes
@@ -153,43 +135,48 @@ def apply_custom_css():
            ===================================================== */
         footer, header, #MainMenu { display: none !important; }
 
-        /* Streamlit toolbars */
+        /* =====================================================
+           RTL Layout & Sidebar placement (Right sidebar)
+           ===================================================== */
+        /* Move Streamlit sidebar to the RIGHT without breaking layout */
+        div[data-testid="stAppViewContainer"]{
+            flex-direction: row-reverse !important;
+        }
+
+        /* Sidebar border on the inner side + hide resizer line */
+        section[data-testid="stSidebar"]{
+            border-right: 1px solid var(--border) !important;
+            border-left: none !important;
+        }
+        div[data-testid="stSidebarResizer"]{ display:none !important; }
+
+        /* Make the collapse/expand control visible + place it top-right */
+        div[data-testid="stSidebarCollapsedControl"]{
+            position: fixed !important;
+            top: 12px !important;
+            right: 12px !important;
+            left: auto !important;
+            z-index: 10002 !important;
+        }
+        div[data-testid="stSidebarCollapsedControl"] button{
+            border-radius: 12px !important;
+            border: 1px solid var(--border) !important;
+            background: var(--card-bg) !important;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.15) !important;
+        }
+        /* Remove the "middle line" when sidebar is collapsed */
+        section[data-testid="stSidebar"][aria-expanded="false"]{
+            border-right: none !important;
+        }
+
+
+        /* Streamlit hamburger / collapsed sidebar control (keep app truly sidebar-less) */
+        div[data-testid="stSidebarCollapsedControl"] { display: block !important; }
         [data-testid="stElementToolbar"] { display: none !important; }
         div[role="tooltip"] { display: none !important; opacity: 0 !important; visibility: hidden !important; }
         button[title="View fullscreen"] { display: none !important; }
 
-        /* =====================================================
-           Sidebar (يمين + قابل للفتح/الإغلاق)
-           ===================================================== */
-        /* انقل الـ Sidebar لليمين بدون كسر سلوك Streamlit */
-        div[data-testid="stAppViewContainer"] {
-            flex-direction: row-reverse !important;
-        }
-
-        /* اخفِ خط السحب/المقسم الذي يظهر كخط في منتصف الصفحة */
-        div[data-testid="stSidebarResizer"] { display: none !important; }
-
-        /* اجعل زر فتح الـ Sidebar (hamburger) ظاهر ومرتّب */
-        div[data-testid="stSidebarCollapsedControl"] {
-            left: auto !important;
-            right: 14px !important;
-        }
-        div[data-testid="stSidebarCollapsedControl"] button {
-            border-radius: 14px !important;
-            border: 1px solid var(--border2) !important;
-            background: var(--card-bg) !important;
-            box-shadow: var(--shadow) !important;
-        }
-        div[data-testid="stSidebarCollapsedControl"] button:hover {
-            border-color: var(--primary) !important;
-        }
-
-        section[data-testid="stSidebar"] {
-            border-right: none !important;
-            border-left: 1px solid var(--border) !important;
-            box-shadow: none !important;
-            background: var(--app-bg) !important;
-        }
+        section[data-testid="stSidebar"] { box-shadow: none !important; }
 
         /* =====================================================
            Expander (رفع التباين)
@@ -597,7 +584,8 @@ def apply_custom_css():
 ---------------------------------*/
 section[data-testid="stSidebar"]{
   background: var(--bg-elev) !important;
-  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+  border-left: none;
 }
 section[data-testid="stSidebar"] .block-container{
   padding-top: 1rem !important;
@@ -684,44 +672,6 @@ section[data-testid="stSidebar"] .stButton button{
   0%{ left:-60%; }
   100%{ left:120%; }
 }
-
-
-        /* =====================================================
-           Sidebar UX fixes (Streamlit Cloud / RTL)
-           ===================================================== */
-
-        /* ✅ لا تخفي زر فتح/إغلاق القائمة */
-        div[data-testid="stSidebarCollapsedControl"]{
-            display:flex !important;
-            visibility: visible !important;
-            opacity: 1 !important;
-            pointer-events: auto !important;
-        }
-
-        /* ✅ تأكد أن السايدبار نفسه لا يتم إخفاؤه */
-        section[data-testid="stSidebar"], div[data-testid="stSidebar"]{
-            display:block !important;
-        }
-
-        /* ✅ اخفِ خط السحب (المسبب لخط في منتصف الصفحة عند بعض الثيمات/RTL) */
-        div[data-testid="stSidebarResizer"],
-        div[data-testid="stSidebarResizeHandle"],
-        div[data-testid="stSidebarResizerContainer"],
-        div[role="separator"][data-testid="stSidebarResizer"]{
-            display:none !important;
-            width:0 !important;
-            min-width:0 !important;
-        }
-
-        /* ✅ تثبيت السايدبار في اليمين بدون كسر الواجهة */
-        div[data-testid="stAppViewContainer"]{
-            flex-direction: row-reverse !important;
-        }
-
-        section[data-testid="stSidebar"]{
-            border-right: none !important;
-            border-left: 1px solid var(--border) !important;
-        }
 
 </style>
         """
