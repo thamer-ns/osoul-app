@@ -34,6 +34,14 @@ def apply_custom_css():
             --blue: #60A5FA;
             --amber: #FBBF24;
 
+
+            --fs-base: 15px;
+            --fs-sm: 13px;
+            --fs-xs: 12px;
+            --lh-base: 1.75;
+            --table-row-alt: rgba(226,232,240,0.04);
+            --table-hover: rgba(96,165,250,0.10);
+
             /* polish */
             --radius-xl: 24px;
             --radius-lg: 18px;
@@ -65,6 +73,14 @@ def apply_custom_css():
             --red: #DC2626;
             --blue: #2563EB;
             --amber: #F59E0B;
+
+
+            --fs-base: 15px;
+            --fs-sm: 13px;
+            --fs-xs: 12px;
+            --lh-base: 1.75;
+            --table-row-alt: rgba(2,6,23,0.02);
+            --table-hover: rgba(37,99,235,0.06);
 
             /* polish */
             --radius-xl: 24px;
@@ -124,8 +140,8 @@ def apply_custom_css():
 
             /* typography base */
             font-family: var(--font-ar) !important;
-            font-size: 15.5px !important;
-            line-height: 1.8 !important;
+            font-size: var(--fs-base) !important;
+            line-height: var(--lh-base) !important;
             -webkit-font-smoothing: antialiased;
             text-rendering: geometricPrecision;
         }
@@ -401,6 +417,24 @@ def apply_custom_css():
         div[role="tooltip"] { display: none !important; opacity: 0 !important; visibility: hidden !important; }
         button[title="View fullscreen"] { display: none !important; }
 
+/* ✅ إخفاء الشريط العلوي في Streamlit Cloud (Share / Star / …) */
+header [data-testid="stToolbar"],
+header [data-testid="stAppToolbar"],
+header [data-testid="stHeaderActionElements"],
+div[data-testid="stToolbar"],
+div[data-testid="stAppToolbar"],
+div[data-testid="stStatusWidget"],
+div[data-testid="stDecoration"],
+div[data-testid="stTopBar"]{
+    display: none !important;
+}
+/* حافظ على وجود الـheader لأن زر فتح الـSidebar يعتمد عليه */
+header{
+    background: transparent !important;
+    box-shadow: none !important;
+}
+
+
         /* =====================================================
            Expander
            ===================================================== */
@@ -664,76 +698,158 @@ def apply_custom_css():
             text-align:left !important;
         }
 
+        
         /* =====================================================
-           ✅ GLOBAL TABLE THEME (st.dataframe / st.table)
-           - ضبط أدق (بدون تكسير) + أفضل وضوح
+           ✅ GLOBAL TABLE THEME (مطابق لصورة 703)
+           - يوحّد st.dataframe / st.table / HTML tables
+           - يمنع تلوين الخلفيات (Heatmap) الذي شوّه الجداول (مثل 815)
+           - يسمح لألوان النص/البادجات/الأيقونات بالظهور بدون كسرها
            ===================================================== */
 
-        /* st.table: HTML table */
+        /* Container */
+        div[data-testid="stDataFrame"],
         div[data-testid="stTable"]{
             border: 1px solid var(--table-grid) !important;
-            border-radius: var(--radius-lg) !important;
+            border-radius: var(--table-radius) !important;
             overflow: hidden !important;
             background: var(--table-bg) !important;
-            box-shadow: 0 8px 18px rgba(15,23,42,0.06) !important;
-        }
-        div[data-testid="stTable"] table{
-            width:100% !important;
-            border-collapse: collapse !important;
-        }
-        div[data-testid="stTable"] thead th{
-            background: var(--table-head-bg) !important;
-            color: var(--table-head-txt) !important;
-            font-weight: 950 !important;
-            border-bottom: 1px solid var(--table-grid) !important;
-            text-align: right !important;
-            padding: 12px 12px !important;
-            font-size: 0.90rem !important;
-            white-space: nowrap !important;
-        }
-        div[data-testid="stTable"] tbody td{
-            color: var(--table-cell-txt) !important;
-            font-weight: 750 !important;
-            border-bottom: 1px solid var(--table-grid) !important;
-            text-align: right !important;
-            padding: 11px 12px !important;
-            font-size: 0.92rem !important;
-            white-space: nowrap !important;
-        }
-        div[data-testid="stTable"] tbody tr:hover td{
-            background: var(--table-hover) !important;
+            box-shadow: 0 10px 24px rgba(15,23,42,0.06) !important;
         }
 
-        /* st.dataframe: Data Editor based grid */
-        div[data-testid="stDataFrame"]{
-            border: 1px solid var(--table-grid) !important;
-            border-radius: var(--radius-lg) !important;
-            overflow: hidden !important;
+        /* --- HTML tables inside Streamlit (st.table, st.dataframe(styler), and custom tables) --- */
+        div[data-testid="stDataFrame"] table,
+        div[data-testid="stTable"] table,
+        table.finance-table,
+        table.dataframe,
+        .dataframe{
+            width: 100% !important;
+            border-collapse: separate !important;
+            border-spacing: 0 !important;
+            direction: rtl !important;
             background: var(--table-bg) !important;
-            box-shadow: 0 8px 18px rgba(15,23,42,0.06) !important;
         }
+
         /* Header cells */
-        div[data-testid="stDataFrame"] [role="columnheader"],
-        div[data-testid="stDataFrame"] [role="columnheader"] *{
+        div[data-testid="stDataFrame"] thead th,
+        div[data-testid="stTable"] thead th,
+        table.finance-table thead th,
+        table.dataframe thead th,
+        .dataframe thead th,
+        table.finance-table th,
+        table.dataframe th,
+        .dataframe th{
             background: var(--table-head-bg) !important;
             color: var(--table-head-txt) !important;
             font-weight: 950 !important;
-            font-size: 0.88rem !important;
+            font-size: var(--fs-sm) !important;
+            padding: 12px 12px !important;
+            text-align: right !important;
             border-bottom: 1px solid var(--table-grid) !important;
-        }
-        /* Grid cells */
-        div[data-testid="stDataFrame"] [role="gridcell"],
-        div[data-testid="stDataFrame"] [role="gridcell"] *{
-            color: var(--table-cell-txt) !important;
-            font-weight: 750 !important;
-            font-size: 0.90rem !important;
-        }
-        /* Grid lines */
-        div[data-testid="stDataFrame"] *{
-            border-color: var(--table-grid) !important;
+            white-space: nowrap !important;
         }
 
-        /* =====================================================
+        /* Body cells */
+        div[data-testid="stDataFrame"] tbody td,
+        div[data-testid="stTable"] tbody td,
+        table.finance-table tbody td,
+        table.dataframe tbody td,
+        .dataframe tbody td,
+        table.finance-table td,
+        table.dataframe td,
+        .dataframe td{
+            font-size: var(--fs-sm) !important;
+            font-weight: 800 !important;
+            padding: 10px 12px !important;
+            border-bottom: 1px solid var(--table-grid) !important;
+            border-inline-start: 1px solid var(--table-grid) !important;
+            text-align: right !important;
+            white-space: nowrap !important;
+            background-color: transparent !important; /* إزالة ألوان الخلفيات غير المرغوبة */
+        }
+        div[data-testid="stDataFrame"] tbody tr td:first-child,
+        div[data-testid="stTable"] tbody tr td:first-child,
+        table.finance-table tbody tr td:first-child,
+        table.dataframe tbody tr td:first-child,
+        .dataframe tbody tr td:first-child{
+            border-inline-start: none !important;
+        }
+
+        /* Row stripes + hover */
+        div[data-testid="stDataFrame"] tbody tr:nth-child(even) td,
+        div[data-testid="stTable"] tbody tr:nth-child(even) td,
+        table.finance-table tbody tr:nth-child(even) td,
+        table.dataframe tbody tr:nth-child(even) td,
+        .dataframe tbody tr:nth-child(even) td{
+            background-color: var(--table-row-alt) !important;
+        }
+        div[data-testid="stDataFrame"] tbody tr:hover td,
+        div[data-testid="stTable"] tbody tr:hover td,
+        table.finance-table tbody tr:hover td,
+        table.dataframe tbody tr:hover td,
+        .dataframe tbody tr:hover td{
+            background-color: var(--table-hover) !important;
+        }
+
+        /* --- Streamlit interactive DataFrame grid (newer versions) --- */
+        div[data-testid="stDataFrame"] [role="columnheader"]{
+            background: var(--table-head-bg) !important;
+            color: var(--table-head-txt) !important;
+            font-weight: 950 !important;
+            font-size: var(--fs-sm) !important;
+            border-bottom: 1px solid var(--table-grid) !important;
+        }
+        div[data-testid="stDataFrame"] [role="gridcell"]{
+            font-size: var(--fs-sm) !important;
+            font-weight: 800 !important;
+            border-bottom: 1px solid var(--table-grid) !important;
+            background-color: transparent !important;
+        }
+        div[data-testid="stDataFrame"] [role="rowgroup"] [role="row"]:nth-child(even) [role="gridcell"]{
+            background-color: var(--table-row-alt) !important;
+        }
+        div[data-testid="stDataFrame"] [role="rowgroup"] [role="row"]:hover [role="gridcell"]{
+            background-color: var(--table-hover) !important;
+        }
+
+        /* Badges / pills inside tables (إذا كانت الخلية تحتوي <span class="..."> ) */
+        div[data-testid="stDataFrame"] .os-pill,
+        div[data-testid="stTable"] .os-pill,
+        .finance-table .os-pill{
+            display: inline-flex !important;
+            align-items: center !important;
+            gap: 6px !important;
+            padding: 4px 10px !important;
+            border-radius: 999px !important;
+            font-weight: 950 !important;
+            font-size: var(--fs-xs) !important;
+            line-height: 1.2 !important;
+            border: 1px solid rgba(148,163,184,0.28) !important;
+            background: var(--soft-bg) !important;
+            white-space: nowrap !important;
+        }
+        div[data-testid="stDataFrame"] .os-pill.green,
+        div[data-testid="stTable"] .os-pill.green,
+        .finance-table .os-pill.green,
+        div[data-testid="stDataFrame"] .os-pill-open,
+        div[data-testid="stTable"] .os-pill-open,
+        .finance-table .os-pill-open{
+            background: rgba(5,150,105,0.14) !important;
+            border-color: rgba(5,150,105,0.28) !important;
+            color: #0F5132 !important;
+        }
+        div[data-testid="stDataFrame"] .os-pill.red,
+        div[data-testid="stTable"] .os-pill.red,
+        .finance-table .os-pill.red,
+        div[data-testid="stDataFrame"] .os-pill-close,
+        div[data-testid="stTable"] .os-pill-close,
+        .finance-table .os-pill-close{
+            background: rgba(220,38,38,0.14) !important;
+            border-color: rgba(220,38,38,0.28) !important;
+            color: #7F1D1D !important;
+        }
+
+
+/* =====================================================
            ✅ Score Ring
            ===================================================== */
         .os-ring{
