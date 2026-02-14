@@ -6,8 +6,8 @@ import math
 import re
 import os
 import base64
-import textwrap
 from typing import Any, Dict, List, Optional, Tuple
+import textwrap
 
 
 # ============================================================
@@ -103,7 +103,7 @@ def render_app_header(
         logo_html = ""
 
         header_html = textwrap.dedent(
-            f"""
+            f"""\
             <div class='os-app-header'>
               <div class='os-app-left'>
                 {logo_html}
@@ -121,7 +121,6 @@ def render_app_header(
         )
 
         st.markdown(header_html, unsafe_allow_html=True)
-
     except Exception:
         # Absolute fallback
         try:
