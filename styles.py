@@ -97,9 +97,50 @@ def apply_custom_css():
             color: var(--txt) !important;
         }
 
-        /* تطبيق Cairo داخل واجهة Streamlit */
-        .stApp, .stApp * {
+        /* تقوية RTL داخل حاويات Streamlit (بعضها يفرض LTR افتراضيًا) */
+        [data-testid="stAppViewContainer"],
+        [data-testid="stMain"],
+        [data-testid="stSidebar"],
+        [data-testid="stVerticalBlock"],
+        [data-testid="stHorizontalBlock"],
+        .block-container {
+            direction: rtl !important;
+            text-align: right !important;
+        }
+
+        /* عناصر الإدخال يجب أن تتبع RTL */
+        input, textarea, select {
+            direction: rtl !important;
+            text-align: right !important;
+        }
+
+        /* إخفاء تلميح Streamlit الإنجليزي أسفل الفورم (لا يؤثر على Enter) */
+        div[data-testid="stForm"] small {
+            display: none !important;
+        }
+
+        /* تطبيق Cairo بالوراثة (بدون كسر Material Icons ligatures) */
+        .stApp {
             font-family: 'Cairo', sans-serif !important;
+        }
+        .stApp input,
+        .stApp textarea,
+        .stApp select,
+        .stApp button,
+        .stApp label,
+        .stApp p,
+        .stApp span,
+        .stApp a,
+        .stApp li,
+        .stApp th,
+        .stApp td,
+        .stApp h1,
+        .stApp h2,
+        .stApp h3,
+        .stApp h4,
+        .stApp h5,
+        .stApp h6 {
+            font-family: inherit !important;
         }
 
         /* Code/JSON blocks يجب أن تبقى LTR */
@@ -131,11 +172,9 @@ def apply_custom_css():
         div[data-testid="stSidebarCollapsedControl"],
         div[data-testid="collapsedControl"],
         [data-testid="collapsedControl"] {
-            position: fixed !important;
-            top: 84px !important;
-            right: 14px !important;
-            width: 1px !important;
-            height: 1px !important;
+            /* اجعل الحاوية 0x0 حتى لا تتحول إلى خط عمودي */
+            width: 0 !important;
+            height: 0 !important;
             padding: 0 !important;
             margin: 0 !important;
             overflow: visible !important;
@@ -162,18 +201,32 @@ def apply_custom_css():
         button[title="Open sidebar"],
         button[aria-label="Open sidebar"] {
             pointer-events: auto !important;
+            position: fixed !important;
+            top: 0.85rem !important;
+            right: 0.85rem !important;
+            left: auto !important;
             width: 42px !important;
             height: 42px !important;
             min-width: 42px !important;
             min-height: 42px !important;
             padding: 0 !important;
-            border-radius: 14px !important;
+            border-radius: 999px !important;
             border: 1px solid var(--border2) !important;
             background: var(--card-bg) !important;
             box-shadow: 0 10px 24px rgba(15,23,42,0.10) !important;
-            display: flex !important;
+            display: inline-flex !important;
             align-items: center !important;
             justify-content: center !important;
+            z-index: 100001 !important;
+        }
+
+        /* ضمان أن أيقونة زر الفتح لا تتحول إلى نص (keyboard_double_arrow_left) */
+        div[data-testid="stSidebarCollapsedControl"] button *,
+        div[data-testid="collapsedControl"] button *,
+        [data-testid="collapsedControl"] button * {
+            font-family: 'Material Symbols Rounded','Material Symbols Outlined','Material Symbols Sharp','Material Icons' !important;
+            font-feature-settings: 'liga' 1 !important;
+            -webkit-font-feature-settings: 'liga' 1 !important;
         }
 
         /* إزالة أي خط/مقبض resizing بالقائمة */
@@ -241,13 +294,8 @@ def apply_custom_css():
 #MainMenu { visibility: hidden !important; }
 footer { visibility: hidden !important; height: 0 !important; }
 
-/* لا نخفي الـSidebar ولا زر الـCollapsedControl */
+/* لا نخفي <header> لأن زر فتح الـSidebar يعتمد عليه */
 header { display: block !important; }
-div[data-testid="stSidebarCollapsedControl"], [data-testid="collapsedControl"] {
-    display: flex !important;
-    z-index: 10000 !important;
-    pointer-events: auto !important;
-}
 
 /* إخفاء Toolbars */
 [data-testid="stElementToolbar"] { display: none !important; }
@@ -675,6 +723,11 @@ section[data-testid="stSidebar"] {
             flex-direction: row-reverse !important;
         }
 
+        /* أعكس ترتيب الأعمدة/الـcolumns لتكون من اليمين لليسار */
+        div[data-testid="stHorizontalBlock"] {
+            flex-direction: row-reverse !important;
+        }
+
         section[data-testid="stSidebar"] {
             right: 0 !important;
             left: auto !important;
@@ -685,7 +738,10 @@ section[data-testid="stSidebar"] {
             left: auto !important;
         }
 
-        div[data-baseweb="select"], div[data-baseweb="popover"] {
+        /* BaseWeb (Streamlit widgets) يميل لفرض LTR */
+        [data-baseweb],
+        div[data-baseweb="select"],
+        div[data-baseweb="popover"] {
             direction: rtl !important;
             text-align: right !important;
         }
