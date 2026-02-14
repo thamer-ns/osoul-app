@@ -6,6 +6,7 @@ import math
 import re
 import os
 import base64
+import textwrap
 from typing import Any, Dict, List, Optional, Tuple
 
 
@@ -78,49 +79,64 @@ def _img_to_base64(path: str) -> Optional[str]:
     except Exception:
         return None
 
+def _dedent_html(s: str) -> str:
+    """Remove common indentation so HTML doesn't render as a code block in Markdown."""
+    try:
+        return textwrap.dedent(s).strip()
+    except Exception:
+        return (s or "").strip()
+
+
+
+
 
 def render_app_header(
     title: str,
     subtitle: str = "منصة تحليل الأسهم — مالي، فني، كلاسيكي، وإدارة مخاطر",
     logo_full_path: str = "assets/logo_full.png",
     logo_mark_path: str = "assets/logo_mark.png",
-    # ⚠️ السايدبار ملغي من التطبيق بالكامل
+    # ⚠️ تركنا الخيار للتوافق الخلفي
     show_in_sidebar: bool = False,
 ):
-    """Render a lightweight, professional header.
+    """Render a lightweight, professional header (fail-safe).
 
-    - Uses CSS classes from styles.py (.os-app-header ...)
-    - Never raises (fail-safe)
+    ملاحظة: كان يظهر الـHTML كنص بسبب مسافات بادئة داخل Markdown.
+    نعالج ذلك عبر `textwrap.dedent` + توحيد أسماء الـCSS classes مع styles.py.
     """
     try:
-        # Sidebar is removed: keep argument for backward compatibility, but do nothing.
         _ = show_in_sidebar
 
-        # Main header
-        # ⚠️ بناءً على طلبك: إلغاء أيقونة (logo_mark) نهائيًا.
-        # نُبقي خيار تمرير المسار للتماسك الخلفي فقط.
-        logo_html = ""
+        # Resolve logo path relative to this file
+        base_dir = os.path.dirname(__file__)
+        full_path = logo_full_path
+        if full_path and not os.path.isabs(full_path):
+            full_path = os.path.join(base_dir, full_path)
 
-        st.markdown(
+        b64 = _img_to_base64(full_path) if full_path else None
+        logo_html = (
+            f"<div class='os-h-logo'><img src='data:image/png;base64,{b64}' alt='logo'/></div>" if b64 else ""
+        )
+
+        html_block = textwrap.dedent(
             f"""
             <div class='os-app-header'>
-              <div class='os-app-left'>
+              <div class='os-h-left'>
                 {logo_html}
                 <div>
-                  <div class='os-app-title'>{html.escape(title)}</div>
-                  <div class='os-app-sub'>{html.escape(subtitle)}</div>
+                  <div class='os-h-title'>{html.escape(title)}</div>
+                  <div class='os-h-sub'>{html.escape(subtitle)}</div>
                 </div>
               </div>
-              <div class='os-app-right'>
-                <span class='os-chip os-chip-blue'><span class='mi'>insights</span>تحليل</span>
-                <span class='os-chip os-chip-gray'><span class='mi'>shield</span>مخاطر</span>
+              <div class='os-h-right'>
+                <span class='os-chip os-chip-blue'>📊 تحليل</span>
+                <span class='os-chip os-chip-gray'>🛡️ مخاطر</span>
               </div>
             </div>
-            """,
-            unsafe_allow_html=True,
-        )
+            """
+        ).strip()
+
+        st.markdown(html_block, unsafe_allow_html=True)
     except Exception:
-        # Absolute fallback
         try:
             st.markdown(f"### {title}")
         except Exception:
@@ -128,6 +144,7 @@ def render_app_header(
 
 # ============================================================
 # 🧼 Helpers: Safe parsing/formatting
+
 # ============================================================
 
 _NUM_RE = re.compile(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?")
@@ -268,7 +285,6 @@ def inject_streamlit_ar_i18n(enable: bool = True):
             ["Type to search", "اكتب للبحث"],
             ["Select an option", "اختر خيارًا"],
             ["Clear value", "مسح"],
-            ["Press Enter to submit form", "اضغط Enter لإرسال النموذج"],
           ]);
 
           function replaceText(node){
@@ -328,182 +344,15 @@ def ar_expander(label, *, expanded=False, icon=None):
 # 🎨 Optional: Inject CSS styles once
 # ============================================================
 
+
+
 def inject_component_styles():
-    """
-    اختياري: استدعِ هذه الدالة مرة في app.py أو views.py
-    لتضمن وجود ستايلات الـ KPI والجدول حتى لو ما عندك CSS خارجي.
-    """
-    st.markdown(
-        """
-        <style>
-        .kpi-card{
-            background: #ffffff;
-            border: 1px solid rgba(148,163,184,0.25);
-            border-radius: 16px;
-            padding: 14px;
-            box-shadow: 0 1px 6px rgba(15,23,42,0.06);
-            position: relative;
-            overflow: hidden;
-        }
-        .kpi-icon-bg{
-            position:absolute;
-            top:10px;
-            left:10px;
-            width:34px;height:34px;
-            display:flex;align-items:center;justify-content:center;
-            background: rgba(37,99,235,0.08);
-            border-radius: 12px;
-            font-size: 18px;
-        }
-        .kpi-label{
-            margin-top: 4px;
-            color:#64748B;
-            font-weight:700;
-            font-size: 0.85rem;
-        }
-        .kpi-value{
-            color:#0F172A;
-            font-weight: 900;
-            font-size: 1.4rem;
-            margin-top: 6px;
-            direction:ltr;
-            text-align:left;
-        }
-        .finance-table{
-            width:100%;
-            border-collapse: separate;
-            border-spacing: 0;
-            background:#fff;
-            border:1px solid rgba(148,163,184,0.25);
-            border-radius:14px;
-            overflow:hidden;
-        }
-        .finance-table th{
-            background: #F8FAFC;
-            color:#334155;
-            font-weight:800;
-            font-size:0.85rem;
-            padding:10px;
-            text-align:right;
-            border-bottom:1px solid rgba(148,163,184,0.25);
-            white-space:nowrap;
-        }
-        .finance-table td{
-            padding:10px;
-            border-bottom:1px solid rgba(148,163,184,0.15);
-            color:#0F172A;
-            font-weight:600;
-            white-space:nowrap;
-            text-align:right;
-        }
-        .finance-table tr:hover td{
-            background: rgba(37,99,235,0.04);
-        }
-        .txt-green{ color:#059669; font-weight:800;}
-        .txt-red{ color:#DC2626; font-weight:800;}
-        .txt-blue{ color:#2563EB; font-weight:800;}
-        .txt-muted{ color:#64748B; font-weight:700;}
-        .td-num{ direction:ltr; text-align:left; }
-        .badge{
-            display:inline-block;
-            padding:2px 10px;
-            border-radius:999px;
-            font-weight:800;
-            font-size:0.75rem;
-        }
-        .badge-open{ background:#DCFCE7; color:#166534; }
-        .badge-closed{ background:#FEE2E2; color:#991B1B; }
-        .link{
-            color:#2563EB;
-            text-decoration:none;
-            font-weight:800;
-        }
-        .link:hover{ text-decoration:underline; }
+    """Backward-compatible helper.
 
-        /* =====================================================
-           ✅ Fallback CSS for Osoli Report (إذا ما كانت موجودة بـ styles.py)
-           ===================================================== */
-        .mi{
-            font-family: "Material Symbols Rounded" !important;
-            font-weight: normal !important;
-            font-style: normal !important;
-            line-height: 1 !important;
-            letter-spacing: normal !important;
-            text-transform: none !important;
-            display: inline-block !important;
-            white-space: nowrap !important;
-            word-wrap: normal !important;
-            direction: ltr !important;
-            -webkit-font-smoothing: antialiased !important;
-            font-feature-settings: "liga" !important;
-            font-size: 18px !important;
-            vertical-align: -4px !important;
-            margin-left: 6px !important;
-        }
-        .os-grid{
-            display:grid;
-            grid-template-columns: repeat(12, 1fr);
-            gap: 12px;
-            margin-top: 10px;
-        }
-        .os-col-12{ grid-column: span 12; }
-        .os-col-6{ grid-column: span 6; }
-        .os-col-4{ grid-column: span 4; }
-        .os-col-3{ grid-column: span 3; }
-        @media (max-width: 900px){
-            .os-col-6,.os-col-4,.os-col-3{ grid-column: span 12; }
-        }
-        .os-card{
-            background:#fff;
-            border:1px solid rgba(15,23,42,0.12);
-            border-radius:18px;
-            padding:14px 14px;
-            box-shadow: 0 10px 25px rgba(15,23,42,0.08);
-        }
-        .os-card-title{
-            font-weight: 950;
-            color:#0F172A;
-            margin-bottom: 10px;
-            display:flex;
-            align-items:center;
-            gap:8px;
-        }
-        .os-muted{
-            color:#64748B;
-            font-weight:800;
-        }
-        .os-kv{
-            display:flex;
-            justify-content:space-between;
-            gap:10px;
-            border-top:1px dashed rgba(15,23,42,0.12);
-            padding-top:8px;
-            margin-top:8px;
-        }
-        .os-k{ color:#64748B; font-weight:900; }
-        .os-v{ color:#0F172A; font-weight:950; direction:ltr; text-align:left; }
-        .os-chip{
-            display:inline-flex;
-            align-items:center;
-            gap:8px;
-            padding: 6px 12px;
-            border-radius: 999px;
-            font-weight: 950;
-            border: 1px solid rgba(15,23,42,0.12);
-            background: #F8FAFC;
-            margin-left: 8px;
-            margin-top: 6px;
-        }
-        .os-chip-gray{ background:#F1F5F9; }
-        .os-chip-blue{ background:#EEF2FF; border-color: rgba(37,99,235,0.25); }
-        .os-chip-green{ background:#ECFDF5; border-color: rgba(5,150,105,0.25); }
-        .os-chip-amber{ background:#FFFBEB; border-color: rgba(245,158,11,0.25); }
-        .os-chip-red{ background:#FEF2F2; border-color: rgba(220,38,38,0.25); }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
+    ✅ ملاحظة: معظم الستايلات الأساسية تُحقن الآن عبر styles.apply_custom_css().
+    هذه الدالة تُترك كـ no-op لتفادي تكرار CSS أو ظهور <style> كنص داخل الواجهة.
+    """
+    return
 
 # ============================================================
 # 🧾 KPI Cards
@@ -529,13 +378,15 @@ def render_kpi(label, value, color_class="neutral", icon="📊"):
         v = html.escape(_safe_text(value))
 
     st.markdown(
-        f"""
-        <div class="kpi-card">
-            <div class="kpi-icon-bg">{html.escape(_safe_text(icon))}</div>
-            <div class="kpi-label">{safe_label}</div>
-            <div class="kpi-value" style="color:{val_color}!important;">{v}</div>
-        </div>
-        """,
+        _dedent_html(
+            f"""
+                    <div class="kpi-card">
+                        <div class="kpi-icon-bg">{html.escape(_safe_text(icon))}</div>
+                        <div class="kpi-label">{safe_label}</div>
+                        <div class="kpi-value" style="color:{val_color}!important;">{v}</div>
+                    </div>
+                    """
+        ),
         unsafe_allow_html=True,
     )
 
@@ -557,18 +408,20 @@ def render_ticker_card(symbol, name, price, change):
     name_disp = html.escape(_safe_text(name))
 
     st.markdown(
-        f"""
-        <div class="kpi-card" style="padding:15px;min-height:120px;">
-            <div style="display:flex;justify-content:space-between;margin-bottom:10px;gap:10px;">
-                <div style="font-weight:900;color:#1E293B;direction:ltr;text-align:left;">{sym_disp}</div>
-                <div style="direction:ltr;color:{col};background:{bg};padding:2px 8px;border-radius:8px;font-weight:800;font-size:0.8rem;">
-                    {change_disp}
-                </div>
-            </div>
-            <div style="font-size:1.5rem;font-weight:900;color:#0F172A;direction:ltr;text-align:left;">{price_disp}</div>
-            <div style="color:#94A3B8;font-size:0.75rem;font-weight:600;">{name_disp}</div>
-        </div>
-        """,
+        _dedent_html(
+            f"""
+                    <div class="kpi-card" style="padding:15px;min-height:120px;">
+                        <div style="display:flex;justify-content:space-between;margin-bottom:10px;gap:10px;">
+                            <div style="font-weight:900;color:#1E293B;direction:ltr;text-align:left;">{sym_disp}</div>
+                            <div style="direction:ltr;color:{col};background:{bg};padding:2px 8px;border-radius:8px;font-weight:800;font-size:0.8rem;">
+                                {change_disp}
+                            </div>
+                        </div>
+                        <div style="font-size:1.5rem;font-weight:900;color:#0F172A;direction:ltr;text-align:left;">{price_disp}</div>
+                        <div style="color:#94A3B8;font-size:0.75rem;font-weight:600;">{name_disp}</div>
+                    </div>
+                    """
+        ),
         unsafe_allow_html=True,
     )
 
@@ -1050,12 +903,14 @@ def render_osoli_report(report: Dict[str, Any], *, title: str = "📌 تقرير
             )
 
         st.markdown(
-            f"""
-            <div class="os-card os-col-6">
-              <div class="os-card-title">{_mi("shield")} بوابات المخاطرة</div>
-              {''.join(items)}
-            </div>
-            """,
+            _dedent_html(
+                f"""
+                            <div class="os-card os-col-6">
+                              <div class="os-card-title">{_mi("shield")} بوابات المخاطرة</div>
+                              {''.join(items)}
+                            </div>
+                            """
+            ),
             unsafe_allow_html=True
         )
 
@@ -1066,14 +921,16 @@ def render_osoli_report(report: Dict[str, Any], *, title: str = "📌 تقرير
             bullets.append(f"<li>{html.escape(_safe_text(x))}</li>")
 
         st.markdown(
-            f"""
-            <div class="os-card os-col-6">
-              <div class="os-card-title">{_mi("fact_check")} الأدلة</div>
-              <ul style="margin:0; padding-right:18px; color:#0F172A; font-weight:800;">
-                {''.join(bullets)}
-              </ul>
-            </div>
-            """,
+            _dedent_html(
+                f"""
+                            <div class="os-card os-col-6">
+                              <div class="os-card-title">{_mi("fact_check")} الأدلة</div>
+                              <ul style="margin:0; padding-right:18px; color:#0F172A; font-weight:800;">
+                                {''.join(bullets)}
+                              </ul>
+                            </div>
+                            """
+            ),
             unsafe_allow_html=True
         )
 
@@ -1089,34 +946,36 @@ def render_osoli_report(report: Dict[str, Any], *, title: str = "📌 تقرير
                 rr = sc.get("rr") or sc.get("r_r") or ""
                 rr_txt = f" | R:R {rr}" if rr else ""
 
-                parts.append(
+                parts.append(_dedent_html(
                     f"""
-                    <div style="border:1px solid rgba(15,23,42,0.10); border-radius:14px; padding:10px; margin-top:10px; background:#fff;">
-                      <div style="font-weight:950;">{html.escape(_safe_text(name))}{html.escape(rr_txt)}</div>
-                      <div class="os-muted">
-                        دخول: <b style="color:#0F172A">{html.escape(_safe_text(entry))}</b>
-                        — وقف: <b style="color:#DC2626">{html.escape(_safe_text(stop))}</b>
-                        — أهداف: <b style="color:#059669">{html.escape(_safe_text(tp))}</b>
-                      </div>
-                    </div>
-                    """
-                )
+                                        <div style="border:1px solid rgba(15,23,42,0.10); border-radius:14px; padding:10px; margin-top:10px; background:#fff;">
+                                          <div style="font-weight:950;">{html.escape(_safe_text(name))}{html.escape(rr_txt)}</div>
+                                          <div class="os-muted">
+                                            دخول: <b style="color:#0F172A">{html.escape(_safe_text(entry))}</b>
+                                            — وقف: <b style="color:#DC2626">{html.escape(_safe_text(stop))}</b>
+                                            — أهداف: <b style="color:#059669">{html.escape(_safe_text(tp))}</b>
+                                          </div>
+                                        </div>
+                                        """
+                ))
             else:
-                parts.append(
+                parts.append(_dedent_html(
                     f"""
-                    <div style="border:1px solid rgba(15,23,42,0.10); border-radius:14px; padding:10px; margin-top:10px; background:#fff;">
-                      <div style="font-weight:900;">{html.escape(_safe_text(sc))}</div>
-                    </div>
-                    """
-                )
+                                        <div style="border:1px solid rgba(15,23,42,0.10); border-radius:14px; padding:10px; margin-top:10px; background:#fff;">
+                                          <div style="font-weight:900;">{html.escape(_safe_text(sc))}</div>
+                                        </div>
+                                        """
+                ))
 
         st.markdown(
-            f"""
-            <div class="os-card os-col-12">
-              <div class="os-card-title">{_mi("route")} السيناريوهات</div>
-              {''.join(parts)}
-            </div>
-            """,
+            _dedent_html(
+                f"""
+                            <div class="os-card os-col-12">
+                              <div class="os-card-title">{_mi("route")} السيناريوهات</div>
+                              {''.join(parts)}
+                            </div>
+                            """
+            ),
             unsafe_allow_html=True
         )
 
