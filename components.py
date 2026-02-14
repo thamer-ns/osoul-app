@@ -2,11 +2,11 @@
 import streamlit as st
 import pandas as pd
 import html
-import textwrap
 import math
 import re
 import os
 import base64
+import textwrap
 from typing import Any, Dict, List, Optional, Tuple
 
 
@@ -77,7 +77,10 @@ def _img_to_base64(path: str) -> Optional[str]:
         with open(path, "rb") as f:
             return base64.b64encode(f.read()).decode("utf-8")
     except Exception:
-      def render_app_header(
+        return None
+
+
+def render_app_header(
     title: str,
     subtitle: str = "منصة تحليل الأسهم — مالي، فني، كلاسيكي، وإدارة مخاطر",
     logo_full_path: str = "assets/logo_full.png",
@@ -102,20 +105,20 @@ def _img_to_base64(path: str) -> Optional[str]:
         st.markdown(
             textwrap.dedent(
                 f"""
-                <div class='os-app-header'>
-                  <div class='os-app-left'>
-                    {logo_html}
-                    <div>
-                      <div class='os-app-title'>{html.escape(title)}</div>
-                      <div class='os-app-sub'>{html.escape(subtitle)}</div>
-                    </div>
-                  </div>
-                  <div class='os-app-right'>
-                    <span class='os-chip os-chip-blue'><span class='mi'>insights</span>تحليل</span>
-                    <span class='os-chip os-chip-gray'><span class='mi'>shield</span>مخاطر</span>
-                  </div>
+            <div class='os-app-header'>
+              <div class='os-app-left'>
+                {logo_html}
+                <div>
+                  <div class='os-app-title'>{html.escape(title)}</div>
+                  <div class='os-app-sub'>{html.escape(subtitle)}</div>
                 </div>
-                """
+              </div>
+              <div class='os-app-right'>
+                <span class='os-chip os-chip-blue'><span class='mi'>insights</span>تحليل</span>
+                <span class='os-chip os-chip-gray'><span class='mi'>shield</span>مخاطر</span>
+              </div>
+            </div>
+            """
             ).strip(),
             unsafe_allow_html=True,
         )
