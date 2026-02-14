@@ -80,22 +80,18 @@ def main():
         initial_sidebar_state="expanded",
     )
 
+    # i18n (DOM translation) يجب أن يأتي بعد set_page_config
+    try:
+        if inject_streamlit_ar_i18n:
+            inject_streamlit_ar_i18n(True)
+    except Exception:
+        pass
+
     # CSS (آمن)
     try:
         apply_custom_css()
     except Exception:
         pass
-
-
-    # DOM i18n (ترجمة نصوص Streamlit الافتراضية) - يجب أن يكون بعد set_page_config و CSS
-    if inject_streamlit_ar_i18n and not st.session_state.get("_os_i18n_done"):
-        try:
-            inject_streamlit_ar_i18n(True)
-            st.session_state["_os_i18n_done"] = True
-        except Exception:
-            # Not fatal
-            st.session_state["_os_i18n_done"] = True
-
 
     # CSS إضافي (اختياري)
     if apply_ui_css:
