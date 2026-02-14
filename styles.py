@@ -85,8 +85,6 @@ def apply_custom_css():
            ===================================================== */
         html, body, [class*="css"], p, div, label, input, button, textarea, h1,h2,h3,h4,h5,h6 {
             font-family: 'Cairo', sans-serif !important;
-            direction: rtl !important;
-            text-align: right !important;
             color: var(--txt);
         }
 
@@ -98,8 +96,6 @@ def apply_custom_css():
             :not([class*="material-symbols"])
         {
             font-family: 'Cairo', sans-serif !important;
-            direction: rtl !important;
-            text-align: right !important;
         }
 
         /* =====================================================
@@ -141,12 +137,9 @@ def apply_custom_css():
         /* =====================================================
            UI Cleanup
            ===================================================== */
-        footer, header, #MainMenu { display: none !important; }
-
-        /* Streamlit hamburger / collapsed sidebar control (keep app truly sidebar-less) */
-        div[data-testid="stSidebarCollapsedControl"] { display: none !important; }
-        div[data-testid="stSidebar"] { display: none !important; }
-        [data-testid="stElementToolbar"] { display: none !important; }
+        footer, #MainMenu { display: none !important; }
+        /* Streamlit sidebar controls (DO NOT HIDE) */
+[data-testid="stElementToolbar"] { display: none !important; }
         div[role="tooltip"] { display: none !important; opacity: 0 !important; visibility: hidden !important; }
         button[title="View fullscreen"] { display: none !important; }
 
