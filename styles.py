@@ -980,6 +980,131 @@ div[data-testid="stCheckbox"] p{
   text-align: right !important;
   unicode-bidi: plaintext !important;
 }
+/* =====================================================
+   TYPOGRAPHY + SPACING (FINAL OVERRIDE)
+   - يحسن حجم/وزن/تباعد خط Cairo لكل الواجهات
+   - لا يغير أي منطق أو ألوان
+   ===================================================== */
+
+/* قاعدة الخط */
+.stApp{
+  font-size: 16px !important;
+  line-height: 1.85 !important;
+  letter-spacing: 0 !important;
+  -webkit-text-size-adjust: 100% !important;
+  text-rendering: optimizeLegibility !important;
+}
+.stApp *{
+  -webkit-font-smoothing: antialiased !important;
+  -moz-osx-font-smoothing: grayscale !important;
+}
+
+/* حاوية المحتوى: تباعد مريح */
+.block-container{
+  padding-top: 1.15rem !important;
+  padding-bottom: 2.0rem !important;
+  max-width: 1280px !important;   /* يحافظ على شكل “احترافي” بدون توسع مبالغ */
+}
+
+/* العناوين (Responsive + أثقل شوي) */
+.stApp h1, .stApp [data-testid="stTitle"]{
+  font-size: clamp(1.85rem, 1.35rem + 1.2vw, 2.45rem) !important;
+  font-weight: 900 !important;
+  line-height: 1.35 !important;
+  margin: 0.25rem 0 0.75rem 0 !important;
+}
+.stApp h2, .stApp [data-testid="stHeader"]{
+  font-size: clamp(1.55rem, 1.20rem + 0.85vw, 2.00rem) !important;
+  font-weight: 900 !important;
+  line-height: 1.4 !important;
+  margin: 0.2rem 0 0.7rem 0 !important;
+}
+.stApp h3, .stApp [data-testid="stSubheader"]{
+  font-size: clamp(1.25rem, 1.05rem + 0.5vw, 1.55rem) !important;
+  font-weight: 900 !important;
+  line-height: 1.5 !important;
+  margin: 0.15rem 0 0.55rem 0 !important;
+}
+
+/* نصوص الماركداون */
+.stApp [data-testid="stMarkdownContainer"],
+.stApp [data-testid="stMarkdownContainer"] p,
+.stApp [data-testid="stMarkdownContainer"] li{
+  font-size: 1.02rem !important;
+  line-height: 1.95 !important;
+  font-weight: 700 !important;
+}
+
+/* Labels (اسم المستخدم / كلمة المرور / إلخ) */
+.stApp label,
+.stApp .stTextInput label,
+.stApp .stPassword label,
+.stApp .stNumberInput label,
+.stApp .stTextArea label,
+.stApp .stSelectbox label,
+.stApp .stMultiSelect label,
+.stApp .stDateInput label{
+  font-size: 0.98rem !important;
+  font-weight: 900 !important;
+  margin-bottom: 0.35rem !important;
+  color: var(--txt) !important;
+}
+
+/* Inputs */
+.stApp input,
+.stApp textarea,
+.stApp select{
+  font-size: 1.02rem !important;
+  font-weight: 800 !important;
+}
+.stApp [data-baseweb="input"] input,
+.stApp [data-baseweb="textarea"] textarea{
+  padding: 0.78rem 1.0rem !important;
+  border-radius: 14px !important;
+}
+
+/* Buttons */
+div.stButton > button{
+  height: 48px !important;
+  border-radius: 14px !important;
+  font-size: 0.98rem !important;
+  font-weight: 900 !important;
+}
+
+/* Tabs */
+[data-testid="stTabs"] [data-baseweb="tab"],
+[data-testid="stTabs"] [role="tab"]{
+  font-size: 0.98rem !important;
+  font-weight: 900 !important;
+  padding: 10px 14px !important;
+}
+
+/* KPI Cards: وضوح أعلى + محاذاة مناسبة RTL (الأرقام LTR لكن على اليمين) */
+.kpi-label{
+  font-size: 0.98rem !important;
+  font-weight: 900 !important;
+  letter-spacing: 0 !important;
+}
+.kpi-value{
+  font-size: clamp(1.75rem, 1.25rem + 1.1vw, 2.35rem) !important;
+  font-weight: 950 !important;
+  direction: ltr !important;      /* أرقام سليمة */
+  text-align: right !important;   /* لكن مكانها يمين */
+  line-height: 1.25 !important;
+}
+
+/* Metric (مثل TASI) */
+[data-testid="stMetric"] [data-testid="stMetricLabel"]{
+  font-size: 0.98rem !important;
+  font-weight: 900 !important;
+  color: var(--muted) !important;
+}
+[data-testid="stMetric"] [data-testid="stMetricValue"]{
+  font-size: clamp(1.65rem, 1.25rem + 1.0vw, 2.20rem) !important;
+  font-weight: 950 !important;
+  direction: ltr !important;
+  text-align: right !important;
+}
 
 </style>
         """
