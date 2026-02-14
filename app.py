@@ -5,12 +5,27 @@ from typing import Optional
 
 import streamlit as st
 
+# Global UI (RTL + sidebar control) — must run after set_page_config
+try:
+    from theme.global_ui import configure_page, apply_global_ui
+except Exception:
+    configure_page = None
+    apply_global_ui = None
+
+# Arabic UI: translate Streamlit default placeholders (call AFTER page config)
+try:
+    from components import inject_streamlit_ar_i18n
+except Exception:
+    inject_streamlit_ar_i18n = None
+
 # -----------------------------------------------------------------------------
 # 🔧 Import bootstrap
 # بعض الرفعّات إلى GitHub تضع المشروع داخل مجلد فرعي (مثل: osoul-app-main).
-# هذا البلوك يجعل imports يعمل حتى لو تغيّر مسار التشغيل.
+# هذا البلوك يجعل `import config` وباقي الوحدات يعمل حتى لو تغيّر مسار التشغيل.
 # -----------------------------------------------------------------------------
 _BASE_DIR = os.path.dirname(__file__)
+
+# أضف المسار الحالي + أي مجلد فرعي يبدو أنه يحتوي ملفات المشروع
 _candidates = [
     _BASE_DIR,
     os.path.join(_BASE_DIR, "osoul-app-main"),
@@ -23,16 +38,8 @@ for _p in _candidates:
     except Exception:
         pass
 
-# الآن imports (بدون أوامر Streamlit قبل set_page_config)
+# الآن imports
 from config import APP_NAME, APP_ICON
-
-# ✅ يجب أن يكون هذا أول نداء Streamlit في الملف
-from theme.global_ui import configure_page, apply_global_ui
-
-configure_page(APP_NAME, APP_ICON)
-apply_global_ui(rtl=True)
-
-# باقي الـ imports بعد تهيئة الصفحة
 from database import init_db
 from styles import apply_custom_css
 
@@ -43,11 +50,15 @@ except Exception:
     apply_ui_css = None
 
 try:
-    from components import inject_component_styles, render_app_header, inject_streamlit_ar_i18n
+    from components import inject_component_styles
 except Exception:
     inject_component_styles = None
+
+# ✅ (اختياري) هيدر احترافي (شعار + اسم + وصف + شريط حالة) بدون لمس منطق التحليل
+try:
+    from components import render_app_header
+except Exception:
     render_app_header = None
-    inject_streamlit_ar_i18n = None
 
 
 def _safe_image(path: str, width: Optional[int] = None):
@@ -69,8 +80,21 @@ def _init_db_once():
 
 
 def main():
-    # Arabic UI: translate Streamlit default placeholders
-    # ✅ بعد set_page_config فقط (حتى لا يسبب مشاكل التهيئة)
+    # Page config MUST be the first Streamlit call
+    if configure_page:
+        try:
+            configure_page(APP_NAME, APP_ICON)
+        except Exception:
+            st.set_page_config(page_title=APP_NAME, page_icon='📈', layout='wide', initial_sidebar_state='expanded')
+    else:
+        st.set_page_config(
+            page_title=APP_NAME,
+            page_icon=APP_ICON if isinstance(APP_ICON, str) and len(APP_ICON) <= 4 else '📈',
+            layout='wide',
+            initial_sidebar_state='expanded',
+        )
+
+    # Arabic i18n (AFTER page config)
     if inject_streamlit_ar_i18n:
         try:
             inject_streamlit_ar_i18n(True)
@@ -83,6 +107,12 @@ def main():
     except Exception:
         pass
 
+    # Global UI overrides (RTL scoped + keep sidebar button clickable)
+    if apply_global_ui:
+        try:
+            apply_global_ui(rtl=True)
+        except Exception:
+            pass
     # CSS إضافي (اختياري)
     if apply_ui_css:
         try:
@@ -103,6 +133,8 @@ def main():
         except Exception:
             pass
 
+
+
     # -------------------------
     # DB Init
     # -------------------------
@@ -116,7 +148,7 @@ def main():
     # Auth Gate (من security.py)
     # -------------------------
     try:
-        # ✅ توافق مع نسخ security المختلفة
+        # ✅ تعديل بسيط فقط: توافق مع نسخ security المختلفة
         try:
             from security import login_system
         except Exception:
@@ -126,6 +158,7 @@ def main():
         st.code(str(e))
         st.stop()
 
+    auth_ok = False
     try:
         auth_ok = bool(login_system())
     except Exception as e:
