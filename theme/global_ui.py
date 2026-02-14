@@ -9,20 +9,23 @@ Goals:
 
 from __future__ import annotations
 
-from typing import Optional
-
 
 def configure_page(title: str, icon: str | None = None) -> None:
-    """Call *once* at the very top of app.py before any other Streamlit commands."""
+    """Call once near the top of app.py before any other Streamlit commands."""
     import streamlit as st
+
+    # icon: emoji (<=4 chars) or a local image path
+    page_icon = "📈"
+    if isinstance(icon, str) and icon.strip():
+        ic = icon.strip()
+        if ic.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".ico")):
+            page_icon = ic
+        elif len(ic) <= 4:
+            page_icon = ic
 
     st.set_page_config(
         page_title=title,
-                page_icon=(
-            icon
-            if (isinstance(icon, str) and icon.lower().endswith((".png", ".jpg", ".jpeg", ".webp", ".ico")))
-            else (icon if isinstance(icon, str) and len(icon) <= 4 else "📈")
-        ),
+        page_icon=page_icon,
         layout="wide",
         initial_sidebar_state="expanded",
     )
@@ -34,20 +37,20 @@ def apply_global_ui(rtl: bool = True) -> None:
 
     dir_css = "rtl" if rtl else "ltr"
     align_css = "right" if rtl else "left"
-    # NOTE: Avoid targeting html/body globally. Only scope to Streamlit containers.
+
     st.markdown(
         f"""
 <style>
-/* ---------------------------
-   RTL: scoped to Streamlit containers only
-   --------------------------- */
+/* ============================
+   RTL (scoped to Streamlit containers only)
+   ============================ */
 [data-testid="stAppViewContainer"],
 [data-testid="stSidebar"] {{
   direction: {dir_css};
   text-align: {align_css};
 }}
 
-/* Keep code/JSON blocks LTR (numbers, code, queries, JSON) */
+/* Keep code/JSON blocks LTR */
 pre, code,
 [data-testid="stCodeBlock"] pre,
 [data-testid="stJson"] pre,
@@ -57,16 +60,15 @@ pre, code,
   text-align: left !important;
 }}
 
-/* ---------------------------
-   Sidebar collapsed control must stay clickable
-   --------------------------- */
+/* ============================
+   Keep sidebar collapsed-control clickable
+   ============================ */
 header {{
   display: block !important;
   visibility: visible !important;
   pointer-events: auto !important;
   z-index: 9999 !important;
 }}
-/* Streamlit uses either stSidebarCollapsedControl or collapsedControl depending on version */
 header [data-testid="stSidebarCollapsedControl"],
 [data-testid="collapsedControl"],
 div[data-testid="stSidebarCollapsedControl"] {{
@@ -83,7 +85,7 @@ div[data-testid="stSidebarCollapsedControl"] {{
   left: auto !important;
 }}
 
-/* Hide the thin resizer line (doesn't affect resizing on most versions) */
+/* Hide the thin resizer line (optional) */
 [data-testid="stSidebarResizer"] {{
   display: none !important;
 }}
