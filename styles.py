@@ -737,11 +737,39 @@ section[data-testid="stSidebar"] {
             order: 2 !important;
             right: 0 !important;
             left: auto !important;
+            border-right: none !important;
+            border-left: 1px solid var(--border2) !important;
+            box-shadow: none !important;
+        }
+
+        /* ✅ When sidebar is collapsed: remove any remaining strip/line */
+        section[data-testid="stSidebar"][aria-expanded="false"],
+        div[data-testid="stSidebar"][aria-expanded="false"],
+        [data-testid="stSidebar"][aria-expanded="false"] {
+            width: 0 !important;
+            min-width: 0 !important;
+            max-width: 0 !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            overflow: hidden !important;
             border: none !important;
             box-shadow: none !important;
         }
 
-        /* Keep main content on the left */
+        
+        /* Fallback (إذا لم يظهر aria-expanded في بعض نسخ Streamlit) */
+        html:has(button[title="Open sidebar"]) section[data-testid="stSidebar"],
+        html:has(button[aria-label="Open sidebar"]) section[data-testid="stSidebar"],
+        html:has(button[title="Open sidebar"]) div[data-testid="stSidebar"],
+        html:has(button[aria-label="Open sidebar"]) div[data-testid="stSidebar"] {
+            width: 0 !important;
+            min-width: 0 !important;
+            max-width: 0 !important;
+            overflow: hidden !important;
+            border: none !important;
+            box-shadow: none !important;
+        }
+/* Keep main content on the left */
         section[data-testid="stMain"],
         [data-testid="stMain"] {
             order: 1 !important;
@@ -761,137 +789,6 @@ section[data-testid="stSidebar"] {
             direction: rtl !important;
             text-align: right !important;
         }
-
-
-/* =====================================================
-   ✅ RTL + SIDEBAR FIX (FINAL OVERRIDES)
-   - يثبت RTL فعليًا في كل العناصر
-   - يُبقي الـSidebar على اليمين
-   - يمنع رجوع "الخط" عند طيّ القائمة
-   ===================================================== */
-
-/* 1) إجبار RTL على كل شيء داخل التطبيق */
-.stApp, .stApp * {
-    direction: rtl !important;
-    text-align: right !important;
-}
-
-/* 2) استثناءات لازم تبقى LTR */
-pre, code, .stCode, .stMarkdown pre, .stMarkdown code {
-    direction: ltr !important;
-    text-align: left !important;
-}
-.material-icons,
-.material-symbols-outlined,
-.material-symbols-rounded,
-.material-symbols-sharp,
-[class*="material-symbols"],
-[data-testid="stIconMaterial"],
-[data-testid="stIconMaterial"] *,
-span[translate="no"]{
-    direction: ltr !important;
-    text-align: center !important;
-}
-
-/* 3) نقل الـSidebar لليمين بشكل آمن */
-div[data-testid="stAppViewContainer"] > div:first-child,
-div[data-testid="stAppViewContainer"] > div:first-child > div {
-    flex-direction: row-reverse !important;
-}
-section[data-testid="stSidebar"]{
-    order: 2 !important;
-    left: auto !important;
-    right: 0 !important;
-    border: none !important;
-    box-shadow: none !important;
-}
-section[data-testid="stMain"],
-[data-testid="stMain"]{
-    order: 1 !important;
-}
-
-/* 4) أعكس الأعمدة والتبويبات */
-div[data-testid="stHorizontalBlock"]{
-    flex-direction: row-reverse !important;
-}
-[data-testid="stTabs"] [role="tablist"]{
-    flex-direction: row-reverse !important;
-    justify-content: flex-start !important;
-}
-
-/* 5) إصلاح عناصر BaseWeb (Select/Popover) */
-[data-baseweb],
-div[data-baseweb="select"],
-div[data-baseweb="popover"]{
-    direction: rtl !important;
-    text-align: right !important;
-}
-
-/* 6) عناصر القائمة (Radio) داخل الـSidebar */
-[data-testid="stSidebar"] [role="radiogroup"] label{
-    display: flex !important;
-    flex-direction: row-reverse !important;
-    justify-content: flex-end !important;
-    gap: .5rem !important;
-}
-
-/* 7) زر طي/فتح الـSidebar (منع الخط العمودي) */
-div[data-testid="stSidebarCollapsedControl"],
-div[data-testid="collapsedControl"],
-[data-testid="collapsedControl"]{
-    position: fixed !important;
-    top: 0.85rem !important;
-    right: 0.85rem !important;
-    left: auto !important;
-
-    width: 46px !important;
-    height: 46px !important;
-
-    padding: 0 !important;
-    margin: 0 !important;
-
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-    overflow: visible !important;
-    z-index: 100001 !important;
-
-    /* مهم: لا تترك الحاوية تمتد بالطول فتظهر كـ"خط" */
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-}
-
-div[data-testid="stSidebarCollapsedControl"]::before,
-div[data-testid="stSidebarCollapsedControl"]::after,
-div[data-testid="collapsedControl"]::before,
-div[data-testid="collapsedControl"]::after,
-[data-testid="collapsedControl"]::before,
-[data-testid="collapsedControl"]::after{
-    display: none !important;
-    content: none !important;
-}
-
-div[data-testid="stSidebarCollapsedControl"] button,
-div[data-testid="collapsedControl"] button,
-[data-testid="collapsedControl"] button,
-button[title="Open sidebar"],
-button[aria-label="Open sidebar"],
-button[title="Close sidebar"],
-button[aria-label="Close sidebar"]{
-    width: 46px !important;
-    height: 46px !important;
-    min-width: 46px !important;
-    min-height: 46px !important;
-    padding: 0 !important;
-    border-radius: 999px !important;
-    border: 1px solid var(--border2) !important;
-    background: var(--card-bg) !important;
-    box-shadow: 0 10px 24px rgba(15,23,42,0.10) !important;
-    display: inline-flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-}
 
 </style>
         """
