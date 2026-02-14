@@ -403,6 +403,23 @@ def evaluate_pending_outcomes_pro(
 # ✅ Learning: context-aware + safety rails
 # ============================================================
 
+# ============================================================
+# ✅ Backward-compatible wrapper
+# ============================================================
+
+def learn_from_history(max_rows: int = 400, target_horizon: int = 20, min_samples: int = 40):
+    """Compatibility wrapper for older imports.
+
+    بعض الأجزاء كانت تستورد learn_from_history مباشرة عبر ai_engine_core.__init__.
+    المنطق المطوّر موجود في learn_from_history_pro.
+    """
+    return learn_from_history_pro(
+        target_horizon=target_horizon,
+        min_samples=min_samples,
+        max_rows=max_rows,
+    )
+
+
 def learn_from_history_pro(
     target_horizon: int = 20,
     min_samples: int = 40,
