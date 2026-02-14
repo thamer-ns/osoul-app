@@ -491,14 +491,24 @@ def require_login():
     with tab1:
         st.subheader("تسجيل الدخول")
 
-        u = st.text_input("اسم المستخدم", key="login_username")
-        p = st.text_input("كلمة المرور", type="password", key="login_password")
-        if getattr(config, "ALLOW_LEGACY_PIN", True):
-            st.caption("إذا كانت كلمة مرورك القديمة PIN رقمي (6 أرقام أو أكثر)، اكتبها كما هي وسيتم قبولها.")
+        # ✅ داخل st.form حتى يعمل Enter كـ Submit في كل المتصفحات
+        try:
+            _login_form = st.form("login_form", clear_on_submit=False, border=True, enter_to_submit=True)
+        except TypeError:
+            # Streamlit versions without enter_to_submit
+            _login_form = st.form("login_form", clear_on_submit=False, border=True)
 
-        remember = st.checkbox("تذكرني", value=True, key="remember_me")
+        with _login_form:
+            u = st.text_input("اسم المستخدم", key="login_username")
+            p = st.text_input("كلمة المرور", type="password", key="login_password")
 
-        if st.button("دخول", width="stretch"):
+            if getattr(config, "ALLOW_LEGACY_PIN", True):
+                st.caption("إذا كانت كلمة مرورك القديمة PIN رقمي (6 أرقام أو أكثر)، اكتبها كما هي وسيتم قبولها.")
+
+            remember = st.checkbox("تذكرني", value=True, key="remember_me")
+            submitted = st.form_submit_button("دخول", use_container_width=True)
+
+        if submitted:
             ok, msg = login_user(u, p, remember_me=remember)
             if ok:
                 st.success(msg)
@@ -509,22 +519,29 @@ def require_login():
     with tab2:
         st.subheader("إنشاء حساب جديد")
 
-        u2 = st.text_input("اسم المستخدم", key="reg_username")
-        p2 = st.text_input("كلمة المرور", type="password", key="reg_password")
+        try:
+            _reg_form = st.form("register_form", clear_on_submit=False, border=True, enter_to_submit=True)
+        except TypeError:
+            _reg_form = st.form("register_form", clear_on_submit=False, border=True)
 
-        if getattr(config, "ALLOW_LEGACY_PIN", True):
-            st.caption("للإصدار القديم: يمكنك استخدام PIN رقمي (6 أرقام+). أو استخدم كلمة مرور قوية (8 أحرف+ حروف/أرقام).")
-        else:
-            st.caption("يفضل كلمة مرور قوية (8 أحرف+ حروف/أرقام).")
+        with _reg_form:
+            u2 = st.text_input("اسم المستخدم", key="reg_username")
+            p2 = st.text_input("كلمة المرور", type="password", key="reg_password")
 
-        if st.button("إنشاء الحساب", width="stretch"):
+            if getattr(config, "ALLOW_LEGACY_PIN", True):
+                st.caption("للإصدار القديم: يمكنك استخدام PIN رقمي (6 أرقام+). أو استخدم كلمة مرور قوية (8 أحرف+ حروف/أرقام).")
+            else:
+                st.caption("يفضل كلمة مرور قوية (8 أحرف+ حروف/أرقام).")
+
+            submitted2 = st.form_submit_button("إنشاء الحساب", use_container_width=True)
+
+        if submitted2:
             ok, msg = register_user(u2, p2)
             if ok:
                 st.success(msg + " يمكنك الآن تسجيل الدخول.")
             else:
                 st.error(msg)
-
-    return False
+return False
 # ============================================================
 # 8) Backward-compatible alias
 # ============================================================
