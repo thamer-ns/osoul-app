@@ -67,8 +67,7 @@ def apply_custom_css():
         @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Sharp:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
 
         :root {
-            /* ✅ Cairo only (مع بدائل احتياطية في حال تعذر التحميل) */
-            --font-ar: 'Cairo', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            --font-ar: 'IBM Plex Sans Arabic', 'Cairo', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
         }
 
 
@@ -828,406 +827,71 @@ html:has(button[title="Close sidebar"]) section[data-testid="stSidebar"],
         }
 
 
-        /* =====================================================
-           ✅ FINAL RTL LOCK + CAIRO (لا يغير التصميم — فقط الاتجاه/الخط/المحاذاة/الأيقونات)
-           ===================================================== */
 
-        /* 0) Cairo everywhere (ثم نستثني الكود/الأيقونات بالأسفل) */
-        .stApp, .stApp *{
-            font-family: 'Cairo', sans-serif !important;
-        }
+/* =====================================================
+   RTL LAST-OVERRIDE (Do not move)
+   - BaseWeb Tabs + Streamlit Columns are still behaving LTR in some views.
+   - This block intentionally overrides earlier rules with MAX priority.
+   ===================================================== */
 
-        /* 1) فرض RTL على كامل الواجهة */
-        .stApp, .stApp *{
-            direction: rtl !important;
-            text-align: right !important;
-            unicode-bidi: plaintext !important;
-        }
-
-        /* 2) قوائم Markdown (النقاط/الترقيم) */
-        .stApp ul, .stApp ol{
-            direction: rtl !important;
-            text-align: right !important;
-            padding-right: 1.25rem !important;
-            padding-left: 0 !important;
-        }
-        .stApp li{ text-align: right !important; }
-
-        /* 3) Radio/Checkbox: اجعل الدائرة/الأيقونة جهة اليمين (Streamlit + BaseWeb) */
-        [role="radiogroup"] label,
-        [role="checkbox"] label,
-        [data-testid="stSidebar"] [role="radiogroup"] label,
-        [data-testid="stSidebar"] [role="checkbox"] label,
-        div[data-testid="stRadio"] label,
-        div[data-testid="stCheckbox"] label{
-            direction: rtl !important;
-            text-align: right !important;
-            justify-content: flex-end !important;
-        }
-
-        /* BaseWeb (المسؤول فعليًا عن دوائر الراديو/الشيك) */
-        div[data-baseweb="radio"] label,
-        div[data-baseweb="checkbox"] label,
-        [data-testid="stSidebar"] div[data-baseweb="radio"] label,
-        [data-testid="stSidebar"] div[data-baseweb="checkbox"] label{
-            display: flex !important;
-            flex-direction: row-reverse !important;
-            align-items: center !important;
-            justify-content: flex-end !important;
-            gap: .55rem !important;
-        }
-
-        /* بعض نسخ BaseWeb تغلف المحتوى داخل div إضافي */
-        div[data-baseweb="radio"] label > div,
-        div[data-baseweb="checkbox"] label > div{
-            display: flex !important;
-            flex-direction: row-reverse !important;
-            align-items: center !important;
-        }
-
-        /* 4) Tabs: ترتيب RTL + محاذاة العناوين */
-        [data-testid="stTabs"] [role="tablist"]{
-            display: flex !important;
-            flex-direction: row-reverse !important;
-            justify-content: flex-start !important;
-        }
-        [data-testid="stTabs"] [role="tab"],
-        [data-testid="stTabs"] [role="tab"] *{
-            direction: rtl !important;
-            text-align: right !important;
-        }
-
-        /* 4.1) Columns: افتراضيًا نخليها RTL (Row-Reverse)
-              لكن داخل الـForms نعيدها Row لأن كثير من الشاشات القديمة مرتبة في الكود لـRTL بالفعل.
-              هذا يحل: (البحث عن سهم) — العنوان يمين، الإدخالات يمين، وزر التحليل يسار.
-        */
-        div[data-testid="stHorizontalBlock"]{
-            flex-direction: row-reverse !important;
-        }
-        div[data-testid="stHorizontalBlock"] > div{
-            flex-direction: inherit !important;
-        }
-        div[data-testid="stForm"] div[data-testid="stHorizontalBlock"]{
-            flex-direction: row !important;
-        }
-
-        /* دعم إضافي لبعض الإصدارات التي تستخدم stColumns */
-        div[data-testid="stColumns"]{
-            display: flex !important;
-            flex-direction: row-reverse !important;
-            width: 100% !important;
-        }
-        div[data-testid="stForm"] div[data-testid="stColumns"]{
-            flex-direction: row !important;
-        }
-
-        /* 4.2) Labels/Headers داخل النماذج/صفحة الدخول: تثبيت RTL + محاذاة يمين */
-        .stApp label,
-        .stApp [data-testid="stForm"] label,
-        .stApp [data-testid="stTextInput"] label,
-        .stApp [data-testid="stPassword"] label,
-        .stApp [data-testid="stTextArea"] label,
-        .stApp [data-testid="stSelectbox"] label,
-        .stApp [data-testid="stRadio"] label,
-        .stApp [data-testid="stCheckbox"] label{
-            direction: rtl !important;
-            text-align: right !important;
-            justify-content: flex-end !important;
-        }
-
-        .stApp .stMarkdown,
-        .stApp .stMarkdown *{
-            direction: rtl !important;
-            text-align: right !important;
-        }
-
-        /* 5) الأرقام تبقى أوضح بـ LTR (بدون كسر RTL) */
-        [data-testid="stMetricValue"],
-        [data-testid="stMetricValue"] *,
-        [data-testid="stMetricDelta"],
-        [data-testid="stMetricDelta"] *,
-        .kpi-value,
-        .kpi-value *,
-        .os-v,
-        .os-v *{
-            direction: ltr !important;
-            unicode-bidi: plaintext !important;
-            text-align: right !important;
-        }
-
-        /* 6) استثناءات: كود/JSON يظل LTR + خط monospace */
-        pre, code, .stCode, .stMarkdown pre, .stMarkdown code,
-        div[data-testid="stJson"] pre, div[data-testid="stCodeBlock"] pre,
-        div[data-testid="stJson"] pre *, div[data-testid="stCodeBlock"] pre *{
-            direction: ltr !important;
-            text-align: left !important;
-            unicode-bidi: plaintext !important;
-            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
-        }
-
-        /* 7) استثناء: أيقونات Material تظل LTR ولا تتغير + خطها الصحيح */
-        .material-icons,
-        .material-symbols-outlined,
-        .material-symbols-rounded,
-        .material-symbols-sharp,
-        [class*="material-symbols"],
-        [data-testid="stIconMaterial"],
-        [data-testid="stIconMaterial"] *,
-        span[translate="no"]{
-            direction: ltr !important;
-            text-align: center !important;
-            unicode-bidi: isolate !important;
-            font-feature-settings: 'liga' 1 !important;
-            -webkit-font-feature-settings: 'liga' 1 !important;
-        }
-
-        .material-icons, i.material-icons, span.material-icons{
-            font-family: 'Material Icons' !important;
-        }
-        .material-symbols-outlined, .material-symbols-rounded, .material-symbols-sharp, [class*="material-symbols"]{
-            font-family: 'Material Symbols Rounded','Material Symbols Outlined','Material Symbols Sharp' !important;
-        }
-
-        /* 8) تحسين RTL داخل select/combobox (يساعد على قوائم الاختيار) */
-        div[data-baseweb="select"] [role="combobox"],
-        div[data-baseweb="select"] [role="listbox"],
-        div[data-baseweb="select"] [role="option"]{
-            direction: rtl !important;
-            text-align: right !important;
-        }
-
-        /* =====================================================
-           RTL ICON + TABS FIXES (بدون تغيير أي تصميم آخر)
-           - يعالج: تبويبات تسجيل الدخول/الصفحات (BaseWeb)
-           - يعالج: أيقونات حقول الإدخال (مثل عين كلمة المرور/رموز داخل الحقول)
-           - يعالج: أيقونات خلفية بطاقات KPI (تنتقل لليمين)
-           - يعالج: st.metric delta/icon ترتيب RTL
-           ===================================================== */
-
-        /* 9) BaseWeb Tabs (Streamlit st.tabs) — بعض الإصدارات لا تستخدم role=tablist بشكل صريح */
-        div[data-baseweb="tab-list"],
-        [data-testid="stTabs"] div[data-baseweb="tab-list"]{
-            display: flex !important;
-            flex-direction: row-reverse !important;
-            justify-content: flex-start !important;
-            direction: rtl !important;
-            text-align: right !important;
-        }
-        div[data-baseweb="tab"],
-        [data-testid="stTabs"] div[data-baseweb="tab"]{
-            direction: rtl !important;
-            text-align: right !important;
-        }
-        /* ثبّت داخل زر التبويب */
-        div[data-baseweb="tab"] > div,
-        [data-testid="stTabs"] div[data-baseweb="tab"] > div{
-            direction: rtl !important;
-            text-align: right !important;
-            unicode-bidi: plaintext !important;
-        }
-
-        /* 10) BaseWeb Input/Password: انقل أيقونات الحقل (start/end enhancer) لتتوافق مع RTL */
-        [data-baseweb="input"]{
-            direction: rtl !important;
-        }
-        [data-baseweb="input"] > div{
-            display: flex !important;
-            flex-direction: row-reverse !important;
-            align-items: center !important;
-        }
-        [data-baseweb="input"] input{
-            direction: rtl !important;
-            text-align: right !important;
-            unicode-bidi: plaintext !important;
-            font-family: 'Cairo', sans-serif !important;
-        }
-        [data-baseweb="input"] input::placeholder{
-            direction: rtl !important;
-            text-align: right !important;
-            unicode-bidi: plaintext !important;
-        }
-        /* زر العين/الأيقونات داخل الحقل: لا نكسر شكل الـSVG */
-        [data-baseweb="input"] button,
-        [data-baseweb="input"] button *{
-            direction: ltr !important;
-            unicode-bidi: isolate !important;
-        }
-
-        /* 11) Metric: اجعل الأيقونة/الـdelta يمشون RTL (سهم + نسبة) */
-        div[data-testid="stMetricLabel"]{
-            direction: rtl !important;
-            text-align: right !important;
-        }
-        div[data-testid="stMetricDelta"]{
-            direction: rtl !important;
-            text-align: right !important;
-            display: inline-flex !important;
-            flex-direction: row-reverse !important;
-            justify-content: flex-end !important;
-            gap: .25rem !important;
-        }
-        div[data-testid="stMetricDelta"] svg{
-            /* السهم/الأيقونة تبقى بشكلها */
-            direction: ltr !important;
-            unicode-bidi: isolate !important;
-        }
-
-        /* 12) KPI background icon: انقل الأيقونة لليمين (RTL) */
-        .kpi-icon-bg{
-            left: auto !important;
-            right: -10px !important;
-        }
-        .kpi-card:hover .kpi-icon-bg{
-            left: auto !important;
-            right: -4px !important;
-        }
-
-
-
-/* === OSOOLI RTL FINAL (v4) === */
-/* الهدف: تثبيت RTL بالكامل + خط Cairo + تصحيح Tabs/Forms/KPIs بدون تغيير أي شيء آخر */
-
-/* 1) Cairo كخط افتراضي (مع استثناء أيقونات Material وكتل الكود) */
-.stApp { font-family: 'Cairo', sans-serif !important; }
-.stApp input, .stApp textarea, .stApp select, .stApp button,
-.stApp label, .stApp p, .stApp a, .stApp li,
-.stApp th, .stApp td, .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6 {
-  font-family: 'Cairo', sans-serif !important;
-}
-/* كتل الكود تبقى LTR بخط monospace */
-pre, code, .stCode, .stMarkdown pre, .stMarkdown code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace !important;
-  direction: ltr !important;
-  text-align: left !important;
-}
-/* أعِد تثبيت خطوط الأيقونات (حتى لا تتأثر بقواعد Cairo) */
-.material-icons,
-.material-symbols-outlined,
-.material-symbols-rounded,
-.material-symbols-sharp,
-[class*="material-symbols"],
-[data-testid="stIconMaterial"],
-[data-testid="stIconMaterial"] *,
-span[translate="no"] {
-  font-family: 'Material Symbols Rounded','Material Symbols Outlined','Material Symbols Sharp','Material Icons' !important;
-  font-feature-settings: 'liga' 1 !important;
-  -webkit-font-feature-settings: 'liga' 1 !important;
-  direction: ltr !important;
-  text-align: center !important;
-  letter-spacing: normal !important;
-}
-
-/* 2) RTL شامل (مع أولوية عالية) */
-html, body, .stApp,
-[data-testid="stAppViewContainer"], [data-testid="stMain"], [data-testid="stSidebar"],
-[data-testid="stVerticalBlock"], [data-testid="stHorizontalBlock"], .block-container {
+/* 1) Streamlit Tabs (BaseWeb) — rely on `direction: rtl` (better underline positioning) */
+[data-testid="stTabs"]{
   direction: rtl !important;
-  text-align: right !important;
 }
-
-/* 3) Streamlit columns & any horizontal blocks: من اليمين لليسار */
-div[data-testid="stHorizontalBlock"]{
-  display: flex !important;
-  flex-direction: row-reverse !important;
-}
-
-/* 4) Tabs (st.tabs): ضع التبويبات يمينًا + رتّبها RTL (يحل: تسجيل الدخول/إنشاء حساب + سجلات/الصفقات/الأرشيف) */
 [data-testid="stTabs"] [data-baseweb="tab-list"],
 [data-testid="stTabs"] [role="tablist"]{
-  width: 100% !important;
-  display: flex !important;
-  flex-direction: row-reverse !important;
-  justify-content: flex-start !important; /* مع row-reverse = يمين */
   direction: rtl !important;
+  flex-direction: row !important;   /* keep natural row; rtl handles visual order */
+  justify-content: flex-start !important; /* in rtl, flex-start = RIGHT */
   text-align: right !important;
 }
 [data-testid="stTabs"] [data-baseweb="tab"],
-[data-testid="stTabs"] button[role="tab"]{
-  direction: rtl !important;
-  text-align: right !important;
-}
-[data-testid="stTabs"] [data-baseweb="tab-panel"],
-[data-testid="stTabs"] [role="tabpanel"]{
+[data-testid="stTabs"] [role="tab"]{
   direction: rtl !important;
   text-align: right !important;
 }
 
-/* 5) Labels داخل النماذج (تسجيل الدخول/اسم المستخدم/كلمة المرور…): يمين */
-[data-baseweb="form-control"] label,
-label[data-baseweb="form-control-label"],
-div[data-baseweb="form-control-label"],
-[data-testid="stTextInput"] label,
-[data-testid="stPassword"] label,
-[data-testid="stEmailInput"] label,
-[data-testid="stNumberInput"] label,
-[data-testid="stTextArea"] label,
-[data-testid="stSelectbox"] label,
-[data-testid="stDateInput"] label,
-[data-testid="stTimeInput"] label,
-[data-testid="stFileUploader"] label{
-  width: 100% !important;
+/* 2) Streamlit Columns — rely on rtl flow instead of row-reverse */
+div[data-testid="stHorizontalBlock"],
+div[data-testid="stColumns"],
+.stHorizontalBlock,
+.stColumns{
+  direction: rtl !important;
+  flex-direction: row !important;  /* rtl makes first column appear on the RIGHT */
+}
+
+/* 3) Widget labels — guarantee RTL in forms (login/register) */
+form, form *{
+  direction: rtl !important;
+}
+div[data-testid="stTextInput"],
+div[data-testid="stTextInput"] label,
+div[data-testid="stTextInput"] p,
+div[data-testid="stSelectbox"],
+div[data-testid="stSelectbox"] label,
+div[data-testid="stSelectbox"] p,
+div[data-testid="stCheckbox"],
+div[data-testid="stCheckbox"] label,
+div[data-testid="stCheckbox"] p{
   direction: rtl !important;
   text-align: right !important;
 }
 
-/* 6) BaseWeb inputs/selects: اجعل الأيقونات/الأسهم تتبع RTL */
-div[data-baseweb="input"],
-div[data-baseweb="textarea"],
-div[data-baseweb="select"]{
-  direction: rtl !important;
-  text-align: right !important;
-}
-/* swap start/end enhancers so icons (مثل eye) تصير على الطرف الصحيح في RTL */
-div[data-baseweb="input"] > div,
-div[data-baseweb="textarea"] > div,
-div[data-baseweb="select"] > div{
+/* 4) BaseWeb inputs — icon/prefix on RIGHT */
+[data-baseweb="input"] > div,
+[data-baseweb="textarea"] > div{
   flex-direction: row-reverse !important;
 }
-/* combobox نفسه */
-div[data-baseweb="select"] [role="combobox"],
-div[data-baseweb="select"] input{
-  direction: rtl !important;
-  text-align: right !important;
-}
 
-/* 7) Checkbox/Radio: أيقونة + نص من اليمين */
-[data-testid="stCheckbox"] label,
-[data-testid="stRadio"] label,
-[data-testid="stToggle"] label{
-  direction: rtl !important;
-  text-align: right !important;
+/* 5) KPI icon background on RIGHT */
+.kpi-icon-bg{
+  right: -10px !important;
+  left: auto !important;
 }
-[data-testid="stCheckbox"] label > div,
-[data-testid="stRadio"] label > div{
-  flex-direction: row-reverse !important;
-  justify-content: flex-end !important;
+.kpi-card:hover .kpi-icon-bg{
+  right: -4px !important;
+  left: auto !important;
 }
-
-/* 8) Metrics (مثل مؤشر TASI): محاذاة RTL مع إبقاء الأرقام LTR */
-div[data-testid="stMetric"]{
-  direction: rtl !important;
-  text-align: right !important;
-}
-[data-testid="stMetricLabel"]{ direction: rtl !important; text-align: right !important; }
-[data-testid="stMetricValue"], [data-testid="stMetricValue"] *{
-  direction: ltr !important;
-  unicode-bidi: plaintext !important;
-  text-align: right !important;
-}
-[data-testid="stMetricDelta"]{
-  direction: rtl !important;
-  display: inline-flex !important;
-  flex-direction: row-reverse !important;
-  justify-content: flex-end !important;
-  gap: .25rem !important;
-}
-
-/* 9) KPI background icons: انقلها لليمين (إجمالي الإيداعات/الأصول… إلخ) */
-.kpi-icon-bg{ left: auto !important; right: -10px !important; }
-.kpi-card:hover .kpi-icon-bg{ left: auto !important; right: -4px !important; }
-
-/* === /OSOOLI RTL FINAL (v4) === */
-
 
 </style>
         """
