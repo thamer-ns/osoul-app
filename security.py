@@ -6,6 +6,7 @@ import time
 import hmac
 import hashlib
 import base64
+import textwrap
 
 try:
     import extra_streamlit_components as stx  # type: ignore
@@ -17,7 +18,7 @@ except Exception:
 import streamlit as st
 
 import config
-from config import APP_ICON, APP_NAME
+from config import APP_ICON, APP_NAME, LOGO_FULL_PATH
 from database import db_create_user, db_verify_user, db_user_exists, fetch_table
 
 
@@ -449,6 +450,7 @@ def require_login():
         if exp and int(time.time()) > int(exp):
             logout_user()
             st.warning("انتهت صلاحية الجلسة. الرجاء تسجيل الدخول مرة أخرى.")
+
         now = datetime.utcnow()
         last = st.session_state.get("last_seen")
         idle_minutes = int(getattr(config, "SESSION_IDLE_MINUTES", 120) or 120)
@@ -460,29 +462,53 @@ def require_login():
             return True
 
     # ===== Landing / Auth UI =====
-    # Render icon (emoji or logo path)
+    # Prefer full logo if available; fallback to APP_ICON
+    def _b64_image(path: str):
+        try:
+            if not path:
+                return None
+            if not os.path.isabs(path):
+                path = os.path.join(os.path.dirname(__file__), path)
+            if not os.path.exists(path):
+                return None
+            with open(path, 'rb') as f:
+                return base64.b64encode(f.read()).decode('utf-8')
+        except Exception:
+            return None
+
+    icon_html = None
     try:
-        if isinstance(APP_ICON, str) and (APP_ICON.lower().endswith((".png",".jpg",".jpeg",".webp")) or "/" in APP_ICON):
-            b64 = None
-            try:
-                with open(APP_ICON, "rb") as f:
-                    import base64
-                    b64 = base64.b64encode(f.read()).decode("utf-8")
-            except Exception:
-                b64 = None
-            icon_html = f"<img src=\"data:image/png;base64,{b64}\" style=\"width:28px;height:28px;vertical-align:middle;border-radius:8px;\"/>" if b64 else "📈"
-        else:
-            icon_html = str(APP_ICON)
+        b64_logo = _b64_image(LOGO_FULL_PATH)
+        if b64_logo:
+            icon_html = (
+                f"<img src='data:image/png;base64,{b64_logo}' "
+                "style='width:42px;height:42px;vertical-align:middle;border-radius:12px;'/>"
+            )
     except Exception:
-        icon_html = "📈"
+        icon_html = None
+
+    if not icon_html:
+        try:
+            if isinstance(APP_ICON, str) and (APP_ICON.lower().endswith((".png", ".jpg", ".jpeg", ".webp")) or "/" in APP_ICON):
+                b64 = _b64_image(APP_ICON)
+                icon_html = (
+                    f"<img src='data:image/png;base64,{b64}' style='width:34px;height:34px;vertical-align:middle;border-radius:10px;'/>"
+                    if b64 else "📈"
+                )
+            else:
+                icon_html = str(APP_ICON)
+        except Exception:
+            icon_html = "📈"
 
     st.markdown(
-        f"""
-        <div class="landing-hero">
-          <div class="landing-title">{icon_html} {APP_NAME}</div>
-          <div class="landing-sub">منصة عربية لتحليل المحافظ، إدارة المخاطر، والباكتيست — بواجهة احترافية وواضحة.</div>
-        </div>
-        """,
+        textwrap.dedent(
+            f"""
+            <div class="landing-hero">
+              <div class="landing-title">{icon_html} {APP_NAME}</div>
+              <div class="landing-sub">منصة عربية لتحليل المحافظ، إدارة المخاطر، والباكتيست — بواجهة احترافية وواضحة.</div>
+            </div>
+            """
+        ).strip(),
         unsafe_allow_html=True,
     )
 
@@ -490,14 +516,7 @@ def require_login():
 
     with tab1:
         st.subheader("تسجيل الدخول")
-
-        # ✅ form يضمن أن Enter يرسل
-        try:
-            _login_form = st.form("login_form", clear_on_submit=False, enter_to_submit=True)
-        except TypeError:
-            _login_form = st.form("login_form", clear_on_submit=False)
-
-        with _login_form:
+        with st.form("login_form", clear_on_submit=False):
             u = st.text_input("اسم المستخدم", key="login_username")
             p = st.text_input("كلمة المرور", type="password", key="login_password")
             if getattr(config, "ALLOW_LEGACY_PIN", True):
@@ -516,13 +535,7 @@ def require_login():
 
     with tab2:
         st.subheader("إنشاء حساب جديد")
-
-        try:
-            _reg_form = st.form("register_form", clear_on_submit=False, enter_to_submit=True)
-        except TypeError:
-            _reg_form = st.form("register_form", clear_on_submit=False)
-
-        with _reg_form:
+        with st.form("register_form", clear_on_submit=False):
             u2 = st.text_input("اسم المستخدم", key="reg_username")
             p2 = st.text_input("كلمة المرور", type="password", key="reg_password")
 
@@ -541,6 +554,7 @@ def require_login():
                 st.error(msg)
 
     return False
+
 # ============================================================
 # 8) Backward-compatible alias
 # ============================================================
