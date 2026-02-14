@@ -5,14 +5,7 @@ from typing import Optional
 
 import streamlit as st
 
-# Global UI (RTL + sidebar control) — must run after set_page_config
-try:
-    from theme.global_ui import configure_page, apply_global_ui
-except Exception:
-    configure_page = None
-    apply_global_ui = None
-
-# Arabic UI: translate Streamlit default placeholders (call AFTER page config)
+# Arabic UI: translate Streamlit default placeholders (called after set_page_config)
 try:
     from components import inject_streamlit_ar_i18n
 except Exception:
@@ -80,26 +73,19 @@ def _init_db_once():
 
 
 def main():
-    # Page config MUST be the first Streamlit call
-    if configure_page:
-        try:
-            configure_page(APP_NAME, APP_ICON)
-        except Exception:
-            st.set_page_config(page_title=APP_NAME, page_icon='📈', layout='wide', initial_sidebar_state='expanded')
-    else:
-        st.set_page_config(
-            page_title=APP_NAME,
-            page_icon=APP_ICON if isinstance(APP_ICON, str) and len(APP_ICON) <= 4 else '📈',
-            layout='wide',
-            initial_sidebar_state='expanded',
-        )
+    st.set_page_config(
+        page_title=APP_NAME,
+        page_icon=APP_ICON if isinstance(APP_ICON, str) and len(APP_ICON) <= 4 else "📈",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
 
-    # Arabic i18n (AFTER page config)
-    if inject_streamlit_ar_i18n:
-        try:
+    # i18n (DOM translation) يجب أن يأتي بعد set_page_config
+    try:
+        if inject_streamlit_ar_i18n:
             inject_streamlit_ar_i18n(True)
-        except Exception:
-            pass
+    except Exception:
+        pass
 
     # CSS (آمن)
     try:
@@ -107,12 +93,6 @@ def main():
     except Exception:
         pass
 
-    # Global UI overrides (RTL scoped + keep sidebar button clickable)
-    if apply_global_ui:
-        try:
-            apply_global_ui(rtl=True)
-        except Exception:
-            pass
     # CSS إضافي (اختياري)
     if apply_ui_css:
         try:
