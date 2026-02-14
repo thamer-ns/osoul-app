@@ -100,8 +100,8 @@ def render_app_header(
 ):
     """Render a lightweight, professional header (fail-safe).
 
-    ملاحظة: كان يظهر الـHTML كنص بسبب مسافات بادئة داخل Markdown.
-    نعالج ذلك عبر `textwrap.dedent` + توحيد أسماء الـCSS classes مع styles.py.
+    ملاحظة: كان يظهر الـHTML كنص بسبب تفسيره كـMarkdown code-block (Indentation).
+    نعالج ذلك عبر `textwrap.dedent(...).strip()` لضمان HTML نظيف.
     """
     try:
         _ = show_in_sidebar
@@ -117,21 +117,21 @@ def render_app_header(
             f"<div class='os-h-logo'><img src='data:image/png;base64,{b64}' alt='logo'/></div>" if b64 else ""
         )
 
-        html_block = (
-    "<div class='os-app-header'>"
-    "<div class='os-h-left'>"
-    f"{logo_html}"
-    "<div>"
-    f"<div class='os-h-title'>{html.escape(title)}</div>"
-    f"<div class='os-h-sub'>{html.escape(subtitle)}</div>"
-    "</div>"
-    "</div>"
-    "<div class='os-h-right'>"
-    "<span class='os-chip os-chip-blue'>📊 تحليل</span>"
-    "<span class='os-chip os-chip-gray'>🛡️ مخاطر</span>"
-    "</div>"
-    "</div>"
-)
+        html_block = textwrap.dedent(f"""
+        <div class='os-app-header'>
+          <div class='os-h-left'>
+            {logo_html}
+            <div>
+              <div class='os-h-title'>{html.escape(title)}</div>
+              <div class='os-h-sub'>{html.escape(subtitle)}</div>
+            </div>
+          </div>
+          <div class='os-h-right'>
+            <span class='os-chip os-chip-blue'>📊 تحليل</span>
+            <span class='os-chip os-chip-gray'>🛡️ مخاطر</span>
+          </div>
+        </div>
+        """).strip()
 
         st.markdown(html_block, unsafe_allow_html=True)
     except Exception:
@@ -139,7 +139,6 @@ def render_app_header(
             st.markdown(f"### {title}")
         except Exception:
             pass
-
 # ============================================================
 # 🧼 Helpers: Safe parsing/formatting
 
