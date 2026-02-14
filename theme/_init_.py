@@ -1,1 +1,2 @@
-# theme package
+# -*- coding: utf-8 -*-
+"""Theme package."""
