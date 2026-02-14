@@ -417,60 +417,88 @@ def apply_custom_css():
         div[role="tooltip"] { display: none !important; opacity: 0 !important; visibility: hidden !important; }
         button[title="View fullscreen"] { display: none !important; }
 
-/* ✅ إخفاء الشريط العلوي في Streamlit Cloud (Share / Star / …) */
-header [data-testid="stToolbar"],
-header [data-testid="stAppToolbar"],
-header [data-testid="stHeaderActionElements"],
-div[data-testid="stToolbar"],
-div[data-testid="stAppToolbar"],
-/* Hide Streamlit top bar actions (Share/Star) WITHOUT killing sidebar toggle */
-div[data-testid="stStatusWidget"]{
-    display: none !important;
-}
 
-/* Keep top bar wrapper but collapse it visually */
-div[data-testid="stTopBar"]{
-    height: 0 !important;
-    min-height: 0 !important;
+/* =====================================================
+   Top bar cleanup (إخفاء أزرار Streamlit العلوية بدون كسر زر فتح القائمة)
+   ===================================================== */
+/* نُبقي <header> موجود لأن زر فتح القائمة يعتمد عليه */
+header { display: block !important; }
+
+/* إخفاء الزخرفة/الخط العلوي */
+div[data-testid="stDecoration"] { display: none !important; }
+
+/* إخفاء شريط الأدوات العلوي (Share / Star / …) */
+div[data-testid="stToolbar"],
+div[data-testid="stToolbarActions"],
+div[data-testid="stAppToolbar"],
+div[data-testid="stStatusWidget"] { display: none !important; }
+
+/* إخفاء Toolbars/Tooltips داخل الصفحة */
+[data-testid="stElementToolbar"] { display: none !important; }
+div[role="tooltip"] { display: none !important; opacity: 0 !important; visibility: hidden !important; }
+button[title="View fullscreen"] { display: none !important; }
+
+/* =====================================================
+   Sidebar collapsed control (زر فتح القائمة) — دائمًا ظاهر
+   ===================================================== */
+div[data-testid="stSidebarCollapsedControl"],
+div[data-testid="collapsedControl"],
+[data-testid="collapsedControl"]{
+    position: fixed !important;
+    top: 0.85rem !important;
+    right: 0.85rem !important;
+    left: auto !important;
+    width: auto !important;
+    height: auto !important;
     padding: 0 !important;
     margin: 0 !important;
     background: transparent !important;
+    border: none !important;
     box-shadow: none !important;
-    border: 0 !important;
-    overflow: visible !important; /* allow sidebar toggle to remain clickable */
+    z-index: 100001 !important;
+    pointer-events: auto !important;
 }
 
-/* Some versions wrap the bar in stDecoration; neutralize instead of hiding */
-div[data-testid="stDecoration"]{
-    height: 0 !important;
-    background: transparent !important;
-    box-shadow: none !important;
-    border: 0 !important;
-}
-
-/* Hide all default top-bar content/buttons */
-div[data-testid="stTopBar"] *{
+div[data-testid="stSidebarCollapsedControl"]::before,
+div[data-testid="stSidebarCollapsedControl"]::after,
+div[data-testid="collapsedControl"]::before,
+div[data-testid="collapsedControl"]::after,
+[data-testid="collapsedControl"]::before,
+[data-testid="collapsedControl"]::after{
     display: none !important;
+    content: none !important;
 }
 
-/* ✅ BUT keep the sidebar collapsed control visible */
-div[data-testid="stTopBar"] div[data-testid="stSidebarCollapsedControl"],
-div[data-testid="stTopBar"] div[data-testid="collapsedControl"]{
-    display: block !important;
-}
-div[data-testid="stTopBar"] div[data-testid="stSidebarCollapsedControl"] *,
-div[data-testid="stTopBar"] div[data-testid="collapsedControl"] *{
-    display: initial !important;
+div[data-testid="stSidebarCollapsedControl"] button,
+div[data-testid="collapsedControl"] button,
+[data-testid="collapsedControl"] button,
+button[title="Open sidebar"],
+button[aria-label="Open sidebar"]{
+    pointer-events: auto !important;
+    width: 42px !important;
+    height: 42px !important;
+    min-width: 42px !important;
+    min-height: 42px !important;
+    padding: 0 !important;
+    border-radius: 999px !important;
+    border: 1px solid var(--border2) !important;
+    background: var(--card-bg) !important;
+    box-shadow: 0 10px 24px rgba(15,23,42,0.10) !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
 }
 
-/* حافظ على وجود الـheader لأن زر فتح الـSidebar يعتمد عليه */
-header{
-    background: transparent !important;
-    box-shadow: none !important;
+div[data-testid="stSidebarCollapsedControl"] button *,
+div[data-testid="collapsedControl"] button *,
+[data-testid="collapsedControl"] button *{
+    font-family: 'Material Symbols Rounded','Material Symbols Outlined','Material Symbols Sharp','Material Icons' !important;
+    font-feature-settings: 'liga' 1 !important;
+    -webkit-font-feature-settings: 'liga' 1 !important;
 }
 
 
-        /* =====================================================
+/* =====================================================
            Expander
            ===================================================== */
         div[data-testid="stExpander"]{
