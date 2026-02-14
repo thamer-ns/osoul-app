@@ -120,8 +120,8 @@ def render_app_header(
                 </div>
               </div>
               <div class='os-h-right'>
-                <span class='os-chip os-chip-blue'><span class='mi'>insights</span>تحليل</span>
-                <span class='os-chip os-chip-gray'><span class='mi'>shield</span>مخاطر</span>
+                <span class='os-chip os-chip-blue'>📊 تحليل</span>
+                <span class='os-chip os-chip-gray'>🛡️ مخاطر</span>
               </div>
             </div>
             """
