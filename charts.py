@@ -1,5 +1,6 @@
 import streamlit as st
 import plotly.graph_objects as go
+import re
 
 from data_normalizer import normalize_ohlcv
 from plotly.subplots import make_subplots
