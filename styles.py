@@ -1,5 +1,6 @@
 # styles.py
 import streamlit as st
+import textwrap
 
 
 def apply_custom_css():
@@ -763,90 +764,140 @@ section[data-testid="stSidebar"] {
             text-align: right !important;
         }
 
+/* =====================================================
+   OSOOLI RTL OVERRIDES (آخر القواعد للفوز على أي تعارض)
+   ===================================================== */
 
-        /* =====================================================
-           ✅ OS RTL + Sidebar Right (Hard override)
-           - Forces the whole app to be truly RTL (layout + text)
-           - Moves Streamlit sidebar to the RIGHT (even after toggle)
-           - Prevents collapsed sidebar control from turning into a vertical bar
-           ===================================================== */
+/* 1) اتجاه عام + محاذاة */
+html, body, .stApp,
+[data-testid="stAppViewContainer"], [data-testid="stMain"], [data-testid="stSidebar"]{
+    direction: rtl !important;
+    text-align: right !important;
+}
 
-        /* Force document direction */
-        html, body, .stApp,
-        [data-testid="stAppViewContainer"],
-        [data-testid="stMain"],
-        [data-testid="stSidebar"] {
-            direction: rtl !important;
-            text-align: right !important;
-        }
+/* 2) نقل الـSidebar لليمين (نقلب صف الحاوية الأساسية) */
+div[data-testid="stAppViewContainer"] > div:first-child{
+    display: flex !important;
+    flex-direction: row-reverse !important;
+    width: 100% !important;
+}
 
-        /* 1) Reverse the main layout container (sidebar on the right) */
-        [data-testid="stAppViewContainer"] > div:first-child,
-        [data-testid="stAppViewContainer"] > div:first-child > div {
-            display: flex !important;
-            flex-direction: row-reverse !important;
-            align-items: stretch !important;
-        }
+section[data-testid="stSidebar"], div[data-testid="stSidebar"]{
+    order: 2 !important;
+    border-right: none !important;
+}
+section[data-testid="stMain"], div[data-testid="stMain"], main[data-testid="stMain"]{
+    order: 1 !important;
+}
 
-        /* 2) Sidebar positioning: match Streamlit variants (div/section) */
-        [data-testid="stSidebar"] {
-            right: 0 !important;
-            left: auto !important;
-            border-left: 1px solid var(--border) !important;
-            border-right: none !important;
-        }
+/* 3) أعمدة Streamlit */
+div[data-testid="stHorizontalBlock"]{
+    display: flex !important;
+    flex-direction: row-reverse !important;
+}
 
-        /* When Streamlit collapses sidebar, it often uses translateX(-100%) for LEFT.
-           Invert it to hide to the RIGHT instead. */
-        [data-testid="stSidebar"][style*="translateX(-"],
-        [data-testid="stSidebar"][style*="translate3d(-"] {
-            transform: translateX(100%) !important;
-        }
+/* 3.5) Metrics: محاذاة يمين بدون كسر الأرقام */
+[data-testid="stMetricLabel"]{
+    direction: rtl !important;
+    text-align: right !important;
+}
+[data-testid="stMetricValue"],
+[data-testid="stMetricDelta"]{
+    direction: ltr !important; /* الأرقام أفضل LTR */
+    text-align: right !important;
+}
 
-        /* 3) Main content should not reserve left margin for sidebar */
-        [data-testid="stMain"] {
-            margin-left: 0 !important;
-        }
+/* 4) أزرار/عناصر فيها أيقونة + نص */
+.stButton > button,
+button[kind],
+button{
+    direction: rtl !important;
+    text-align: right !important;
+}
+.stButton > button{
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    flex-direction: row-reverse !important;
+    gap: .45rem !important;
+}
 
-        /* 4) Keep collapsed/open control as a normal button (no vertical "line") */
-        [data-testid="collapsedControl"],
-        [data-testid="stSidebarCollapsedControl"] {
-            position: fixed !important;
-            top: 0.85rem !important;
-            right: 0.85rem !important;
-            left: auto !important;
-            width: 44px !important;
-            height: 44px !important;
-            max-height: 44px !important;
-            overflow: hidden !important;
-            background: transparent !important;
-            z-index: 100000 !important;
-        }
-        [data-testid="collapsedControl"] button,
-        [data-testid="stSidebarCollapsedControl"] button,
-        button[title="Open sidebar"],
-        button[aria-label="Open sidebar"] {
-            width: 44px !important;
-            height: 44px !important;
-            min-width: 44px !important;
-            min-height: 44px !important;
-            border-radius: 999px !important;
-        }
+/* 5) عناصر القائمة (radio) داخل الـSidebar */
+[data-testid="stSidebar"] [role="radiogroup"] label{
+    direction: rtl !important;
+    text-align: right !important;
+    justify-content: flex-end !important;
+}
 
-        /* 5) True RTL for Columns / layout rows */
-        [data-testid="stHorizontalBlock"],
-        [data-testid="stColumns"],
-        .stHorizontalBlock,
-        .stColumns {
-            flex-direction: row-reverse !important;
-        }
+/* 6) زر الطي/الفتح بدون خط عمودي */
+div[data-testid="stSidebarCollapsedControl"],
+div[data-testid="collapsedControl"],
+[data-testid="collapsedControl"]{
+    position: fixed !important;
+    top: 0.85rem !important;
+    right: 0.85rem !important;
+    left: auto !important;
 
-        /* 6) Sidebar widgets (radio/checkbox) align RTL */
-        [data-testid="stSidebar"] [role="radiogroup"] label {
-            flex-direction: row-reverse !important;
-            justify-content: space-between !important;
-        }
+    width: 46px !important;
+    height: 46px !important;
+    min-width: 46px !important;
+    min-height: 46px !important;
 
+    padding: 0 !important;
+    margin: 0 !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+    z-index: 100000 !important;
+    pointer-events: auto !important;
+
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+
+div[data-testid="stSidebarCollapsedControl"]::before,
+div[data-testid="stSidebarCollapsedControl"]::after,
+div[data-testid="collapsedControl"]::before,
+div[data-testid="collapsedControl"]::after,
+[data-testid="collapsedControl"]::before,
+[data-testid="collapsedControl"]::after{
+    display:none !important;
+    content:none !important;
+}
+
+div[data-testid="stSidebarCollapsedControl"] button,
+div[data-testid="collapsedControl"] button,
+[data-testid="collapsedControl"] button,
+button[title="Open sidebar"],
+button[aria-label="Open sidebar"]{
+    width: 46px !important;
+    height: 46px !important;
+    min-width: 46px !important;
+    min-height: 46px !important;
+    padding: 0 !important;
+
+    border-radius: 999px !important;
+    border: 1px solid var(--border2) !important;
+    background: var(--card-bg) !important;
+    box-shadow: 0 10px 24px rgba(15,23,42,0.10) !important;
+
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+
+    pointer-events: auto !important;
+    z-index: 100001 !important;
+}
+
+/* 7) عند الطي: Streamlit غالبًا يخفي الـSidebar لليسار -> نعكس للإخفاء يمين */
+html:has([data-testid="collapsedControl"]) section[data-testid="stSidebar"],
+html:has([data-testid="collapsedControl"]) div[data-testid="stSidebar"]{
+    transform: translateX(100%) !important;
+    border: none !important;
+    box-shadow: none !important;
+}
 
 </style>
         """
@@ -854,4 +905,4 @@ section[data-testid="stSidebar"] {
     # Insert theme variables safely without turning the whole CSS into an f-string.
     css = css.replace("__VAR_CSS__", var_css)
 
-    st.markdown(css, unsafe_allow_html=True)
+    st.markdown(textwrap.dedent(css).strip(), unsafe_allow_html=True)
