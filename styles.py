@@ -145,6 +145,11 @@ def apply_custom_css():
             -webkit-font-smoothing: antialiased;
             text-rendering: geometricPrecision;
         }
+/* ✅ فرض Cairo على كل عناصر Streamlit (الجداول/BaseWeb) */
+.stApp, .stApp * {
+    font-family: var(--font-ar) !important;
+}
+
 
         /* تقوية RTL داخل حاويات Streamlit (بعضها يفرض LTR افتراضيًا) */
         [data-testid="stAppViewContainer"],
@@ -312,6 +317,7 @@ def apply_custom_css():
         pre, code, .stCode, .stMarkdown pre, .stMarkdown code {
             direction: ltr !important;
             text-align: left !important;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
         }
 
         /* إصلاح أيقونات Streamlit/Material (Ligatures) */
@@ -427,12 +433,30 @@ header { display: block !important; }
 /* إخفاء الزخرفة/الخط العلوي */
 div[data-testid="stDecoration"] { display: none !important; }
 
-/* إخفاء شريط الأدوات العلوي (Share / Star / …) */
-div[data-testid="stToolbar"],
+/* إخفاء شريط الأدوات العلوي (Share / Star / …) — مع إبقاء زر فتح القائمة الجانبية */
+/* نخفي مجموعات الأزرار في Streamlit Cloud، لكن لا نخفي stToolbar نفسه لأن زر الـSidebar قد يكون بداخله */
 div[data-testid="stToolbarActions"],
 div[data-testid="stAppToolbar"],
-div[data-testid="stStatusWidget"] { display: none !important; }
+div[data-testid="stStatusWidget"] {
+    display: none !important;
+}
 
+/* في بعض نسخ Streamlit Cloud: الأزرار تكون داخل stToolbar نفسه — نخفي كل شيء ما عدا زر الـSidebar */
+div[data-testid="stToolbar"] a,
+div[data-testid="stToolbar"] button {
+    display: none !important;
+}
+
+div[data-testid="stToolbar"] button[title*="sidebar" i],
+div[data-testid="stToolbar"] button[aria-label*="sidebar" i],
+div[data-testid="stToolbar"] button[title="Open sidebar"],
+div[data-testid="stToolbar"] button[aria-label="Open sidebar"],
+div[data-testid="stToolbar"] button[title="Close sidebar"],
+div[data-testid="stToolbar"] button[aria-label="Close sidebar"],
+div[data-testid="stToolbar"] button[title="Collapse sidebar"],
+div[data-testid="stToolbar"] button[aria-label="Collapse sidebar"] {
+    display: inline-flex !important;
+}
 /* إخفاء Toolbars/Tooltips داخل الصفحة */
 [data-testid="stElementToolbar"] { display: none !important; }
 div[role="tooltip"] { display: none !important; opacity: 0 !important; visibility: hidden !important; }
