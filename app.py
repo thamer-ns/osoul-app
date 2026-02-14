@@ -6,7 +6,11 @@ from typing import Optional
 import streamlit as st
 
 # Arabic UI: translate Streamlit default placeholders
-from components import inject_streamlit_ar_i18n
+# Arabic UI: translate Streamlit default placeholders (called after set_page_config)
+try:
+    from components import inject_streamlit_ar_i18n
+except Exception:
+    inject_streamlit_ar_i18n = None
 # -----------------------------------------------------------------------------
 # 🔧 Import bootstrap
 # بعض الرفعّات إلى GitHub تضع المشروع داخل مجلد فرعي (مثل: osoul-app-main).
@@ -84,7 +88,7 @@ def main():
 
 
     # DOM i18n (ترجمة نصوص Streamlit الافتراضية) - يجب أن يكون بعد set_page_config و CSS
-    if not st.session_state.get("_os_i18n_done"):
+    if inject_streamlit_ar_i18n and not st.session_state.get("_os_i18n_done"):
         try:
             inject_streamlit_ar_i18n(True)
             st.session_state["_os_i18n_done"] = True
