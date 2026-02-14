@@ -6,8 +6,8 @@ import textwrap
 def apply_custom_css():
     """Inject global CSS.
 
-    - Keeps your existing look.
-    - Adds **Light/Dark** theme support (no feature removal).
+    - Keeps your existing look/logic (RTL, sidebar-on-right, icons safety).
+    - Adds light/dark theming via CSS variables.
       Theme key: `st.session_state['ui_theme']` in {"light", "dark"}.
     """
 
@@ -33,12 +33,26 @@ def apply_custom_css():
             --red: #F87171;
             --blue: #60A5FA;
             --amber: #FBBF24;
+
+            /* polish */
+            --radius-xl: 24px;
+            --radius-lg: 18px;
+            --radius-md: 14px;
+            --radius-sm: 12px;
+            --focus: 0 0 0 4px rgba(45,91,255,0.25);
+
+            --table-bg: #0B1220;
+            --table-head-bg: #111B2F;
+            --table-head-txt: #BFDBFE;
+            --table-cell-txt: #E5E7EB;
+            --table-grid: rgba(148,163,184,0.22);
+            --table-hover: rgba(96,165,250,0.07);
         """
     else:
         var_css = """
             --app-bg: #F6F8FB;
             --txt: #0F172A;
-            --muted: #9CA3AF;
+            --muted: #64748B;
             --primary: #2D5BFF;
             --accent: #00D4FF;
             --border: rgba(15,23,42,0.12);
@@ -51,6 +65,20 @@ def apply_custom_css():
             --red: #DC2626;
             --blue: #2563EB;
             --amber: #F59E0B;
+
+            /* polish */
+            --radius-xl: 24px;
+            --radius-lg: 18px;
+            --radius-md: 14px;
+            --radius-sm: 12px;
+            --focus: 0 0 0 4px rgba(45,91,255,0.18);
+
+            --table-bg: #ffffff;
+            --table-head-bg: #EEF2FF;
+            --table-head-txt: #1E3A8A;
+            --table-cell-txt: #0F172A;
+            --table-grid: rgba(15,23,42,0.08);
+            --table-hover: rgba(37,99,235,0.05);
         """
 
     css = """
@@ -59,6 +87,7 @@ def apply_custom_css():
            Fonts
            ===================================================== */
         @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;600;700&display=swap');
         @import url('https://fonts.googleapis.com/icon?family=Material+Icons');
 
         /* ✅ Material Symbols (سبب expand_more كنص) */
@@ -70,9 +99,8 @@ def apply_custom_css():
             --font-ar: 'IBM Plex Sans Arabic', 'Cairo', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
         }
 
-
         /* =====================================================
-           Theme variables (لتحسين الوضوح)
+           Theme variables
            ===================================================== */
         :root{
             __VAR_CSS__
@@ -81,11 +109,8 @@ def apply_custom_css():
         /* ✅ App background for both themes */
         .stApp { background: var(--app-bg) !important; }
 
-                /* =====================================================
+        /* =====================================================
            RTL + Cairo (مركزي) + حماية أيقونات Streamlit
-           - نثبت RTL بشكل عام (حتى صفحة الدخول والتبويبات)
-           - نطبق Cairo على واجهة Streamlit فقط
-           - نستثني Material Icons/Symbols حتى لا تظهر كنص مثل keyboard_double_arrow_left
            ===================================================== */
         html, body {
             direction: rtl !important;
@@ -96,6 +121,13 @@ def apply_custom_css():
             direction: rtl !important;
             text-align: right !important;
             color: var(--txt) !important;
+
+            /* typography base */
+            font-family: var(--font-ar) !important;
+            font-size: 15.5px !important;
+            line-height: 1.8 !important;
+            -webkit-font-smoothing: antialiased;
+            text-rendering: geometricPrecision;
         }
 
         /* تقوية RTL داخل حاويات Streamlit (بعضها يفرض LTR افتراضيًا) */
@@ -116,14 +148,9 @@ def apply_custom_css():
         }
 
         /* إخفاء تلميح Streamlit الإنجليزي أسفل الفورم (لا يؤثر على Enter) */
-        div[data-testid="stForm"] small {
-            display: none !important;
-        }
+        div[data-testid="stForm"] small { display: none !important; }
 
-        /* تطبيق Cairo بالوراثة (بدون كسر Material Icons ligatures) */
-        .stApp {
-            font-family: 'Cairo', sans-serif !important;
-        }
+        /* تطبيق الخط بالوراثة */
         .stApp input,
         .stApp textarea,
         .stApp select,
@@ -144,83 +171,128 @@ def apply_custom_css():
             font-family: inherit !important;
         }
 
-        
+        /* =====================================================
+           Typography polish (بدون تغيير ترتيب/RTL)
+           ===================================================== */
+        .stApp h1{ font-size: 2.05rem !important; font-weight: 950 !important; line-height: 1.25 !important; margin-bottom: 0.35rem !important; }
+        .stApp h2{ font-size: 1.65rem !important; font-weight: 950 !important; line-height: 1.3 !important; margin-bottom: 0.35rem !important; }
+        .stApp h3{ font-size: 1.35rem !important; font-weight: 900 !important; line-height: 1.35 !important; }
+        .stApp p, .stApp li{ font-size: 1rem !important; line-height: 1.95 !important; color: var(--txt) !important; }
+        .stApp small, .stApp .os-muted{ line-height: 1.8 !important; }
 
-/* ✅ GLOBAL_TEXT_RTL_FORCE: تثبيت اتجاه العناوين/النصوص/التبويبات بدون تخريب التنسيق */
-.stApp h1,
-.stApp h2,
-.stApp h3,
-.stApp h4,
-.stApp h5,
-.stApp h6,
-.stApp [data-testid="stTitle"],
-.stApp [data-testid="stHeader"],
-.stApp [data-testid="stSubheader"],
-.stApp [data-testid="stMarkdownContainer"],
-.stApp [data-testid="stMarkdownContainer"] * {
-    direction: rtl !important;
-    text-align: right !important;
-    unicode-bidi: plaintext !important;
-}
+        /* link readability */
+        .stApp a{ color: var(--primary) !important; font-weight: 900 !important; text-decoration: none !important; }
+        .stApp a:hover{ text-decoration: underline !important; }
 
-/* التبويبات (تسجيل الدخول/إنشاء حساب/سجل السحوبات/الصفقات القائمة...) */
-div[data-testid="stTabs"] [data-baseweb="tab-list"] {
-    direction: rtl !important;
-    unicode-bidi: plaintext !important;
-    /* اجعل ترتيب التبويبات من اليمين لليسار وثبّت محاذاتها */
-    flex-direction: row-reverse !important;
-    justify-content: flex-end !important;
-}
-div[data-testid="stTabs"] [data-baseweb="tab"] {
-    direction: rtl !important;
-    text-align: right !important;
-    unicode-bidi: plaintext !important;
-}
+        /* inputs look */
+        div[data-baseweb="input"] input,
+        div[data-baseweb="textarea"] textarea,
+        div[data-baseweb="select"] input{
+            border-radius: var(--radius-md) !important;
+            border: 1px solid var(--border2) !important;
+            background: var(--card-bg) !important;
+            color: var(--txt) !important;
+            min-height: 46px !important;
+            padding: 10px 12px !important;
+            font-weight: 700 !important;
+        }
+        div[data-baseweb="input"] input:focus,
+        div[data-baseweb="textarea"] textarea:focus,
+        div[data-baseweb="select"] input:focus{
+            outline: none !important;
+            box-shadow: var(--focus) !important;
+            border-color: rgba(45,91,255,0.45) !important;
+        }
+        .stTextInput label, .stPassword label, .stNumberInput label, .stTextArea label,
+        .stSelectbox label, .stMultiSelect label, .stDateInput label{
+            font-weight: 900 !important;
+            color: var(--txt) !important;
+            font-size: 0.95rem !important;
+        }
 
-/* حقول الإدخال (اسم المستخدم/كلمة المرور...): العنوان + النص داخل الحقل */
-.stTextInput label,
-.stPassword label,
-.stNumberInput label,
-.stTextArea label,
-.stSelectbox label,
-.stMultiSelect label,
-.stDateInput label {
-    direction: rtl !important;
-    text-align: right !important;
-    unicode-bidi: plaintext !important;
-    width: 100% !important;
-}
-.stTextInput input,
-.stPassword input,
-.stNumberInput input,
-.stTextArea textarea,
-.stSelectbox input,
-.stMultiSelect input,
-.stDateInput input {
-    direction: rtl !important;
-    text-align: right !important;
-    unicode-bidi: plaintext !important;
-}
-.stTextInput input::placeholder,
-.stPassword input::placeholder,
-.stNumberInput input::placeholder,
-.stTextArea textarea::placeholder,
-.stSelectbox input::placeholder,
-.stMultiSelect input::placeholder,
-.stDateInput input::placeholder {
-    direction: rtl !important;
-    text-align: right !important;
-}
+        /* GLOBAL RTL text enforcement (as before) */
+        .stApp h1,
+        .stApp h2,
+        .stApp h3,
+        .stApp h4,
+        .stApp h5,
+        .stApp h6,
+        .stApp [data-testid="stTitle"],
+        .stApp [data-testid="stHeader"],
+        .stApp [data-testid="stSubheader"],
+        .stApp [data-testid="stMarkdownContainer"],
+        .stApp [data-testid="stMarkdownContainer"] * {
+            direction: rtl !important;
+            text-align: right !important;
+            unicode-bidi: plaintext !important;
+        }
 
-/* عناصر قياس Streamlit (مثل المؤشر العام TASI) */
-[data-testid="stMetric"],
-[data-testid="stMetric"] * {
-    direction: rtl !important;
-    text-align: right !important;
-    unicode-bidi: plaintext !important;
-}
+        /* التبويبات */
+        div[data-testid="stTabs"] [data-baseweb="tab-list"] {
+            direction: rtl !important;
+            unicode-bidi: plaintext !important;
+            flex-direction: row-reverse !important;
+            justify-content: flex-end !important;
+            gap: 6px !important;
+            padding-bottom: 6px !important;
+            border-bottom: 1px solid var(--border) !important;
+        }
+        div[data-testid="stTabs"] [data-baseweb="tab"] {
+            direction: rtl !important;
+            text-align: right !important;
+            unicode-bidi: plaintext !important;
+            font-weight: 900 !important;
+            font-size: 0.95rem !important;
+            border-radius: 999px !important;
+            padding: 10px 14px !important;
+        }
+        /* active tab highlight */
+        div[data-testid="stTabs"] [aria-selected="true"]{
+            background: rgba(45,91,255,0.10) !important;
+            box-shadow: 0 8px 16px rgba(15,23,42,0.06) !important;
+        }
 
-/* Code/JSON blocks يجب أن تبقى LTR */
+        /* حقول الإدخال داخل الحقول */
+        .stTextInput input,
+        .stPassword input,
+        .stNumberInput input,
+        .stTextArea textarea,
+        .stSelectbox input,
+        .stMultiSelect input,
+        .stDateInput input {
+            direction: rtl !important;
+            text-align: right !important;
+            unicode-bidi: plaintext !important;
+        }
+
+        /* عناصر قياس Streamlit (مثل المؤشر العام TASI) */
+        [data-testid="stMetric"]{
+            border-radius: var(--radius-lg) !important;
+            padding: 14px 14px !important;
+        }
+        [data-testid="stMetric"] [data-testid="stMetricLabel"]{
+            color: var(--muted) !important;
+            font-weight: 900 !important;
+            font-size: 0.95rem !important;
+        }
+        [data-testid="stMetric"] [data-testid="stMetricValue"]{
+            font-weight: 950 !important;
+            font-size: 2.1rem !important;
+            letter-spacing: 0.3px !important;
+            color: var(--txt) !important;
+        }
+        [data-testid="stMetric"] [data-testid="stMetricDelta"]{
+            font-weight: 900 !important;
+            font-size: 0.95rem !important;
+        }
+        [data-testid="stMetric"],
+        [data-testid="stMetric"] * {
+            direction: rtl !important;
+            text-align: right !important;
+            unicode-bidi: plaintext !important;
+        }
+
+        /* Code/JSON blocks يجب أن تبقى LTR */
         pre, code, .stCode, .stMarkdown pre, .stMarkdown code {
             direction: ltr !important;
             text-align: left !important;
@@ -244,12 +316,11 @@ div[data-testid="stTabs"] [data-baseweb="tab"] {
         }
 
         /* =====================================================
-           Sidebar collapsed control: منع ظهور الخط/الشريط عند طيّ القائمة
+           Sidebar collapsed control (كما هو)
            ===================================================== */
         div[data-testid="stSidebarCollapsedControl"],
         div[data-testid="collapsedControl"],
         [data-testid="collapsedControl"] {
-            /* اجعل الحاوية 0x0 حتى لا تتحول إلى خط عمودي */
             width: 0 !important;
             height: 0 !important;
             padding: 0 !important;
@@ -297,7 +368,6 @@ div[data-testid="stTabs"] [data-baseweb="tab"] {
             z-index: 100001 !important;
         }
 
-        /* ضمان أن أيقونة زر الفتح لا تتحول إلى نص (keyboard_double_arrow_left) */
         div[data-testid="stSidebarCollapsedControl"] button *,
         div[data-testid="collapsedControl"] button *,
         [data-testid="collapsedControl"] button * {
@@ -320,113 +390,53 @@ div[data-testid="stTabs"] [data-baseweb="tab"] {
             box-shadow: none !important;
         }
 
-/* Tabs: اجعل ترتيب الألسنة RTL */
-[data-testid="stTabs"] [role="tablist"]{
-    flex-direction: row-reverse !important;
-    justify-content: flex-start !important;
-}
-
-
-/* =====================================================
-           Material Icons / Symbols fixes
+        /* =====================================================
+           UI Cleanup
            ===================================================== */
-        .material-icons,
-        i.material-icons,
-        span.material-icons {
-            font-family: 'Material Icons' !important;
-            direction: ltr !important;
-            text-align: center !important;
-            font-weight: normal !important;
-            font-style: normal !important;
-            letter-spacing: normal !important;
-            text-transform: none !important;
-            white-space: nowrap !important;
-            -webkit-font-feature-settings: "liga" !important;
-            font-feature-settings: "liga" !important;
-            -webkit-font-smoothing: antialiased !important;
-        }
+        #MainMenu { visibility: hidden !important; }
+        footer { visibility: hidden !important; height: 0 !important; }
+        header { display: block !important; }
 
-        .material-symbols-outlined,
-        .material-symbols-rounded,
-        .material-symbols-sharp,
-        [class*="material-symbols"] {
-            font-family: 'Material Symbols Rounded', 'Material Symbols Outlined', 'Material Symbols Sharp' !important;
-            direction: ltr !important;
-            text-align: center !important;
-            font-weight: normal !important;
-            font-style: normal !important;
-            letter-spacing: normal !important;
-            text-transform: none !important;
-            white-space: nowrap !important;
-            -webkit-font-feature-settings: "liga" !important;
-            font-feature-settings: "liga" !important;
-            -webkit-font-smoothing: antialiased !important;
-        }
+        [data-testid="stElementToolbar"] { display: none !important; }
+        div[role="tooltip"] { display: none !important; opacity: 0 !important; visibility: hidden !important; }
+        button[title="View fullscreen"] { display: none !important; }
 
-        
-/* =====================================================
-   UI Cleanup
-   ===================================================== */
-/* لا نخفي <header> لأن زر فتح الـSidebar عند الطيّ يعتمد عليه */
-#MainMenu { visibility: hidden !important; }
-footer { visibility: hidden !important; height: 0 !important; }
-
-/* لا نخفي <header> لأن زر فتح الـSidebar يعتمد عليه */
-header { display: block !important; }
-
-/* إخفاء Toolbars */
-[data-testid="stElementToolbar"] { display: none !important; }
-div[role="tooltip"] { display: none !important; opacity: 0 !important; visibility: hidden !important; }
-button[title="View fullscreen"] { display: none !important; }
-
-/* إزالة خط الـResizer الذي يظهر عند طيّ القائمة */
-div[data-testid="stSidebarResizer"],
-div[data-testid="stSidebarResizeHandle"],
-div[data-testid="stSidebarResizeHandle"] * {
-    display: none !important;
-}
-
-section[data-testid="stSidebar"] {
-    border-right: none !important;
-    border-left: none !important;
-    box-shadow: none !important;
-}
-
-/* =====================================================
-   Expander (رفع التباين)
+        /* =====================================================
+           Expander
            ===================================================== */
         div[data-testid="stExpander"]{
             border: 1px solid var(--border2) !important;
-            border-radius: 14px !important;
+            border-radius: var(--radius-lg) !important;
             background: var(--card-bg) !important;
             box-shadow: 0 8px 18px rgba(15,23,42,0.06) !important;
             margin-bottom: 12px !important;
         }
         div[data-testid="stExpander"] details summary{
-            font-weight: 900 !important;
+            font-weight: 950 !important;
             color: var(--primary) !important;
             padding: 12px 16px !important;
+            border-radius: var(--radius-lg) !important;
         }
         div[data-testid="stExpander"] details summary:hover{
             background: rgba(37,99,235,0.06) !important;
         }
 
         /* =====================================================
-           KPI Cards
+           KPI Cards (polish)
            ===================================================== */
         .kpi-card {
             background: var(--card-bg) !important;
-            border-radius: 22px !important;
-            padding: 22px 20px !important;
+            border-radius: var(--radius-xl) !important;
+            padding: 18px 18px !important;
             position: relative;
             overflow: hidden;
             border: 1px solid var(--border) !important;
             box-shadow: var(--shadow) !important;
-            transition: all 0.25s ease;
-            margin-bottom: 16px !important;
+            transition: all 0.22s ease;
+            margin-bottom: 14px !important;
         }
         .kpi-card:hover {
-            transform: translateY(-4px) !important;
+            transform: translateY(-3px) !important;
             box-shadow: var(--shadow2) !important;
             border-color: rgba(37,99,235,0.30) !important;
         }
@@ -434,84 +444,113 @@ section[data-testid="stSidebar"] {
             position: absolute;
             left: -10px;
             bottom: -18px;
-            font-size: 5.2rem;
-            opacity: 0.10;
-            transform: rotate(12deg);
+            font-size: 5.0rem;
+            opacity: 0.08;
+            transform: rotate(10deg);
             transition: all 0.35s ease;
             color: var(--txt);
             pointer-events: none;
+            filter: saturate(0.9);
         }
         .kpi-card:hover .kpi-icon-bg {
-            transform: rotate(0deg) scale(1.12);
-            opacity: 0.16;
-            left: -4px;
+            transform: rotate(0deg) scale(1.08);
+            opacity: 0.12;
+            left: -6px;
         }
         .kpi-label{
             color: var(--muted) !important;
-            font-size: 0.95rem !important;
-            font-weight: 800 !important;
+            font-size: 0.92rem !important;
+            font-weight: 900 !important;
             margin-bottom: 6px !important;
         }
         .kpi-value{
-            font-size: 2.05rem !important;
+            font-size: 1.85rem !important; /* أقل شوي عشان ما يكبر نصوص مثل "انتقل للتنويهات" */
             font-weight: 950 !important;
             color: var(--txt) !important;
             direction: ltr !important;
             text-align: left !important;
-            letter-spacing: 0.2px;
+            letter-spacing: 0.15px;
+            line-height: 1.25 !important;
         }
 
         /* =====================================================
-           Tables (أوضح) - HTML Tables (مثل جدول الصفقات)
+           Tables (HTML tables مثل جدول الصفقات)
+           - رجعناها أجمل + متوافقة مع الثيم
            ===================================================== */
         .finance-table{
             width: 100%;
             border-collapse: separate;
             border-spacing: 0;
-            border: 1px solid var(--border2);
-            border-radius: 14px;
+            border: 1px solid var(--table-grid);
+            border-radius: var(--radius-lg);
             overflow: hidden;
-            background: #fff;
+            background: var(--table-bg);
             margin-top: 14px;
             box-shadow: 0 8px 18px rgba(15,23,42,0.06);
         }
         .finance-table th{
-            background: #F1F5FF !important;
-            color: #1E40AF !important;
-            font-weight: 900;
-            padding: 14px;
+            background: var(--table-head-bg) !important;
+            color: var(--table-head-txt) !important;
+            font-weight: 950;
+            padding: 12px 12px;
             text-align: right;
-            border-bottom: 2px solid rgba(37,99,235,0.18);
+            border-bottom: 1px solid var(--table-grid);
             white-space: nowrap;
+            font-size: 0.90rem;
         }
         .finance-table td{
-            padding: 12px 14px;
+            padding: 11px 12px;
             text-align: right;
-            border-bottom: 1px solid rgba(15,23,42,0.08);
-            color: #0F172A;
-            font-weight: 700;
+            border-bottom: 1px solid var(--table-grid);
+            color: var(--table-cell-txt);
+            font-weight: 750;
             white-space: nowrap;
+            font-size: 0.92rem;
+        }
+        .finance-table tr:nth-child(even) td{
+            background: rgba(148,163,184,0.05);
         }
         .finance-table tr:hover td{
-            background: rgba(37,99,235,0.04);
+            background: var(--table-hover) !important;
         }
 
-        .txt-green { color: var(--green) !important; font-weight: 900 !important; }
-        .txt-red   { color: var(--red) !important; font-weight: 900 !important; }
-        .txt-blue  { color: var(--blue) !important; font-weight: 900 !important; }
+
+        .txt-green { color: var(--green) !important; font-weight: 950 !important; }
+        .txt-red   { color: var(--red) !important; font-weight: 950 !important; }
+        .txt-blue  { color: var(--blue) !important; font-weight: 950 !important; }
+
+        /* تمييز خلايا الحالة إذا كان بداخلها لون (للصفقات المفتوحة/المغلقة) */
+        .finance-table td:has(.txt-green){ background: rgba(5,150,105,0.07) !important; }
+        .finance-table td:has(.txt-red){ background: rgba(220,38,38,0.06) !important; }
+
+        /* ✅ Pills optional (إذا كانت موجودة في كود الجدول) */
+        .pill{
+            display:inline-flex; align-items:center; gap:8px;
+            padding: 4px 10px;
+            border-radius: 999px;
+            border: 1px solid var(--table-grid);
+            background: rgba(148,163,184,0.06);
+            font-weight: 950;
+            font-size: 0.84rem;
+            white-space: nowrap;
+        }
+        .pill-open{ background: rgba(5,150,105,0.12); border-color: rgba(5,150,105,0.25); color: var(--green); }
+        .pill-open::before{ content:"●"; font-size: 10px; line-height: 1; }
+        .pill-closed{ background: rgba(220,38,38,0.10); border-color: rgba(220,38,38,0.25); color: var(--red); }
+        .pill-closed::before{ content:"●"; font-size: 10px; line-height: 1; }
 
         /* =====================================================
-           Buttons
+           Buttons (polish)
            ===================================================== */
         div.stButton > button{
             width: 100%;
-            border-radius: 14px;
-            height: 50px;
-            font-weight: 900;
-            border: 1px solid rgba(15,23,42,0.10);
+            border-radius: var(--radius-md);
+            height: 48px;
+            font-weight: 950;
+            border: 1px solid var(--border2);
             box-shadow: 0 6px 14px rgba(15,23,42,0.06);
-            background: #fff;
-            color: #0F172A;
+            background: var(--card-bg);
+            color: var(--txt);
             transition: 0.2s;
         }
         div.stButton > button:hover{
@@ -520,9 +559,13 @@ section[data-testid="stSidebar"] {
             color: var(--primary);
             border-color: rgba(37,99,235,0.30);
         }
+        div.stButton > button:focus{
+            outline: none !important;
+            box-shadow: var(--focus) !important;
+        }
 
         /* =====================================================
-           ✅ Report UI (Cards / Chips / Better JSON)
+           Report UI (Cards / Chips / Better JSON) - كما هو مع تحسين بسيط
            ===================================================== */
         .os-grid{
             display:grid;
@@ -543,10 +586,12 @@ section[data-testid="stSidebar"] {
             transition: transform .15s ease, box-shadow .15s ease;
             background: var(--card-bg);
             border: 1px solid var(--border2);
-            border-radius: 16px;
+            border-radius: var(--radius-lg);
             padding: 14px 14px;
             box-shadow: 0 8px 18px rgba(15,23,42,0.06);
         }
+        .os-card:hover{ transform: translateY(-2px); box-shadow: 0 12px 30px rgba(15,23,42,.12); }
+
         .os-card-title{
             font-weight: 950;
             margin-bottom: 8px;
@@ -554,6 +599,7 @@ section[data-testid="stSidebar"] {
             display:flex;
             align-items:center;
             gap:8px;
+            font-size: 1.05rem;
         }
         .os-muted{
             color: var(--muted);
@@ -579,11 +625,11 @@ section[data-testid="stSidebar"] {
             font-size: 18px;
             line-height: 1;
         }
-        .os-chip-green{ background:#DCFCE7; border-color: rgba(5,150,105,0.25); color:#166534; }
-        .os-chip-red{ background:#FEE2E2; border-color: rgba(220,38,38,0.25); color:#991B1B; }
-        .os-chip-blue{ background:#DBEAFE; border-color: rgba(37,99,235,0.25); color:#1E40AF; }
-        .os-chip-gray{ background:#F3F4F6; border-color: rgba(55,65,81,0.18); color:#374151; }
-        .os-chip-amber{ background:#FEF3C7; border-color: rgba(245,158,11,0.28); color:#92400E; }
+        .os-chip-green{ background: rgba(5,150,105,0.12); border-color: rgba(5,150,105,0.25); color: var(--green); }
+        .os-chip-red{ background: rgba(220,38,38,0.10); border-color: rgba(220,38,38,0.25); color: var(--red); }
+        .os-chip-blue{ background: rgba(37,99,235,0.10); border-color: rgba(37,99,235,0.22); color: var(--blue); }
+        .os-chip-gray{ background: rgba(148,163,184,0.16); border-color: rgba(148,163,184,0.22); color: var(--txt); }
+        .os-chip-amber{ background: rgba(245,158,11,0.14); border-color: rgba(245,158,11,0.22); color: var(--amber); }
 
         .os-kv{
             display:flex;
@@ -601,7 +647,7 @@ section[data-testid="stSidebar"] {
         div[data-testid="stCodeBlock"] pre{
             background: #0B1220 !important;
             color: #E5E7EB !important;
-            border-radius: 14px !important;
+            border-radius: var(--radius-lg) !important;
             border: 1px solid rgba(255,255,255,0.10) !important;
             padding: 14px !important;
             font-size: 0.85rem !important;
@@ -619,53 +665,76 @@ section[data-testid="stSidebar"] {
         }
 
         /* =====================================================
-           ✅ GLOBAL TABLE THEME (الحل لمشكلتك)
-           كل جداول Streamlit الحالية + المستقبلية (st.dataframe / st.table)
-           بتصير مثل جدول الصفقات
+           ✅ GLOBAL TABLE THEME (st.dataframe / st.table)
+           - ضبط أدق (بدون تكسير) + أفضل وضوح
            ===================================================== */
 
-        /* الحاوية */
-        div[data-testid="stDataFrame"],
+        /* st.table: HTML table */
         div[data-testid="stTable"]{
-            border: 1px solid var(--border2) !important;
-            border-radius: 14px !important;
+            border: 1px solid var(--table-grid) !important;
+            border-radius: var(--radius-lg) !important;
             overflow: hidden !important;
-            background: #fff !important;
+            background: var(--table-bg) !important;
             box-shadow: 0 8px 18px rgba(15,23,42,0.06) !important;
         }
-
-        /* رأس الجدول */
-        div[data-testid="stDataFrame"] thead tr th,
-        div[data-testid="stTable"] thead tr th{
-            background: #F1F5FF !important;
-            color: #1E40AF !important;
-            font-weight: 900 !important;
-            border-bottom: 2px solid rgba(37,99,235,0.18) !important;
+        div[data-testid="stTable"] table{
+            width:100% !important;
+            border-collapse: collapse !important;
+        }
+        div[data-testid="stTable"] thead th{
+            background: var(--table-head-bg) !important;
+            color: var(--table-head-txt) !important;
+            font-weight: 950 !important;
+            border-bottom: 1px solid var(--table-grid) !important;
             text-align: right !important;
+            padding: 12px 12px !important;
+            font-size: 0.90rem !important;
             white-space: nowrap !important;
         }
-
-        /* خلايا */
-        div[data-testid="stDataFrame"] tbody tr td,
-        div[data-testid="stTable"] tbody tr td{
-            color: #0F172A !important;
-            font-weight: 700 !important;
-            border-bottom: 1px solid rgba(15,23,42,0.08) !important;
+        div[data-testid="stTable"] tbody td{
+            color: var(--table-cell-txt) !important;
+            font-weight: 750 !important;
+            border-bottom: 1px solid var(--table-grid) !important;
             text-align: right !important;
+            padding: 11px 12px !important;
+            font-size: 0.92rem !important;
             white-space: nowrap !important;
         }
-
-        /* Hover */
-        div[data-testid="stDataFrame"] tbody tr:hover td,
         div[data-testid="stTable"] tbody tr:hover td{
-            background: rgba(37,99,235,0.04) !important;
+            background: var(--table-hover) !important;
         }
 
-        /* إزالة حدود داخلية مزعجة */
-        div[data-testid="stDataFrame"] *{ border-color: rgba(15,23,42,0.08) !important; }
+        /* st.dataframe: Data Editor based grid */
+        div[data-testid="stDataFrame"]{
+            border: 1px solid var(--table-grid) !important;
+            border-radius: var(--radius-lg) !important;
+            overflow: hidden !important;
+            background: var(--table-bg) !important;
+            box-shadow: 0 8px 18px rgba(15,23,42,0.06) !important;
+        }
+        /* Header cells */
+        div[data-testid="stDataFrame"] [role="columnheader"],
+        div[data-testid="stDataFrame"] [role="columnheader"] *{
+            background: var(--table-head-bg) !important;
+            color: var(--table-head-txt) !important;
+            font-weight: 950 !important;
+            font-size: 0.88rem !important;
+            border-bottom: 1px solid var(--table-grid) !important;
+        }
+        /* Grid cells */
+        div[data-testid="stDataFrame"] [role="gridcell"],
+        div[data-testid="stDataFrame"] [role="gridcell"] *{
+            color: var(--table-cell-txt) !important;
+            font-weight: 750 !important;
+            font-size: 0.90rem !important;
+        }
+        /* Grid lines */
+        div[data-testid="stDataFrame"] *{
+            border-color: var(--table-grid) !important;
+        }
 
         /* =====================================================
-           ✅ Score Ring (دائري) - للاستخدام داخل shared.py
+           ✅ Score Ring
            ===================================================== */
         .os-ring{
             width: 98px;
@@ -681,8 +750,8 @@ section[data-testid="stSidebar"] {
             width: 74px;
             height: 74px;
             border-radius: 50%;
-            background: #fff;
-            border: 1px solid rgba(15,23,42,0.10);
+            background: var(--card-bg);
+            border: 1px solid var(--border);
             position:absolute;
         }
         .os-ring .os-ring-text{
@@ -708,7 +777,7 @@ section[data-testid="stSidebar"] {
             justify-content:space-between;
             gap:16px;
             padding: 14px 16px;
-            border-radius: 18px;
+            border-radius: var(--radius-xl);
             border: 1px solid var(--border2);
             background: linear-gradient(135deg, rgba(11,87,208,0.06), rgba(99,102,241,0.05));
             box-shadow: 0 10px 24px rgba(15,23,42,0.06);
@@ -724,8 +793,8 @@ section[data-testid="stSidebar"] {
             width: 52px;
             height: 52px;
             border-radius: 14px;
-            background: #fff;
-            border: 1px solid rgba(15,23,42,0.10);
+            background: var(--card-bg);
+            border: 1px solid var(--border);
             overflow:hidden;
             display:grid;
             place-items:center;
@@ -761,81 +830,58 @@ section[data-testid="stSidebar"] {
             .os-app-header .os-h-right{ justify-content:flex-start; }
         }
 
-        /* =====================================================
-           Mobile tweaks
-           ===================================================== */
-        @media (max-width: 900px){
-            .kpi-card{ padding: 18px 16px !important; border-radius: 18px !important; }
-            .kpi-value{ font-size: 1.85rem !important; }
+        /* Landing hero */
+        .landing-hero{
+            background: linear-gradient(135deg, rgba(45,91,255,.22), rgba(139,92,246,.16));
+            border: 1px solid var(--border2);
+            border-radius: var(--radius-xl);
+            padding: 18px 18px;
+            margin: 8px 0 14px 0;
         }
-        /* Card hover */
-.os-card:hover{transform: translateY(-2px); box-shadow: 0 12px 30px rgba(0,0,0,.35);}
-
-/* Landing hero */
-.landing-hero{
-    background: linear-gradient(135deg, rgba(45,91,255,.25), rgba(139,92,246,.18));
-    border: 1px solid rgba(255,255,255,.08);
-    border-radius: 20px;
-    padding: 22px 22px;
-    margin: 8px 0 14px 0;
-}
-.landing-title{
-    font-size: 28px;
-    font-weight: 800;
-    letter-spacing: .2px;
-    margin-bottom: 6px;
-}
-.landing-sub{
-    color: var(--muted);
-    font-size: 14px;
-    line-height: 1.9;
-    max-width: 820px;
-}
-
+        .landing-title{
+            font-size: 26px;
+            font-weight: 950;
+            letter-spacing: .2px;
+            margin-bottom: 6px;
+        }
+        .landing-sub{
+            color: var(--muted);
+            font-size: 14px;
+            line-height: 1.95;
+            max-width: 820px;
+            font-weight: 700;
+        }
 
         /* =====================================================
-           Sidebar on the RIGHT (RTL)
-        ===================================================== */
-
-        /* Streamlit markup changes between versions; cover common wrappers */
+           Sidebar on the RIGHT (RTL) — as-is
+           ===================================================== */
         div[data-testid="stAppViewContainer"],
         div[data-testid="stAppViewContainer"] > div:first-child,
         div[data-testid="stAppViewContainer"] > div:first-child > div {
             flex-direction: row-reverse !important;
         }
 
-        /* أعكس ترتيب الأعمدة/الـcolumns لتكون من اليمين لليسار */
-        div[data-testid="stHorizontalBlock"] {
-            flex-direction: row-reverse !important;
-        }
+        div[data-testid="stHorizontalBlock"] { flex-direction: row-reverse !important; }
 
-        /* Force sidebar to live on the right */
         section[data-testid="stSidebar"] {
             order: 2 !important;
             right: 0 !important;
             left: auto !important;
-
-            /* ✅ الحل الأساسي: لا تضع Border داخلي ثابت
-               لأنه يتحول إلى خط عند طي القائمة في بعض نسخ Streamlit */
             border-left: none !important;
             border-right: none !important;
             box-shadow: none !important;
         }
 
-        /* فاصل يظهر فقط عندما تكون القائمة "مفتوحة" (وجود زر Close/Collapse) */
-        
-        /* إذا كانت نسخة Streamlit تضع aria-expanded على الـSidebar */
         section[data-testid="stSidebar"][aria-expanded="true"],
         div[data-testid="stSidebar"][aria-expanded="true"],
         [data-testid="stSidebar"][aria-expanded="true"],
-html:has(button[title="Close sidebar"]) section[data-testid="stSidebar"],
+        html:has(button[title="Close sidebar"]) section[data-testid="stSidebar"],
         html:has(button[aria-label="Close sidebar"]) section[data-testid="stSidebar"],
         html:has(button[title="Collapse sidebar"]) section[data-testid="stSidebar"],
         html:has(button[aria-label="Collapse sidebar"]) section[data-testid="stSidebar"] {
             border-left: 1px solid var(--border2) !important;
         }
 
-        /* ✅ When sidebar is collapsed: remove any remaining strip/line */
         section[data-testid="stSidebar"][aria-expanded="false"],
         div[data-testid="stSidebar"][aria-expanded="false"],
         [data-testid="stSidebar"][aria-expanded="false"] {
@@ -857,7 +903,6 @@ html:has(button[title="Close sidebar"]) section[data-testid="stSidebar"],
             display: none !important;
         }
 
-        /* Fallback (إذا لم يظهر aria-expanded في بعض نسخ Streamlit) */
         html:has(button[title="Open sidebar"]) section[data-testid="stSidebar"],
         html:has(button[aria-label="Open sidebar"]) section[data-testid="stSidebar"],
         html:has(button[title="Open sidebar"]) div[data-testid="stSidebar"],
@@ -881,20 +926,15 @@ html:has(button[title="Close sidebar"]) section[data-testid="stSidebar"],
             display: none !important;
         }
 
-        /* Keep main content on the left */
         section[data-testid="stMain"],
-        [data-testid="stMain"] {
-            order: 1 !important;
-        }
+        [data-testid="stMain"] { order: 1 !important; }
 
-        /* Collapsed control button on the top-right */
         [data-testid="collapsedControl"],
         [data-testid="stSidebarCollapsedControl"] {
             right: 0.75rem !important;
             left: auto !important;
         }
 
-        /* BaseWeb (Streamlit widgets) يميل لفرض LTR */
         [data-baseweb],
         div[data-baseweb="select"],
         div[data-baseweb="popover"] {
@@ -902,226 +942,77 @@ html:has(button[title="Close sidebar"]) section[data-testid="stSidebar"],
             text-align: right !important;
         }
 
+        /* =====================================================
+           RTL LAST-OVERRIDE (Do not move) — keep layout fixes
+           ===================================================== */
+        [data-testid="stTabs"]{ direction: rtl !important; }
+        [data-testid="stTabs"] [data-baseweb="tab-list"],
+        [data-testid="stTabs"] [role="tablist"]{
+            direction: rtl !important;
+            flex-direction: row-reverse !important;
+            justify-content: flex-end !important;
+            text-align: right !important;
+        }
+        [data-testid="stTabs"] [data-baseweb="tab"],
+        [data-testid="stTabs"] [role="tab"]{
+            direction: rtl !important;
+            text-align: right !important;
+        }
 
+        div[data-testid="stHorizontalBlock"],
+        div[data-testid="stColumns"],
+        .stHorizontalBlock,
+        .stColumns{
+            direction: rtl !important;
+            flex-direction: row !important;
+        }
 
-/* =====================================================
-   RTL LAST-OVERRIDE (Do not move)
-   - BaseWeb Tabs + Streamlit Columns are still behaving LTR in some views.
-   - This block intentionally overrides earlier rules with MAX priority.
-   ===================================================== */
+        form, form *{ direction: rtl !important; }
+        div[data-testid="stTextInput"],
+        div[data-testid="stTextInput"] label,
+        div[data-testid="stTextInput"] p,
+        div[data-testid="stSelectbox"],
+        div[data-testid="stSelectbox"] label,
+        div[data-testid="stSelectbox"] p,
+        div[data-testid="stCheckbox"],
+        div[data-testid="stCheckbox"] label,
+        div[data-testid="stCheckbox"] p{
+            direction: rtl !important;
+            text-align: right !important;
+        }
 
-/* 1) Streamlit Tabs (BaseWeb) — rely on `direction: rtl` (better underline positioning) */
-[data-testid="stTabs"]{
-  direction: rtl !important;
-}
-[data-testid="stTabs"] [data-baseweb="tab-list"],
-[data-testid="stTabs"] [role="tablist"]{
-  direction: rtl !important;
-  flex-direction: row-reverse !important;   /* force RTL visual order */
-  justify-content: flex-end !important; /* keep tabs aligned to the RIGHT */
-  text-align: right !important;
-}
-[data-testid="stTabs"] [data-baseweb="tab"],
-[data-testid="stTabs"] [role="tab"]{
-  direction: rtl !important;
-  text-align: right !important;
-}
+        [data-baseweb="input"] > div,
+        [data-baseweb="textarea"] > div{
+            flex-direction: row-reverse !important;
+        }
 
-/* 2) Streamlit Columns — rely on rtl flow instead of row-reverse */
-div[data-testid="stHorizontalBlock"],
-div[data-testid="stColumns"],
-.stHorizontalBlock,
-.stColumns{
-  direction: rtl !important;
-  flex-direction: row !important;  /* rtl makes first column appear on the RIGHT */
-}
+        .kpi-icon-bg{
+            right: -10px !important;
+            left: auto !important;
+        }
+        .kpi-card:hover .kpi-icon-bg{
+            right: -6px !important;
+            left: auto !important;
+        }
 
-/* 3) Widget labels — guarantee RTL in forms (login/register) */
-form, form *{
-  direction: rtl !important;
-}
-div[data-testid="stTextInput"],
-div[data-testid="stTextInput"] label,
-div[data-testid="stTextInput"] p,
-div[data-testid="stSelectbox"],
-div[data-testid="stSelectbox"] label,
-div[data-testid="stSelectbox"] p,
-div[data-testid="stCheckbox"],
-div[data-testid="stCheckbox"] label,
-div[data-testid="stCheckbox"] p{
-  direction: rtl !important;
-  text-align: right !important;
-}
+        .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6,
+        .stApp [data-testid="stTitle"], .stApp [data-testid="stHeader"], .stApp [data-testid="stSubheader"],
+        .stApp [data-testid="stMarkdownContainer"],
+        .stApp [data-testid="stMarkdownContainer"] * {
+            direction: rtl !important;
+            text-align: right !important;
+            unicode-bidi: plaintext !important;
+        }
 
-/* 4) BaseWeb inputs — icon/prefix on RIGHT */
-[data-baseweb="input"] > div,
-[data-baseweb="textarea"] > div{
-  flex-direction: row-reverse !important;
-}
+        /* Mobile tweaks */
+        @media (max-width: 900px){
+            .kpi-card{ padding: 16px 14px !important; border-radius: 18px !important; }
+            .kpi-value{ font-size: 1.65rem !important; }
+            [data-testid="stMetric"] [data-testid="stMetricValue"]{ font-size: 1.85rem !important; }
+        }
 
-/* 5) KPI icon background on RIGHT */
-.kpi-icon-bg{
-  right: -10px !important;
-  left: auto !important;
-}
-.kpi-card:hover .kpi-icon-bg{
-  right: -4px !important;
-  left: auto !important;
-}
-
-
-
-/* 6) Force headings/text RTL (fix st.title/st.header misalignment) */
-.stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6,
-.stApp [data-testid="stTitle"], .stApp [data-testid="stHeader"], .stApp [data-testid="stSubheader"],
-.stApp [data-testid="stMarkdownContainer"],
-.stApp [data-testid="stMarkdownContainer"] * {
-  direction: rtl !important;
-  text-align: right !important;
-  unicode-bidi: plaintext !important;
-}
-
-
-/* =====================================================
-   Typography polish (Arabic-first)
-   - تحسين الخط، الارتفاع بين السطور، وحجم العناوين
-   - بدون تغيير أي منطق/اتجاه RTL أو توزيع العناصر
-   ===================================================== */
-
-.stApp{
-  -webkit-font-smoothing: antialiased !important;
-  -moz-osx-font-smoothing: grayscale !important;
-  text-rendering: optimizeLegibility !important;
-  font-size: 16px !important;
-  line-height: 1.85 !important;
-}
-
-/* نصوص عامة */
-.stApp p,
-.stApp li,
-.stApp label,
-.stApp small,
-.stApp .stMarkdown,
-.stApp [data-testid="stMarkdownContainer"]{
-  line-height: 1.9 !important;
-  font-weight: 700 !important;
-}
-
-.stApp [data-testid="stMarkdownContainer"] p{
-  margin: 0.35rem 0 0.70rem !important;
-  color: var(--txt) !important;
-}
-
-/* عناوين */
-.stApp h1,
-.stApp [data-testid="stTitle"]{
-  font-size: clamp(1.85rem, 2.6vw, 2.45rem) !important;
-  font-weight: 950 !important;
-  line-height: 1.25 !important;
-  margin: 0.35rem 0 0.65rem !important;
-}
-.stApp h2,
-.stApp [data-testid="stHeader"]{
-  font-size: clamp(1.45rem, 2.1vw, 2.05rem) !important;
-  font-weight: 950 !important;
-  line-height: 1.28 !important;
-  margin: 0.30rem 0 0.55rem !important;
-}
-.stApp h3,
-.stApp [data-testid="stSubheader"]{
-  font-size: clamp(1.15rem, 1.7vw, 1.55rem) !important;
-  font-weight: 900 !important;
-  line-height: 1.32 !important;
-  margin: 0.25rem 0 0.45rem !important;
-}
-
-/* مسافات أفضل للفواصل */
-.stApp hr{
-  margin: 1.10rem 0 !important;
-  border-color: rgba(15,23,42,0.10) !important;
-}
-
-/* Labels & Inputs */
-.stApp label{
-  font-size: 0.98rem !important;
-  font-weight: 900 !important;
-  color: var(--txt) !important;
-  margin-bottom: 6px !important;
-}
-
-.stApp input,
-.stApp textarea,
-.stApp select{
-  font-size: 1.02rem !important;
-  font-weight: 800 !important;
-  line-height: 1.6 !important;
-}
-
-/* BaseWeb inputs padding (يحسن شكل حقول تسجيل الدخول والبحث) */
-[data-baseweb="input"] input,
-[data-baseweb="textarea"] textarea{
-  padding: 0.70rem 0.90rem !important;
-  border-radius: 14px !important;
-}
-
-/* Buttons */
-div.stButton > button{
-  font-size: 1.02rem !important;
-  letter-spacing: 0.15px !important;
-}
-
-/* Tabs */
-[data-testid="stTabs"] [data-baseweb="tab"],
-[data-testid="stTabs"] [role="tab"]{
-  font-size: 0.98rem !important;
-  font-weight: 900 !important;
-  padding: 10px 16px !important;
-}
-
-/* Metrics (مثل TASI) */
-[data-testid="stMetricLabel"]{
-  font-size: 0.98rem !important;
-  font-weight: 900 !important;
-  color: var(--muted) !important;
-}
-[data-testid="stMetricValue"]{
-  font-size: 2.10rem !important;
-  font-weight: 950 !important;
-  line-height: 1.15 !important;
-  letter-spacing: 0.2px !important;
-  font-variant-numeric: tabular-nums !important;
-}
-[data-testid="stMetricDelta"]{
-  font-weight: 900 !important;
-  font-variant-numeric: tabular-nums !important;
-}
-
-/* KPI cards */
-.kpi-label{
-  font-size: 1.00rem !important;
-  font-weight: 900 !important;
-}
-.kpi-value{
-  font-size: clamp(1.70rem, 2.2vw, 2.15rem) !important;
-  line-height: 1.10 !important;
-  font-variant-numeric: tabular-nums !important;
-}
-
-/* App header */
-.os-app-header .os-h-title{
-  font-size: 1.45rem !important;
-  font-weight: 950 !important;
-}
-.os-app-header .os-h-sub{
-  font-size: 0.98rem !important;
-  line-height: 1.7 !important;
-}
-
-
-</style>
+        </style>
         """
 
-    # Insert theme variables safely without turning the whole CSS into an f-string.
     css = css.replace("__VAR_CSS__", var_css)
-
     st.markdown(textwrap.dedent(css).strip(), unsafe_allow_html=True)
