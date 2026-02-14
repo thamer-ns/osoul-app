@@ -1081,6 +1081,154 @@ html:has(button[title="Close sidebar"]) section[data-testid="stSidebar"],
             left: auto !important;
             right: -4px !important;
         }
+
+
+
+/* === OSOOLI RTL FINAL (v4) === */
+/* الهدف: تثبيت RTL بالكامل + خط Cairo + تصحيح Tabs/Forms/KPIs بدون تغيير أي شيء آخر */
+
+/* 1) Cairo كخط افتراضي (مع استثناء أيقونات Material وكتل الكود) */
+.stApp { font-family: 'Cairo', sans-serif !important; }
+.stApp input, .stApp textarea, .stApp select, .stApp button,
+.stApp label, .stApp p, .stApp a, .stApp li,
+.stApp th, .stApp td, .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6 {
+  font-family: 'Cairo', sans-serif !important;
+}
+/* كتل الكود تبقى LTR بخط monospace */
+pre, code, .stCode, .stMarkdown pre, .stMarkdown code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace !important;
+  direction: ltr !important;
+  text-align: left !important;
+}
+/* أعِد تثبيت خطوط الأيقونات (حتى لا تتأثر بقواعد Cairo) */
+.material-icons,
+.material-symbols-outlined,
+.material-symbols-rounded,
+.material-symbols-sharp,
+[class*="material-symbols"],
+[data-testid="stIconMaterial"],
+[data-testid="stIconMaterial"] *,
+span[translate="no"] {
+  font-family: 'Material Symbols Rounded','Material Symbols Outlined','Material Symbols Sharp','Material Icons' !important;
+  font-feature-settings: 'liga' 1 !important;
+  -webkit-font-feature-settings: 'liga' 1 !important;
+  direction: ltr !important;
+  text-align: center !important;
+  letter-spacing: normal !important;
+}
+
+/* 2) RTL شامل (مع أولوية عالية) */
+html, body, .stApp,
+[data-testid="stAppViewContainer"], [data-testid="stMain"], [data-testid="stSidebar"],
+[data-testid="stVerticalBlock"], [data-testid="stHorizontalBlock"], .block-container {
+  direction: rtl !important;
+  text-align: right !important;
+}
+
+/* 3) Streamlit columns & any horizontal blocks: من اليمين لليسار */
+div[data-testid="stHorizontalBlock"]{
+  display: flex !important;
+  flex-direction: row-reverse !important;
+}
+
+/* 4) Tabs (st.tabs): ضع التبويبات يمينًا + رتّبها RTL (يحل: تسجيل الدخول/إنشاء حساب + سجلات/الصفقات/الأرشيف) */
+[data-testid="stTabs"] [data-baseweb="tab-list"],
+[data-testid="stTabs"] [role="tablist"]{
+  width: 100% !important;
+  display: flex !important;
+  flex-direction: row-reverse !important;
+  justify-content: flex-start !important; /* مع row-reverse = يمين */
+  direction: rtl !important;
+  text-align: right !important;
+}
+[data-testid="stTabs"] [data-baseweb="tab"],
+[data-testid="stTabs"] button[role="tab"]{
+  direction: rtl !important;
+  text-align: right !important;
+}
+[data-testid="stTabs"] [data-baseweb="tab-panel"],
+[data-testid="stTabs"] [role="tabpanel"]{
+  direction: rtl !important;
+  text-align: right !important;
+}
+
+/* 5) Labels داخل النماذج (تسجيل الدخول/اسم المستخدم/كلمة المرور…): يمين */
+[data-baseweb="form-control"] label,
+label[data-baseweb="form-control-label"],
+div[data-baseweb="form-control-label"],
+[data-testid="stTextInput"] label,
+[data-testid="stPassword"] label,
+[data-testid="stEmailInput"] label,
+[data-testid="stNumberInput"] label,
+[data-testid="stTextArea"] label,
+[data-testid="stSelectbox"] label,
+[data-testid="stDateInput"] label,
+[data-testid="stTimeInput"] label,
+[data-testid="stFileUploader"] label{
+  width: 100% !important;
+  direction: rtl !important;
+  text-align: right !important;
+}
+
+/* 6) BaseWeb inputs/selects: اجعل الأيقونات/الأسهم تتبع RTL */
+div[data-baseweb="input"],
+div[data-baseweb="textarea"],
+div[data-baseweb="select"]{
+  direction: rtl !important;
+  text-align: right !important;
+}
+/* swap start/end enhancers so icons (مثل eye) تصير على الطرف الصحيح في RTL */
+div[data-baseweb="input"] > div,
+div[data-baseweb="textarea"] > div,
+div[data-baseweb="select"] > div{
+  flex-direction: row-reverse !important;
+}
+/* combobox نفسه */
+div[data-baseweb="select"] [role="combobox"],
+div[data-baseweb="select"] input{
+  direction: rtl !important;
+  text-align: right !important;
+}
+
+/* 7) Checkbox/Radio: أيقونة + نص من اليمين */
+[data-testid="stCheckbox"] label,
+[data-testid="stRadio"] label,
+[data-testid="stToggle"] label{
+  direction: rtl !important;
+  text-align: right !important;
+}
+[data-testid="stCheckbox"] label > div,
+[data-testid="stRadio"] label > div{
+  flex-direction: row-reverse !important;
+  justify-content: flex-end !important;
+}
+
+/* 8) Metrics (مثل مؤشر TASI): محاذاة RTL مع إبقاء الأرقام LTR */
+div[data-testid="stMetric"]{
+  direction: rtl !important;
+  text-align: right !important;
+}
+[data-testid="stMetricLabel"]{ direction: rtl !important; text-align: right !important; }
+[data-testid="stMetricValue"], [data-testid="stMetricValue"] *{
+  direction: ltr !important;
+  unicode-bidi: plaintext !important;
+  text-align: right !important;
+}
+[data-testid="stMetricDelta"]{
+  direction: rtl !important;
+  display: inline-flex !important;
+  flex-direction: row-reverse !important;
+  justify-content: flex-end !important;
+  gap: .25rem !important;
+}
+
+/* 9) KPI background icons: انقلها لليمين (إجمالي الإيداعات/الأصول… إلخ) */
+.kpi-icon-bg{ left: auto !important; right: -10px !important; }
+.kpi-card:hover .kpi-icon-bg{ left: auto !important; right: -4px !important; }
+
+/* === /OSOOLI RTL FINAL (v4) === */
+
+
 </style>
         """
 
