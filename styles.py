@@ -144,7 +144,83 @@ def apply_custom_css():
             font-family: inherit !important;
         }
 
-        /* Code/JSON blocks يجب أن تبقى LTR */
+        
+
+/* ✅ GLOBAL_TEXT_RTL_FORCE: تثبيت اتجاه العناوين/النصوص/التبويبات بدون تخريب التنسيق */
+.stApp h1,
+.stApp h2,
+.stApp h3,
+.stApp h4,
+.stApp h5,
+.stApp h6,
+.stApp [data-testid="stTitle"],
+.stApp [data-testid="stHeader"],
+.stApp [data-testid="stSubheader"],
+.stApp [data-testid="stMarkdownContainer"],
+.stApp [data-testid="stMarkdownContainer"] * {
+    direction: rtl !important;
+    text-align: right !important;
+    unicode-bidi: plaintext !important;
+}
+
+/* التبويبات (تسجيل الدخول/إنشاء حساب/سجل السحوبات/الصفقات القائمة...) */
+div[data-testid="stTabs"] [data-baseweb="tab-list"] {
+    direction: rtl !important;
+    unicode-bidi: plaintext !important;
+    /* اجعل ترتيب التبويبات من اليمين لليسار وثبّت محاذاتها */
+    flex-direction: row-reverse !important;
+    justify-content: flex-end !important;
+}
+div[data-testid="stTabs"] [data-baseweb="tab"] {
+    direction: rtl !important;
+    text-align: right !important;
+    unicode-bidi: plaintext !important;
+}
+
+/* حقول الإدخال (اسم المستخدم/كلمة المرور...): العنوان + النص داخل الحقل */
+.stTextInput label,
+.stPassword label,
+.stNumberInput label,
+.stTextArea label,
+.stSelectbox label,
+.stMultiSelect label,
+.stDateInput label {
+    direction: rtl !important;
+    text-align: right !important;
+    unicode-bidi: plaintext !important;
+    width: 100% !important;
+}
+.stTextInput input,
+.stPassword input,
+.stNumberInput input,
+.stTextArea textarea,
+.stSelectbox input,
+.stMultiSelect input,
+.stDateInput input {
+    direction: rtl !important;
+    text-align: right !important;
+    unicode-bidi: plaintext !important;
+}
+.stTextInput input::placeholder,
+.stPassword input::placeholder,
+.stNumberInput input::placeholder,
+.stTextArea textarea::placeholder,
+.stSelectbox input::placeholder,
+.stMultiSelect input::placeholder,
+.stDateInput input::placeholder {
+    direction: rtl !important;
+    text-align: right !important;
+}
+
+/* عناصر قياس Streamlit (مثل المؤشر العام TASI) */
+[data-testid="stMetric"],
+[data-testid="stMetric"] * {
+    direction: rtl !important;
+    text-align: right !important;
+    unicode-bidi: plaintext !important;
+}
+
+/* Code/JSON blocks يجب أن تبقى LTR */
         pre, code, .stCode, .stMarkdown pre, .stMarkdown code {
             direction: ltr !important;
             text-align: left !important;
@@ -841,8 +917,8 @@ html:has(button[title="Close sidebar"]) section[data-testid="stSidebar"],
 [data-testid="stTabs"] [data-baseweb="tab-list"],
 [data-testid="stTabs"] [role="tablist"]{
   direction: rtl !important;
-  flex-direction: row !important;   /* keep natural row; rtl handles visual order */
-  justify-content: flex-start !important; /* in rtl, flex-start = RIGHT */
+  flex-direction: row-reverse !important;   /* force RTL visual order */
+  justify-content: flex-end !important; /* keep tabs aligned to the RIGHT */
   text-align: right !important;
 }
 [data-testid="stTabs"] [data-baseweb="tab"],
@@ -891,6 +967,18 @@ div[data-testid="stCheckbox"] p{
 .kpi-card:hover .kpi-icon-bg{
   right: -4px !important;
   left: auto !important;
+}
+
+
+
+/* 6) Force headings/text RTL (fix st.title/st.header misalignment) */
+.stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6,
+.stApp [data-testid="stTitle"], .stApp [data-testid="stHeader"], .stApp [data-testid="stSubheader"],
+.stApp [data-testid="stMarkdownContainer"],
+.stApp [data-testid="stMarkdownContainer"] * {
+  direction: rtl !important;
+  text-align: right !important;
+  unicode-bidi: plaintext !important;
 }
 
 </style>
