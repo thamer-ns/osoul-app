@@ -416,105 +416,164 @@ div[data-testid="collapsedControl"],
         button[title="View fullscreen"] { display: none !important; }
 
 
+
 /* =====================================================
-   Top bar cleanup (إخفاء أزرار Streamlit العلوية بدون كسر زر فتح القائمة)
+   Top bar cleanup (إخفاء شريط Streamlit العلوي بدون كسر زر القائمة)
+   - نخفي فقط أدوات Streamlit Cloud (Share/Star/Deploy ...)
+   - ونثبت زر فتح/إغلاق الـSidebar فوق المحتوى دائماً
    ===================================================== */
-/* نُبقي <header> موجود لأن زر فتح القائمة يعتمد عليه */
-header { display: block !important; }
 
-/* إخفاء الزخرفة/الخط العلوي */
-div[data-testid="stDecoration"] { display: none !important; }
-
-/* إخفاء شريط الأدوات العلوي (Share / Star / …) — مع إبقاء زر فتح القائمة الجانبية */
-/* نخفي مجموعات الأزرار في Streamlit Cloud، لكن لا نخفي stToolbar نفسه لأن زر الـSidebar قد يكون بداخله */
+/* أخفِ عناصر الشريط العلوي (Share/Star/...) فقط */
 div[data-testid="stToolbarActions"],
-div[data-testid="stAppToolbar"],
-div[data-testid="stStatusWidget"] {
+div[data-testid="stStatusWidget"],
+div[data-testid="stDecoration"]{
     display: none !important;
 }
 
-/* في بعض نسخ Streamlit Cloud: الأزرار تكون داخل stToolbar نفسه — نخفي كل شيء ما عدا زر الـSidebar */
-div[data-testid="stToolbar"] a,
-div[data-testid="stToolbar"] button {
-    display: none !important;
+/* لا تخفي الـheader بالكامل لأن زر الـSidebar قد يكون بداخله في بعض النسخ */
+header[data-testid="stHeader"]{
+    background: transparent !important;
+    border: none !important;
 }
 
-div[data-testid="stToolbar"] button[title*="sidebar" i],
-div[data-testid="stToolbar"] button[aria-label*="sidebar" i],
-div[data-testid="stToolbar"] button[title="Open sidebar"],
-div[data-testid="stToolbar"] button[aria-label="Open sidebar"],
-div[data-testid="stToolbar"] button[title="Close sidebar"],
-div[data-testid="stToolbar"] button[aria-label="Close sidebar"],
-div[data-testid="stToolbar"] button[title="Collapse sidebar"],
-div[data-testid="stToolbar"] button[aria-label="Collapse sidebar"] {
-    display: inline-flex !important;
+/* ✅ إجبار خط Cairo على كل عناصر الواجهة (مع استثناء الأيقونات/الكود) */
+.stApp, .stApp *{
+    font-family: 'Cairo', sans-serif !important;
 }
-/* إخفاء Toolbars/Tooltips داخل الصفحة */
-[data-testid="stElementToolbar"] { display: none !important; }
-div[role="tooltip"] { display: none !important; opacity: 0 !important; visibility: hidden !important; }
-button[title="View fullscreen"] { display: none !important; }
+
+/* Code/JSON blocks يجب أن تبقى LTR + monospace */
+pre, code, .stCode, .stMarkdown pre, .stMarkdown code{
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
+    direction: ltr !important;
+    text-align: left !important;
+}
+
+/* إصلاح Material Icons/Symbols حتى لا تظهر كنص */
+.material-icons,
+.material-symbols-outlined,
+.material-symbols-rounded,
+.material-symbols-sharp,
+[class*="material-symbols"],
+[data-testid="stIconMaterial"],
+[data-testid="stIconMaterial"] *,
+div[data-testid="collapsedControl"] span,
+div[data-testid="stSidebarCollapsedControl"] span,
+div[data-testid="stSidebarCollapsedControl"] button span,
+div[data-testid="collapsedControl"] button span{
+    font-family: 'Material Symbols Rounded','Material Symbols Outlined','Material Symbols Sharp','Material Icons' !important;
+    font-feature-settings: 'liga' 1 !important;
+    -webkit-font-feature-settings: 'liga' 1 !important;
+    direction: ltr !important;
+    text-align: center !important;
+    letter-spacing: normal !important;
+}
 
 /* =====================================================
-   Sidebar collapsed control (زر فتح القائمة) — دائمًا ظاهر
+   ✅ Sidebar Toggle (حل جذري): أظهر زر فتح/إغلاق القائمة حتى مع إخفاء الشريط
    ===================================================== */
 div[data-testid="stSidebarCollapsedControl"],
 div[data-testid="collapsedControl"],
 [data-testid="collapsedControl"]{
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+
+    /* نثبتها فوق المحتوى */
     position: fixed !important;
-    top: 0.85rem !important;
-    right: 0.85rem !important;
+    top: 72px !important;           /* تحت مستوى الشريط المخفي */
+    right: 16px !important;
     left: auto !important;
+
     width: auto !important;
     height: auto !important;
     padding: 0 !important;
     margin: 0 !important;
+
     background: transparent !important;
     border: none !important;
     box-shadow: none !important;
-    z-index: 100001 !important;
-    pointer-events: auto !important;
-}
 
-div[data-testid="stSidebarCollapsedControl"]::before,
-div[data-testid="stSidebarCollapsedControl"]::after,
-div[data-testid="collapsedControl"]::before,
-div[data-testid="collapsedControl"]::after,
-[data-testid="collapsedControl"]::before,
-[data-testid="collapsedControl"]::after{
-    display: none !important;
-    content: none !important;
+    pointer-events: none !important; /* الحاوية لا تلتقط */
+    z-index: 100001 !important;
 }
 
 div[data-testid="stSidebarCollapsedControl"] button,
 div[data-testid="collapsedControl"] button,
 [data-testid="collapsedControl"] button,
 button[title="Open sidebar"],
-button[aria-label="Open sidebar"]{
+button[aria-label="Open sidebar"],
+button[title="Close sidebar"],
+button[aria-label="Close sidebar"],
+button[title="Collapse sidebar"],
+button[aria-label="Collapse sidebar"]{
     pointer-events: auto !important;
-    width: 42px !important;
-    height: 42px !important;
-    min-width: 42px !important;
-    min-height: 42px !important;
-    padding: 0 !important;
-    border-radius: 999px !important;
-    border: 1px solid var(--border2) !important;
-    background: var(--card-bg) !important;
-    box-shadow: 0 10px 24px rgba(15,23,42,0.10) !important;
     display: inline-flex !important;
     align-items: center !important;
     justify-content: center !important;
+
+    width: 44px !important;
+    height: 44px !important;
+    min-width: 44px !important;
+    min-height: 44px !important;
+    padding: 0 !important;
+
+    border-radius: 999px !important;
+    border: 1px solid var(--border2) !important;
+    background: var(--card-bg) !important;
+    color: var(--txt) !important;
+
+    box-shadow: 0 10px 24px rgba(15,23,42,0.12) !important;
+    z-index: 100002 !important;
 }
 
+/* منع ظهور اسم الأيقونة كنص داخل زر القائمة */
 div[data-testid="stSidebarCollapsedControl"] button *,
 div[data-testid="collapsedControl"] button *,
-[data-testid="collapsedControl"] button *{
-    font-family: 'Material Symbols Rounded','Material Symbols Outlined','Material Symbols Sharp','Material Icons' !important;
-    font-feature-settings: 'liga' 1 !important;
-    -webkit-font-feature-settings: 'liga' 1 !important;
+[data-testid="collapsedControl"] button *,
+button[title="Open sidebar"] *,
+button[aria-label="Open sidebar"] *,
+button[title="Close sidebar"] *,
+button[aria-label="Close sidebar"] *,
+button[title="Collapse sidebar"] *,
+button[aria-label="Collapse sidebar"] *{
+    font-size: 0 !important;
+}
+
+/* رمز ثابت (hamburger) */
+div[data-testid="stSidebarCollapsedControl"] button::before,
+div[data-testid="collapsedControl"] button::before,
+[data-testid="collapsedControl"] button::before,
+button[title="Open sidebar"]::before,
+button[aria-label="Open sidebar"]::before{
+    content: "☰";
+    font-size: 22px;
+    line-height: 1;
+    font-weight: 900;
+}
+
+/* إذا كانت القائمة مفتوحة غالباً يظهر زر Close/Collapse: نعكس الرمز إلى X */
+html:has(button[title="Close sidebar"]) div[data-testid="stSidebarCollapsedControl"] button::before,
+html:has(button[aria-label="Close sidebar"]) div[data-testid="stSidebarCollapsedControl"] button::before,
+html:has(button[title="Collapse sidebar"]) div[data-testid="stSidebarCollapsedControl"] button::before,
+html:has(button[aria-label="Collapse sidebar"]) div[data-testid="stSidebarCollapsedControl"] button::before,
+html:has(button[title="Close sidebar"]) div[data-testid="collapsedControl"] button::before,
+html:has(button[aria-label="Close sidebar"]) div[data-testid="collapsedControl"] button::before,
+html:has(button[title="Collapse sidebar"]) div[data-testid="collapsedControl"] button::before,
+html:has(button[aria-label="Collapse sidebar"]) div[data-testid="collapsedControl"] button::before{
+    content: "×";
+    font-size: 26px;
+}
+
+/* لا تخفي زر فتح القائمة تحت أي ظرف */
+button[title="Open sidebar"],
+button[aria-label="Open sidebar"]{
+    display: inline-flex !important;
+    visibility: visible !important;
+    opacity: 1 !important;
 }
 
 
-/* =====================================================
+        /* =====================================================
            Expander
            ===================================================== */
         div[data-testid="stExpander"]{
@@ -1357,6 +1416,98 @@ html:has(button[aria-label="Open sidebar"]) section[data-testid="stSidebar"] div
     right: 12px !important;
     left: auto !important;
     z-index: 1000006 !important;
+}
+
+
+/* =====================================================
+   FINAL: Expander icon ligature fix (removes English like keyboard_double_arrow_left)
+   ===================================================== */
+div[data-testid="stExpander"] details summary{
+    position: relative !important;
+    padding-left: 44px !important; /* السهم على اليسار في RTL */
+}
+div[data-testid="stExpander"] details summary span[translate="no"],
+div[data-testid="stExpander"] details summary .material-icons,
+div[data-testid="stExpander"] details summary .material-symbols-rounded,
+div[data-testid="stExpander"] details summary .material-symbols-outlined{
+    font-size: 0 !important;
+}
+div[data-testid="stExpander"] details summary::after{
+    content: "▾";
+    position: absolute;
+    left: 16px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 20px;
+    line-height: 1;
+    color: var(--muted);
+}
+div[data-testid="stExpander"] details[open] summary::after{
+    transform: translateY(-50%) rotate(180deg);
+}
+
+
+/* =====================================================
+   ABSOLUTE LAST OVERRIDE: Sidebar toggle must be visible/clickable
+   ===================================================== */
+div[data-testid="collapsedControl"],
+div[data-testid="stSidebarCollapsedControl"]{
+    display: block !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+
+    position: fixed !important;
+    top: 72px !important;        /* تحت الشريط المخفي */
+    right: 16px !important;
+    left: auto !important;
+
+    z-index: 2147483647 !important;
+    pointer-events: none !important;
+
+    transform: none !important;
+    clip: auto !important;
+    overflow: visible !important;
+}
+div[data-testid="collapsedControl"] button,
+div[data-testid="stSidebarCollapsedControl"] button{
+    pointer-events: auto !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+
+    width: 46px !important;
+    height: 46px !important;
+    min-width: 46px !important;
+    min-height: 46px !important;
+
+    border-radius: 999px !important;
+    border: 1px solid var(--border2) !important;
+    background: var(--card-bg) !important;
+    color: var(--txt) !important;
+
+    box-shadow: 0 12px 30px rgba(15,23,42,0.14) !important;
+}
+div[data-testid="collapsedControl"] button *,
+div[data-testid="stSidebarCollapsedControl"] button *{
+    font-size: 0 !important; /* لا نص */
+}
+div[data-testid="collapsedControl"] button::before,
+div[data-testid="stSidebarCollapsedControl"] button::before{
+    content: "☰";
+    font-size: 22px;
+    line-height: 1;
+    font-weight: 900;
+}
+html:has(button[title="Close sidebar"]) div[data-testid="collapsedControl"] button::before,
+html:has(button[aria-label="Close sidebar"]) div[data-testid="collapsedControl"] button::before,
+html:has(button[title="Collapse sidebar"]) div[data-testid="collapsedControl"] button::before,
+html:has(button[aria-label="Collapse sidebar"]) div[data-testid="collapsedControl"] button::before,
+html:has(button[title="Close sidebar"]) div[data-testid="stSidebarCollapsedControl"] button::before,
+html:has(button[aria-label="Close sidebar"]) div[data-testid="stSidebarCollapsedControl"] button::before,
+html:has(button[title="Collapse sidebar"]) div[data-testid="stSidebarCollapsedControl"] button::before,
+html:has(button[aria-label="Collapse sidebar"]) div[data-testid="stSidebarCollapsedControl"] button::before{
+    content: "×";
+    font-size: 26px;
 }
 
 </style>
