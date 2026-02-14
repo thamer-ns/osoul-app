@@ -723,10 +723,20 @@ section[data-testid="stSidebar"] {
         ===================================================== */
 
         /* Streamlit markup changes between versions; cover common wrappers */
-        div[data-testid="stAppViewContainer"],
-        div[data-testid="stAppViewContainer"] > div:first-child,
-        div[data-testid="stAppViewContainer"] > div:first-child > div {
+        div[data-testid="stAppViewContainer"]{
             flex-direction: row-reverse !important;
+        }
+
+        /* اجعل الحاوية التي تضم الـSidebar + الـMain Flex ليطبق row-reverse فعلياً */
+        div[data-testid="stAppViewContainer"] > div:first-child{
+            display: flex !important;
+            flex-direction: row-reverse !important;
+            width: 100% !important;
+        }
+        div[data-testid="stAppViewContainer"] > div:first-child > div{
+            display: flex !important;
+            flex-direction: row-reverse !important;
+            width: 100% !important;
         }
 
         /* أعكس ترتيب الأعمدة/الـcolumns لتكون من اليمين لليسار */
@@ -892,14 +902,20 @@ button[aria-label="Open sidebar"]{
     z-index: 100001 !important;
 }
 
-/* 7) عند الطي: Streamlit غالبًا يخفي الـSidebar لليسار -> نعكس للإخفاء يمين */
-html:has([data-testid="collapsedControl"]) section[data-testid="stSidebar"],
-html:has([data-testid="collapsedControl"]) div[data-testid="stSidebar"]{
-    transform: translateX(100%) !important;
+/* 7) عند الطي: لا نخفي الـSidebar دائمًا (كان يسبب اختفاءها حتى وهي مفتوحة)
+   نخفيها فقط عندما يظهر زر "Open sidebar" (أي أن القائمة مطوية) */
+html:has(button[aria-label="Open sidebar"]) section[data-testid="stSidebar"],
+html:has(button[aria-label="Open sidebar"]) div[data-testid="stSidebar"],
+html:has(button[title="Open sidebar"]) section[data-testid="stSidebar"],
+html:has(button[title="Open sidebar"]) div[data-testid="stSidebar"]{
+    width: 0 !important;
+    min-width: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
     border: none !important;
     box-shadow: none !important;
+    overflow: hidden !important;
 }
-
 
 /* =====================================================
    RTL HARDENING v3 (covers more Streamlit DOM variants)
@@ -965,6 +981,9 @@ label, [data-testid="stWidgetLabel"]{
 
     st.markdown(textwrap.dedent(css).strip(), unsafe_allow_html=True)
 
+    # Ensure DOM root is RTL (some widgets ignore CSS-only direction)
+    _apply_rtl_dom_fix()
+
 
 
 def _apply_rtl_dom_fix():
@@ -984,12 +1003,19 @@ def _apply_rtl_dom_fix():
                 root.setAttribute('dir','rtl');
                 root.setAttribute('lang','ar');
                 root.classList.add('os-rtl');
+
                 const body = doc.body;
                 if (body){
                   body.setAttribute('dir','rtl');
-                  body.style.direction='rtl';
-                  body.style.textAlign='right';
+                  body.style.direction = 'rtl';
+                  body.style.textAlign = 'right';
                 }
+
+                // Streamlit containers (extra hardening)
+                const app = doc.querySelector('.stApp') || doc.body;
+                if (app){
+                  app.setAttribute('dir','rtl');
+                  app.classList.add('os-rtl');
                 }
               }catch(e){}
             })();
