@@ -167,81 +167,81 @@ def apply_custom_css():
         }
 
         /* =====================================================
-           Sidebar collapsed control: منع ظهور الخط/الشريط عند طيّ القائمة
-           ===================================================== */
-        div[data-testid="stSidebarCollapsedControl"],
-        div[data-testid="collapsedControl"],
-        [data-testid="collapsedControl"] {
-            /* اجعل الحاوية 0x0 حتى لا تتحول إلى خط عمودي */
-            width: 0 !important;
-            height: 0 !important;
-            padding: 0 !important;
-            margin: 0 !important;
-            overflow: visible !important;
-            background: transparent !important;
-            border: none !important;
-            box-shadow: none !important;
-            pointer-events: none !important;
-            z-index: 100000 !important;
-        }
+   Sidebar: RTL + طي/فتح بدون "خط عمودي"
+   - نُبقي زر الطي/الفتح قابل للنقر
+   - عند الطي: نخفي محتوى السايدبار بالكامل (بدل ما ينضغط ويصير نص عمودي)
+   ===================================================== */
 
-        div[data-testid="stSidebarCollapsedControl"]::before,
-        div[data-testid="stSidebarCollapsedControl"]::after,
-        div[data-testid="collapsedControl"]::before,
-        div[data-testid="collapsedControl"]::after,
-        [data-testid="collapsedControl"]::before,
-        [data-testid="collapsedControl"]::after {
-            display: none !important;
-            content: none !important;
-        }
+/* Keep header visible لأن زر فتح السايدبار يعيش داخله */
+header{
+    display:block !important;
+    visibility: visible !important;
+    pointer-events: auto !important;
+    z-index: 99999 !important;
+}
 
-        div[data-testid="stSidebarCollapsedControl"] button,
-        div[data-testid="collapsedControl"] button,
-        [data-testid="collapsedControl"] button,
-        button[title="Open sidebar"],
-        button[aria-label="Open sidebar"] {
-            pointer-events: auto !important;
-            position: fixed !important;
-            top: 0.85rem !important;
-            right: 0.85rem !important;
-            left: auto !important;
-            width: 42px !important;
-            height: 42px !important;
-            min-width: 42px !important;
-            min-height: 42px !important;
-            padding: 0 !important;
-            border-radius: 999px !important;
-            border: 1px solid var(--border2) !important;
-            background: var(--card-bg) !important;
-            box-shadow: 0 10px 24px rgba(15,23,42,0.10) !important;
-            display: inline-flex !important;
-            align-items: center !important;
-            justify-content: center !important;
-            z-index: 100001 !important;
-        }
+/* اجعل زر التحكم بالسايدبار دائماً في اليمين (RTL) */
+[data-testid="collapsedControl"],
+[data-testid="stSidebarCollapsedControl"],
+div[data-testid="stSidebarCollapsedControl"]{
+    left: auto !important;
+    right: 0.75rem !important;
+    top: 0.75rem !important;
+    z-index: 100000 !important;
+}
 
-        /* ضمان أن أيقونة زر الفتح لا تتحول إلى نص (keyboard_double_arrow_left) */
-        div[data-testid="stSidebarCollapsedControl"] button *,
-        div[data-testid="collapsedControl"] button *,
-        [data-testid="collapsedControl"] button * {
-            font-family: 'Material Symbols Rounded','Material Symbols Outlined','Material Symbols Sharp','Material Icons' !important;
-            font-feature-settings: 'liga' 1 !important;
-            -webkit-font-feature-settings: 'liga' 1 !important;
-        }
+/* لا تمنع النقر */
+[data-testid="collapsedControl"] *,
+[data-testid="stSidebarCollapsedControl"] *{
+    pointer-events: auto !important;
+}
 
-        /* إزالة أي خط/مقبض resizing بالقائمة */
-        div[data-testid="stSidebarResizer"],
-        div[data-testid="stSidebarResizeHandle"],
-        div[data-testid="stSidebarResizeHandle"] *,
-        section[data-testid="stSidebar"] div[style*="cursor: col-resize"] {
-            display: none !important;
-        }
+/* عند الطي: نُخفي السايدبار بالكامل لتجنب ظهور "شريط/نص عمودي" */
+html.os-sidebar-collapsed section[data-testid="stSidebar"]{
+    width: 0 !important;
+    min-width: 0 !important;
+    max-width: 0 !important;
+    flex: 0 0 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: hidden !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+html.os-sidebar-collapsed section[data-testid="stSidebar"] > div{
+    display: none !important;
+}
 
-        section[data-testid="stSidebar"] {
-            border-right: none !important;
-            border-left: none !important;
-            box-shadow: none !important;
-        }
+/* إزالة أي خط/مقبض resizing بالقائمة */
+div[data-testid="stSidebarResizer"],
+div[data-testid="stSidebarResizeHandle"],
+div[data-testid="stSidebarResizeHandle"] *,
+section[data-testid="stSidebar"] div[style*="cursor: col-resize"]{
+    display: none !important;
+}
+
+section[data-testid="stSidebar"]{
+    border-right: none !important;
+    border-left: none !important;
+    box-shadow: none !important;
+}
+
+/* =====================================================
+   ✅ Columns order (RTL)
+   ===================================================== */
+div[data-testid="stHorizontalBlock"],
+div[data-testid="stColumns"],
+.stHorizontalBlock,
+.stColumns{
+    flex-direction: row-reverse !important;
+}
+
+/* بعض إصدارات Streamlit تستخدم "column" كـ testid */
+div[data-testid="column"],
+div[data-testid="stColumn"]{
+    direction: rtl !important;
+    text-align: right !important;
+}
 
 /* Tabs: اجعل ترتيب الألسنة RTL */
 [data-testid="stTabs"] [role="tablist"]{
@@ -685,6 +685,14 @@ section[data-testid="stSidebar"] {
         }
 
         /* =====================================================
+   Backward-compatible header class aliases
+   ===================================================== */
+.os-app-header .os-app-left{ display:flex; align-items:center; gap:12px; min-width:0; }
+.os-app-header .os-app-right{ display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; }
+.os-app-header .os-app-title{ font-size:1.35rem; font-weight:950; line-height:1.15; margin:0; }
+.os-app-header .os-app-sub{ margin-top:4px; color:var(--muted); font-weight:800; font-size:0.92rem; }
+
+/* =====================================================
            Mobile tweaks
            ===================================================== */
         @media (max-width: 900px){
@@ -721,11 +729,10 @@ section[data-testid="stSidebar"] {
         ===================================================== */
 
         /* Streamlit markup changes between versions; cover common wrappers */
-        div[data-testid="stAppViewContainer"],
-        div[data-testid="stAppViewContainer"] > div:first-child,
-        div[data-testid="stAppViewContainer"] > div:first-child > div {
-            flex-direction: row-reverse !important;
-        }
+        /* ✅ ترتيب المحتوى (RTL):
+   لا نعكس حاوية التطبيق الجذرية لأن ذلك قد يسبب "شريط عمودي" عند طيّ السايدبار في بعض نسخ Streamlit.
+   نعتمد على نقل السايدبار لليمين عبر خاصية order فقط. */
+}
 
         /* أعكس ترتيب الأعمدة/الـcolumns لتكون من اليمين لليسار */
         div[data-testid="stHorizontalBlock"] {
@@ -763,52 +770,6 @@ section[data-testid="stSidebar"] {
             text-align: right !important;
         }
 
-
-/* =====================================================
-   RTL 강화 + منع شريط/خط القائمة عند الانهيار
-   ===================================================== */
-
-/* بعض إصدارات Streamlit تستخدم stColumns بدل stHorizontalBlock */
-div[data-testid="stColumns"],
-div[data-testid="stColumns"] > div,
-div[data-testid="stColumns"] > div > div,
-.stColumns,
-.stHorizontalBlock {
-    direction: rtl !important;
-    text-align: right !important;
-}
-div[data-testid="stColumns"] > div,
-div[data-testid="stHorizontalBlock"],
-.stHorizontalBlock {
-    flex-direction: row-reverse !important;
-}
-
-/* اجعل الـ sidebar ثابتة يمين دائمًا، ومنع وضع "الخط" عند الطيّ */
-section[data-testid="stSidebar"]{
-    min-width: 300px !important;
-    width: clamp(300px, 22vw, 380px) !important;
-    max-width: 380px !important;
-    transform: none !important;
-    overflow: hidden !important;
-}
-section[data-testid="stSidebar"] > div{
-    width: 100% !important;
-    overflow: hidden !important;
-}
-
-/* امنع زر الطيّ (Close/Collapse) لأنه يسبب شريط عمودي في بعض النسخ */
-button[title="Close sidebar"],
-button[aria-label="Close sidebar"],
-button[title="Collapse sidebar"],
-button[aria-label="Collapse sidebar"]{
-    display: none !important;
-}
-
-/* شدّ تطبيق الخط العربي على أغلب العناصر (بدون كسر أيقونات الماتيريال) */
-.stApp *:not(.material-icons):not(.material-symbols-outlined):not(.material-symbols-rounded):not(.material-symbols-sharp):not([data-testid="stIconMaterial"]):not([data-testid="stIconMaterial"] *) {
-    font-family: inherit !important;
-}
-
 </style>
         """
 
@@ -816,3 +777,59 @@ button[aria-label="Collapse sidebar"]{
     css = css.replace("__VAR_CSS__", var_css)
 
     st.markdown(css, unsafe_allow_html=True)
+
+    # ✅ RTL + Sidebar collapse fix (JS): يحدد حالة طيّ السايدبار ويمنع ظهور النص العمودي
+    try:
+        import streamlit.components.v1 as components
+        if not st.session_state.get('_os_rtl_sidebar_js'):
+            components.html(
+                '''
+                <script>
+                (function(){
+                  const root = document.documentElement;
+                  try { root.setAttribute('dir','rtl'); } catch(e){}
+                  root.classList.add('os-rtl');
+
+                  function getSidebar(){
+                    return document.querySelector('section[data-testid="stSidebar"]');
+                  }
+                  function getCollapsedControl(){
+                    return document.querySelector('[data-testid="collapsedControl"], [data-testid="stSidebarCollapsedControl"], div[data-testid="stSidebarCollapsedControl"]');
+                  }
+                  function isCollapsed(){
+                    const sb = getSidebar();
+                    const cc = getCollapsedControl();
+                    let collapsed = false;
+                    if (sb){
+                      const w = sb.getBoundingClientRect().width;
+                      const aria = (sb.getAttribute('aria-expanded') || sb.getAttribute('data-expanded') || '').toLowerCase();
+                      if (aria === 'false') collapsed = true;
+                      if (w > 0 && w < 90) collapsed = true; // الشريط الضيق
+                    }
+                    if (cc){
+                      const btn = cc.querySelector('button');
+                      const t = (btn && (btn.getAttribute('title') || btn.getAttribute('aria-label') || '') || '').toLowerCase();
+                      if (t.includes('open sidebar')) collapsed = true;
+                    }
+                    return collapsed;
+                  }
+                  function apply(){
+                    const c = isCollapsed();
+                    root.classList.toggle('os-sidebar-collapsed', !!c);
+                  }
+                  apply();
+
+                  const obs = new MutationObserver(function(){ apply(); });
+                  obs.observe(document.body, {subtree:true, childList:true, attributes:true});
+                  window.addEventListener('resize', apply);
+                  // تأمين إضافي لأن Streamlit يبدّل DOM بعد التفاعل
+                  setTimeout(apply, 500);
+                  setTimeout(apply, 1500);
+                })();
+                </script>
+                ''',
+                height=0,
+            )
+            st.session_state['_os_rtl_sidebar_js'] = True
+    except Exception:
+        pass
