@@ -254,8 +254,8 @@ def apply_custom_css():
         div[data-testid="stTabs"] [data-baseweb="tab-list"] {
             direction: rtl !important;
             unicode-bidi: plaintext !important;
-            flex-direction: row-reverse !important;
-            justify-content: flex-end !important;
+            flex-direction: row !important;
+            justify-content: flex-start !important;
             gap: 6px !important;
             padding-bottom: 6px !important;
             border-bottom: 1px solid var(--border) !important;
@@ -1205,8 +1205,8 @@ button[aria-label="Open sidebar"]{
         [data-testid="stTabs"] [data-baseweb="tab-list"],
         [data-testid="stTabs"] [role="tablist"]{
             direction: rtl !important;
-            flex-direction: row-reverse !important;
-            justify-content: flex-end !important;
+            flex-direction: row !important;
+            justify-content: flex-start !important;
             text-align: right !important;
         }
         [data-testid="stTabs"] [data-baseweb="tab"],
@@ -1529,6 +1529,25 @@ html:has(button[title="Collapse sidebar"]) div[data-testid="stSidebarCollapsedCo
 html:has(button[aria-label="Collapse sidebar"]) div[data-testid="stSidebarCollapsedControl"] button::before{
     content: "×";
     font-size: 26px;
+}
+
+
+/* =====================================================
+   FINAL: Tabs order (RTL) — keep your tab order as written in Python
+   - First tab appears on the RIGHT in RTL.
+   ===================================================== */
+div[data-testid="stTabs"]{ direction: rtl !important; }
+div[data-testid="stTabs"] [data-baseweb="tab-list"],
+div[data-testid="stTabs"] [role="tablist"]{
+  direction: rtl !important;
+  flex-direction: row !important;          /* IMPORTANT: no row-reverse */
+  justify-content: flex-start !important;  /* in RTL => aligns to right */
+  text-align: right !important;
+}
+div[data-testid="stTabs"] [data-baseweb="tab"],
+div[data-testid="stTabs"] [role="tab"]{
+  direction: rtl !important;
+  text-align: right !important;
 }
 
 </style>
