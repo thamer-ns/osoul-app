@@ -1,5 +1,6 @@
 # styles.py
 import streamlit as st
+import textwrap
 
 
 def apply_custom_css():
@@ -737,9 +738,25 @@ section[data-testid="stSidebar"] {
             order: 2 !important;
             right: 0 !important;
             left: auto !important;
+
+            /* ✅ الحل الأساسي: لا تضع Border داخلي ثابت
+               لأنه يتحول إلى خط عند طي القائمة في بعض نسخ Streamlit */
+            border-left: none !important;
             border-right: none !important;
-            border-left: 1px solid var(--border2) !important;
             box-shadow: none !important;
+        }
+
+        /* فاصل يظهر فقط عندما تكون القائمة "مفتوحة" (وجود زر Close/Collapse) */
+        
+        /* إذا كانت نسخة Streamlit تضع aria-expanded على الـSidebar */
+        section[data-testid="stSidebar"][aria-expanded="true"],
+        div[data-testid="stSidebar"][aria-expanded="true"],
+        [data-testid="stSidebar"][aria-expanded="true"],
+html:has(button[title="Close sidebar"]) section[data-testid="stSidebar"],
+        html:has(button[aria-label="Close sidebar"]) section[data-testid="stSidebar"],
+        html:has(button[title="Collapse sidebar"]) section[data-testid="stSidebar"],
+        html:has(button[aria-label="Collapse sidebar"]) section[data-testid="stSidebar"] {
+            border-left: 1px solid var(--border2) !important;
         }
 
         /* ✅ When sidebar is collapsed: remove any remaining strip/line */
@@ -749,14 +766,21 @@ section[data-testid="stSidebar"] {
             width: 0 !important;
             min-width: 0 !important;
             max-width: 0 !important;
+            flex: 0 0 0 !important;
             padding: 0 !important;
             margin: 0 !important;
             overflow: hidden !important;
+            transform: translateX(100%) !important;
             border: none !important;
             box-shadow: none !important;
         }
 
-        
+        section[data-testid="stSidebar"][aria-expanded="false"] *,
+        div[data-testid="stSidebar"][aria-expanded="false"] *,
+        [data-testid="stSidebar"][aria-expanded="false"] * {
+            display: none !important;
+        }
+
         /* Fallback (إذا لم يظهر aria-expanded في بعض نسخ Streamlit) */
         html:has(button[title="Open sidebar"]) section[data-testid="stSidebar"],
         html:has(button[aria-label="Open sidebar"]) section[data-testid="stSidebar"],
@@ -765,11 +789,23 @@ section[data-testid="stSidebar"] {
             width: 0 !important;
             min-width: 0 !important;
             max-width: 0 !important;
+            flex: 0 0 0 !important;
+            padding: 0 !important;
+            margin: 0 !important;
             overflow: hidden !important;
+            transform: translateX(100%) !important;
             border: none !important;
             box-shadow: none !important;
         }
-/* Keep main content on the left */
+
+        html:has(button[title="Open sidebar"]) section[data-testid="stSidebar"] *,
+        html:has(button[aria-label="Open sidebar"]) section[data-testid="stSidebar"] *,
+        html:has(button[title="Open sidebar"]) div[data-testid="stSidebar"] *,
+        html:has(button[aria-label="Open sidebar"]) div[data-testid="stSidebar"] * {
+            display: none !important;
+        }
+
+        /* Keep main content on the left */
         section[data-testid="stMain"],
         [data-testid="stMain"] {
             order: 1 !important;
@@ -796,4 +832,4 @@ section[data-testid="stSidebar"] {
     # Insert theme variables safely without turning the whole CSS into an f-string.
     css = css.replace("__VAR_CSS__", var_css)
 
-    st.markdown(css, unsafe_allow_html=True)
+    st.markdown(textwrap.dedent(css).strip(), unsafe_allow_html=True)
