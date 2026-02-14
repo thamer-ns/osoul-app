@@ -80,56 +80,174 @@ def apply_custom_css():
         /* ✅ App background for both themes */
         .stApp { background: var(--app-bg) !important; }
 
-        /* =====================================================
-   Base RTL + Cairo (safe)
-   ===================================================== */
-        :root{
-            --os-font-ar: 'Cairo', sans-serif;
-        }
-
-        /* Arabic typography */
-        .stApp{ font-family: var(--os-font-ar) !important; }
-        .stApp :where(h1,h2,h3,h4,h5,h6,p,div,span,label,button,input,textarea,select,option,li,ul,ol,table,th,td){
-            font-family: var(--os-font-ar) !important;
-        }
-
-        /* RTL containers */
-        html, body{ direction: rtl !important; }
-        .stApp [data-testid="stAppViewContainer"],
-        .stApp [data-testid="stHeader"],
-        .stApp [data-testid="stMain"],
-        .stApp [data-testid="stMainBlockContainer"],
-        .stApp section[data-testid="stSidebar"],
-        .stApp [data-testid="stSidebarContent"],
-        .stApp .stMarkdown,
-        .stApp .stMarkdown *{
+                /* =====================================================
+           RTL + Cairo (مركزي) + حماية أيقونات Streamlit
+           - نثبت RTL بشكل عام (حتى صفحة الدخول والتبويبات)
+           - نطبق Cairo على واجهة Streamlit فقط
+           - نستثني Material Icons/Symbols حتى لا تظهر كنص مثل keyboard_double_arrow_left
+           ===================================================== */
+        html, body {
             direction: rtl !important;
             text-align: right !important;
         }
 
-        /* Reverse Streamlit layout so sidebar is on the right */
-        div[data-testid="stAppViewContainer"] > div:first-child{
-            flex-direction: row-reverse !important;
+        .stApp {
+            direction: rtl !important;
+            text-align: right !important;
+            color: var(--txt) !important;
         }
 
-        /* Tabs RTL (BaseWeb) */
-        .stApp div[data-baseweb="tab-list"]{
-            flex-direction: row-reverse !important;
+        /* تقوية RTL داخل حاويات Streamlit (بعضها يفرض LTR افتراضيًا) */
+        [data-testid="stAppViewContainer"],
+        [data-testid="stMain"],
+        [data-testid="stSidebar"],
+        [data-testid="stVerticalBlock"],
+        [data-testid="stHorizontalBlock"],
+        .block-container {
             direction: rtl !important;
-        }
-        .stApp div[data-baseweb="tab"]{
             text-align: right !important;
         }
 
-        /* Keep code and technical text LTR */
-        .stApp pre,
-        .stApp code,
-        .stApp [data-testid="stCodeBlock"],
-        .stApp .stCodeBlock{
+        /* عناصر الإدخال يجب أن تتبع RTL */
+        input, textarea, select {
+            direction: rtl !important;
+            text-align: right !important;
+        }
+
+        /* إخفاء تلميح Streamlit الإنجليزي أسفل الفورم (لا يؤثر على Enter) */
+        div[data-testid="stForm"] small {
+            display: none !important;
+        }
+
+        /* تطبيق Cairo بالوراثة (بدون كسر Material Icons ligatures) */
+        .stApp {
+            font-family: 'Cairo', sans-serif !important;
+        }
+        .stApp input,
+        .stApp textarea,
+        .stApp select,
+        .stApp button,
+        .stApp label,
+        .stApp p,
+        .stApp span,
+        .stApp a,
+        .stApp li,
+        .stApp th,
+        .stApp td,
+        .stApp h1,
+        .stApp h2,
+        .stApp h3,
+        .stApp h4,
+        .stApp h5,
+        .stApp h6 {
+            font-family: inherit !important;
+        }
+
+        /* Code/JSON blocks يجب أن تبقى LTR */
+        pre, code, .stCode, .stMarkdown pre, .stMarkdown code {
             direction: ltr !important;
             text-align: left !important;
-            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace !important;
         }
+
+        /* إصلاح أيقونات Streamlit/Material (Ligatures) */
+        .material-icons,
+        .material-symbols-outlined,
+        .material-symbols-rounded,
+        .material-symbols-sharp,
+        [class*="material-symbols"],
+        [data-testid="stIconMaterial"],
+        [data-testid="stIconMaterial"] *,
+        span[translate="no"] {
+            font-family: 'Material Symbols Rounded','Material Symbols Outlined','Material Symbols Sharp','Material Icons' !important;
+            font-feature-settings: 'liga' 1 !important;
+            -webkit-font-feature-settings: 'liga' 1 !important;
+            direction: ltr !important;
+            text-align: center !important;
+            letter-spacing: normal !important;
+        }
+
+        /* =====================================================
+           Sidebar collapsed control: منع ظهور الخط/الشريط عند طيّ القائمة
+           ===================================================== */
+        div[data-testid="stSidebarCollapsedControl"],
+        div[data-testid="collapsedControl"],
+        [data-testid="collapsedControl"] {
+            /* اجعل الحاوية 0x0 حتى لا تتحول إلى خط عمودي */
+            width: 0 !important;
+            height: 0 !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            overflow: visible !important;
+            background: transparent !important;
+            border: none !important;
+            box-shadow: none !important;
+            pointer-events: none !important;
+            z-index: 100000 !important;
+        }
+
+        div[data-testid="stSidebarCollapsedControl"]::before,
+        div[data-testid="stSidebarCollapsedControl"]::after,
+        div[data-testid="collapsedControl"]::before,
+        div[data-testid="collapsedControl"]::after,
+        [data-testid="collapsedControl"]::before,
+        [data-testid="collapsedControl"]::after {
+            display: none !important;
+            content: none !important;
+        }
+
+        div[data-testid="stSidebarCollapsedControl"] button,
+        div[data-testid="collapsedControl"] button,
+        [data-testid="collapsedControl"] button,
+        button[title="Open sidebar"],
+        button[aria-label="Open sidebar"] {
+            pointer-events: auto !important;
+            position: fixed !important;
+            top: 0.85rem !important;
+            right: 0.85rem !important;
+            left: auto !important;
+            width: 42px !important;
+            height: 42px !important;
+            min-width: 42px !important;
+            min-height: 42px !important;
+            padding: 0 !important;
+            border-radius: 999px !important;
+            border: 1px solid var(--border2) !important;
+            background: var(--card-bg) !important;
+            box-shadow: 0 10px 24px rgba(15,23,42,0.10) !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            z-index: 100001 !important;
+        }
+
+        /* ضمان أن أيقونة زر الفتح لا تتحول إلى نص (keyboard_double_arrow_left) */
+        div[data-testid="stSidebarCollapsedControl"] button *,
+        div[data-testid="collapsedControl"] button *,
+        [data-testid="collapsedControl"] button * {
+            font-family: 'Material Symbols Rounded','Material Symbols Outlined','Material Symbols Sharp','Material Icons' !important;
+            font-feature-settings: 'liga' 1 !important;
+            -webkit-font-feature-settings: 'liga' 1 !important;
+        }
+
+        /* إزالة أي خط/مقبض resizing بالقائمة */
+        div[data-testid="stSidebarResizer"],
+        div[data-testid="stSidebarResizeHandle"],
+        div[data-testid="stSidebarResizeHandle"] *,
+        section[data-testid="stSidebar"] div[style*="cursor: col-resize"] {
+            display: none !important;
+        }
+
+        section[data-testid="stSidebar"] {
+            border-right: none !important;
+            border-left: none !important;
+            box-shadow: none !important;
+        }
+
+/* Tabs: اجعل ترتيب الألسنة RTL */
+[data-testid="stTabs"] [role="tablist"]{
+    flex-direction: row-reverse !important;
+    justify-content: flex-start !important;
+}
 
 
 /* =====================================================
@@ -169,77 +287,36 @@ def apply_custom_css():
         }
 
         
-        /* --- Icon fonts safety (prevent Cairo from breaking Streamlit icons) --- */
-        [data-testid="stIconMaterial"] *,
-        [data-testid="collapsedControl"] *,
-        div[data-testid="stSidebarCollapsedControl"] *{
-            font-family: 'Material Symbols Rounded', 'Material Symbols Outlined', 'Material Icons' !important;
-            direction: ltr !important;
-            text-align: center !important;
-            font-weight: normal !important;
-            font-style: normal !important;
-            letter-spacing: normal !important;
-            text-transform: none !important;
-            white-space: nowrap !important;
-            -webkit-font-feature-settings: "liga" !important;
-            font-feature-settings: "liga" !important;
-            -webkit-font-smoothing: antialiased !important;
-            font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24 !important;
-        }
 /* =====================================================
-           UI Cleanup
-           ===================================================== */
-        footer, header, #MainMenu { display: none !important; }
+   UI Cleanup
+   ===================================================== */
+/* لا نخفي <header> لأن زر فتح الـSidebar عند الطيّ يعتمد عليه */
+#MainMenu { visibility: hidden !important; }
+footer { visibility: hidden !important; height: 0 !important; }
 
-        /* Sidebar collapse control + resizer (RTL-safe, no vertical strip) */
-        [data-testid="stSidebarResizer"],
-        [data-testid="stSidebarResizeHandle"],
-        div[data-testid="stSidebarResizer"]{
-            display: none !important;
-        }
+/* لا نخفي <header> لأن زر فتح الـSidebar يعتمد عليه */
+header { display: block !important; }
 
-        [data-testid="collapsedControl"],
-        div[data-testid="collapsedControl"],
-        div[data-testid="stSidebarCollapsedControl"]{
-            position: fixed !important;
-            top: 72px !important;
-            right: 16px !important;
-            left: auto !important;
-            height: auto !important;
-            width: auto !important;
-            background: transparent !important;
-            border: none !important;
-            box-shadow: none !important;
-            z-index: 10000 !important;
-        }
+/* إخفاء Toolbars */
+[data-testid="stElementToolbar"] { display: none !important; }
+div[role="tooltip"] { display: none !important; opacity: 0 !important; visibility: hidden !important; }
+button[title="View fullscreen"] { display: none !important; }
 
-        [data-testid="collapsedControl"] button,
-        div[data-testid="stSidebarCollapsedControl"] button{
-            background: var(--card-bg) !important;
-            border: 1px solid var(--border2) !important;
-            border-radius: 999px !important;
-            box-shadow: 0 10px 25px rgba(15,23,42,0.08) !important;
-            min-width: 40px !important;
-            min-height: 40px !important;
-            padding: 6px !important;
-        }
+/* إزالة خط الـResizer الذي يظهر عند طيّ القائمة */
+div[data-testid="stSidebarResizer"],
+div[data-testid="stSidebarResizeHandle"],
+div[data-testid="stSidebarResizeHandle"] * {
+    display: none !important;
+}
 
-        [data-testid="collapsedControl"] button * ,
-        div[data-testid="stSidebarCollapsedControl"] button *{
-            white-space: nowrap !important;
-        }
-        [data-testid="stElementToolbar"] { display: none !important; }
-        div[role="tooltip"] { display: none !important; opacity: 0 !important; visibility: hidden !important; }
-        button[title="View fullscreen"] { display: none !important; }
+section[data-testid="stSidebar"] {
+    border-right: none !important;
+    border-left: none !important;
+    box-shadow: none !important;
+}
 
-        section[data-testid="stSidebar"] {
-            border-right: none !important;
-            border-left: none !important;
-            box-shadow: none !important;
-        }
-
-        /* =====================================================
-           Expander (رفع التباين)
+/* =====================================================
+   Expander (رفع التباين)
            ===================================================== */
         div[data-testid="stExpander"]{
             border: 1px solid var(--border2) !important;
@@ -639,6 +716,54 @@ def apply_custom_css():
 }
 
 
+        /* =====================================================
+           Sidebar on the RIGHT (RTL)
+        ===================================================== */
+
+        /* Streamlit markup changes between versions; cover common wrappers */
+        div[data-testid="stAppViewContainer"],
+        div[data-testid="stAppViewContainer"] > div:first-child,
+        div[data-testid="stAppViewContainer"] > div:first-child > div {
+            flex-direction: row-reverse !important;
+        }
+
+        /* أعكس ترتيب الأعمدة/الـcolumns لتكون من اليمين لليسار */
+        div[data-testid="stHorizontalBlock"] {
+            flex-direction: row-reverse !important;
+        }
+
+        /* Force sidebar to live on the right */
+        section[data-testid="stSidebar"] {
+            order: 2 !important;
+            right: 0 !important;
+            left: auto !important;
+            border-left: none !important;
+            border-right: 1px solid rgba(255,255,255,0.06) !important;
+            box-shadow: none !important;
+        }
+
+        /* Keep main content on the left */
+        section[data-testid="stMain"],
+        [data-testid="stMain"] {
+            order: 1 !important;
+        }
+
+        /* Collapsed control button on the top-right */
+        [data-testid="collapsedControl"],
+        [data-testid="stSidebarCollapsedControl"] {
+            right: 0.75rem !important;
+            left: auto !important;
+        }
+
+        /* BaseWeb (Streamlit widgets) يميل لفرض LTR */
+        [data-baseweb],
+        div[data-baseweb="select"],
+        div[data-baseweb="popover"] {
+            direction: rtl !important;
+            text-align: right !important;
+        }
+
+</style>
         """
 
     # Insert theme variables safely without turning the whole CSS into an f-string.
