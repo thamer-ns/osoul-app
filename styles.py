@@ -996,6 +996,91 @@ html:has(button[title="Close sidebar"]) section[data-testid="stSidebar"],
             text-align: right !important;
         }
 
+        /* =====================================================
+           RTL ICON + TABS FIXES (بدون تغيير أي تصميم آخر)
+           - يعالج: تبويبات تسجيل الدخول/الصفحات (BaseWeb)
+           - يعالج: أيقونات حقول الإدخال (مثل عين كلمة المرور/رموز داخل الحقول)
+           - يعالج: أيقونات خلفية بطاقات KPI (تنتقل لليمين)
+           - يعالج: st.metric delta/icon ترتيب RTL
+           ===================================================== */
+
+        /* 9) BaseWeb Tabs (Streamlit st.tabs) — بعض الإصدارات لا تستخدم role=tablist بشكل صريح */
+        div[data-baseweb="tab-list"],
+        [data-testid="stTabs"] div[data-baseweb="tab-list"]{
+            display: flex !important;
+            flex-direction: row-reverse !important;
+            justify-content: flex-start !important;
+            direction: rtl !important;
+            text-align: right !important;
+        }
+        div[data-baseweb="tab"],
+        [data-testid="stTabs"] div[data-baseweb="tab"]{
+            direction: rtl !important;
+            text-align: right !important;
+        }
+        /* ثبّت داخل زر التبويب */
+        div[data-baseweb="tab"] > div,
+        [data-testid="stTabs"] div[data-baseweb="tab"] > div{
+            direction: rtl !important;
+            text-align: right !important;
+            unicode-bidi: plaintext !important;
+        }
+
+        /* 10) BaseWeb Input/Password: انقل أيقونات الحقل (start/end enhancer) لتتوافق مع RTL */
+        [data-baseweb="input"]{
+            direction: rtl !important;
+        }
+        [data-baseweb="input"] > div{
+            display: flex !important;
+            flex-direction: row-reverse !important;
+            align-items: center !important;
+        }
+        [data-baseweb="input"] input{
+            direction: rtl !important;
+            text-align: right !important;
+            unicode-bidi: plaintext !important;
+            font-family: 'Cairo', sans-serif !important;
+        }
+        [data-baseweb="input"] input::placeholder{
+            direction: rtl !important;
+            text-align: right !important;
+            unicode-bidi: plaintext !important;
+        }
+        /* زر العين/الأيقونات داخل الحقل: لا نكسر شكل الـSVG */
+        [data-baseweb="input"] button,
+        [data-baseweb="input"] button *{
+            direction: ltr !important;
+            unicode-bidi: isolate !important;
+        }
+
+        /* 11) Metric: اجعل الأيقونة/الـdelta يمشون RTL (سهم + نسبة) */
+        div[data-testid="stMetricLabel"]{
+            direction: rtl !important;
+            text-align: right !important;
+        }
+        div[data-testid="stMetricDelta"]{
+            direction: rtl !important;
+            text-align: right !important;
+            display: inline-flex !important;
+            flex-direction: row-reverse !important;
+            justify-content: flex-end !important;
+            gap: .25rem !important;
+        }
+        div[data-testid="stMetricDelta"] svg{
+            /* السهم/الأيقونة تبقى بشكلها */
+            direction: ltr !important;
+            unicode-bidi: isolate !important;
+        }
+
+        /* 12) KPI background icon: انقل الأيقونة لليمين (RTL) */
+        .kpi-icon-bg{
+            left: auto !important;
+            right: -10px !important;
+        }
+        .kpi-card:hover .kpi-icon-bg{
+            left: auto !important;
+            right: -4px !important;
+        }
 </style>
         """
 
