@@ -342,19 +342,10 @@ def apply_custom_css():
            Sidebar collapsed control (كما هو)
            ===================================================== */
         div[data-testid="stSidebarCollapsedControl"],
-        div[data-testid="collapsedControl"],
-        [data-testid="collapsedControl"] {
-            width: 0 !important;
-            height: 0 !important;
-            padding: 0 !important;
-            margin: 0 !important;
-            overflow: visible !important;
-            background: transparent !important;
-            border: none !important;
-            box-shadow: none !important;
-            pointer-events: none !important;
-            z-index: 100000 !important;
-        }
+div[data-testid="collapsedControl"],
+[data-testid="collapsedControl"]{
+    /* handled later by Sidebar toggle override */
+}
 
         div[data-testid="stSidebarCollapsedControl"]::before,
         div[data-testid="stSidebarCollapsedControl"]::after,
@@ -1086,26 +1077,7 @@ div[data-testid="collapsedControl"] button *,
             border-left: 1px solid var(--border2) !important;
         }
 
-        section[data-testid="stSidebar"][aria-expanded="false"],
-        div[data-testid="stSidebar"][aria-expanded="false"],
-        [data-testid="stSidebar"][aria-expanded="false"] {
-            width: 0 !important;
-            min-width: 0 !important;
-            max-width: 0 !important;
-            flex: 0 0 0 !important;
-            padding: 0 !important;
-            margin: 0 !important;
-            overflow: hidden !important;
-            transform: translateX(100%) !important;
-            border: none !important;
-            box-shadow: none !important;
-        }
-
-        section[data-testid="stSidebar"][aria-expanded="false"] *,
-        div[data-testid="stSidebar"][aria-expanded="false"] *,
-        [data-testid="stSidebar"][aria-expanded="false"] * {
-            display: none !important;
-        }
+        section[data-testid="stSidebar"][aria-expanded="false"]{ border: none !important; box-shadow:none !important; }
 
         html:has(button[title="Open sidebar"]) section[data-testid="stSidebar"],
         html:has(button[aria-label="Open sidebar"]) section[data-testid="stSidebar"],
@@ -1236,6 +1208,156 @@ div[data-testid="collapsedControl"] button *,
             display: inline-flex !important;
             visibility: visible !important;
         }
+
+
+/* =====================================================
+   Typography (Cairo) — enforce globally (except icons/code)
+   ===================================================== */
+.stApp, .stApp *{
+    font-family: 'Cairo', sans-serif !important;
+    -webkit-font-smoothing: antialiased !important;
+    text-rendering: optimizeLegibility !important;
+}
+/* Keep code blocks monospace */
+pre, code, .stCode, .stMarkdown pre, .stMarkdown code, div[data-testid="stCodeBlock"] *{
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace !important;
+}
+
+
+/* =====================================================
+   Material Icons/Symbols — stop showing ligature text
+   ===================================================== */
+.stApp .material-icons,
+.stApp i.material-icons,
+.stApp span.material-icons,
+.stApp .material-symbols-outlined,
+.stApp .material-symbols-rounded,
+.stApp .material-symbols-sharp,
+.stApp [class*="material-symbols"],
+.stApp [data-testid="stIconMaterial"],
+.stApp [data-testid="stIconMaterial"] *,
+.stApp span[translate="no"]{
+    font-family: "Material Symbols Rounded","Material Symbols Outlined","Material Symbols Sharp","Material Icons" !important;
+    font-feature-settings: "liga" 1 !important;
+    -webkit-font-feature-settings: "liga" 1 !important;
+    font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24 !important;
+    letter-spacing: normal !important;
+    text-transform: none !important;
+    white-space: nowrap !important;
+    direction: ltr !important;
+    unicode-bidi: isolate !important;
+}
+
+
+/* =====================================================
+   Sidebar toggle — keep visible even when top bar is hidden
+   ===================================================== */
+div[data-testid="stSidebarCollapsedControl"],
+div[data-testid="collapsedControl"],
+[data-testid="collapsedControl"]{
+    display: block !important;
+    position: fixed !important;
+    top: 12px !important;
+    right: 12px !important;
+    left: auto !important;
+    width: auto !important;
+    height: auto !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+    pointer-events: auto !important;
+    z-index: 1000002 !important;
+}
+/* Do NOT shrink the toggle container to 0 (was causing disappearance) */
+div[data-testid="stSidebarCollapsedControl"] button,
+div[data-testid="collapsedControl"] button,
+[data-testid="collapsedControl"] button,
+button[title="Open sidebar"],
+button[aria-label="Open sidebar"],
+button[title="Close sidebar"],
+button[aria-label="Close sidebar"],
+button[title="Collapse sidebar"],
+button[aria-label="Collapse sidebar"]{
+    pointer-events: auto !important;
+    position: relative !important;
+    width: 44px !important;
+    height: 44px !important;
+    min-width: 44px !important;
+    min-height: 44px !important;
+    padding: 0 !important;
+    border-radius: 999px !important;
+    border: 1px solid var(--border2) !important;
+    background: var(--card-bg) !important;
+    box-shadow: 0 10px 24px rgba(15,23,42,0.10) !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+/* Ensure the icon inside toggle never becomes text */
+div[data-testid="stSidebarCollapsedControl"] button *,
+div[data-testid="collapsedControl"] button *{
+    font-family: "Material Symbols Rounded","Material Symbols Outlined","Material Symbols Sharp","Material Icons" !important;
+    font-feature-settings: "liga" 1 !important;
+    -webkit-font-feature-settings: "liga" 1 !important;
+}
+
+
+/* =====================================================
+   FINAL FIX: Never hide the sidebar toggle button
+   - Streamlit sometimes renders the toggle inside the top toolbar.
+   - We keep the topbar actions hidden, but force the toggle visible + fixed.
+   ===================================================== */
+div[data-testid="stToolbar"] button[title="Open sidebar"],
+div[data-testid="stToolbar"] button[aria-label="Open sidebar"],
+div[data-testid="stToolbar"] button[title="Close sidebar"],
+div[data-testid="stToolbar"] button[aria-label="Close sidebar"],
+div[data-testid="stToolbar"] button[title="Collapse sidebar"],
+div[data-testid="stToolbar"] button[aria-label="Collapse sidebar"],
+div[data-testid="stToolbar"] button[title="Expand sidebar"],
+div[data-testid="stToolbar"] button[aria-label="Expand sidebar"]{
+    display: inline-flex !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    position: fixed !important;
+    top: 12px !important;
+    right: 12px !important;
+    left: auto !important;
+    width: 44px !important;
+    height: 44px !important;
+    min-width: 44px !important;
+    min-height: 44px !important;
+    padding: 0 !important;
+    border-radius: 999px !important;
+    border: 1px solid var(--border2) !important;
+    background: var(--card-bg) !important;
+    box-shadow: 0 10px 24px rgba(15,23,42,0.10) !important;
+    z-index: 1000005 !important;
+}
+
+/* If earlier rules hide all sidebar children when collapsed, unhide the toggle container */
+html:has(button[title="Open sidebar"]) section[data-testid="stSidebar"] div[data-testid="stSidebarCollapsedControl"],
+html:has(button[aria-label="Open sidebar"]) section[data-testid="stSidebar"] div[data-testid="stSidebarCollapsedControl"],
+html:has(button[title="Open sidebar"]) section[data-testid="stSidebar"] div[data-testid="collapsedControl"],
+html:has(button[aria-label="Open sidebar"]) section[data-testid="stSidebar"] div[data-testid="collapsedControl"]{
+    display: block !important;
+    width: auto !important;
+    height: auto !important;
+    overflow: visible !important;
+}
+html:has(button[title="Open sidebar"]) section[data-testid="stSidebar"] div[data-testid="stSidebarCollapsedControl"] button,
+html:has(button[aria-label="Open sidebar"]) section[data-testid="stSidebar"] div[data-testid="stSidebarCollapsedControl"] button,
+html:has(button[title="Open sidebar"]) section[data-testid="stSidebar"] div[data-testid="collapsedControl"] button,
+html:has(button[aria-label="Open sidebar"]) section[data-testid="stSidebar"] div[data-testid="collapsedControl"] button{
+    display: inline-flex !important;
+    position: fixed !important;
+    top: 12px !important;
+    right: 12px !important;
+    left: auto !important;
+    z-index: 1000006 !important;
+}
 
 </style>
         """
