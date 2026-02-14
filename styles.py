@@ -112,7 +112,7 @@ def apply_custom_css():
         @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Sharp:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
 
         :root {
-            --font-ar: 'IBM Plex Sans Arabic', 'Cairo', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            --font-ar: 'Cairo', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
         }
 
         /* =====================================================
@@ -423,11 +423,46 @@ header [data-testid="stAppToolbar"],
 header [data-testid="stHeaderActionElements"],
 div[data-testid="stToolbar"],
 div[data-testid="stAppToolbar"],
-div[data-testid="stStatusWidget"],
-div[data-testid="stDecoration"],
-div[data-testid="stTopBar"]{
+/* Hide Streamlit top bar actions (Share/Star) WITHOUT killing sidebar toggle */
+div[data-testid="stStatusWidget"]{
     display: none !important;
 }
+
+/* Keep top bar wrapper but collapse it visually */
+div[data-testid="stTopBar"]{
+    height: 0 !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    border: 0 !important;
+    overflow: visible !important; /* allow sidebar toggle to remain clickable */
+}
+
+/* Some versions wrap the bar in stDecoration; neutralize instead of hiding */
+div[data-testid="stDecoration"]{
+    height: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    border: 0 !important;
+}
+
+/* Hide all default top-bar content/buttons */
+div[data-testid="stTopBar"] *{
+    display: none !important;
+}
+
+/* ✅ BUT keep the sidebar collapsed control visible */
+div[data-testid="stTopBar"] div[data-testid="stSidebarCollapsedControl"],
+div[data-testid="stTopBar"] div[data-testid="collapsedControl"]{
+    display: block !important;
+}
+div[data-testid="stTopBar"] div[data-testid="stSidebarCollapsedControl"] *,
+div[data-testid="stTopBar"] div[data-testid="collapsedControl"] *{
+    display: initial !important;
+}
+
 /* حافظ على وجود الـheader لأن زر فتح الـSidebar يعتمد عليه */
 header{
     background: transparent !important;
