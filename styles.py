@@ -90,26 +90,30 @@ def apply_custom_css():
             color: var(--txt);
         }
 
-        /* ✅ طبّق Cairo على span لكن استثنِ أيقونات Material */
-        span:not(.material-icons)
-            :not(.material-symbols-outlined)
-            :not(.material-symbols-rounded)
-            :not(.material-symbols-sharp)
-            :not([class*="material-symbols"])
-        {
-            font-family: 'Cairo', sans-serif !important;
-            direction: rtl !important;
-            text-align: right !important;
-        }
+
+/* Tabs: اجعل ترتيب الألسنة RTL */
+[data-testid="stTabs"] [role="tablist"]{
+    flex-direction: row-reverse !important;
+    justify-content: flex-start !important;
+}
+
+/* Code/JSON blocks يجب أن تبقى LTR */
+pre, code, .stCode, .stMarkdown pre, .stMarkdown code {
+    direction: ltr !important;
+    text-align: left !important;
+}
+
 
         
-        /* ✅ Keep code blocks LTR (لا نكسر كود/JSON) */
-        pre, code, [data-testid="stCodeBlock"] pre, [data-testid="stJson"] pre {
-            direction: ltr !important;
-            text-align: left !important;
-            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
-        }
-/* =====================================================
+/* ✅ طبّق Cairo على span لكن استثنِ أيقونات Material */
+span:not(.material-icons):not(.material-symbols-outlined):not(.material-symbols-rounded):not(.material-symbols-sharp):not([class*="material-symbols"]) {
+    font-family: 'Cairo', sans-serif !important;
+    direction: rtl !important;
+    text-align: right !important;
+}
+
+
+        /* =====================================================
            Material Icons / Symbols fixes
            ===================================================== */
         .material-icons,
@@ -145,25 +149,42 @@ def apply_custom_css():
             -webkit-font-smoothing: antialiased !important;
         }
 
-        /* =====================================================
-           UI Cleanup
-           ===================================================== */
-        footer, #MainMenu { display: none !important; }
-        header { display: block !important; visibility: visible !important; }
+        
+/* =====================================================
+   UI Cleanup
+   ===================================================== */
+/* لا نخفي <header> لأن زر فتح الـSidebar عند الطيّ يعتمد عليه */
+#MainMenu { visibility: hidden !important; }
+footer { visibility: hidden !important; height: 0 !important; }
 
-        /* Streamlit sidebar control: keep visible */
-        [data-testid="stElementToolbar"] { display: none !important; }
-        div[role="tooltip"] { display: none !important; opacity: 0 !important; visibility: hidden !important; }
-        button[title="View fullscreen"] { display: none !important; }
+/* لا نخفي الـSidebar ولا زر الـCollapsedControl */
+header { display: block !important; }
+div[data-testid="stSidebarCollapsedControl"], [data-testid="collapsedControl"] {
+    display: flex !important;
+    z-index: 10000 !important;
+    pointer-events: auto !important;
+}
 
-        section[data-testid="stSidebar"] {
-            border-right: none !important;
-            border-left: none !important;
-            box-shadow: none !important;
-        }
+/* إخفاء Toolbars */
+[data-testid="stElementToolbar"] { display: none !important; }
+div[role="tooltip"] { display: none !important; opacity: 0 !important; visibility: hidden !important; }
+button[title="View fullscreen"] { display: none !important; }
 
-        /* =====================================================
-           Expander (رفع التباين)
+/* إزالة خط الـResizer الذي يظهر عند طيّ القائمة */
+div[data-testid="stSidebarResizer"],
+div[data-testid="stSidebarResizeHandle"],
+div[data-testid="stSidebarResizeHandle"] * {
+    display: none !important;
+}
+
+section[data-testid="stSidebar"] {
+    border-right: none !important;
+    border-left: none !important;
+    box-shadow: none !important;
+}
+
+/* =====================================================
+   Expander (رفع التباين)
            ===================================================== */
         div[data-testid="stExpander"]{
             border: 1px solid var(--border2) !important;
