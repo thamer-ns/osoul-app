@@ -66,7 +66,7 @@ def apply_custom_css():
         @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Sharp:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
 
         :root {
-            --font-ar: 'Cairo', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            --font-ar: 'IBM Plex Sans Arabic', 'Cairo', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
         }
 
 
@@ -81,19 +81,36 @@ def apply_custom_css():
         .stApp { background: var(--app-bg) !important; }
 
         /* =====================================================
-           Base RTL + Cairo (بدون كسر الأيقونات)
+           Base RTL + Cairo (Scoped to Streamlit containers)
            ===================================================== */
-        html, body, [class*="css"], p, div, label, input, button, textarea, select, option,
-        h1,h2,h3,h4,h5,h6, ul, ol, li, a, small, strong, em, th, td, table {
-            font-family: var(--font-ar) !important;
+        /* لا تفرض RTL على html/body لأن هذا يكسر أيقونات Streamlit (Material ligatures) */
+        [data-testid="stAppViewContainer"], 
+        section[data-testid="stSidebar"],
+        [data-testid="stHeader"] {
             direction: rtl !important;
             text-align: right !important;
+        }
+
+        /* طبّق Cairo على عناصر النص داخل Streamlit فقط */
+        [data-testid="stAppViewContainer"] :is(p, div, label, input, button, textarea, h1,h2,h3,h4,h5,h6, li, a, td, th, small, strong),
+        section[data-testid="stSidebar"] :is(p, div, label, input, button, textarea, h1,h2,h3,h4,h5,h6, li, a, td, th, small, strong),
+        [data-testid="stHeader"] :is(p, div, label, input, button, textarea, h1,h2,h3,h4,h5,h6, li, a, td, th, small, strong) {
+            font-family: 'Cairo', sans-serif !important;
             color: var(--txt);
+        }
+
+        /* استثناءات الأيقونات: لا تغيّر خطها */
+        [data-testid="stAppViewContainer"] :is(i, span, svg)[data-testid="stIconMaterial"],
+        section[data-testid="stSidebar"] :is(i, span, svg)[data-testid="stIconMaterial"] {
+            font-family: 'Material Symbols Rounded', 'Material Symbols Outlined', 'Material Symbols Sharp', 'Material Icons' !important;
+            direction: ltr !important;
+            text-align: center !important;
         }
 
 
 /* Tabs: اجعل ترتيب الألسنة RTL */
-[data-testid="stTabs"] [role="tablist"]{
+[data-testid="stTabs"] [role="tablist"],
+div[data-baseweb="tab-list"]{
     flex-direction: row-reverse !important;
     justify-content: flex-start !important;
 }
@@ -106,8 +123,10 @@ pre, code, .stCode, .stMarkdown pre, .stMarkdown code {
 
 
         
-/* ✅ طبّق Cairo على span لكن استثنِ أيقونات Material */
-span:not(.material-icons):not(.material-symbols-outlined):not(.material-symbols-rounded):not(.material-symbols-sharp):not([class*="material-symbols"]) {
+/* ✅ طبّق Cairo على span داخل Streamlit فقط (مع استثناء الأيقونات) */
+[data-testid="stAppViewContainer"] span:not(.material-icons):not(.material-symbols-outlined):not(.material-symbols-rounded):not(.material-symbols-sharp):not([class*="material-symbols"]):not([data-testid="stIconMaterial"]),
+section[data-testid="stSidebar"] span:not(.material-icons):not(.material-symbols-outlined):not(.material-symbols-rounded):not(.material-symbols-sharp):not([class*="material-symbols"]):not([data-testid="stIconMaterial"]),
+[data-testid="stHeader"] span:not(.material-icons):not(.material-symbols-outlined):not(.material-symbols-rounded):not(.material-symbols-sharp):not([class*="material-symbols"]):not([data-testid="stIconMaterial"]) {
     font-family: 'Cairo', sans-serif !important;
     direction: rtl !important;
     text-align: right !important;
@@ -151,6 +170,25 @@ span:not(.material-icons):not(.material-symbols-outlined):not(.material-symbols-
         }
 
         
+
+        /* ✅ Streamlit icon testid (حل ظهور ligature كنص) */
+        [data-testid="stIconMaterial"], 
+        [data-testid="stIconMaterial"] *, 
+        i[data-testid="stIconMaterial"], 
+        span[data-testid="stIconMaterial"] {
+            font-family: 'Material Symbols Rounded', 'Material Symbols Outlined', 'Material Symbols Sharp', 'Material Icons' !important;
+            -webkit-font-feature-settings: "liga" !important;
+            font-feature-settings: "liga" !important;
+            direction: ltr !important;
+            text-align: center !important;
+            font-weight: normal !important;
+            font-style: normal !important;
+            letter-spacing: normal !important;
+            text-transform: none !important;
+            white-space: nowrap !important;
+            -webkit-font-smoothing: antialiased !important;
+        }
+
 /* =====================================================
    UI Cleanup
    ===================================================== */
@@ -161,58 +199,63 @@ footer { visibility: hidden !important; height: 0 !important; }
 /* لا نخفي الـSidebar ولا زر الـCollapsedControl */
 header { display: block !important; }
 div[data-testid="stSidebarCollapsedControl"], [data-testid="collapsedControl"] {
-    /* اجعل زر الفتح "زر دائري" بدل شريط عمودي */
+    /* اجعل زر الطي/الفتح صغير (لا يتحول لشريط) */
     position: fixed !important;
-    right: 12px !important;
+    top: 14px !important;
+    right: 14px !important;   /* Sidebar على اليمين */
     left: auto !important;
-    top: 74px !important; /* تحت شريط Streamlit العلوي */
-    display: inline-flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    height: auto !important;
-    width: auto !important;
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
+    width: 0 !important;      /* يمنع ظهور خط/شريط طويل */
+    height: 0 !important;
     padding: 0 !important;
     margin: 0 !important;
-    z-index: 100000 !important;
-    pointer-events: auto !important;
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    z-index: 10000 !important;
+    pointer-events: none !important; /* نخلي النقر على الزر فقط */
+    overflow: visible !important;
 }
+
+/* الزر نفسه */
+div[data-testid="stSidebarCollapsedControl"] button, 
+[data-testid="collapsedControl"] button {
+    position: fixed !important;
+    top: 14px !important;
+    right: 14px !important;
+    left: auto !important;
+    pointer-events: auto !important;
+    width: 40px !important;
+    height: 40px !important;
+    border-radius: 999px !important;
+    background: rgba(255,255,255,0.85) !important;
+    border: 1px solid var(--border2) !important;
+    box-shadow: 0 8px 22px rgba(0,0,0,0.12) !important;
+    display: grid !important;
+    place-items: center !important;
+    padding: 0 !important;
+}
+
+/* أيقونة الزر (مهم لمنع ظهور keyboard_double_arrow_left كنص) */
+div[data-testid="stSidebarCollapsedControl"] [data-testid="stIconMaterial"],
+div[data-testid="stSidebarCollapsedControl"] i,
+div[data-testid="stSidebarCollapsedControl"] span,
+[data-testid="collapsedControl"] [data-testid="stIconMaterial"],
+[data-testid="collapsedControl"] i,
+[data-testid="collapsedControl"] span {
+    font-family: 'Material Symbols Rounded', 'Material Symbols Outlined', 'Material Symbols Sharp', 'Material Icons' !important;
+    -webkit-font-feature-settings: "liga" !important;
+    font-feature-settings: "liga" !important;
+    direction: ltr !important;
+    text-align: center !important;
+}
+
+/* إزالة أي حدود/خطوط قد تظهر كفاصل */
 div[data-testid="stSidebarCollapsedControl"]::before,
 div[data-testid="stSidebarCollapsedControl"]::after,
 [data-testid="collapsedControl"]::before,
-[data-testid="collapsedControl"]::after{
+[data-testid="collapsedControl"]::after {
     content: none !important;
-    display: none !important;
 }
-div[data-testid="stSidebarCollapsedControl"] > div,
-[data-testid="collapsedControl"] > div{
-    height: auto !important;
-    width: auto !important;
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-    padding: 0 !important;
-    margin: 0 !important;
-}
-div[data-testid="stSidebarCollapsedControl"] button,
-[data-testid="collapsedControl"] button{
-    height: 38px !important;
-    width: 38px !important;
-    min-height: 38px !important;
-    min-width: 38px !important;
-    border-radius: 999px !important;
-    border: 1px solid var(--border2) !important;
-    background: var(--card-bg) !important;
-    box-shadow: var(--shadow) !important;
-    padding: 0 !important;
-    margin: 0 !important;
-    display: inline-flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-}
-
 
 /* إخفاء Toolbars */
 [data-testid="stElementToolbar"] { display: none !important; }
@@ -226,12 +269,15 @@ div[data-testid="stSidebarResizeHandle"] * {
     display: none !important;
 }
 
-/* (إصدارات Streamlit مختلفة) مقابض تغيير عرض القائمة قد لا تحمل data-testid */
-section[data-testid="stSidebar"] div[style*="cursor: col-resize"],
-section[data-testid="stSidebar"] div[style*="col-resize"]{
+
+/* إزالة أي عنصر Resizer/Separator متبقّي يظهر كخط في الشاشة */
+div[style*="col-resize"],
+div[style*="cursor: col-resize"],
+div[style*="cursor:col-resize"],
+div[data-testid="stSidebarSeparator"],
+div[data-testid="stSidebarSeparator"] * {
     display: none !important;
 }
-
 
 section[data-testid="stSidebar"] {
     border-right: none !important;
