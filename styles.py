@@ -85,6 +85,8 @@ def apply_custom_css():
            ===================================================== */
         html, body, [class*="css"], p, div, label, input, button, textarea, h1,h2,h3,h4,h5,h6 {
             font-family: 'Cairo', sans-serif !important;
+            direction: rtl !important;
+            text-align: right !important;
             color: var(--txt);
         }
 
@@ -96,9 +98,18 @@ def apply_custom_css():
             :not([class*="material-symbols"])
         {
             font-family: 'Cairo', sans-serif !important;
+            direction: rtl !important;
+            text-align: right !important;
         }
 
-        /* =====================================================
+        
+        /* ✅ Keep code blocks LTR (لا نكسر كود/JSON) */
+        pre, code, [data-testid="stCodeBlock"] pre, [data-testid="stJson"] pre {
+            direction: ltr !important;
+            text-align: left !important;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
+        }
+/* =====================================================
            Material Icons / Symbols fixes
            ===================================================== */
         .material-icons,
@@ -138,8 +149,10 @@ def apply_custom_css():
            UI Cleanup
            ===================================================== */
         footer, #MainMenu { display: none !important; }
-        /* Streamlit sidebar controls (DO NOT HIDE) */
-[data-testid="stElementToolbar"] { display: none !important; }
+        header { display: block !important; visibility: visible !important; }
+
+        /* Streamlit sidebar control: keep visible */
+        [data-testid="stElementToolbar"] { display: none !important; }
         div[role="tooltip"] { display: none !important; opacity: 0 !important; visibility: hidden !important; }
         button[title="View fullscreen"] { display: none !important; }
 
