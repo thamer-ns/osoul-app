@@ -6,6 +6,7 @@ import math
 import re
 import os
 import base64
+import textwrap
 from typing import Any, Dict, List, Optional, Tuple
 
 
@@ -101,7 +102,7 @@ def render_app_header(
         # نُبقي خيار تمرير المسار للتماسك الخلفي فقط.
         logo_html = ""
 
-        st.markdown(
+        header_html = textwrap.dedent(
             f"""
             <div class='os-app-header'>
               <div class='os-app-left'>
@@ -116,9 +117,11 @@ def render_app_header(
                 <span class='os-chip os-chip-gray'><span class='mi'>shield</span>مخاطر</span>
               </div>
             </div>
-            """,
-            unsafe_allow_html=True,
+            """
         )
+
+        st.markdown(header_html, unsafe_allow_html=True)
+
     except Exception:
         # Absolute fallback
         try:
