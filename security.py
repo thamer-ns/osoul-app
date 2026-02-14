@@ -491,17 +491,15 @@ def require_login():
     with tab1:
         st.subheader("تسجيل الدخول")
 
-        # ✅ داخل st.form حتى يعمل Enter كـ Submit في كل المتصفحات
+        # ✅ form يضمن أن Enter يرسل
         try:
-            _login_form = st.form("login_form", clear_on_submit=False, border=True, enter_to_submit=True)
+            _login_form = st.form("login_form", clear_on_submit=False, enter_to_submit=True)
         except TypeError:
-            # Streamlit versions without enter_to_submit
-            _login_form = st.form("login_form", clear_on_submit=False, border=True)
+            _login_form = st.form("login_form", clear_on_submit=False)
 
         with _login_form:
             u = st.text_input("اسم المستخدم", key="login_username")
             p = st.text_input("كلمة المرور", type="password", key="login_password")
-
             if getattr(config, "ALLOW_LEGACY_PIN", True):
                 st.caption("إذا كانت كلمة مرورك القديمة PIN رقمي (6 أرقام أو أكثر)، اكتبها كما هي وسيتم قبولها.")
 
@@ -520,9 +518,9 @@ def require_login():
         st.subheader("إنشاء حساب جديد")
 
         try:
-            _reg_form = st.form("register_form", clear_on_submit=False, border=True, enter_to_submit=True)
+            _reg_form = st.form("register_form", clear_on_submit=False, enter_to_submit=True)
         except TypeError:
-            _reg_form = st.form("register_form", clear_on_submit=False, border=True)
+            _reg_form = st.form("register_form", clear_on_submit=False)
 
         with _reg_form:
             u2 = st.text_input("اسم المستخدم", key="reg_username")
@@ -541,7 +539,8 @@ def require_login():
                 st.success(msg + " يمكنك الآن تسجيل الدخول.")
             else:
                 st.error(msg)
-return False
+
+    return False
 # ============================================================
 # 8) Backward-compatible alias
 # ============================================================
