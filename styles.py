@@ -899,6 +899,159 @@ html:has([data-testid="collapsedControl"]) div[data-testid="stSidebar"]{
     box-shadow: none !important;
 }
 
+
+/* =====================================================
+   ✅ OSOOLI FINAL RTL + SIDEBAR (مستقر)
+   - يحل: رجوع LTR، ظهور النص/الأيقونات مع الطي، وتموضع الـSidebar
+   ===================================================== */
+
+/* 1) اتجاه عام */
+html, body, .stApp {
+  direction: rtl !important;
+  text-align: right !important;
+}
+
+/* 2) عكس ترتيب الحاوية الأساسية (Sidebar يمين) */
+div[data-testid="stAppViewContainer"]{
+  display: flex !important;
+  flex-direction: row-reverse !important;
+}
+div[data-testid="stAppViewContainer"] > div:first-child{
+  display: flex !important;
+  flex-direction: row-reverse !important;
+  width: 100% !important;
+}
+
+/* 3) Sidebar يمين + Main يسار */
+[data-testid="stSidebar"]{
+  order: 2 !important;
+  left: auto !important;
+  right: 0 !important;
+  border-right: none !important;
+  border-left: 1px solid rgba(148,163,184,0.20) !important;
+}
+[data-testid="stMain"], section[data-testid="stMain"], main[data-testid="stMain"]{
+  order: 1 !important;
+}
+
+/* 4) عند طيّ القائمة: اخفِ الـSidebar بالكامل (يمنع ظهور النص عموديًا) */
+[data-testid="stSidebar"][aria-expanded="false"]{
+  width: 0 !important;
+  min-width: 0 !important;
+  max-width: 0 !important;
+  overflow: hidden !important;
+  transform: translateX(100%) !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+[data-testid="stSidebar"][aria-expanded="false"] *{
+  display: none !important;
+}
+
+/* 5) زر الطي/الفتح: ثبته أعلى يمين */
+[data-testid="collapsedControl"],
+div[data-testid="stSidebarCollapsedControl"]{
+  position: fixed !important;
+  top: 0.85rem !important;
+  right: 0.85rem !important;
+  left: auto !important;
+
+  width: auto !important;
+  height: auto !important;
+  padding: 0 !important;
+  margin: 0 !important;
+
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  z-index: 100000 !important;
+
+  pointer-events: auto !important;
+}
+[data-testid="collapsedControl"] button,
+div[data-testid="stSidebarCollapsedControl"] button,
+button[title="Open sidebar"],
+button[aria-label="Open sidebar"],
+button[title="Close sidebar"],
+button[aria-label="Close sidebar"]{
+  pointer-events: auto !important;
+  width: 44px !important;
+  height: 44px !important;
+  min-width: 44px !important;
+  min-height: 44px !important;
+  padding: 0 !important;
+  border-radius: 999px !important;
+  border: 1px solid rgba(148,163,184,0.30) !important;
+  background: rgba(255,255,255,0.85) !important;
+  backdrop-filter: blur(10px) !important;
+  box-shadow: 0 10px 24px rgba(15,23,42,0.10) !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+/* 6) أعمدة Streamlit (st.columns) */
+div[data-testid="stHorizontalBlock"]{
+  display: flex !important;
+  flex-direction: row-reverse !important;
+}
+
+/* 7) Tabs */
+[data-testid="stTabs"] [role="tablist"]{
+  display: flex !important;
+  flex-direction: row-reverse !important;
+  justify-content: flex-start !important;
+}
+
+/* 8) Widgets: إدخالات + BaseWeb */
+input, textarea, select,
+[data-testid="stTextInput"] input,
+[data-testid="stTextArea"] textarea,
+[data-testid="stNumberInput"] input,
+[data-baseweb="input"] input,
+[data-baseweb="textarea"] textarea,
+[data-baseweb="select"] input{
+  direction: rtl !important;
+  text-align: right !important;
+}
+[data-baseweb="select"] [role="combobox"]{
+  direction: rtl !important;
+  text-align: right !important;
+  justify-content: flex-end !important;
+}
+
+/* 9) Radio/Checkbox داخل الـSidebar: أيقونة/نص من اليمين */
+[data-testid="stSidebar"] [role="radiogroup"] label,
+[data-testid="stSidebar"] [role="radiogroup"] label > div{
+  direction: rtl !important;
+  text-align: right !important;
+  justify-content: flex-end !important;
+}
+[data-testid="stSidebar"] [role="radiogroup"] label{
+  display: flex !important;
+  flex-direction: row-reverse !important;
+  gap: .5rem !important;
+}
+
+/* 10) الأزرار التي تحتوي أيقونة + نص */
+.stButton > button, button{
+  direction: rtl !important;
+}
+.stButton > button{
+  display: inline-flex !important;
+  flex-direction: row-reverse !important;
+  gap: .45rem !important;
+}
+
+
+/* 11) الأرقام/القيم: عرض LTR + محاذاة يمين (أكثر قراءة بالعربي) */
+[data-testid="stMetricValue"],
+[data-testid="stMetricValue"] *{
+  direction: ltr !important;
+  unicode-bidi: plaintext !important;
+  text-align: right !important;
+}
+
 </style>
         """
 
