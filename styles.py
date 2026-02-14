@@ -55,6 +55,7 @@ def apply_custom_css():
             --table-cell-txt: #E5E7EB;
             --table-grid: rgba(148,163,184,0.22);
             --table-hover: rgba(96,165,250,0.07);
+            --topbar-offset: 56px;
         """
     else:
         var_css = """
@@ -95,6 +96,7 @@ def apply_custom_css():
             --table-cell-txt: #0F172A;
             --table-grid: rgba(15,23,42,0.08);
             --table-hover: rgba(37,99,235,0.05);
+            --topbar-offset: 56px;
         """
 
     css = """
@@ -327,8 +329,7 @@ def apply_custom_css():
         .material-symbols-sharp,
         [class*="material-symbols"],
         [data-testid="stIconMaterial"],
-        [data-testid="stIconMaterial"] *,
-        span[translate="no"] {
+        [data-testid="stIconMaterial"] * {
             font-family: 'Material Symbols Rounded','Material Symbols Outlined','Material Symbols Sharp','Material Icons' !important;
             font-feature-settings: 'liga' 1 !important;
             -webkit-font-feature-settings: 'liga' 1 !important;
@@ -372,7 +373,7 @@ def apply_custom_css():
         button[aria-label="Open sidebar"] {
             pointer-events: auto !important;
             position: fixed !important;
-            top: 0.85rem !important;
+            top: calc(var(--topbar-offset, 56px) + 10px) !important;
             right: 0.85rem !important;
             left: auto !important;
             width: 42px !important;
@@ -1214,7 +1215,29 @@ div[data-testid="collapsedControl"] button *,
             [data-testid="stMetric"] [data-testid="stMetricValue"]{ font-size: 1.85rem !important; }
         }
 
-        </style>
+        
+        /* =====================================================
+           ✅ FINAL FIX: Sidebar toggle always visible (below hidden top bar)
+           ===================================================== */
+        div[data-testid="stSidebarCollapsedControl"],
+        div[data-testid="collapsedControl"],
+        [data-testid="collapsedControl"] {
+            visibility: visible !important;
+            overflow: visible !important;
+            z-index: 2147483646 !important;
+        }
+        div[data-testid="stSidebarCollapsedControl"] button,
+        div[data-testid="collapsedControl"] button,
+        [data-testid="collapsedControl"] button,
+        button[title="Open sidebar"],
+        button[aria-label="Open sidebar"] {
+            top: calc(var(--topbar-offset, 56px) + 10px) !important;
+            z-index: 2147483647 !important;
+            display: inline-flex !important;
+            visibility: visible !important;
+        }
+
+</style>
         """
 
     css = css.replace("__VAR_CSS__", var_css)
