@@ -13,13 +13,6 @@ import streamlit as st
 
 from osoli_logging import redact_text
 
-# Silence pandas warning about DB-API connections (we still use parameterized queries safely)
-warnings.filterwarnings(
-    "ignore",
-    message=r"pandas only supports SQLAlchemy connectable",
-    category=UserWarning,
-)
-
 
 def _set_last_db_error(msg: str) -> None:
     """Store last DB error for UI debugging without crashing the app."""
@@ -63,9 +56,30 @@ def _is_postgres_url(url: str) -> bool:
     return u.startswith("postgres://") or u.startswith("postgresql://")
 
 
+
+def _normalize_db_url(url: str, *, for_sqlalchemy: bool = False) -> str:
+    """Normalize Postgres URLs across providers.
+
+    - Supabase/Heroku sometimes provide postgres:// which SQLAlchemy dislikes.
+    - For SQLAlchemy, prefer an explicit driver when available.
+    """
+    u = (url or "").strip()
+    if not u:
+        return u
+
+    # postgres:// -> postgresql://
+    if u.lower().startswith("postgres://"):
+        u = "postgresql://" + u[len("postgres://") :]
+
+    if for_sqlalchemy:
+        # If the URL already specifies a driver (postgresql+...), keep it.
+        if u.lower().startswith("postgresql://"):
+            u = "postgresql+psycopg2://" + u[len("postgresql://") :]
+    return u
+
 def _get_db_url() -> str:
     """Return DB URL from config/env/secrets (preferred)."""
-    return (getattr(config, "DB_CONNECTION_URL", None) or getattr(config, "DATABASE_URL", None) or "").strip()
+    return _normalize_db_url((getattr(config, "DB_CONNECTION_URL", None) or getattr(config, "DATABASE_URL", None) or "").strip(), for_sqlalchemy=False)
 
 def _get_db_kind() -> str:
     url = _get_db_url()
@@ -73,17 +87,18 @@ def _get_db_kind() -> str:
 
 
 def _get_engine():
-    """Create a SQLAlchemy engine for pandas read_sql_* calls.
-    Removes pandas warnings that occur with raw DB-API connections.
+    """Create (once) a SQLAlchemy engine for pandas read_sql_* calls.
+
+    الهدف: إلغاء تحذير pandas عند استخدام DB-API connection مباشرةً.
     """
     global _ENGINE
-    # If we already attempted engine init, reuse the result (even if None).
-    if "_ENGINE" in globals():
-        try:
-            if _ENGINE is not None:
-                return _ENGINE
-        except Exception:
-            _ENGINE = None
+
+    # Reuse if created
+    try:
+        if _ENGINE is not None:
+            return _ENGINE
+    except Exception:
+        _ENGINE = None
 
     if _get_db_kind() != "postgres":
         _ENGINE = None
@@ -94,11 +109,11 @@ def _get_engine():
         _ENGINE = None
         return None
 
-    # SQLAlchemy is optional; if missing we simply use raw DB-API.
     try:
         from sqlalchemy import create_engine  # type: ignore
 
-        _ENGINE = create_engine(db_url, pool_pre_ping=True, future=True)
+        sa_url = _normalize_db_url(db_url, for_sqlalchemy=True)
+        _ENGINE = create_engine(sa_url, pool_pre_ping=True, future=True)
     except Exception as e:
         _ENGINE = None
         _set_last_db_error(f"sqlalchemy_engine_failed: {redact_text(e)}")
@@ -137,7 +152,7 @@ def get_connection_pool():
 
     try:
         if _POOL is None:
-            _POOL = SimpleConnectionPool(minconn=1, maxconn=5, dsn=db_url)
+            _POOL = SimpleConnectionPool(minconn=1, maxconn=5, dsn=_normalize_db_url(db_url, for_sqlalchemy=False))
         _POOL_LAST_OK = True
         _POOL_LAST_ERR = None
         return _POOL
@@ -294,52 +309,38 @@ def _safe_ident(name: str) -> str:
 def fetch_table(t: str) -> pd.DataFrame:
     """Read an entire table from the configured DB.
 
-    ✅ Fixes the common 'data disappeared' issue by trying:
-      1) unquoted name (Postgres folds to lower-case)
-      2) quoted name (case-sensitive) if needed
-      3) public.<name> as a fallback in Postgres
+    ✅ يحاول:
+      1) الاسم بدون اقتباس (Postgres يحول إلى lower-case)
+      2) الاسم داخل اقتباس (لحالات CamelCase المقتبس)
+      3) public.<name> كخيار أخير في Postgres
     """
     t = _safe_ident(t)
     conn, kind = get_connection()
     try:
         if kind == "postgres":
             engine = _get_engine()
-            # Prefer SQLAlchemy engine for pandas
-            if engine is not None:
-                try:
-                    df = pd.read_sql(f"SELECT * FROM {t}", engine)
-                    if not df.empty:
-                        return df
-                except Exception as e:
-                    _set_last_db_error(redact_text(e))
+            if engine is None:
+                raise RuntimeError("SQLAlchemy engine not available (required for Postgres).")
 
-                # Try quoted identifier (handles tables created with quoted CamelCase)
-                try:
-                    df = pd.read_sql(f'SELECT * FROM "{t}"', engine)
-                    if not df.empty:
-                        return df
-                except Exception:
-                    pass
-
-                # Try explicit public schema
-                try:
-                    df = pd.read_sql(f"SELECT * FROM public.{t}", engine)
-                    if not df.empty:
-                        return df
-                except Exception:
-                    pass
-
-            # Fallback to raw connection (still works, but pandas warns)
+            # Prefer SQLAlchemy engine for pandas (no DB-API warning)
             try:
-                df = pd.read_sql(f"SELECT * FROM {t}", conn)
+                df = pd.read_sql(f"SELECT * FROM {t}", engine)
+                if not df.empty:
+                    return df
+            except Exception as e:
+                _set_last_db_error(redact_text(e))
+
+            # Try quoted identifier (handles tables created with quoted CamelCase)
+            try:
+                df = pd.read_sql(f'SELECT * FROM "{t}"', engine)
                 if not df.empty:
                     return df
             except Exception:
                 pass
 
-            # Quoted fallback on raw conn
+            # Try explicit public schema
             try:
-                df = pd.read_sql(f'SELECT * FROM "{t}"', conn)
+                df = pd.read_sql(f"SELECT * FROM public.{t}", engine)
                 return df
             except Exception as e:
                 _set_last_db_error(redact_text(e))
@@ -354,25 +355,48 @@ def fetch_table(t: str) -> pd.DataFrame:
     finally:
         put_connection(conn, kind)
 
+
 def fetch_df(query: str, params: Optional[Tuple[Any, ...]] = None) -> pd.DataFrame:
-    """Fetch a dataframe using a parameterized query (portable + safe)."""
+    """Fetch a dataframe using a parameterized query (portable + safe).
+
+    - Postgres: via SQLAlchemy engine (avoids pandas DB-API warnings)
+    - SQLite: via sqlite connection
+    """
     conn, kind = get_connection()
     try:
         q = _adapt_query_for_kind(query, kind)
+
         if kind == "postgres":
             engine = _get_engine()
-            # For Postgres + simple SELECTs, engine is usually more stable with pandas.
-            if engine is not None and (params is None or params == ()):
+            if engine is None:
+                raise RuntimeError("SQLAlchemy engine not available (required for Postgres).")
+
+            # pandas+SQLAlchemy prefers named params. Convert %s placeholders if tuple params are provided.
+            if params:
+                q2 = q
+                d: Dict[str, Any] = {}
+                for i, v in enumerate(params):
+                    q2 = q2.replace("%s", f":p{i}", 1)
+                    d[f"p{i}"] = v
                 try:
-                    return pd.read_sql(q, engine)
+                    from sqlalchemy import text as sa_text  # type: ignore
+
+                    return pd.read_sql(sa_text(q2), engine, params=d)
                 except Exception:
-                    pass
+                    # Fallback without sa_text (still works on many setups)
+                    return pd.read_sql(q2, engine, params=d)
+
+            return pd.read_sql(q, engine)
+
+        # SQLite (params tuple is fine)
         return pd.read_sql(q, conn, params=params or ())
+
     except Exception as e:
         _set_last_db_error(redact_text(e))
         return pd.DataFrame()
     finally:
         put_connection(conn, kind)
+
 
 def db_user_exists(username: str) -> Optional[bool]:
     """Return True/False if known, or None if DB error."""
