@@ -66,7 +66,7 @@ def apply_custom_css():
         @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Sharp:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
 
         :root {
-            --font-ar: 'IBM Plex Sans Arabic', 'Cairo', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            --font-ar: 'Cairo', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
         }
 
 
@@ -81,42 +81,22 @@ def apply_custom_css():
         .stApp { background: var(--app-bg) !important; }
 
         /* =====================================================
-   Base Typography + RTL (scoped, لا نكسر Material Icons)
-   ===================================================== */
-html, body {
-    font-family: 'Cairo', sans-serif;
-    color: var(--txt);
-}
-
-/* ✅ RTL على حاويات Streamlit فقط (أكثر ثباتًا وأقل تكسيرًا لواجهة BaseWeb) */
-[data-testid="stAppViewContainer"],
-section[data-testid="stSidebar"] {
-    direction: rtl;
-    text-align: right;
-}
+           Base RTL + Cairo (بدون كسر الأيقونات)
+           ===================================================== */
+        html, body, [class*="css"], p, div, label, input, button, textarea, select, option,
+        h1,h2,h3,h4,h5,h6, ul, ol, li, a, small, strong, em, th, td, table {
+            font-family: var(--font-ar) !important;
+            direction: rtl !important;
+            text-align: right !important;
+            color: var(--txt);
+        }
 
 
-/* نصوص Streamlit الشائعة */
-[data-testid="stMarkdownContainer"],
-[data-testid="stText"],
-.stMarkdown,
-.stText,
-label, p, h1,h2,h3,h4,h5,h6 {
-    text-align: right;
-}
-
-/* Tabs: اجعل ترتيب الألسنة RTL (BaseWeb + fallback) */
-[data-testid="stTabs"] div[data-baseweb="tab-list"],
+/* Tabs: اجعل ترتيب الألسنة RTL */
 [data-testid="stTabs"] [role="tablist"]{
     flex-direction: row-reverse !important;
-    justify-content: flex-end !important;
+    justify-content: flex-start !important;
 }
-[data-testid="stTabs"] button[role="tab"]{
-    direction: rtl !important;
-    text-align: right !important;
-}
-
-
 
 /* Code/JSON blocks يجب أن تبقى LTR */
 pre, code, .stCode, .stMarkdown pre, .stMarkdown code {
@@ -126,7 +106,15 @@ pre, code, .stCode, .stMarkdown pre, .stMarkdown code {
 
 
         
-/* =====================================================
+/* ✅ طبّق Cairo على span لكن استثنِ أيقونات Material */
+span:not(.material-icons):not(.material-symbols-outlined):not(.material-symbols-rounded):not(.material-symbols-sharp):not([class*="material-symbols"]) {
+    font-family: 'Cairo', sans-serif !important;
+    direction: rtl !important;
+    text-align: right !important;
+}
+
+
+        /* =====================================================
            Material Icons / Symbols fixes
            ===================================================== */
         .material-icons,
@@ -173,10 +161,58 @@ footer { visibility: hidden !important; height: 0 !important; }
 /* لا نخفي الـSidebar ولا زر الـCollapsedControl */
 header { display: block !important; }
 div[data-testid="stSidebarCollapsedControl"], [data-testid="collapsedControl"] {
-    display: flex !important;
-    z-index: 10000 !important;
+    /* اجعل زر الفتح "زر دائري" بدل شريط عمودي */
+    position: fixed !important;
+    right: 12px !important;
+    left: auto !important;
+    top: 74px !important; /* تحت شريط Streamlit العلوي */
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    height: auto !important;
+    width: auto !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    z-index: 100000 !important;
     pointer-events: auto !important;
 }
+div[data-testid="stSidebarCollapsedControl"]::before,
+div[data-testid="stSidebarCollapsedControl"]::after,
+[data-testid="collapsedControl"]::before,
+[data-testid="collapsedControl"]::after{
+    content: none !important;
+    display: none !important;
+}
+div[data-testid="stSidebarCollapsedControl"] > div,
+[data-testid="collapsedControl"] > div{
+    height: auto !important;
+    width: auto !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+}
+div[data-testid="stSidebarCollapsedControl"] button,
+[data-testid="collapsedControl"] button{
+    height: 38px !important;
+    width: 38px !important;
+    min-height: 38px !important;
+    min-width: 38px !important;
+    border-radius: 999px !important;
+    border: 1px solid var(--border2) !important;
+    background: var(--card-bg) !important;
+    box-shadow: var(--shadow) !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+
 
 /* إخفاء Toolbars */
 [data-testid="stElementToolbar"] { display: none !important; }
@@ -190,28 +226,12 @@ div[data-testid="stSidebarResizeHandle"] * {
     display: none !important;
 }
 
-
-
-/* Collapsed control: لا نكسر الأيقونة ولا نظهر شريط/خط */
-div[data-testid="stSidebarCollapsedControl"],
-[data-testid="collapsedControl"]{
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-}
-div[data-testid="stSidebarCollapsedControl"]::before,
-div[data-testid="stSidebarCollapsedControl"]::after,
-[data-testid="collapsedControl"]::before,
-[data-testid="collapsedControl"]::after{
-    display: none !important;
-    content: none !important;
-}
-
-/* بعض إصدارات Streamlit تستخدم Separator إضافي */
-div[data-testid="stSidebarSeparator"],
-div[data-testid="stSidebarSeparator"] *{
+/* (إصدارات Streamlit مختلفة) مقابض تغيير عرض القائمة قد لا تحمل data-testid */
+section[data-testid="stSidebar"] div[style*="cursor: col-resize"],
+section[data-testid="stSidebar"] div[style*="col-resize"]{
     display: none !important;
 }
+
 
 section[data-testid="stSidebar"] {
     border-right: none !important;
@@ -641,16 +661,6 @@ section[data-testid="stSidebar"] {
             direction: rtl !important;
             text-align: right !important;
         }
-
-/* Sidebar radio: تحسين المحاذاة RTL */
-section[data-testid="stSidebar"] [role="radiogroup"] > label{
-    flex-direction: row-reverse !important;
-    justify-content: flex-start !important;
-    gap: 0.55rem !important;
-}
-section[data-testid="stSidebar"] [role="radiogroup"] > label > div{
-    text-align: right !important;
-}
 
 </style>
         """
