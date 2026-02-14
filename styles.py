@@ -716,91 +716,135 @@ section[data-testid="stSidebar"] {
 }
 
 
-        
         /* =====================================================
-           Sidebar on the RIGHT + True RTL layout
-           ===================================================== */
+           Sidebar on the RIGHT (RTL)
+        ===================================================== */
 
-        /* Ensure the root layout container is flex and reversed */
-        div[data-testid="stAppViewContainer"] {
-            display: flex !important;
-            flex-direction: row-reverse !important;
-            direction: rtl !important;
-        }
-
-        /* Some Streamlit versions wrap Main/Sidebar inside extra divs */
+        /* Streamlit markup changes between versions; cover common wrappers */
+        div[data-testid="stAppViewContainer"],
         div[data-testid="stAppViewContainer"] > div:first-child,
         div[data-testid="stAppViewContainer"] > div:first-child > div {
-            display: flex !important;
             flex-direction: row-reverse !important;
-            width: 100% !important;
         }
 
-        /* Sidebar: support both div/section */
-        [data-testid="stSidebar"] {
-            order: 0 !important;
-            direction: rtl !important;
-            text-align: right !important;
-            left: auto !important;
+        /* أعكس ترتيب الأعمدة/الـcolumns لتكون من اليمين لليسار */
+        div[data-testid="stHorizontalBlock"] {
+            flex-direction: row-reverse !important;
+        }
+
+        /* Force sidebar to live on the right */
+        section[data-testid="stSidebar"] {
+            order: 2 !important;
             right: 0 !important;
+            left: auto !important;
             border-left: none !important;
-            border-right: 1px solid rgba(148,163,184,0.18) !important;
+            border-right: 1px solid rgba(255,255,255,0.06) !important;
+            box-shadow: none !important;
         }
 
-        /* Main content should be left of the sidebar */
-        [data-testid="stMain"],
-        section.main,
-        div[data-testid="stMain"] {
+        /* Keep main content on the left */
+        section[data-testid="stMain"],
+        [data-testid="stMain"] {
             order: 1 !important;
-            direction: rtl !important;
-            text-align: right !important;
         }
 
-        /* True RTL columns: Streamlit columns are flex; reverse them */
-        div[data-testid="stHorizontalBlock"],
-        div[data-testid="stColumns"] {
-            display: flex !important;
-            flex-direction: row-reverse !important;
-        }
-
-        /* Inputs / widgets alignment */
-        [data-testid="stSidebar"] input,
-        [data-testid="stSidebar"] textarea,
-        [data-testid="stSidebar"] select,
-        [data-testid="stSidebar"] label,
-        [data-testid="stSidebar"] p,
-        [data-testid="stSidebar"] span,
-        [data-testid="stSidebar"] a {
-            direction: rtl !important;
-            text-align: right !important;
-        }
-
-        /* Collapsed control: keep it clickable, fix the "vertical text" artifact */
+        /* Collapsed control button on the top-right */
         [data-testid="collapsedControl"],
         [data-testid="stSidebarCollapsedControl"] {
-            direction: ltr !important;
             right: 0.75rem !important;
             left: auto !important;
-            width: 48px !important;
-            height: 48px !important;
-            padding: 0 !important;
-            margin: 0 !important;
-            background: transparent !important;
-            border: none !important;
-            box-shadow: none !important;
-            z-index: 100000 !important;
         }
 
-        /* Chips: keep icon then text in RTL */
-        .os-chip { direction: rtl !important; }
-        .os-chip .mi { margin-left: 0.4rem !important; margin-right: 0 !important; }
-
-        /* BaseWeb (Streamlit widgets) sometimes forces LTR */
+        /* BaseWeb (Streamlit widgets) يميل لفرض LTR */
         [data-baseweb],
         div[data-baseweb="select"],
         div[data-baseweb="popover"] {
             direction: rtl !important;
             text-align: right !important;
+        }
+
+
+        /* =====================================================
+           ✅ OS RTL + Sidebar Right (Hard override)
+           - Forces the whole app to be truly RTL (layout + text)
+           - Moves Streamlit sidebar to the RIGHT (even after toggle)
+           - Prevents collapsed sidebar control from turning into a vertical bar
+           ===================================================== */
+
+        /* Force document direction */
+        html, body, .stApp,
+        [data-testid="stAppViewContainer"],
+        [data-testid="stMain"],
+        [data-testid="stSidebar"] {
+            direction: rtl !important;
+            text-align: right !important;
+        }
+
+        /* 1) Reverse the main layout container (sidebar on the right) */
+        [data-testid="stAppViewContainer"] > div:first-child,
+        [data-testid="stAppViewContainer"] > div:first-child > div {
+            display: flex !important;
+            flex-direction: row-reverse !important;
+            align-items: stretch !important;
+        }
+
+        /* 2) Sidebar positioning: match Streamlit variants (div/section) */
+        [data-testid="stSidebar"] {
+            right: 0 !important;
+            left: auto !important;
+            border-left: 1px solid var(--border) !important;
+            border-right: none !important;
+        }
+
+        /* When Streamlit collapses sidebar, it often uses translateX(-100%) for LEFT.
+           Invert it to hide to the RIGHT instead. */
+        [data-testid="stSidebar"][style*="translateX(-"],
+        [data-testid="stSidebar"][style*="translate3d(-"] {
+            transform: translateX(100%) !important;
+        }
+
+        /* 3) Main content should not reserve left margin for sidebar */
+        [data-testid="stMain"] {
+            margin-left: 0 !important;
+        }
+
+        /* 4) Keep collapsed/open control as a normal button (no vertical "line") */
+        [data-testid="collapsedControl"],
+        [data-testid="stSidebarCollapsedControl"] {
+            position: fixed !important;
+            top: 0.85rem !important;
+            right: 0.85rem !important;
+            left: auto !important;
+            width: 44px !important;
+            height: 44px !important;
+            max-height: 44px !important;
+            overflow: hidden !important;
+            background: transparent !important;
+            z-index: 100000 !important;
+        }
+        [data-testid="collapsedControl"] button,
+        [data-testid="stSidebarCollapsedControl"] button,
+        button[title="Open sidebar"],
+        button[aria-label="Open sidebar"] {
+            width: 44px !important;
+            height: 44px !important;
+            min-width: 44px !important;
+            min-height: 44px !important;
+            border-radius: 999px !important;
+        }
+
+        /* 5) True RTL for Columns / layout rows */
+        [data-testid="stHorizontalBlock"],
+        [data-testid="stColumns"],
+        .stHorizontalBlock,
+        .stColumns {
+            flex-direction: row-reverse !important;
+        }
+
+        /* 6) Sidebar widgets (radio/checkbox) align RTL */
+        [data-testid="stSidebar"] [role="radiogroup"] label {
+            flex-direction: row-reverse !important;
+            justify-content: space-between !important;
         }
 
 
