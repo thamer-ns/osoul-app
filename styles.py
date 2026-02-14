@@ -1136,7 +1136,28 @@ button[aria-label="Open sidebar"]{
             border-left: 1px solid var(--border2) !important;
         }
 
-        section[data-testid="stSidebar"][aria-expanded="false"]{ border: none !important; box-shadow:none !important; }
+        /* ✅ Sidebar collapsed: اخفاء كامل (يمنع ظهور خط/نص متكدّس عند الطي) */
+        section[data-testid="stSidebar"][aria-expanded="false"],
+        div[data-testid="stSidebar"][aria-expanded="false"],
+        [data-testid="stSidebar"][aria-expanded="false"]{
+            width: 0 !important;
+            min-width: 0 !important;
+            max-width: 0 !important;
+            flex: 0 0 0 !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            overflow: hidden !important;
+            transform: translateX(100%) !important; /* RTL: ادفعها خارج الشاشة */
+            border: none !important;
+            box-shadow: none !important;
+            pointer-events: none !important;
+            background: transparent !important;
+        }
+        section[data-testid="stSidebar"][aria-expanded="false"] *,
+        div[data-testid="stSidebar"][aria-expanded="false"] *,
+        [data-testid="stSidebar"][aria-expanded="false"] *{
+            display: none !important;
+        }
 
         html:has(button[title="Open sidebar"]) section[data-testid="stSidebar"],
         html:has(button[aria-label="Open sidebar"]) section[data-testid="stSidebar"],
