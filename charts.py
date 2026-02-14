@@ -10,6 +10,39 @@ import pandas as pd
 from market_data import get_chart_history
 
 
+
+# ============================================================
+# ✅ Helpers: interval normalization (Arabic/UI -> yfinance)
+# ============================================================
+def _norm_interval(interval: str) -> str:
+    """Normalize interval to yfinance-compatible codes.
+
+    Supports Arabic labels and common aliases:
+    - ساعة/1h/60m -> 60m
+    - يوم/1d -> 1d
+    - أسبوع/1wk -> 1wk
+    - شهر/1mo -> 1mo
+    """
+    itv = str(interval or "").strip().lower()
+
+    if itv in ["ساعة", "ساعه", "1h", "hour", "1hour", "60m"]:
+        return "60m"
+    if itv in ["30m", "نصف ساعة", "نصف ساعه"]:
+        return "30m"
+    if itv in ["15m", "ربع ساعة", "ربع ساعه"]:
+        return "15m"
+    if itv in ["5m", "5د", "٥د"]:
+        return "5m"
+    if itv in ["1m", "1د", "١د"]:
+        return "1m"
+    if itv in ["يوم", "daily", "day", "1d"]:
+        return "1d"
+    if itv in ["أسبوع", "اسبوع", "week", "weekly", "1w", "1wk"]:
+        return "1wk"
+    if itv in ["شهر", "month", "monthly", "1mo"]:
+        return "1mo"
+    return itv or "1d"
+
 # ============================================================
 # ✅ Utils: Symbol + Datetime Index
 # ============================================================
