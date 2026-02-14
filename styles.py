@@ -81,21 +81,42 @@ def apply_custom_css():
         .stApp { background: var(--app-bg) !important; }
 
         /* =====================================================
-           Base RTL + Cairo (بدون كسر الأيقونات)
-           ===================================================== */
-        html, body, [class*="css"], p, div, label, input, button, textarea, h1,h2,h3,h4,h5,h6 {
-            font-family: 'Cairo', sans-serif !important;
-            direction: rtl !important;
-            text-align: right !important;
-            color: var(--txt);
-        }
+   Base Typography + RTL (scoped, لا نكسر Material Icons)
+   ===================================================== */
+html, body {
+    font-family: 'Cairo', sans-serif;
+    color: var(--txt);
+}
+
+/* ✅ RTL على حاويات Streamlit فقط (أكثر ثباتًا وأقل تكسيرًا لواجهة BaseWeb) */
+[data-testid="stAppViewContainer"],
+section[data-testid="stSidebar"] {
+    direction: rtl;
+    text-align: right;
+}
 
 
-/* Tabs: اجعل ترتيب الألسنة RTL */
+/* نصوص Streamlit الشائعة */
+[data-testid="stMarkdownContainer"],
+[data-testid="stText"],
+.stMarkdown,
+.stText,
+label, p, h1,h2,h3,h4,h5,h6 {
+    text-align: right;
+}
+
+/* Tabs: اجعل ترتيب الألسنة RTL (BaseWeb + fallback) */
+[data-testid="stTabs"] div[data-baseweb="tab-list"],
 [data-testid="stTabs"] [role="tablist"]{
     flex-direction: row-reverse !important;
-    justify-content: flex-start !important;
+    justify-content: flex-end !important;
 }
+[data-testid="stTabs"] button[role="tab"]{
+    direction: rtl !important;
+    text-align: right !important;
+}
+
+
 
 /* Code/JSON blocks يجب أن تبقى LTR */
 pre, code, .stCode, .stMarkdown pre, .stMarkdown code {
@@ -105,15 +126,7 @@ pre, code, .stCode, .stMarkdown pre, .stMarkdown code {
 
 
         
-/* ✅ طبّق Cairo على span لكن استثنِ أيقونات Material */
-span:not(.material-icons):not(.material-symbols-outlined):not(.material-symbols-rounded):not(.material-symbols-sharp):not([class*="material-symbols"]) {
-    font-family: 'Cairo', sans-serif !important;
-    direction: rtl !important;
-    text-align: right !important;
-}
-
-
-        /* =====================================================
+/* =====================================================
            Material Icons / Symbols fixes
            ===================================================== */
         .material-icons,
@@ -174,6 +187,29 @@ button[title="View fullscreen"] { display: none !important; }
 div[data-testid="stSidebarResizer"],
 div[data-testid="stSidebarResizeHandle"],
 div[data-testid="stSidebarResizeHandle"] * {
+    display: none !important;
+}
+
+
+
+/* Collapsed control: لا نكسر الأيقونة ولا نظهر شريط/خط */
+div[data-testid="stSidebarCollapsedControl"],
+[data-testid="collapsedControl"]{
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+div[data-testid="stSidebarCollapsedControl"]::before,
+div[data-testid="stSidebarCollapsedControl"]::after,
+[data-testid="collapsedControl"]::before,
+[data-testid="collapsedControl"]::after{
+    display: none !important;
+    content: none !important;
+}
+
+/* بعض إصدارات Streamlit تستخدم Separator إضافي */
+div[data-testid="stSidebarSeparator"],
+div[data-testid="stSidebarSeparator"] *{
     display: none !important;
 }
 
@@ -605,6 +641,16 @@ section[data-testid="stSidebar"] {
             direction: rtl !important;
             text-align: right !important;
         }
+
+/* Sidebar radio: تحسين المحاذاة RTL */
+section[data-testid="stSidebar"] [role="radiogroup"] > label{
+    flex-direction: row-reverse !important;
+    justify-content: flex-start !important;
+    gap: 0.55rem !important;
+}
+section[data-testid="stSidebar"] [role="radiogroup"] > label > div{
+    text-align: right !important;
+}
 
 </style>
         """
