@@ -1,7 +1,5 @@
 # styles.py
 import streamlit as st
-import streamlit.components.v1 as components
-import textwrap
 
 
 def apply_custom_css():
@@ -723,20 +721,10 @@ section[data-testid="stSidebar"] {
         ===================================================== */
 
         /* Streamlit markup changes between versions; cover common wrappers */
-        div[data-testid="stAppViewContainer"]{
+        div[data-testid="stAppViewContainer"],
+        div[data-testid="stAppViewContainer"] > div:first-child,
+        div[data-testid="stAppViewContainer"] > div:first-child > div {
             flex-direction: row-reverse !important;
-        }
-
-        /* اجعل الحاوية التي تضم الـSidebar + الـMain Flex ليطبق row-reverse فعلياً */
-        div[data-testid="stAppViewContainer"] > div:first-child{
-            display: flex !important;
-            flex-direction: row-reverse !important;
-            width: 100% !important;
-        }
-        div[data-testid="stAppViewContainer"] > div:first-child > div{
-            display: flex !important;
-            flex-direction: row-reverse !important;
-            width: 100% !important;
         }
 
         /* أعكس ترتيب الأعمدة/الـcolumns لتكون من اليمين لليسار */
@@ -749,8 +737,7 @@ section[data-testid="stSidebar"] {
             order: 2 !important;
             right: 0 !important;
             left: auto !important;
-            border-left: none !important;
-            border-right: 1px solid rgba(255,255,255,0.06) !important;
+            border: none !important;
             box-shadow: none !important;
         }
 
@@ -775,72 +762,80 @@ section[data-testid="stSidebar"] {
             text-align: right !important;
         }
 
+
 /* =====================================================
-   OSOOLI RTL OVERRIDES (آخر القواعد للفوز على أي تعارض)
+   ✅ RTL + SIDEBAR FIX (FINAL OVERRIDES)
+   - يثبت RTL فعليًا في كل العناصر
+   - يُبقي الـSidebar على اليمين
+   - يمنع رجوع "الخط" عند طيّ القائمة
    ===================================================== */
 
-/* 1) اتجاه عام + محاذاة */
-html, body, .stApp,
-[data-testid="stAppViewContainer"], [data-testid="stMain"], [data-testid="stSidebar"]{
+/* 1) إجبار RTL على كل شيء داخل التطبيق */
+.stApp, .stApp * {
     direction: rtl !important;
     text-align: right !important;
 }
 
-/* 2) نقل الـSidebar لليمين (نقلب صف الحاوية الأساسية) */
-div[data-testid="stAppViewContainer"] > div:first-child{
-    display: flex !important;
-    flex-direction: row-reverse !important;
-    width: 100% !important;
+/* 2) استثناءات لازم تبقى LTR */
+pre, code, .stCode, .stMarkdown pre, .stMarkdown code {
+    direction: ltr !important;
+    text-align: left !important;
+}
+.material-icons,
+.material-symbols-outlined,
+.material-symbols-rounded,
+.material-symbols-sharp,
+[class*="material-symbols"],
+[data-testid="stIconMaterial"],
+[data-testid="stIconMaterial"] *,
+span[translate="no"]{
+    direction: ltr !important;
+    text-align: center !important;
 }
 
-section[data-testid="stSidebar"], div[data-testid="stSidebar"]{
-    order: 2 !important;
-    border-right: none !important;
+/* 3) نقل الـSidebar لليمين بشكل آمن */
+div[data-testid="stAppViewContainer"] > div:first-child,
+div[data-testid="stAppViewContainer"] > div:first-child > div {
+    flex-direction: row-reverse !important;
 }
-section[data-testid="stMain"], div[data-testid="stMain"], main[data-testid="stMain"]{
+section[data-testid="stSidebar"]{
+    order: 2 !important;
+    left: auto !important;
+    right: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+section[data-testid="stMain"],
+[data-testid="stMain"]{
     order: 1 !important;
 }
 
-/* 3) أعمدة Streamlit */
+/* 4) أعكس الأعمدة والتبويبات */
 div[data-testid="stHorizontalBlock"]{
+    flex-direction: row-reverse !important;
+}
+[data-testid="stTabs"] [role="tablist"]{
+    flex-direction: row-reverse !important;
+    justify-content: flex-start !important;
+}
+
+/* 5) إصلاح عناصر BaseWeb (Select/Popover) */
+[data-baseweb],
+div[data-baseweb="select"],
+div[data-baseweb="popover"]{
+    direction: rtl !important;
+    text-align: right !important;
+}
+
+/* 6) عناصر القائمة (Radio) داخل الـSidebar */
+[data-testid="stSidebar"] [role="radiogroup"] label{
     display: flex !important;
     flex-direction: row-reverse !important;
-}
-
-/* 3.5) Metrics: محاذاة يمين بدون كسر الأرقام */
-[data-testid="stMetricLabel"]{
-    direction: rtl !important;
-    text-align: right !important;
-}
-[data-testid="stMetricValue"],
-[data-testid="stMetricDelta"]{
-    direction: ltr !important; /* الأرقام أفضل LTR */
-    text-align: right !important;
-}
-
-/* 4) أزرار/عناصر فيها أيقونة + نص */
-.stButton > button,
-button[kind],
-button{
-    direction: rtl !important;
-    text-align: right !important;
-}
-.stButton > button{
-    display: inline-flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    flex-direction: row-reverse !important;
-    gap: .45rem !important;
-}
-
-/* 5) عناصر القائمة (radio) داخل الـSidebar */
-[data-testid="stSidebar"] [role="radiogroup"] label{
-    direction: rtl !important;
-    text-align: right !important;
     justify-content: flex-end !important;
+    gap: .5rem !important;
 }
 
-/* 6) زر الطي/الفتح بدون خط عمودي */
+/* 7) زر طي/فتح الـSidebar (منع الخط العمودي) */
 div[data-testid="stSidebarCollapsedControl"],
 div[data-testid="collapsedControl"],
 [data-testid="collapsedControl"]{
@@ -851,18 +846,17 @@ div[data-testid="collapsedControl"],
 
     width: 46px !important;
     height: 46px !important;
-    min-width: 46px !important;
-    min-height: 46px !important;
 
     padding: 0 !important;
     margin: 0 !important;
+
     background: transparent !important;
     border: none !important;
     box-shadow: none !important;
     overflow: visible !important;
-    z-index: 100000 !important;
-    pointer-events: auto !important;
+    z-index: 100001 !important;
 
+    /* مهم: لا تترك الحاوية تمتد بالطول فتظهر كـ"خط" */
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
@@ -874,103 +868,29 @@ div[data-testid="collapsedControl"]::before,
 div[data-testid="collapsedControl"]::after,
 [data-testid="collapsedControl"]::before,
 [data-testid="collapsedControl"]::after{
-    display:none !important;
-    content:none !important;
+    display: none !important;
+    content: none !important;
 }
 
 div[data-testid="stSidebarCollapsedControl"] button,
 div[data-testid="collapsedControl"] button,
 [data-testid="collapsedControl"] button,
 button[title="Open sidebar"],
-button[aria-label="Open sidebar"]{
+button[aria-label="Open sidebar"],
+button[title="Close sidebar"],
+button[aria-label="Close sidebar"]{
     width: 46px !important;
     height: 46px !important;
     min-width: 46px !important;
     min-height: 46px !important;
     padding: 0 !important;
-
     border-radius: 999px !important;
     border: 1px solid var(--border2) !important;
     background: var(--card-bg) !important;
     box-shadow: 0 10px 24px rgba(15,23,42,0.10) !important;
-
     display: inline-flex !important;
     align-items: center !important;
     justify-content: center !important;
-
-    pointer-events: auto !important;
-    z-index: 100001 !important;
-}
-
-/* 7) عند الطي: لا نخفي الـSidebar دائمًا (كان يسبب اختفاءها حتى وهي مفتوحة)
-   نخفيها فقط عندما يظهر زر "Open sidebar" (أي أن القائمة مطوية) */
-html:has(button[aria-label="Open sidebar"]) section[data-testid="stSidebar"],
-html:has(button[aria-label="Open sidebar"]) div[data-testid="stSidebar"],
-html:has(button[title="Open sidebar"]) section[data-testid="stSidebar"],
-html:has(button[title="Open sidebar"]) div[data-testid="stSidebar"]{
-    width: 0 !important;
-    min-width: 0 !important;
-    padding: 0 !important;
-    margin: 0 !important;
-    border: none !important;
-    box-shadow: none !important;
-    overflow: hidden !important;
-}
-
-/* =====================================================
-   RTL HARDENING v3 (covers more Streamlit DOM variants)
-   ===================================================== */
-
-/* markdown/text containers */
-div[data-testid="stMarkdownContainer"],
-.stMarkdown,
-.stMarkdownContainer,
-div[data-testid="stText"],
-div[data-testid="stCaptionContainer"],
-div[data-testid="stHeading"]{
-  direction: rtl !important;
-  text-align: right !important;
-}
-
-/* headings & paragraphs */
-.stApp h1,.stApp h2,.stApp h3,.stApp h4,.stApp h5,.stApp h6,
-.stApp p,.stApp li{
-  direction: rtl !important;
-  text-align: right !important;
-}
-
-/* columns: some versions wrap an inner flex container */
-div[data-testid="stHorizontalBlock"],
-div[data-testid="stHorizontalBlock"] > div{
-  display: flex !important;
-  flex-direction: row-reverse !important;
-}
-
-/* tabs: BaseWeb & generic */
-div[data-baseweb="tab-list"],
-[role="tablist"]{
-  display: flex !important;
-  flex-direction: row-reverse !important;
-  justify-content: flex-end !important;
-}
-[role="tab"]{
-  direction: rtl !important;
-  text-align: right !important;
-}
-
-/* sidebar options: emoji/icon on the right with RTL text */
-[data-testid="stSidebar"] [role="radiogroup"] label{
-  display: flex !important;
-  flex-direction: row-reverse !important;
-  align-items: center !important;
-  justify-content: flex-end !important;
-  gap: .5rem !important;
-}
-
-/* widget labels */
-label, [data-testid="stWidgetLabel"]{
-  direction: rtl !important;
-  text-align: right !important;
 }
 
 </style>
@@ -979,50 +899,4 @@ label, [data-testid="stWidgetLabel"]{
     # Insert theme variables safely without turning the whole CSS into an f-string.
     css = css.replace("__VAR_CSS__", var_css)
 
-    st.markdown(textwrap.dedent(css).strip(), unsafe_allow_html=True)
-
-    # Ensure DOM root is RTL (some widgets ignore CSS-only direction)
-    _apply_rtl_dom_fix()
-
-
-
-def _apply_rtl_dom_fix():
-    """Force RTL at the DOM root (works across Streamlit versions).
-
-    We set html/body dir='rtl' and add a marker class. This helps when some
-    widgets or containers keep LTR despite CSS-only fixes.
-    """
-    try:
-        components.html(
-            """
-            <script>
-            (function(){
-              try{
-                const doc = (window.parent && window.parent.document) ? window.parent.document : document;
-                const root = doc.documentElement;
-                root.setAttribute('dir','rtl');
-                root.setAttribute('lang','ar');
-                root.classList.add('os-rtl');
-
-                const body = doc.body;
-                if (body){
-                  body.setAttribute('dir','rtl');
-                  body.style.direction = 'rtl';
-                  body.style.textAlign = 'right';
-                }
-
-                // Streamlit containers (extra hardening)
-                const app = doc.querySelector('.stApp') || doc.body;
-                if (app){
-                  app.setAttribute('dir','rtl');
-                  app.classList.add('os-rtl');
-                }
-              }catch(e){}
-            })();
-            </script>
-            """,
-            height=0,
-            width=0,
-        )
-    except Exception:
-        pass
+    st.markdown(css, unsafe_allow_html=True)
