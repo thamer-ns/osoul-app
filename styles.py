@@ -826,6 +826,91 @@ html:has(button[title="Close sidebar"]) section[data-testid="stSidebar"],
             text-align: right !important;
         }
 
+
+        /* =====================================================
+           ✅ FINAL RTL LOCK (لا يغير التصميم — فقط الاتجاه/المحاذاة/الأيقونات)
+           ===================================================== */
+
+        /* 1) فرض RTL على كامل الواجهة */
+        .stApp, .stApp *{
+            direction: rtl !important;
+            text-align: right !important;
+            unicode-bidi: plaintext !important;
+        }
+
+        /* 2) قوائم Markdown (النقاط/الترقيم) */
+        .stApp ul, .stApp ol{
+            direction: rtl !important;
+            text-align: right !important;
+            padding-right: 1.25rem !important;
+            padding-left: 0 !important;
+        }
+        .stApp li{ text-align: right !important; }
+
+        /* 3) Radio/Checkbox: اجعل الدائرة/الأيقونة جهة اليمين */
+        [role="radiogroup"] label,
+        [role="checkbox"] label,
+        [data-testid="stSidebar"] [role="radiogroup"] label,
+        [data-testid="stSidebar"] [role="checkbox"] label{
+            direction: rtl !important;
+            text-align: right !important;
+            justify-content: flex-end !important;
+        }
+        [role="radiogroup"] label,
+        [data-testid="stSidebar"] [role="radiogroup"] label{
+            display: flex !important;
+            flex-direction: row-reverse !important;
+            gap: .5rem !important;
+        }
+
+        /* 4) Tabs + Columns: ترتيب RTL */
+        [data-testid="stTabs"] [role="tablist"]{
+            display: flex !important;
+            flex-direction: row-reverse !important;
+            justify-content: flex-start !important;
+        }
+        div[data-testid="stHorizontalBlock"],
+        div[data-testid="stHorizontalBlock"] > div{
+            flex-direction: row-reverse !important;
+        }
+
+        /* 5) الأرقام تبقى أوضح بـ LTR (بدون كسر RTL) */
+        [data-testid="stMetricValue"],
+        [data-testid="stMetricValue"] *,
+        [data-testid="stMetricDelta"],
+        [data-testid="stMetricDelta"] *,
+        .kpi-value,
+        .kpi-value *,
+        .os-v,
+        .os-v *{
+            direction: ltr !important;
+            unicode-bidi: plaintext !important;
+            text-align: right !important;
+        }
+
+        /* 6) استثناءات: كود/JSON يظل LTR */
+        pre, code, .stCode, .stMarkdown pre, .stMarkdown code,
+        div[data-testid="stJson"] pre, div[data-testid="stCodeBlock"] pre,
+        div[data-testid="stJson"] pre *, div[data-testid="stCodeBlock"] pre *{
+            direction: ltr !important;
+            text-align: left !important;
+            unicode-bidi: plaintext !important;
+        }
+
+        /* 7) استثناء: أيقونات Material تظل LTR ولا تتغير */
+        .material-icons,
+        .material-symbols-outlined,
+        .material-symbols-rounded,
+        .material-symbols-sharp,
+        [class*="material-symbols"],
+        [data-testid="stIconMaterial"],
+        [data-testid="stIconMaterial"] *,
+        span[translate="no"]{
+            direction: ltr !important;
+            text-align: center !important;
+            unicode-bidi: isolate !important;
+        }
+
 </style>
         """
 
