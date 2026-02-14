@@ -885,15 +885,60 @@ html:has(button[title="Close sidebar"]) section[data-testid="stSidebar"],
             align-items: center !important;
         }
 
-        /* 4) Tabs + Columns: ترتيب RTL */
+        /* 4) Tabs: ترتيب RTL + محاذاة العناوين */
         [data-testid="stTabs"] [role="tablist"]{
             display: flex !important;
             flex-direction: row-reverse !important;
             justify-content: flex-start !important;
         }
-        div[data-testid="stHorizontalBlock"],
-        div[data-testid="stHorizontalBlock"] > div{
+        [data-testid="stTabs"] [role="tab"],
+        [data-testid="stTabs"] [role="tab"] *{
+            direction: rtl !important;
+            text-align: right !important;
+        }
+
+        /* 4.1) Columns: افتراضيًا نخليها RTL (Row-Reverse)
+              لكن داخل الـForms نعيدها Row لأن كثير من الشاشات القديمة مرتبة في الكود لـRTL بالفعل.
+              هذا يحل: (البحث عن سهم) — العنوان يمين، الإدخالات يمين، وزر التحليل يسار.
+        */
+        div[data-testid="stHorizontalBlock"]{
             flex-direction: row-reverse !important;
+        }
+        div[data-testid="stHorizontalBlock"] > div{
+            flex-direction: inherit !important;
+        }
+        div[data-testid="stForm"] div[data-testid="stHorizontalBlock"]{
+            flex-direction: row !important;
+        }
+
+        /* دعم إضافي لبعض الإصدارات التي تستخدم stColumns */
+        div[data-testid="stColumns"]{
+            display: flex !important;
+            flex-direction: row-reverse !important;
+            width: 100% !important;
+        }
+        div[data-testid="stForm"] div[data-testid="stColumns"]{
+            flex-direction: row !important;
+        }
+
+        /* 4.2) Labels/Headers داخل النماذج/صفحة الدخول: تثبيت RTL + محاذاة يمين */
+        .stApp label,
+        .stApp [data-testid="stForm"] label,
+        .stApp [data-testid="stTextInput"] label,
+        .stApp [data-testid="stPassword"] label,
+        .stApp [data-testid="stTextArea"] label,
+        .stApp [data-testid="stSelectbox"] label,
+        .stApp [data-testid="stRadio"] label,
+        .stApp [data-testid="stCheckbox"] label{
+            direction: rtl !important;
+            text-align: right !important;
+            justify-content: flex-end !important;
+        }
+
+        .stApp .stMarkdown,
+        .stApp .stMarkdown *{
+            direction: rtl !important;
+            text-align: right !important;
         }
 
         /* 5) الأرقام تبقى أوضح بـ LTR (بدون كسر RTL) */
