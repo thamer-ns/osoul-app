@@ -67,7 +67,8 @@ def apply_custom_css():
         @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Sharp:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200');
 
         :root {
-            --font-ar: 'IBM Plex Sans Arabic', 'Cairo', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            /* ✅ Cairo only (مع بدائل احتياطية في حال تعذر التحميل) */
+            --font-ar: 'Cairo', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
         }
 
 
@@ -828,8 +829,13 @@ html:has(button[title="Close sidebar"]) section[data-testid="stSidebar"],
 
 
         /* =====================================================
-           ✅ FINAL RTL LOCK (لا يغير التصميم — فقط الاتجاه/المحاذاة/الأيقونات)
+           ✅ FINAL RTL LOCK + CAIRO (لا يغير التصميم — فقط الاتجاه/الخط/المحاذاة/الأيقونات)
            ===================================================== */
+
+        /* 0) Cairo everywhere (ثم نستثني الكود/الأيقونات بالأسفل) */
+        .stApp, .stApp *{
+            font-family: 'Cairo', sans-serif !important;
+        }
 
         /* 1) فرض RTL على كامل الواجهة */
         .stApp, .stApp *{
@@ -847,20 +853,36 @@ html:has(button[title="Close sidebar"]) section[data-testid="stSidebar"],
         }
         .stApp li{ text-align: right !important; }
 
-        /* 3) Radio/Checkbox: اجعل الدائرة/الأيقونة جهة اليمين */
+        /* 3) Radio/Checkbox: اجعل الدائرة/الأيقونة جهة اليمين (Streamlit + BaseWeb) */
         [role="radiogroup"] label,
         [role="checkbox"] label,
         [data-testid="stSidebar"] [role="radiogroup"] label,
-        [data-testid="stSidebar"] [role="checkbox"] label{
+        [data-testid="stSidebar"] [role="checkbox"] label,
+        div[data-testid="stRadio"] label,
+        div[data-testid="stCheckbox"] label{
             direction: rtl !important;
             text-align: right !important;
             justify-content: flex-end !important;
         }
-        [role="radiogroup"] label,
-        [data-testid="stSidebar"] [role="radiogroup"] label{
+
+        /* BaseWeb (المسؤول فعليًا عن دوائر الراديو/الشيك) */
+        div[data-baseweb="radio"] label,
+        div[data-baseweb="checkbox"] label,
+        [data-testid="stSidebar"] div[data-baseweb="radio"] label,
+        [data-testid="stSidebar"] div[data-baseweb="checkbox"] label{
             display: flex !important;
             flex-direction: row-reverse !important;
-            gap: .5rem !important;
+            align-items: center !important;
+            justify-content: flex-end !important;
+            gap: .55rem !important;
+        }
+
+        /* بعض نسخ BaseWeb تغلف المحتوى داخل div إضافي */
+        div[data-baseweb="radio"] label > div,
+        div[data-baseweb="checkbox"] label > div{
+            display: flex !important;
+            flex-direction: row-reverse !important;
+            align-items: center !important;
         }
 
         /* 4) Tabs + Columns: ترتيب RTL */
@@ -888,16 +910,17 @@ html:has(button[title="Close sidebar"]) section[data-testid="stSidebar"],
             text-align: right !important;
         }
 
-        /* 6) استثناءات: كود/JSON يظل LTR */
+        /* 6) استثناءات: كود/JSON يظل LTR + خط monospace */
         pre, code, .stCode, .stMarkdown pre, .stMarkdown code,
         div[data-testid="stJson"] pre, div[data-testid="stCodeBlock"] pre,
         div[data-testid="stJson"] pre *, div[data-testid="stCodeBlock"] pre *{
             direction: ltr !important;
             text-align: left !important;
             unicode-bidi: plaintext !important;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
         }
 
-        /* 7) استثناء: أيقونات Material تظل LTR ولا تتغير */
+        /* 7) استثناء: أيقونات Material تظل LTR ولا تتغير + خطها الصحيح */
         .material-icons,
         .material-symbols-outlined,
         .material-symbols-rounded,
@@ -909,6 +932,23 @@ html:has(button[title="Close sidebar"]) section[data-testid="stSidebar"],
             direction: ltr !important;
             text-align: center !important;
             unicode-bidi: isolate !important;
+            font-feature-settings: 'liga' 1 !important;
+            -webkit-font-feature-settings: 'liga' 1 !important;
+        }
+
+        .material-icons, i.material-icons, span.material-icons{
+            font-family: 'Material Icons' !important;
+        }
+        .material-symbols-outlined, .material-symbols-rounded, .material-symbols-sharp, [class*="material-symbols"]{
+            font-family: 'Material Symbols Rounded','Material Symbols Outlined','Material Symbols Sharp' !important;
+        }
+
+        /* 8) تحسين RTL داخل select/combobox (يساعد على قوائم الاختيار) */
+        div[data-baseweb="select"] [role="combobox"],
+        div[data-baseweb="select"] [role="listbox"],
+        div[data-baseweb="select"] [role="option"]{
+            direction: rtl !important;
+            text-align: right !important;
         }
 
 </style>
