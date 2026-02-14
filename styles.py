@@ -763,6 +763,52 @@ section[data-testid="stSidebar"] {
             text-align: right !important;
         }
 
+
+/* =====================================================
+   RTL 강화 + منع شريط/خط القائمة عند الانهيار
+   ===================================================== */
+
+/* بعض إصدارات Streamlit تستخدم stColumns بدل stHorizontalBlock */
+div[data-testid="stColumns"],
+div[data-testid="stColumns"] > div,
+div[data-testid="stColumns"] > div > div,
+.stColumns,
+.stHorizontalBlock {
+    direction: rtl !important;
+    text-align: right !important;
+}
+div[data-testid="stColumns"] > div,
+div[data-testid="stHorizontalBlock"],
+.stHorizontalBlock {
+    flex-direction: row-reverse !important;
+}
+
+/* اجعل الـ sidebar ثابتة يمين دائمًا، ومنع وضع "الخط" عند الطيّ */
+section[data-testid="stSidebar"]{
+    min-width: 300px !important;
+    width: clamp(300px, 22vw, 380px) !important;
+    max-width: 380px !important;
+    transform: none !important;
+    overflow: hidden !important;
+}
+section[data-testid="stSidebar"] > div{
+    width: 100% !important;
+    overflow: hidden !important;
+}
+
+/* امنع زر الطيّ (Close/Collapse) لأنه يسبب شريط عمودي في بعض النسخ */
+button[title="Close sidebar"],
+button[aria-label="Close sidebar"],
+button[title="Collapse sidebar"],
+button[aria-label="Collapse sidebar"]{
+    display: none !important;
+}
+
+/* شدّ تطبيق الخط العربي على أغلب العناصر (بدون كسر أيقونات الماتيريال) */
+.stApp *:not(.material-icons):not(.material-symbols-outlined):not(.material-symbols-rounded):not(.material-symbols-sharp):not([data-testid="stIconMaterial"]):not([data-testid="stIconMaterial"] *) {
+    font-family: inherit !important;
+}
+
 </style>
         """
 
