@@ -1,6 +1,7 @@
 # ai_engine_core/core.py
 
 from datetime import datetime
+import re
 
 def _now_str():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
