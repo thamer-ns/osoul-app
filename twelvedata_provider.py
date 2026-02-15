@@ -76,30 +76,36 @@ def _throttle(key: str = "_td_last_call_ts", min_gap_s: float = 1.2):
 
 
 def _interval_map(interval: str) -> str:
-    itv = (interval or "1d").strip().lower()
+    """Normalize interval to TwelveData expected keys.
+
+    Important: monthly uses 1mo/1month, and 1m means 1-minute (NOT month).
+    """
+    iv = str(interval or "").strip().lower()
     mapping = {
+        # minutes
+        "1m": "1min",
+        "1min": "1min",
+        "5m": "5min",
+        "5min": "5min",
+        "15m": "15min",
+        "15min": "15min",
+        "30m": "30min",
+        "30min": "30min",
+        # hours
+        "1h": "1h",
+        "60m": "1h",
+        "60min": "1h",
+        # days/weeks/months
         "1d": "1day",
         "1day": "1day",
-        "d": "1day",
         "1wk": "1week",
         "1w": "1week",
         "1week": "1week",
-        "w": "1week",
         "1mo": "1month",
-        "1m": "1month",
-        "1month": "1month",
         "mo": "1month",
-        "1h": "1h",
-        "60m": "1h",
-        "30m": "30min",
-        "15m": "15min",
-        "5m": "5min",
-        "1min": "1min",
+        "1month": "1month",
     }
-    return mapping.get(itv, "1day")
-
-
-@st.cache_data(ttl=60 * 60, show_spinner=False)
+    return mapping.get(iv, iv)
 
 def resolve_symbol_meta(symbol: str, default_exchange: str = "XSAU") -> Dict[str, str]:
     """Resolve symbol and exchange for Twelve Data endpoints.
