@@ -2,6 +2,7 @@
 
 import re
 import time
+from datetime import datetime
 import json
 import os
 from typing import List, Dict, Any, Optional
@@ -50,25 +51,31 @@ def _get_twelvedata_key() -> str:
 
 
 def _td_interval(interval: str) -> str:
-    itv = (interval or "1d").strip().lower()
-    mapping = {
+    """Map UI interval keys to TwelveData interval strings.
+
+    Notes:
+    - Use 1mo for monthly (NOT 1m) to avoid clash with 1-minute.
+    - TwelveData minute key is 1min.
+    """
+    m = {
+        "1m": "1min",
+        "1min": "1min",
+        "5m": "5min",
+        "15m": "15min",
+        "30m": "30min",
+        "60m": "1h",
+        "1h": "1h",
         "1d": "1day",
-        "1day": "1day",
         "1wk": "1week",
         "1w": "1week",
-        "1week": "1week",
         "1mo": "1month",
-        "1m": "1month",
         "1month": "1month",
-        "1h": "1h",
-        "60m": "1h",
-        "30m": "30min",
-        "15m": "15min",
-        "5m": "5min",
-        "1m": "1min",
+        "mo": "1month",
+        "1year": "1year",
+        "1y": "1year",
     }
-    return mapping.get(itv, "1day")
-
+    k = str(interval or "").strip().lower()
+    return m.get(k, k)
 
 def _td_request(params: Dict[str, Any], timeout: int = 10, max_retries: int = 3) -> Optional[Dict[str, Any]]:
     if not requests:
@@ -263,45 +270,37 @@ def _http_get(url: str, timeout: int = 6, retries: int = 2, sleep: float = 0.6):
 # 🔤 Symbol Normalization (توحيد الرموز)
 # ============================================================
 def get_ticker_symbol(symbol: str) -> str:
-    """توحيد الرموز لتوافق Yahoo Finance.
+    """Return a normalized ticker symbol without forcing .SR on non-Saudi assets.
 
-    يدعم أشكال إدخال شائعة من واجهات مختلفة:
-    - 1150  -> 1150.SR
-    - 1150.SR -> 1150.SR
-    - SR.1150 / SR1150 -> 1150.SR  ✅ (كان سبب اختفاء البيانات المخزنة)
-    - TASI -> ^TASI.SR
+    Rules (simple + safe):
+    - Digits only => Saudi (.SR)
+    - SR.#### / SR#### => Saudi (.SR)
+    - If symbol already looks like an exchange-qualified ticker (contains '.'),
+      index (^), FX (=X), or crypto pair with '-' (e.g., BTC-USD) => keep as-is.
+    - Otherwise keep as-is (do NOT append .SR by default).
     """
     s = _clean_symbol_text(str(symbol or "")).strip().upper()
     if not s:
         return ""
 
-    # indices
-    if s in ["TASI", ".TASI", "^TASI", "^TASI.SR"]:
+    # Common index aliases
+    if s in {"TASI", ".TASI", "^TASI", "^TASI.SR"}:
         return "^TASI.SR"
 
-    # normalize common UI formats: SR.1150 / SR1150
+    # SR.1150 / SR1150
     m = re.match(r"^SR\.?([0-9]{1,6})$", s)
     if m:
         return f"{m.group(1)}.SR"
 
-    # plain digits
-    if s.isdigit():
+    # Digits only => Saudi
+    if re.match(r"^[0-9]{1,6}$", s):
         return f"{s}.SR"
 
-    # allow already-normalized
-    if s.startswith("^"):
+    # Already qualified or special formats (keep)
+    if "." in s or s.startswith("^") or "=" in s or "-" in s:
         return s
 
-    # if ends with SR but missing dot
-    if s.endswith("SR") and not s.endswith(".SR"):
-        s = s[:-2] + ".SR"
-
-    # if missing .SR (typical equities)
-    if not s.endswith(".SR") and not s.startswith("^"):
-        return f"{s}.SR"
-
     return s
-
 
 def _symbol_variants(symbol: str) -> List[str]:
     raw = _clean_symbol_text(str(symbol or "")).strip().upper()
@@ -919,6 +918,8 @@ def get_chart_history(symbol: str, period: str = None, interval: str = "1d", yea
         except Exception:
             pass
 
+
+
     # Final normalize columns (robust)
     df = _normalize_ohlcv_columns(df) if isinstance(df, pd.DataFrame) else pd.DataFrame()
     if df is None or df.empty:
@@ -935,6 +936,44 @@ def get_chart_history(symbol: str, period: str = None, interval: str = "1d", yea
 
     df = df[cols].copy()
     df = df.dropna(subset=needed, how="any")
+
+    # If user requested 4H, resample the fetched 1H data to 4H
+    try:
+        if req_interval in ["4h", "240m", "4hr", "4hours"] and df is not None and not df.empty:
+            df = df.resample("4H").agg({
+                "Open": "first",
+                "High": "max",
+                "Low": "min",
+                "Close": "last",
+                "Volume": "sum",
+            }).dropna(subset=["Open", "High", "Low", "Close"])
+    except Exception:
+        pass
+
+    # Data lineage (best-effort)
+    try:
+        lineage = {
+            "symbol": str(sym),
+            "interval": str(req_interval),
+            "fetched_interval": str(interval),
+            "period": str(period),
+            "rows": int(len(df)) if df is not None else 0,
+            "start": str(df.index.min()) if df is not None and not df.empty else None,
+            "end": str(df.index.max()) if df is not None and not df.empty else None,
+            "source": str(getattr(df, "attrs", {}).get("source") or "unknown"),
+            "fetched_at": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+        }
+        try:
+            df.attrs["data_lineage"] = lineage
+        except Exception:
+            pass
+        try:
+            _LAST_LINEAGE[_sym_key(sym)] = lineage
+        except Exception:
+            pass
+    except Exception:
+        pass
+
     return df
 
 
