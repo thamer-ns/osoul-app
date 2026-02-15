@@ -1,1 +1,3 @@
+# Auto-generated to fix vendored twelvedata package packaging on case-sensitive systems.
 version = "vendored"
+__version__ = version
