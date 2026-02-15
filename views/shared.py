@@ -161,16 +161,19 @@ def _ensure_ui_once():
 def _sym_key(sym: str) -> str:
     return (sym or "").replace(".", "_").replace("-", "_").replace(" ", "_")
 
-def _normalize_symbol(sym: str) -> str:
-    sym = (sym or "").strip().upper()
-    if not sym:
-        return ""
-    if sym.isdigit():
-        return f"{sym}.SR"
-    sym = sym.replace(" ", "").replace("-", "")
-    if sym.endswith("SR") and ".SR" not in sym:
-        sym = sym.replace("SR", ".SR")
-    return sym
+def _normalize_symbol(symbol: str) -> str:
+    """Normalize symbol consistently with market_data.get_ticker_symbol.
+
+    ✅ Keeps crypto pairs like BTC-USD (does not strip '-').
+    """
+    try:
+        from market_data import get_ticker_symbol
+        return get_ticker_symbol(symbol)
+    except Exception:
+        s = str(symbol or "").strip().upper().replace(" ", "")
+        if s.isdigit():
+            return f"{s}.SR"
+        return s
 
 def _safe_status_series(df: pd.DataFrame) -> pd.Series:
     if df is None or df.empty or "status" not in df.columns:
