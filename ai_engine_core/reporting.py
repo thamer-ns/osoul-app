@@ -231,30 +231,27 @@ def generate_ai_report(symbol, timeframe="1D"):
         # Indicators pack
         ind = _compute_indicators(df)
 
-        # Signal events timeline (for multi-timeframe UI)
+        # Precompute UI helpers (safe) before report dict is constructed
+        signal_events = []
         try:
-            report["signal_events"] = _build_signal_events(df, ind, limit=12)
+            signal_events = _build_signal_events(df, ind, limit=12)
         except Exception:
-            report["signal_events"] = []
+            signal_events = []
 
-        # Data lineage (if market_data attached attrs)
+        data_lineage = None
         try:
-            dl = getattr(df, "attrs", {}).get("data_lineage")
-            if dl:
-                report.setdefault("engine_meta", {})["data_lineage"] = dl
+            data_lineage = getattr(df, "attrs", {}).get("data_lineage")
         except Exception:
-            pass
+            data_lineage = None
 
-        # Why I might be wrong (simple explainability)
+        why_wrong = []
         try:
-            why = []
             if df is None or df.empty or len(df) < 120:
-                why.append("Coverage منخفض (بيانات قليلة)")
+                why_wrong.append("Coverage منخفض (بيانات قليلة)")
             if float(ind.get("atr_pct", 0) or 0) > 6:
-                why.append("تذبذب مرتفع (ATR%)")
-            report.setdefault("engine_meta", {})["why_wrong"] = why[:5]
+                why_wrong.append("تذبذب مرتفع (ATR%)")
         except Exception:
-            pass
+            why_wrong = []
 
         # =========================
         # Core tech modules
@@ -691,6 +688,12 @@ def generate_ai_report(symbol, timeframe="1D"):
             },
         }
 
+        # Attach multi-timeframe helpers
+        report["signal_events"] = signal_events or []
+        report["engine_meta"]["why_wrong"] = (why_wrong or [])[:5]
+        if data_lineage:
+            report["engine_meta"]["data_lineage"] = data_lineage
+
         report["risk_gates"] = _risk_gates(report)
         report["scenarios"] = _build_scenarios(df, report)
 
@@ -708,7 +711,7 @@ def generate_ai_report(symbol, timeframe="1D"):
                 signal_id = log_ai_signal(
                     symbol,
                     timeframe,
-                    recommendation,
+                    rec,
                     float(total_score),
                     float(confidence),
                     report,
