@@ -5,7 +5,7 @@ from typing import Any, Dict, Optional
 
 from database import execute_query, fetch_table, fetch_df
 from market_data import get_ticker_symbol, _symbol_variants
-from .utils import _safe_float, _safe_date_str
+from .utils import _safe_float, _safe_float_none, _safe_date_str
 
 
 # ==============================================================
@@ -34,7 +34,7 @@ def save_financial_record(symbol, date_str, data, period_type="Annual", source="
             "long_term_debt",
         ]
 
-        vals = {k: _safe_float((data or {}).get(k, 0)) for k in keys}
+        vals = {k: _safe_float_none((data or {}).get(k, None)) for k in keys}
 
         if sum(abs(v) for v in vals.values()) == 0:
             return False
@@ -46,7 +46,7 @@ def save_financial_record(symbol, date_str, data, period_type="Annual", source="
              total_assets, total_liabilities, total_equity,
              operating_cash_flow, current_assets, current_liabilities, long_term_debt)
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            ON CONFLICT (symbol, date, period_type)
+            ON CONFLICT (symbol, date_str, period_type)
             DO UPDATE SET
                 revenue=EXCLUDED.revenue,
                 net_income=EXCLUDED.net_income,
@@ -105,7 +105,7 @@ def get_stored_financials_df(symbol, period_type="Annual"):
         SELECT *
         FROM financialstatements
         WHERE ({sym_clause}) AND LOWER(TRIM(period_type)) = LOWER(TRIM(%s))
-        ORDER BY date DESC;
+        ORDER BY date_str DESC;
         """
         df = fetch_df(q, tuple(vs + [period_type]))
         if df is None or df.empty:
