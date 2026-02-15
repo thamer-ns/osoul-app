@@ -899,6 +899,12 @@ def init_db():
             """
         execute_query(q)
 
+    # Unique index required for ON CONFLICT upsert
+    execute_query("""
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_financialstatements_uq
+    ON financialstatements(symbol, date_str, period_type);
+    """)
+
     # raw json table (full statements)
     if not table_exists("financialstatements_raw"):
         q = """
