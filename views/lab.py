@@ -21,6 +21,80 @@ except Exception:
 def view_backtester_ui(fin):
     st.header("🧪 المختبر")
 
+    st.subheader("🧠 تحليل متعدد الفواصل (AI)")
+    colA, colB = st.columns([2, 1])
+    with colA:
+        ai_symbol = st.text_input("الرمز للتحليل (يدعم: 1120 / AAPL / BTC-USD)", value="1120", key="lab_ai_symbol")
+    with colB:
+        horizon_days = st.number_input("أفق التقييم (للمعايرة) بالأيام", min_value=5, max_value=60, value=20, step=5, key="lab_cal_h")
+
+    tfs_all = ["15M", "30M", "1H", "4H", "1D", "1W", "1M"]
+    timeframes = st.multiselect("الفواصل", tfs_all, default=tfs_all, key="lab_ai_tfs")
+
+    with st.expander("🎛️ معايرة thresholds (اختياري)"):
+        st.caption("تعتمد على سجلات النظام ai_signals/ai_outcomes (سريعة وخفيفة).")
+        cal_tf = st.selectbox("الفاصل المراد معايرته", options=tfs_all, index=4, key="lab_cal_tf")
+        if st.button("⚙️ تشغيل المعايرة الآن", key="lab_run_cal"):
+            try:
+                from ai_engine_core.calibration import calibrate_thresholds, get_current_thresholds
+                res = calibrate_thresholds(cal_tf, horizon_days=int(horizon_days))
+                st.success("تمت المعايرة ✅" if res.get("used") else "لم تتم المعايرة (بيانات غير كافية)")
+                st.json(res)
+                st.info({"current_thresholds": get_current_thresholds(cal_tf)})
+            except Exception as e:
+                st.error(f"تعذر تشغيل المعايرة: {e}")
+
+    if st.button("تشغيل التحليل متعدد الفواصل", key="lab_run_ai"):
+        from views.shared import generate_ai_report
+        sym_norm = _normalize_symbol(ai_symbol)
+        results = []
+        with st.spinner("جاري التحليل..."):
+            for tf in timeframes:
+                try:
+                    rep = generate_ai_report(sym_norm, timeframe=tf)
+                    results.append((tf, rep))
+                except Exception as e:
+                    results.append((tf, {"error": str(e)}))
+
+        rows = []
+        for tf, rep in results:
+            if not isinstance(rep, dict) or "error" in rep:
+                rows.append({"TF": tf, "Recommendation": "—", "Score": None, "Confidence": None, "Note": rep.get("error") if isinstance(rep, dict) else "error"})
+                continue
+            rows.append({
+                "TF": tf,
+                "Recommendation": rep.get("recommendation"),
+                "Score": rep.get("total_score"),
+                "Confidence": rep.get("confidence"),
+                "Source": (rep.get("engine_meta") or {}).get("data_lineage", {}).get("source"),
+                "Coverage": (rep.get("engine_meta") or {}).get("data_lineage", {}).get("rows"),
+            })
+        st.dataframe(rows, use_container_width=True)
+
+        for tf, rep in results:
+            with st.expander(f"تفاصيل {tf}", expanded=False):
+                if not isinstance(rep, dict):
+                    st.write(rep)
+                    continue
+                if "error" in rep:
+                    st.error(rep["error"])
+                    continue
+                st.write({
+                    "recommendation": rep.get("recommendation"),
+                    "total_score": rep.get("total_score"),
+                    "confidence": rep.get("confidence"),
+                    "thresholds_used": (rep.get("engine_meta") or {}).get("thresholds_used"),
+                    "why_wrong": (rep.get("engine_meta") or {}).get("why_wrong"),
+                    "data_lineage": (rep.get("engine_meta") or {}).get("data_lineage"),
+                })
+                ev = rep.get("signal_events") or []
+                if ev:
+                    st.markdown("**Timeline (أحدث الشارات):**")
+                    st.json(ev)
+
+    st.divider()
+
+
     if not run_backtest:
         st.warning("Backtester غير متوفر حالياً.")
         if bt_import_error:
