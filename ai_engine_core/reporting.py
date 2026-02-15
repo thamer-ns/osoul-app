@@ -75,6 +75,61 @@ def _timeframe_to_interval(timeframe: str) -> str:
     return "1d"
 
 
+
+
+def _build_signal_events(df: pd.DataFrame, ind: dict, limit: int = 12) -> list:
+    """Create a compact list of recent technical 'events' for UI timeline."""
+    events = []
+    try:
+        if df is None or df.empty:
+            return events
+
+        close = df["Close"]
+        # SMA crosses
+        sma50 = ind.get("sma50")
+        sma200 = ind.get("sma200")
+        if sma50 is not None and sma200 is not None and len(sma50) >= 3 and len(sma200) >= 3:
+            prev = float(sma50.iloc[-2] - sma200.iloc[-2])
+            curr = float(sma50.iloc[-1] - sma200.iloc[-1])
+            if prev <= 0 and curr > 0:
+                events.append({"type":"SMA Cross","event":"Golden Cross (50>200)","at": str(df.index[-1])})
+            elif prev >= 0 and curr < 0:
+                events.append({"type":"SMA Cross","event":"Death Cross (50<200)","at": str(df.index[-1])})
+
+        # MACD cross
+        macd = ind.get("macd")
+        macd_sig = ind.get("macd_signal")
+        if macd is not None and macd_sig is not None and len(macd) >= 3 and len(macd_sig) >= 3:
+            prev = float(macd.iloc[-2] - macd_sig.iloc[-2])
+            curr = float(macd.iloc[-1] - macd_sig.iloc[-1])
+            if prev <= 0 and curr > 0:
+                events.append({"type":"MACD","event":"MACD bullish cross","at": str(df.index[-1])})
+            elif prev >= 0 and curr < 0:
+                events.append({"type":"MACD","event":"MACD bearish cross","at": str(df.index[-1])})
+
+        # RSI zones
+        rsi = ind.get("rsi14")
+        if rsi is not None and len(rsi) >= 2:
+            r = float(rsi.iloc[-1])
+            if r <= 30:
+                events.append({"type":"RSI","event":f"Oversold (RSI {r:.1f})","at": str(df.index[-1])})
+            elif r >= 70:
+                events.append({"type":"RSI","event":f"Overbought (RSI {r:.1f})","at": str(df.index[-1])})
+
+        # Close vs SMA20
+        sma20 = ind.get("sma20")
+        if sma20 is not None and len(sma20) >= 2 and len(close) >= 2:
+            prev = float(close.iloc[-2] - sma20.iloc[-2])
+            curr = float(close.iloc[-1] - sma20.iloc[-1])
+            if prev <= 0 and curr > 0:
+                events.append({"type":"Price","event":"Close crossed above SMA20","at": str(df.index[-1])})
+            elif prev >= 0 and curr < 0:
+                events.append({"type":"Price","event":"Close crossed below SMA20","at": str(df.index[-1])})
+    except Exception:
+        pass
+
+    return events[:limit]
+
 def _dedup_limit(items, limit=12):
     out, seen = [], set()
     for x in (items or []):
@@ -175,6 +230,31 @@ def generate_ai_report(symbol, timeframe="1D"):
 
         # Indicators pack
         ind = _compute_indicators(df)
+
+        # Signal events timeline (for multi-timeframe UI)
+        try:
+            report["signal_events"] = _build_signal_events(df, ind, limit=12)
+        except Exception:
+            report["signal_events"] = []
+
+        # Data lineage (if market_data attached attrs)
+        try:
+            dl = getattr(df, "attrs", {}).get("data_lineage")
+            if dl:
+                report.setdefault("engine_meta", {})["data_lineage"] = dl
+        except Exception:
+            pass
+
+        # Why I might be wrong (simple explainability)
+        try:
+            why = []
+            if df is None or df.empty or len(df) < 120:
+                why.append("Coverage منخفض (بيانات قليلة)")
+            if float(ind.get("atr_pct", 0) or 0) > 6:
+                why.append("تذبذب مرتفع (ATR%)")
+            report.setdefault("engine_meta", {})["why_wrong"] = why[:5]
+        except Exception:
+            pass
 
         # =========================
         # Core tech modules
@@ -626,17 +706,14 @@ def generate_ai_report(symbol, timeframe="1D"):
         try:
             if get_flag("enable_self_learning", True):
                 signal_id = log_ai_signal(
-            symbol,
-            timeframe,
-            features,
-            report,
-            horizon_days=20,
-            sector=sector,
-            strategy_name=strategy_name,
-            market_trend=market_trend,
-            regime=regime,
-            ctx_key=ctx_key,
-            horizons=horizons,
+                    symbol,
+                    timeframe,
+                    recommendation,
+                    float(total_score),
+                    float(confidence),
+                    report,
+                    market_trend=market_trend,
+                    regime=regime,
                 )
         except Exception:
             signal_id = None
