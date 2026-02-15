@@ -69,7 +69,18 @@ def view_backtester_ui(fin):
                 "Source": (rep.get("engine_meta") or {}).get("data_lineage", {}).get("source"),
                 "Coverage": (rep.get("engine_meta") or {}).get("data_lineage", {}).get("rows"),
             })
-        st.dataframe(rows, use_container_width=True)
+        df_sum = pd.DataFrame(rows)
+        # توحيد ترتيب الأعمدة وتنسيق القيم لعرض متناسق مع جداول التطبيق
+        desired = ["TF", "Recommendation", "Score", "Confidence", "Source", "Coverage", "Note"]
+        cols = [c for c in desired if c in df_sum.columns]
+        if cols:
+            df_sum = df_sum[cols]
+        df_sum = df_sum.fillna("—")
+        try:
+            html_table = df_sum.to_html(index=False, classes=["finance-table"], escape=False)
+            st.markdown(html_table, unsafe_allow_html=True)
+        except Exception:
+            st.dataframe(df_sum, use_container_width=True, hide_index=True)
 
         for tf, rep in results:
             with st.expander(f"تفاصيل {tf}", expanded=False):
