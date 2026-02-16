@@ -11,12 +11,6 @@ except Exception:
 
 import streamlit as st
 
-# Arabic UI: translate Streamlit default placeholders (called after set_page_config)
-try:
-    from components import inject_streamlit_ar_i18n
-except Exception:
-    inject_streamlit_ar_i18n = None
-
 # -----------------------------------------------------------------------------
 # 🔧 Import bootstrap
 # بعض الرفعّات إلى GitHub تضع المشروع داخل مجلد فرعي (مثل: osoul-app-main).
@@ -33,12 +27,26 @@ if PARENT_DIR and PARENT_DIR not in sys.path:
 # -----------------------------------------------------------------------------
 # 🧩 App configuration
 # -----------------------------------------------------------------------------
+try:
+    import config
+    page_title = getattr(config, "APP_NAME", "أُصول")
+    page_icon = getattr(config, "APP_ICON", "📈")
+except Exception:
+    page_title = "أُصول"
+    page_icon = "📈"
+
 st.set_page_config(
-    page_title="أُصول",
-    page_icon="📈",
+    page_title=page_title,
+    page_icon=page_icon,
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# Arabic UI: translate Streamlit default placeholders (called after set_page_config)
+try:
+    from components import inject_streamlit_ar_i18n
+except Exception:
+    inject_streamlit_ar_i18n = None
 
 if inject_streamlit_ar_i18n:
     try:
@@ -47,82 +55,11 @@ if inject_streamlit_ar_i18n:
         pass
 
 # -----------------------------------------------------------------------------
-# 🧠 Imports (after sys.path bootstrap)
+# ✅ Auth + Main Router (This restores your original app structure)
 # -----------------------------------------------------------------------------
-from analytics import calculate_portfolio_metrics, get_portfolio_cache_key  # noqa: E402
-from views.dashboard import view_dashboard  # noqa: E402
-from views.signals import view_signals  # noqa: E402
-from views.analysis import view_analysis  # noqa: E402
-from views.settings import view_settings  # noqa: E402
+from security import require_login  # noqa: E402
+from views import router  # noqa: E402
 
-# -----------------------------------------------------------------------------
-# 🧭 Sidebar navigation (stable — no dynamic imports)
-# -----------------------------------------------------------------------------
-def _render_sidebar() -> str:
-    st.sidebar.title("أُصول")
-    st.sidebar.caption("منصة تحليل واستثمار")
-
-    pages = {
-        "الرئيسية": "home",
-        "المستشار": "advisor",
-        "الإشارات": "signals",
-        "التقارير": "reports",
-        "التحليل": "analysis",
-        "الإعدادات": "settings",
-    }
-
-    choice = st.sidebar.radio("القائمة", list(pages.keys()), index=0)
-    return pages[choice]
-
-
-page = _render_sidebar()
-
-# -----------------------------------------------------------------------------
-# 🚀 Page router
-# -----------------------------------------------------------------------------
-def _load_fin():
-    with st.spinner("جارٍ تحميل بيانات المحفظة..."):
-        return calculate_portfolio_metrics(cache_key=get_portfolio_cache_key())
-
-
-def _render_reports_placeholder():
-    st.header("التقارير")
-    st.info("صفحة التقارير قيد التطوير. مؤقتًا: استخدم صفحة التحليل + الإشارات.")
-
-
-def _render_advisor_placeholder(fin):
-    st.header("المستشار")
-    st.caption("المستشار موجود داخل صفحة **التحليل** (تبويب/قسم المستشار).")
-    st.markdown("➡️ افتح **التحليل** ثم اختر تبويب/قسم **المستشار**.")
-    # عرض التحليل مباشرة لتقليل الإحساس بأن الصفحة فارغة
-    view_analysis(fin)
-
-
-try:
-    fin = _load_fin()
-
-    if page == "home":
-        view_dashboard(fin)
-
-    elif page == "signals":
-        view_signals(fin)
-
-    elif page == "analysis":
-        view_analysis(fin)
-
-    elif page == "settings":
-        view_settings()
-
-    elif page == "reports":
-        _render_reports_placeholder()
-
-    elif page == "advisor":
-        _render_advisor_placeholder(fin)
-
-    else:
-        view_dashboard(fin)
-
-except Exception as e:
-    st.error("حدث خطأ أثناء تشغيل التطبيق.")
-    st.exception(e)
-    st.info("جرّب إعادة تشغيل التطبيق من Manage app → Reboot، أو راجع سجلّ الأخطاء في Streamlit Cloud.")
+# صفحة تسجيل الدخول (مع الشعار) موجودة داخل security.require_login()
+if require_login():
+    router()
