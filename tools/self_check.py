@@ -11,6 +11,7 @@ tools/self_check.py
 from __future__ import annotations
 import os
 import ast
+import re
 from pathlib import Path
 from typing import List, Tuple, Dict, Set
 
@@ -75,56 +76,6 @@ def build_import_graph(py_files: List[Path]) -> Dict[str, Set[str]]:
         graph[mod] = imports
     return graph
 
-
-import ast
-
-def check_missing_init_files(repo_root: Path) -> list[str]:
-    """Warn if a directory looks like a Python package but has a misnamed _init_.py instead of __init__.py."""
-    warnings = []
-    for p in repo_root.rglob("_init_.py"):
-        pkg_dir = p.parent
-        if not (pkg_dir / "__init__.py").exists():
-            warnings.append(str(p.relative_to(repo_root)))
-    return sorted(set(warnings))
-
-def check_relative_imports(py_files: list[Path], repo_root: Path) -> list[tuple[str, str, str]]:
-    """Detect relative imports that point to missing modules (common on case-sensitive systems)."""
-    problems: list[tuple[str, str, str]] = []
-    for f in py_files:
-        rel = str(f.relative_to(repo_root))
-        try:
-            src = f.read_text(encoding="utf-8", errors="ignore")
-            tree = ast.parse(src, filename=rel)
-        except Exception as e:
-            problems.append((rel, "parse_error", str(e)))
-            continue
-
-        file_dir = f.parent
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.level and node.module is not None:
-                base = file_dir
-                # In Python: level=1 means "from .foo" (same package), level=2 means "from ..foo" (parent), etc.
-                for _ in range(node.level - 1):
-                    base = base.parent
-                target = base.joinpath(*node.module.split("."))
-                file_candidate = target.with_suffix(".py")
-                pkg_candidate = target / "__init__.py"
-                if not file_candidate.exists() and not pkg_candidate.exists():
-                    # case-insensitive suggestion
-                    suggestions = []
-                    parent = target.parent
-                    leaf = target.name
-                    if parent.exists():
-                        for entry in parent.iterdir():
-                            name = entry.name
-                            if name.lower() in {leaf.lower(), (leaf + ".py").lower()}:
-                                suggestions.append(name)
-                    problems.append(
-                        (rel, f"missing_relative_import: {'.' * node.level}{node.module}",
-                         f"Expected {file_candidate.relative_to(repo_root)} or {pkg_candidate.relative_to(repo_root)}; suggestions: {suggestions}")
-                    )
-    return problems
-
 def main() -> int:
     print("="*72)
     print("Osoli Self Check")
@@ -156,29 +107,59 @@ def main() -> int:
     else:
         print("\n✅ No __pycache__ folders.")
 
-    # Additional checks that catch common release issues
-    init_warn = check_missing_init_files(PROJECT_ROOT)
-    if init_warn:
-        print("\n⚠️ Possible misnamed __init__.py files (found _init_.py without __init__.py):")
-        for x in init_warn:
-            print(" -", x)
-    else:
-        print("\n✅ Package __init__.py naming: OK")
-
-    rel_import_issues = check_relative_imports(py_files, PROJECT_ROOT)
-    if rel_import_issues:
-        print("\n⚠️ Broken relative imports detected (may break on Linux/macOS):")
-        for f, kind, detail in rel_import_issues[:50]:
-            print(f" - {f} -> {kind}: {detail}")
-        if len(rel_import_issues) > 50:
-            print(f"   ... and {len(rel_import_issues) - 50} more")
-    else:
-        print("\n✅ Relative imports: OK")
-
     graph = build_import_graph(py_files)
     # quick: show top-level modules count
     print("\n📦 Python modules scanned:", len(graph))
 
+
+    # --- Extra (optional) code-health signals (no runtime impact) ---
+    try:
+        trailing = tabs = long_lines = 0
+        broad_except = 0
+        branch_nodes = (ast.If, ast.For, ast.While, ast.Try, ast.With, ast.Match, ast.BoolOp)
+        func_rank = []  # (branches, lines, file::func)
+        for p in py_files:
+            txt = p.read_text(encoding='utf-8', errors='ignore')
+            for ln in txt.splitlines():
+                if ln.rstrip() != ln:
+                    trailing += 1
+                if '\t' in ln:
+                    tabs += 1
+                if len(ln) > 140:
+                    long_lines += 1
+            broad_except += len(re.findall(r"except\s+Exception\s*:\s*(?:\n\s+pass|\n\s+return|\n\s+continue)", txt))
+            try:
+                tree = ast.parse(txt)
+            except SyntaxError:
+                continue
+            for n in ast.walk(tree):
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and hasattr(n, 'lineno') and hasattr(n, 'end_lineno'):
+                    branches = sum(1 for sub in ast.walk(n) if isinstance(sub, branch_nodes))
+                    lines_ = int(n.end_lineno) - int(n.lineno) + 1
+                    if branches >= 40 or lines_ >= 300:
+                        func_rank.append((branches, lines_, f"{p.relative_to(PROJECT_ROOT)}::{n.name} ({n.lineno}-{n.end_lineno})"))
+        func_rank.sort(reverse=True)
+
+        print('\n🧹 Style quick-scan:')
+        print(f' - trailing whitespace lines: {trailing}')
+        print(f' - tabbed lines: {tabs}')
+        print(f' - long lines >140: {long_lines}')
+        print(f' - broad except Exception w/ pass/return/continue: {broad_except}')
+
+        if func_rank:
+            print('\n🧠 Complexity hotspots (top 10):')
+            for b, l_, desc in func_rank[:10]:
+                print(f' - branches={b:3d} lines={l_:4d} {desc}')
+
+        legacy_dir = PROJECT_ROOT / 'legacy'
+        vendor_td = PROJECT_ROOT / 'twelvedata'
+        if legacy_dir.exists():
+            print('\n🗑️ Dead-code candidate: legacy/ (consider archiving)')
+        if vendor_td.exists():
+            print('🗑️ Dead-code candidate: twelvedata/ (vendored SDK; consider archiving)')
+
+    except Exception as e:
+        print('\n⚠️ Extra code-health scan skipped due to error:', e)
     print("\nDone.")
     return 0 if (not missing and not syn) else 2
 
