@@ -13,8 +13,6 @@ import streamlit as st
 
 # -----------------------------------------------------------------------------
 # 🔧 Import bootstrap
-# بعض الرفعّات إلى GitHub تضع المشروع داخل مجلد فرعي (مثل: osoul-app-main).
-# هذا البلوك يجعل الاستيرادات تعمل حتى لو تغيّر مسار التشغيل.
 # -----------------------------------------------------------------------------
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 if ROOT_DIR not in sys.path:
@@ -42,24 +40,39 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Arabic UI: translate Streamlit default placeholders (called after set_page_config)
+# -----------------------------------------------------------------------------
+# ✅ Global UI / RTL / Theme CSS (هذا هو اللي يرجّع الشكل كما كان)
+# -----------------------------------------------------------------------------
+try:
+    from styles import apply_custom_css
+except Exception:
+    apply_custom_css = None
+
+# Arabic UI: translate Streamlit default placeholders
 try:
     from components import inject_streamlit_ar_i18n
 except Exception:
     inject_streamlit_ar_i18n = None
 
-if inject_streamlit_ar_i18n:
+# حقن الستايل مرة واحدة من البداية (مهم لتسجيل الدخول + RTL)
+if "___css_applied" not in st.session_state:
+    st.session_state["___css_applied"] = True
     try:
-        inject_streamlit_ar_i18n()
+        if apply_custom_css:
+            apply_custom_css()
+    except Exception:
+        pass
+    try:
+        if inject_streamlit_ar_i18n:
+            inject_streamlit_ar_i18n(True)
     except Exception:
         pass
 
 # -----------------------------------------------------------------------------
-# ✅ Auth + Main Router (This restores your original app structure)
+# ✅ Auth + Main Router (يرجع المحافظ + النافبار + التفاصيل)
 # -----------------------------------------------------------------------------
 from security import require_login  # noqa: E402
 from views import router  # noqa: E402
 
-# صفحة تسجيل الدخول (مع الشعار) موجودة داخل security.require_login()
 if require_login():
     router()
