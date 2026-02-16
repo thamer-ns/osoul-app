@@ -85,8 +85,10 @@ def execute_query(query: str, params: Optional[Tuple[Any, ...]] = None) -> bool:
     fn, _ = _safe_import_db()
     if not fn:
         return False
+    kind = _get_db_kind()
+    q = _adapt_sql_placeholders(query, kind)
     try:
-        return bool(fn(query, tuple(params or ())))
+        return bool(fn(q, tuple(params or ())))
     except Exception:
         return False
 
@@ -100,14 +102,40 @@ def fetch_table(table: str, limit: Optional[int] = None):
     _, fn = _safe_import_db()
     if not fn:
         return []
+
+    lim: Optional[int]
     try:
-        return fn(str(table), limit=limit)
-    except TypeError:
-        # Backward compatibility if underlying signature doesn't support limit.
-        rows = fn(str(table))
-        if limit is None or rows is None:
+        lim = None if limit is None else max(0, int(limit))
+    except Exception:
+        lim = None
+
+    def _apply_limit(rows):
+        if lim is None:
             return rows
-        return list(rows)[: int(limit)]
+        # pandas DataFrame
+        if hasattr(rows, "head"):
+            try:
+                return rows.head(lim)
+            except Exception:
+                pass
+        # sized/sliceable containers
+        try:
+            return rows[:lim]
+        except Exception:
+            pass
+        # generic iterables
+        try:
+            return list(rows)[:lim]
+        except Exception:
+            return rows
+
+    try:
+        rows = fn(str(table), limit=lim)
+        return _apply_limit(rows)
+    except TypeError:
+        # Backward compatibility if underlying signature doesn't support `limit`.
+        rows = fn(str(table))
+        return _apply_limit(rows)
     except Exception:
         return []
 
