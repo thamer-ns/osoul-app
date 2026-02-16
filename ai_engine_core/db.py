@@ -77,6 +77,41 @@ def _safe_fetch_table(table: str):
         return None
 
 
+def execute_query(query: str, params: Optional[Tuple[Any, ...]] = None) -> bool:
+    """Compatibility wrapper re-exporting database.execute_query.
+
+    Returns False when the database layer is unavailable.
+    """
+    fn, _ = _safe_import_db()
+    if not fn:
+        return False
+    try:
+        return bool(fn(query, tuple(params or ())))
+    except Exception:
+        return False
+
+
+def fetch_table(table: str, limit: Optional[int] = None):
+    """Compatibility wrapper re-exporting database.fetch_table.
+
+    Some AI modules import ``fetch_table`` directly from ``ai_engine_core.db``.
+    Keep this stable even if underlying storage is unavailable.
+    """
+    _, fn = _safe_import_db()
+    if not fn:
+        return []
+    try:
+        return fn(str(table), limit=limit)
+    except TypeError:
+        # Backward compatibility if underlying signature doesn't support limit.
+        rows = fn(str(table))
+        if limit is None or rows is None:
+            return rows
+        return list(rows)[: int(limit)]
+    except Exception:
+        return []
+
+
 def _ensure_user_rules_table() -> None:
     """Create ai_user_rules table if missing."""
     kind = _get_db_kind()
