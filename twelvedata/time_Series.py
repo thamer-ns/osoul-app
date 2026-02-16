@@ -1,6 +1,12 @@
 #time_Series.py
 # coding: utf-8
+"""Compatibility shim for case-sensitive filesystems.
 
+Upstream code imports `twelvedata.time_series` while this vendored copy keeps
+implementation in `time_Series.py`.
+"""
+
+from .time_Series import *  # noqa: F401,F403
 import time
 import pytimeparse
 import re
