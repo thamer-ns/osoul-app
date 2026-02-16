@@ -77,69 +77,6 @@ def _safe_fetch_table(table: str):
         return None
 
 
-def execute_query(query: str, params: Optional[Tuple[Any, ...]] = None) -> bool:
-    """Compatibility wrapper re-exporting database.execute_query.
-
-    Returns False when the database layer is unavailable.
-    """
-    fn, _ = _safe_import_db()
-    if not fn:
-        return False
-    kind = _get_db_kind()
-    q = _adapt_sql_placeholders(query, kind)
-    try:
-        return bool(fn(q, tuple(params or ())))
-    except Exception:
-        return False
-
-
-def fetch_table(table: str, limit: Optional[int] = None):
-    """Compatibility wrapper re-exporting database.fetch_table.
-
-    Some AI modules import ``fetch_table`` directly from ``ai_engine_core.db``.
-    Keep this stable even if underlying storage is unavailable.
-    """
-    _, fn = _safe_import_db()
-    if not fn:
-        return []
-
-    lim: Optional[int]
-    try:
-        lim = None if limit is None else max(0, int(limit))
-    except Exception:
-        lim = None
-
-    def _apply_limit(rows):
-        if lim is None:
-            return rows
-        # pandas DataFrame
-        if hasattr(rows, "head"):
-            try:
-                return rows.head(lim)
-            except Exception:
-                pass
-        # sized/sliceable containers
-        try:
-            return rows[:lim]
-        except Exception:
-            pass
-        # generic iterables
-        try:
-            return list(rows)[:lim]
-        except Exception:
-            return rows
-
-    try:
-        rows = fn(str(table), limit=lim)
-        return _apply_limit(rows)
-    except TypeError:
-        # Backward compatibility if underlying signature doesn't support `limit`.
-        rows = fn(str(table))
-        return _apply_limit(rows)
-    except Exception:
-        return []
-
-
 def _ensure_user_rules_table() -> None:
     """Create ai_user_rules table if missing."""
     kind = _get_db_kind()
@@ -223,212 +160,278 @@ def _ensure_ai_outcomes_table() -> None:
             );
             """
         )
-def _ensure_ai_tables() -> None:
-    """Create ai_signals + ai_weights tables used by logging/learning."""
+
+
+def _ensure_ai_advanced_table() -> None:
+    """Create ai_advanced_indicators table if missing (store advanced indicators)."""
     kind = _get_db_kind()
     if (kind or "").lower() == "postgres":
         _try_exec(
             """
-            CREATE TABLE IF NOT EXISTS ai_signals (
+            CREATE TABLE IF NOT EXISTS ai_advanced_indicators (
                 id TEXT PRIMARY KEY,
-                created_at TIMESTAMP,
                 symbol TEXT,
-                sector TEXT,
                 timeframe TEXT,
-                horizon_days INTEGER,
-                strategy_name TEXT,
-                features_json JSONB,
-                report_json JSONB,
-                outcome_return_pct DOUBLE PRECISION,
-                outcome_win INTEGER,
-                exit_features_json JSONB
-            );
-            """
-        )
-        _try_exec(
-            """
-            CREATE TABLE IF NOT EXISTS ai_weights (
-                key TEXT PRIMARY KEY,
-                weight DOUBLE PRECISION,
-                updated_at TIMESTAMP
+                computed_at TIMESTAMP,
+                indicators_json JSONB
             );
             """
         )
     else:
         _try_exec(
             """
-            CREATE TABLE IF NOT EXISTS ai_signals (
+            CREATE TABLE IF NOT EXISTS ai_advanced_indicators (
                 id TEXT PRIMARY KEY,
-                created_at TEXT,
                 symbol TEXT,
-                sector TEXT,
                 timeframe TEXT,
-                horizon_days INTEGER,
-                strategy_name TEXT,
-                features_json TEXT,
-                report_json TEXT,
-                outcome_return_pct REAL,
-                outcome_win INTEGER,
-                exit_features_json TEXT
-            );
-            """
-        )
-        _try_exec(
-            """
-            CREATE TABLE IF NOT EXISTS ai_weights (
-                key TEXT PRIMARY KEY,
-                weight REAL,
-                updated_at TEXT
+                computed_at TEXT,
+                indicators_json TEXT
             );
             """
         )
 
-# ============================================================
-    # ✅ Add new columns for context-aware learning (best-effort on existing DBs)
+
+def ensure_tables() -> None:
+    _ensure_user_rules_table()
+    _ensure_ai_advanced_table()
+    _ensure_ai_outcomes_table()
+
+    # Optional evolving columns
+    _try_add_column("ai_outcomes", "max_dd_pct", "REAL", "DOUBLE PRECISION")
+    _try_add_column("ai_outcomes", "max_ru_pct", "REAL", "DOUBLE PRECISION")
+    _try_add_column("ai_outcomes", "exit_price", "REAL", "DOUBLE PRECISION")
+    _try_add_column("ai_outcomes", "exit_at", "TEXT", "TIMESTAMP")
+    _try_add_column("ai_outcomes", "context_json", "TEXT", "JSONB")
+
+
+def upsert_user_rule(rule_id: str, title: str, rule_text: str, parsed_json: Dict[str, Any], enabled: int = 1) -> bool:
+    ensure_tables()
+    kind = _get_db_kind()
+    payload = json.dumps(parsed_json, ensure_ascii=False)
+    now = _now_iso()
+
+    if (kind or "").lower() == "postgres":
+        q = """
+        INSERT INTO ai_user_rules (id, created_at, title, rule_text, parsed_json, enabled)
+        VALUES (%s, %s, %s, %s, %s::jsonb, %s)
+        ON CONFLICT (id) DO UPDATE SET
+            title = EXCLUDED.title,
+            rule_text = EXCLUDED.rule_text,
+            parsed_json = EXCLUDED.parsed_json,
+            enabled = EXCLUDED.enabled;
+        """
+        return _try_exec(q, (rule_id, now, title, rule_text, payload, enabled))
+
+    q = """
+    INSERT OR REPLACE INTO ai_user_rules (id, created_at, title, rule_text, parsed_json, enabled)
+    VALUES (?, ?, ?, ?, ?, ?);
+    """
+    return _try_exec(q, (rule_id, now, title, rule_text, payload, enabled))
+
+
+def list_user_rules() -> list:
+    ensure_tables()
+    rows = _safe_fetch_table("ai_user_rules")
+    if rows is None:
+        return []
     try:
-        _try_add_column("ai_signals", "market_trend", "TEXT", "TEXT")
-        _try_add_column("ai_signals", "regime", "TEXT", "TEXT")
-        _try_add_column("ai_signals", "ctx_key", "TEXT", "TEXT")
-        _try_add_column("ai_signals", "horizons_json", "TEXT", "JSONB")
+        # If pandas DF
+        if hasattr(rows, "to_dict"):
+            return rows.to_dict("records")  # type: ignore
     except Exception:
         pass
-
-    # ✅ Multi-horizon outcomes table
     try:
-        _ensure_ai_outcomes_table()
+        return list(rows)
     except Exception:
-        pass
-# Advanced indicators storage (optional caching)
-# ============================================================
-
-def _get_conn():
-    # Local import to avoid circular dependencies at import time.
-    from database import get_connection  # type: ignore
-    return get_connection()
+        return []
 
 
-def ensure_advanced_indicators_table() -> None:
-    """Create storage table if missing."""
+def delete_user_rule(rule_id: str) -> bool:
+    ensure_tables()
+    kind = _get_db_kind()
+    if (kind or "").lower() == "postgres":
+        return _try_exec("DELETE FROM ai_user_rules WHERE id=%s;", (rule_id,))
+    return _try_exec("DELETE FROM ai_user_rules WHERE id=?;", (rule_id,))
+
+
+def save_advanced_indicators(symbol: str, timeframe: str, indicators: Dict[str, Any]) -> bool:
+    ensure_tables()
+    kind = _get_db_kind()
+    now = _now_iso()
+    doc = json.dumps(indicators, ensure_ascii=False)
+    key = f"{symbol}:{timeframe}"
+
+    if (kind or "").lower() == "postgres":
+        q = """
+        INSERT INTO ai_advanced_indicators (id, symbol, timeframe, computed_at, indicators_json)
+        VALUES (%s, %s, %s, %s, %s::jsonb)
+        ON CONFLICT (id) DO UPDATE SET
+            computed_at = EXCLUDED.computed_at,
+            indicators_json = EXCLUDED.indicators_json;
+        """
+        return _try_exec(q, (key, symbol, timeframe, now, doc))
+
+    q = """
+    INSERT OR REPLACE INTO ai_advanced_indicators (id, symbol, timeframe, computed_at, indicators_json)
+    VALUES (?, ?, ?, ?, ?);
+    """
+    return _try_exec(q, (key, symbol, timeframe, now, doc))
+
+
+def load_advanced_indicators(symbol: str, timeframe: str) -> Optional[Dict[str, Any]]:
+    ensure_tables()
+    rows = _safe_fetch_table("ai_advanced_indicators")
+    if rows is None:
+        return None
+
+    target_id = f"{symbol}:{timeframe}"
+    rec = None
+
     try:
-        conn, kind = _get_conn()
-        cur = conn.cursor()
-
-        if str(kind) == "postgres":
-            cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS advanced_indicators (
-                    id SERIAL PRIMARY KEY,
-                    symbol TEXT NOT NULL,
-                    asof TEXT NOT NULL,
-                    interval TEXT NOT NULL,
-                    payload JSONB NOT NULL,
-                    confidence DOUBLE PRECISION,
-                    created_at TIMESTAMP DEFAULT NOW()
-                );
-                """
-            )
-            cur.execute(
-                "CREATE INDEX IF NOT EXISTS idx_adv_indicators_symbol_interval_created_at ON advanced_indicators(symbol, interval, created_at DESC);"
-            )
+        # pandas DataFrame
+        if hasattr(rows, "loc"):
+            df = rows  # type: ignore
+            try:
+                hit = df[df["id"] == target_id]
+                if len(hit) > 0:
+                    rec = hit.iloc[-1].to_dict()
+            except Exception:
+                pass
         else:
-            cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS advanced_indicators (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    symbol TEXT NOT NULL,
-                    asof TEXT NOT NULL,
-                    interval TEXT NOT NULL,
-                    payload TEXT NOT NULL,
-                    confidence REAL,
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-                );
-                """
-            )
-            cur.execute(
-                "CREATE INDEX IF NOT EXISTS idx_adv_indicators_symbol_interval_created_at ON advanced_indicators(symbol, interval, created_at);"
-            )
-
-        conn.commit()
+            for r in rows:
+                try:
+                    if isinstance(r, dict) and r.get("id") == target_id:
+                        rec = r
+                except Exception:
+                    continue
     except Exception:
-        # Storage is optional; never fail the app.
-        return
+        rec = None
 
+    if not rec:
+        return None
 
-def save_advanced_indicators(
-    symbol: str,
-    interval: str,
-    payload: Dict[str, Any],
-    confidence: Optional[float] = None,
-    asof: Optional[str] = None,
-) -> None:
-    """Insert one record."""
-    ensure_advanced_indicators_table()
+    raw = rec.get("indicators_json")
+    if raw is None:
+        return None
+    if isinstance(raw, dict):
+        return raw
     try:
-        conn, kind = _get_conn()
-        cur = conn.cursor()
-
-        asof = asof or _now_iso()
-
-        if str(kind) == "postgres":
-            cur.execute(
-                """
-                INSERT INTO advanced_indicators(symbol, asof, interval, payload, confidence)
-                VALUES (%s, %s, %s, %s, %s);
-                """,
-                (symbol, asof, interval, json.dumps(payload), confidence),
-            )
-        else:
-            cur.execute(
-                """
-                INSERT INTO advanced_indicators(symbol, asof, interval, payload, confidence)
-                VALUES (?, ?, ?, ?, ?);
-                """,
-                (symbol, asof, interval, json.dumps(payload, ensure_ascii=False), confidence),
-            )
-
-        conn.commit()
-    except Exception:
-        return
-
-
-def fetch_latest_advanced_indicators(symbol: str, interval: str) -> Optional[Dict[str, Any]]:
-    """Fetch the most recently stored record for (symbol, interval)."""
-    ensure_advanced_indicators_table()
-    try:
-        conn, kind = _get_conn()
-        cur = conn.cursor()
-        if str(kind) == "postgres":
-            cur.execute(
-                """
-                SELECT payload, confidence, asof, created_at
-                FROM advanced_indicators
-                WHERE symbol=%s AND interval=%s
-                ORDER BY created_at DESC
-                LIMIT 1;
-                """,
-                (symbol, interval),
-            )
-        else:
-            cur.execute(
-                """
-                SELECT payload, confidence, asof, created_at
-                FROM advanced_indicators
-                WHERE symbol=? AND interval=?
-                ORDER BY created_at DESC
-                LIMIT 1;
-                """,
-                (symbol, interval),
-            )
-        row = cur.fetchone()
-        if not row:
-            return None
-        payload_raw, confidence, asof, created_at = row
-        payload = json.loads(payload_raw) if isinstance(payload_raw, str) else payload_raw
-        return {
-            "payload": payload,
-            "confidence": confidence,
-            "asof": asof,
-            "created_at": str(created_at),
-        }
+        return json.loads(raw)
     except Exception:
         return None
+
+
+def save_outcome(
+    signal_id: str,
+    horizon_days: int,
+    return_pct: float,
+    win: int,
+    exit_reason: str = "",
+    hit_tp: int = 0,
+    hit_sl: int = 0,
+    max_dd_pct: Optional[float] = None,
+    max_ru_pct: Optional[float] = None,
+    exit_price: Optional[float] = None,
+    exit_at: Optional[str] = None,
+    context: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """Store a realized outcome for a signal/horizon."""
+    ensure_tables()
+    kind = _get_db_kind()
+    now = _now_iso()
+    outcome_id = f"{signal_id}:{horizon_days}"
+
+    ctx_json = json.dumps(context or {}, ensure_ascii=False)
+    if (kind or "").lower() == "postgres":
+        q = """
+        INSERT INTO ai_outcomes (
+            id, signal_id, horizon_days, return_pct, win, exit_reason,
+            hit_tp, hit_sl, max_dd_pct, max_ru_pct, exit_price, exit_at, context_json
+        )
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
+        ON CONFLICT (id) DO UPDATE SET
+            return_pct = EXCLUDED.return_pct,
+            win = EXCLUDED.win,
+            exit_reason = EXCLUDED.exit_reason,
+            hit_tp = EXCLUDED.hit_tp,
+            hit_sl = EXCLUDED.hit_sl,
+            max_dd_pct = EXCLUDED.max_dd_pct,
+            max_ru_pct = EXCLUDED.max_ru_pct,
+            exit_price = EXCLUDED.exit_price,
+            exit_at = EXCLUDED.exit_at,
+            context_json = EXCLUDED.context_json;
+        """
+        return _try_exec(
+            q,
+            (
+                outcome_id,
+                signal_id,
+                int(horizon_days),
+                float(return_pct),
+                int(win),
+                str(exit_reason or ""),
+                int(hit_tp),
+                int(hit_sl),
+                None if max_dd_pct is None else float(max_dd_pct),
+                None if max_ru_pct is None else float(max_ru_pct),
+                None if exit_price is None else float(exit_price),
+                exit_at or now,
+                ctx_json,
+            ),
+        )
+
+    q = """
+    INSERT OR REPLACE INTO ai_outcomes (
+        id, signal_id, horizon_days, return_pct, win, exit_reason,
+        hit_tp, hit_sl, max_dd_pct, max_ru_pct, exit_price, exit_at, context_json
+    )
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?);
+    """
+    return _try_exec(
+        q,
+        (
+            outcome_id,
+            signal_id,
+            int(horizon_days),
+            float(return_pct),
+            int(win),
+            str(exit_reason or ""),
+            int(hit_tp),
+            int(hit_sl),
+            None if max_dd_pct is None else float(max_dd_pct),
+            None if max_ru_pct is None else float(max_ru_pct),
+            None if exit_price is None else float(exit_price),
+            exit_at or now,
+            ctx_json,
+        ),
+    )
+
+
+def list_outcomes(signal_id: Optional[str] = None) -> list:
+    """Return outcomes. If DB fetch_table can't filter, we filter in Python."""
+    ensure_tables()
+    rows = _safe_fetch_table("ai_outcomes")
+    if rows is None:
+        return []
+    out = []
+    try:
+        if hasattr(rows, "to_dict"):
+            out = rows.to_dict("records")  # type: ignore
+        else:
+            out = list(rows)
+    except Exception:
+        try:
+            out = list(rows)
+        except Exception:
+            return []
+
+    if not signal_id:
+        return out
+    filtered = []
+    for r in out:
+        try:
+            if isinstance(r, dict) and r.get("signal_id") == signal_id:
+                filtered.append(r)
+        except Exception:
+            pass
+    return filtered
