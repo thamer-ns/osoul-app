@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # ai_engine_core/calibration.py
 import json
 from typing import Dict, Any, List, Optional, Tuple
