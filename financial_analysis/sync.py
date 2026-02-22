@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # financial_analysis/sync.py
 from typing import Tuple, List
 
