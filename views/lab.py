@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 #views/lab.py
 import streamlit as st
 from feature_flags import get_flag
