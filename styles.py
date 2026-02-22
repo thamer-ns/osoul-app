@@ -1115,7 +1115,8 @@ button[aria-label="Open sidebar"]{
             flex-direction: row-reverse !important;
         }
 
-        div[data-testid="stHorizontalBlock"] { flex-direction: row-reverse !important; }
+        /* لا تعكس كل الأعمدة داخليًا؛ نحافظ على ترتيب st.columns في RTL (الأول يمينًا) */
+        div[data-testid="stHorizontalBlock"] { flex-direction: row !important; }
 
         section[data-testid="stSidebar"] {
             order: 2 !important;
@@ -1548,6 +1549,59 @@ div[data-testid="stTabs"] [data-baseweb="tab"],
 div[data-testid="stTabs"] [role="tab"]{
   direction: rtl !important;
   text-align: right !important;
+}
+
+
+/* =====================================================
+   FINAL HARD RTL OVERRIDE (patch 2026-02-23)
+   - يعالج رجوع الواجهة إلى LTR في بعض إصدارات Streamlit/المتصفحات
+   - يُبقي السايدبار على اليمين بدون كسر بقية الميزات
+   ===================================================== */
+html, body,
+.stApp,
+[data-testid="stAppViewContainer"],
+[data-testid="stMain"],
+[data-testid="stSidebar"],
+.block-container{
+  direction: rtl !important;
+  text-align: right !important;
+}
+
+/* اجعل أول عنصر في st.columns يظهر يمينًا (لا row-reverse هنا) */
+div[data-testid="stHorizontalBlock"],
+div[data-testid="stColumns"],
+.stHorizontalBlock,
+.stColumns{
+  direction: rtl !important;
+  flex-direction: row !important;
+}
+
+/* ترتيب طبقة التطبيق: السايدبار يمين الشاشة */
+div[data-testid="stAppViewContainer"] > div,
+div[data-testid="stAppViewContainer"] > div:first-child,
+div[data-testid="stAppViewContainer"] > div:first-child > div{
+  flex-direction: row-reverse !important;
+}
+
+/* تثبيت السايدبار يمينًا مهما تغيّر DOM */
+section[data-testid="stSidebar"],
+div[data-testid="stSidebar"],
+[data-testid="stSidebar"]{
+  right: 0 !important;
+  left: auto !important;
+  inset-inline-end: 0 !important;
+  inset-inline-start: auto !important;
+  text-align: right !important;
+}
+
+/* استثناءات LTR للكود/JSON حتى لا تتشوّه */
+pre, code,
+[data-testid="stCodeBlock"] pre,
+[data-testid="stJson"] pre,
+[data-testid="stCodeBlock"] pre code,
+[data-testid="stJson"] pre code{
+  direction: ltr !important;
+  text-align: left !important;
 }
 
 </style>
