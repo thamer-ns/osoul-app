@@ -11,6 +11,7 @@ NAV_MAIN = [
 ]
 NAV_MORE = [
     ("نبض المحفظة", "pulse"),
+    ("الإشارات", "signals"),
     ("سجل الكاش", "cash"),
     ("إضافة صفقة", "add"),
     ("أدوات", "tools"),
@@ -28,6 +29,7 @@ _ICONS = {
     "analysis": "📊",
     "backtest": "🧪",
     "pulse": "💓",
+    "signals": "⚡",
     "cash": "💵",
     "add": "➕",
     "tools": "🧰",
