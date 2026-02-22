@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # classical_analysis.py
 import streamlit as st
 import pandas as pd
