@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 #views/analysis/financial.py
 import streamlit as st
 import pandas as pd
