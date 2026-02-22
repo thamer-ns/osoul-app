@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # ai_engine_core/user_rules.py
 
 import json
