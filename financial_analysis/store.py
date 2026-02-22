@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # financial_analysis/store.py
 import pandas as pd
 import json
