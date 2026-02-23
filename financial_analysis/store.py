@@ -9,6 +9,9 @@ from database import execute_query, fetch_table, fetch_df
 from market_data import get_ticker_symbol, _symbol_variants
 from .utils import _safe_float, _safe_float_none, _safe_date_str
 
+# Canonical table name for full/raw financial statements storage
+_TABLE_NAME = "financialstatements_raw"
+
 
 # ==============================================================
 # 💾 DB Save / Fetch
@@ -38,12 +41,13 @@ def save_financial_record(symbol, date_str, data, period_type="Annual", source="
 
         vals = {k: _safe_float_none((data or {}).get(k, None)) for k in keys}
 
-        if sum(abs(v) for v in vals.values()) == 0:
+        total_abs = sum(abs(float(v)) for v in vals.values() if v is not None)
+        if total_abs == 0:
             return False
 
         query = """
             INSERT INTO financialstatements
-            (symbol, date, period_type, source,
+            (symbol, date_str, period_type, source,
              revenue, net_income,
              total_assets, total_liabilities, total_equity,
              operating_cash_flow, current_assets, current_liabilities, long_term_debt)
