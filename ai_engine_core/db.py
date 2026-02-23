@@ -77,6 +77,65 @@ def _safe_fetch_table(table: str):
         return None
 
 
+def execute_query(query: str, params: Optional[Tuple[Any, ...]] = None) -> bool:
+    """Compatibility wrapper re-exporting database.execute_query.
+
+    Returns False when the database layer is unavailable.
+    """
+    fn, _ = _safe_import_db()
+    if not fn:
+        return False
+    kind = _get_db_kind()
+    q = _adapt_sql_placeholders(query, kind)
+    try:
+        return bool(fn(q, tuple(params or ())))
+    except Exception:
+        return False
+
+
+def fetch_table(table: str, limit: Optional[int] = None):
+    """Compatibility wrapper re-exporting database.fetch_table.
+
+    Some AI modules import ``fetch_table`` directly from ``ai_engine_core.db``.
+    Keep this stable even if underlying storage is unavailable.
+    """
+    _, fn = _safe_import_db()
+    if not fn:
+        return []
+
+    lim: Optional[int]
+    try:
+        lim = None if limit is None else max(0, int(limit))
+    except Exception:
+        lim = None
+
+    def _apply_limit(rows):
+        if lim is None:
+            return rows
+        if hasattr(rows, "head"):
+            try:
+                return rows.head(lim)
+            except Exception:
+                pass
+        try:
+            return rows[:lim]
+        except Exception:
+            pass
+        try:
+            return list(rows)[:lim]
+        except Exception:
+            return rows
+
+    try:
+        rows = fn(str(table), limit=lim)
+        return _apply_limit(rows)
+    except TypeError:
+        rows = fn(str(table))
+        return _apply_limit(rows)
+    except Exception:
+        return []
+
+
 def _ensure_user_rules_table() -> None:
     """Create ai_user_rules table if missing."""
     kind = _get_db_kind()
@@ -160,6 +219,86 @@ def _ensure_ai_outcomes_table() -> None:
             );
             """
         )
+
+
+def _ensure_ai_tables() -> None:
+    """Create ai_signals + ai_weights tables used by logging/learning (compat)."""
+    kind = _get_db_kind()
+    if (kind or "").lower() == "postgres":
+        _try_exec(
+            """
+            CREATE TABLE IF NOT EXISTS ai_signals (
+                id TEXT PRIMARY KEY,
+                created_at TIMESTAMP,
+                symbol TEXT,
+                sector TEXT,
+                timeframe TEXT,
+                horizon_days INTEGER,
+                strategy_name TEXT,
+                features_json JSONB,
+                report_json JSONB,
+                outcome_return_pct DOUBLE PRECISION,
+                outcome_win INTEGER,
+                exit_features_json JSONB
+            );
+            """
+        )
+        _try_exec(
+            """
+            CREATE TABLE IF NOT EXISTS ai_weights (
+                key TEXT PRIMARY KEY,
+                weight DOUBLE PRECISION,
+                updated_at TIMESTAMP
+            );
+            """
+        )
+    else:
+        _try_exec(
+            """
+            CREATE TABLE IF NOT EXISTS ai_signals (
+                id TEXT PRIMARY KEY,
+                created_at TEXT,
+                symbol TEXT,
+                sector TEXT,
+                timeframe TEXT,
+                horizon_days INTEGER,
+                strategy_name TEXT,
+                features_json TEXT,
+                report_json TEXT,
+                outcome_return_pct REAL,
+                outcome_win INTEGER,
+                exit_features_json TEXT
+            );
+            """
+        )
+        _try_exec(
+            """
+            CREATE TABLE IF NOT EXISTS ai_weights (
+                key TEXT PRIMARY KEY,
+                weight REAL,
+                updated_at TEXT
+            );
+            """
+        )
+
+    # Best-effort schema upgrades used by newer logging/reporting code
+    try:
+        _try_add_column("ai_signals", "market_trend", "TEXT", "TEXT")
+        _try_add_column("ai_signals", "regime", "TEXT", "TEXT")
+        _try_add_column("ai_signals", "ctx_key", "TEXT", "TEXT")
+        _try_add_column("ai_signals", "horizons_json", "TEXT", "JSONB")
+    except Exception:
+        pass
+
+    try:
+        _ensure_ai_outcomes_table()
+        _try_add_column("ai_outcomes", "max_dd_pct", "REAL", "DOUBLE PRECISION")
+        _try_add_column("ai_outcomes", "max_ru_pct", "REAL", "DOUBLE PRECISION")
+        _try_add_column("ai_outcomes", "exit_price", "REAL", "DOUBLE PRECISION")
+        _try_add_column("ai_outcomes", "exit_at", "TEXT", "TIMESTAMP")
+        _try_add_column("ai_outcomes", "context_json", "TEXT", "JSONB")
+    except Exception:
+        pass
 
 
 def _ensure_ai_advanced_table() -> None:
