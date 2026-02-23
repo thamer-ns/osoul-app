@@ -12,7 +12,8 @@ try:
     from dotenv import load_dotenv  # type: ignore
     load_dotenv()
 except Exception:
-    pass
+    import logging
+    logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at app.py:14')
 
 
 # -----------------------------------------------------------------------------
@@ -32,7 +33,8 @@ for _p in _candidates:
         if _p and os.path.isdir(_p) and _p not in sys.path:
             sys.path.insert(0, _p)
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at app.py:34')
 
 
 def _safe_image(path: str, width: Optional[int] = None) -> None:
@@ -40,7 +42,8 @@ def _safe_image(path: str, width: Optional[int] = None) -> None:
         if path and os.path.exists(path):
             st.image(path, width=width)
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at app.py:42')
 
 
 def _load_app_config() -> Tuple[str, str]:
@@ -103,31 +106,36 @@ def _apply_global_ui_once() -> None:
         if inject_streamlit_ar_i18n:
             inject_streamlit_ar_i18n(True)
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at app.py:105')
 
     try:
         if apply_custom_css:
             apply_custom_css()
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at app.py:111')
 
     try:
         if apply_ui_css:
             apply_ui_css()
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at app.py:117')
 
     try:
         if inject_component_styles:
             inject_component_styles()
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at app.py:123')
 
     try:
         if render_app_header:
             render_app_header("أصولي", "منصة الذكاء الكمي للأسواق")
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at app.py:129')
 
 
 def main() -> None:
