@@ -28,13 +28,15 @@ def remove_pycache(root: Path) -> int:
             shutil.rmtree(p)
             removed += 1
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at tools/cleanup.py:30')
 
     for p in root.rglob("*.pyc"):
         try:
             p.unlink()
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at tools/cleanup.py:36')
     return removed
 
 
