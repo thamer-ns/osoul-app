@@ -106,7 +106,8 @@ def _df_quality_snapshot(df: pd.DataFrame) -> Dict[str, Any]:
     try:
         out["last_dt"] = str(df.index[-1])
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at views/analysis/technical.py:108')
 
     # متطلبات دنيا (مبدئية)
     if len(df) < 220:
@@ -125,7 +126,8 @@ def _df_quality_snapshot(df: pd.DataFrame) -> Dict[str, Any]:
             if bad:
                 out["issues"].append(f"وجدت {bad} شموع فيها High < Low (بيانات غير منطقية).")
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at views/analysis/technical.py:127')
 
     out["ok"] = bool(out["ok"] and (len(out["issues"]) == 0))
     return out
@@ -386,7 +388,8 @@ def _render_advanced_section(df: pd.DataFrame, symbol: str, interval: str):
 
         save_advanced_indicators(symbol=symbol, interval=interval, payload=pack)
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at views/analysis/technical.py:388')
 
     # ✅ Score موحد + تفسير
     score, explain = _advanced_unified_score(pack, df)
@@ -468,7 +471,8 @@ def view_technical(symbol: str, interval: str = "1d"):
                     f"آخر شمعة: **{str(last_bar)}** | المصدر: **Yahoo/yfinance** | الفاصل: **{interval}**"
                 )
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at views/analysis/technical.py:470')
 
         # ✅ إصلاح: views.shared._render_technical_chart_flex لا يستقبل df أو key.
         try:
