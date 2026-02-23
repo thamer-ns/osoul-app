@@ -140,7 +140,8 @@ def render_app_header(
         try:
             st.markdown(f"### {title}")
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at components.py:142')
 # ============================================================
 # 🧼 Helpers: Safe parsing/formatting
 
@@ -170,7 +171,8 @@ def _safe_number(val, default=None):
         if hasattr(pd, "isna") and pd.isna(val):
             return default
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at components.py:172')
 
     try:
         if isinstance(val, (int, float)) and not _is_nan(val):
@@ -178,7 +180,8 @@ def _safe_number(val, default=None):
                 return default
             return float(val)
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at components.py:180')
 
     s = str(val).strip()
     if not s:
@@ -241,7 +244,8 @@ def _safe_text(val) -> str:
         if hasattr(pd, "isna") and pd.isna(val):
             return "-"
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at components.py:243')
     s = str(val)
     if not s.strip():
         return "-"
@@ -488,7 +492,8 @@ def render_custom_table(
                         html_out += f'<td><span class="{html.escape(_safe_text(cls))}">{html.escape(_safe_text(disp))}</span></td>'
                     continue
                 except Exception:
-                    pass
+                    import logging
+                    logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at components.py:490')
 
             display = _safe_text(val)
             cls = ""
@@ -695,7 +700,8 @@ def _apply_search(df: pd.DataFrame, q: str, cols: Optional[List[str]] = None) ->
         try:
             mask = mask | df[c].astype(str).str.contains(q, case=False, na=False)
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at components.py:697')
     return df[mask].copy()
 
 
@@ -709,7 +715,8 @@ def _apply_filters(df: pd.DataFrame, filters: Dict[str, List[str]]) -> pd.DataFr
         try:
             out = out[out[col].astype(str).isin([str(x) for x in selected])]
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at components.py:711')
     return out
 
 
@@ -866,7 +873,8 @@ def render_osoli_report(report: Dict[str, Any], *, title: str = "📌 تقرير
             if s2 is not None:
                 chip_cls = "os-chip-green" if s2 >= 70 else ("os-chip-amber" if s2 >= 50 else "os-chip-red")
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at components.py:868')
 
         chips.append(
             f'<span class="os-chip {chip_cls}">{_mi("donut_large")} الدرجة: {html.escape(score_txt)}</span>'
