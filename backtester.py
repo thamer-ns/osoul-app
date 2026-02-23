@@ -430,7 +430,8 @@ def run_backtest(
             log_rows[-1]["portfolio_value"] = float(port_val)
 
     final_val = float(equity_rows[-1]["portfolio_value"]) if equity_rows else float(capital)
-    ret_pct = ((final_val - float(capital)) / float(capital)) * 100
+    cap0 = float(capital or 0.0)
+    ret_pct = (((final_val - cap0) / cap0) * 100.0) if cap0 > 0 else 0.0
 
     # تجهيز DataFrames للواجهة
     trades_df = pd.DataFrame([{
@@ -453,6 +454,35 @@ def run_backtest(
     except Exception:
         metrics = {}
 
+    # مشتقات آمنة للواجهة (حتى لا تعتمد الواجهة على مفاتيح مفقودة/صيغ خاطئة)
+    try:
+        completed_trades = 0
+        wins = 0
+        if log_rows:
+            last_buy_value = None
+            for x in log_rows:
+                side = str(x.get("side", ""))
+                v = float(x.get("value", 0) or 0)
+                if side == "Buy":
+                    last_buy_value = v
+                elif side == "Sell" and last_buy_value is not None:
+                    completed_trades += 1
+                    if v > last_buy_value:
+                        wins += 1
+                    last_buy_value = None
+        win_rate = (wins / completed_trades * 100.0) if completed_trades > 0 else 0.0
+    except Exception:
+        completed_trades = 0
+        win_rate = 0.0
+
+    mdd_pct = 0.0
+    sharpe_out = 0.0
+    try:
+        mdd_pct = float(metrics.get("max_drawdown", 0.0) or 0.0) * 100.0
+        sharpe_out = float(metrics.get("sharpe", 0.0) or 0.0)
+    except Exception:
+        mdd_pct = 0.0
+        sharpe_out = 0.0
 
     result = {
         "run_id": run_id,
@@ -462,6 +492,10 @@ def run_backtest(
         "strategy_name_ar": get_strategy_label(strategy),
         "return_pct": float(ret_pct),
         "final_value": float(final_val),
+        "max_drawdown_pct": float(mdd_pct),
+        "win_rate": float(win_rate),
+        "trades_count": int(completed_trades),
+        "sharpe": float(sharpe_out),
         "trades_log": trades_df,
         "df": out_df,
     }
