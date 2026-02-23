@@ -622,7 +622,8 @@ def render_classical_analysis(symbol: str, interval: str = "1d"):
             with st.expander("📋 جدول المستويات (موحّد)"):
                 _render_levels_table(lvl_rows)
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at classical_analysis.py:624')
 
     # --------------------------------------------------------
     # Summary Cards
