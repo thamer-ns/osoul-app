@@ -183,7 +183,8 @@ def analyze_vsa(df: pd.DataFrame, lookback: int = 60):
             feats["vsa_distribution"] = 1
             signals.append("DISTRIBUTION")
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/vsa.py:185')
 
     # clamp
     out["score"] = float(max(min(score, 6.0), -6.0))
