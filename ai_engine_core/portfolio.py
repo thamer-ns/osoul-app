@@ -172,8 +172,7 @@ def calculate_portfolio_risk_score(trades_df, cash_percent):
         try:
             log.exception("calculate_portfolio_risk_score failed")
         except Exception:
-            import logging
-            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/portfolio.py:174')
+            pass
         return None
 
 
@@ -182,79 +181,163 @@ def calculate_portfolio_risk_score(trades_df, cash_percent):
 # =========================================================
 def run_stress_test(portfolio_value, open_positions_df):
     """
-    Stress test بسيط لكن أذكى:
-    - Weighted beta proxy من strategy + asset_type
-    - يضيف سيناريوهات إضافية (gap, slow bleed) بشكل آمن
-    - يرجع نفس البنية: {scenarios:[], insight:""}
+    اختبار تحمل تقديري (Heuristic / Beta Proxy) للمحفظة المفتوحة.
+
+    - يعتمد على حساسية تقديرية للمراكز (نوع الأصل + الاستراتيجية + خسائر كبيرة حالية)
+    - ليس Backtest ولا VaR إحصائي
+    - يستخدم portfolio_value (إذا كان صالحًا) لحساب الأثر بالقيمة النقدية
+    - يحافظ على التوافق الخلفي ويعيد بنية {scenarios:[], insight:""} مع حقول إضافية
     """
     try:
-        if open_positions_df is None or open_positions_df.empty:
-            return {"scenarios": [], "insight": "المحفظة كاش."}
+        if open_positions_df is None or getattr(open_positions_df, "empty", True):
+            return {
+                "scenarios": [],
+                "insight": "المحفظة كاش.",
+                "method": "heuristic_beta_proxy",
+                "assumption_quality": "غير متاح",
+            }
 
         if "market_value" not in open_positions_df.columns:
-            return {"scenarios": [], "insight": "غير متاح"}
+            return {
+                "scenarios": [],
+                "insight": "غير متاح",
+                "method": "heuristic_beta_proxy",
+                "assumption_quality": "غير متاح",
+            }
 
         mv = pd.to_numeric(open_positions_df["market_value"], errors="coerce").fillna(0.0).astype(float)
         total_val = float(mv.sum())
         if total_val <= 0:
-            return {"scenarios": [], "insight": "غير متاح"}
+            return {
+                "scenarios": [],
+                "insight": "غير متاح",
+                "method": "heuristic_beta_proxy",
+                "assumption_quality": "غير متاح",
+            }
 
-        # Beta proxy rules:
-        # - Sukuk ~ 0.1
-        # - Speculation "مضاربة" ~ 1.25
-        # - Normal equity ~ 0.95
-        # - Unknown / high-risk ~ 1.05
+        # استخدم القيمة الممررة لحساب الأثر النقدي إن كانت صالحة، وإلا fallback على مجموع المراكز المفتوحة
+        portfolio_val_input = _sf(portfolio_value, 0.0)
+        effective_portfolio_value = float(portfolio_val_input) if portfolio_val_input > 0 else total_val
+
         weighted_beta = 0.0
+        high_risk_count = 0
+        sukuk_count = 0
+        losing_heavy_count = 0
+        positions_count = int(len(open_positions_df))
+
         for _, row in open_positions_df.iterrows():
             w = _safe_div(_sf(row.get("market_value", 0.0), 0.0), total_val, 0.0)
             asset_type = _infer_asset_type(row)
             strat = _infer_strategy(row)
 
-            if str(asset_type).lower() == "sukuk":
+            if str(asset_type).strip().lower() == "sukuk":
                 b = 0.10
+                sukuk_count += 1
             elif "مضاربة" in str(strat):
                 b = 1.25
+                high_risk_count += 1
             else:
                 b = 0.95
 
-            # Optional extra: if position is already losing big -> behaves worse in stress
             gp = _sf(row.get("gain_pct", 0.0), 0.0)
             if gp <= -15:
                 b *= 1.08
+                losing_heavy_count += 1
 
             weighted_beta += (w * b)
 
+        weighted_beta = float(max(0.0, weighted_beta))
+
         scenarios = [
-            {"name": "انهيار (-20%)", "market_chg": -0.20, "color": "#8B0000"},
-            {"name": "تصحـيح (-10%)", "market_chg": -0.10, "color": "#DC2626"},
-            {"name": "نزيف بطيء (-6%)", "market_chg": -0.06, "color": "#EF4444"},
-            {"name": "انتعـاش (+10%)", "market_chg": 0.10, "color": "#059669"},
-            {"name": "طفرة (+20%)", "market_chg": 0.20, "color": "#047857"},
+            {"name": "انهيار (-20%)", "market_chg": -0.20, "color": "#B91C1C"},
+            {"name": "تصحيح (-10%)", "market_chg": -0.10, "color": "#DC2626"},
+            {"name": "نزيف بطيء (-6%)", "market_chg": -0.06, "color": "#F97316"},
+            {"name": "انتعاش (+10%)", "market_chg": 0.10, "color": "#16A34A"},
+            {"name": "طفرة (+20%)", "market_chg": 0.20, "color": "#15803D"},
         ]
 
         results = []
         for s in scenarios:
-            impact_pct = float(s["market_chg"]) * float(weighted_beta)
+            market_chg = float(s["market_chg"])
+            impact_pct = market_chg * weighted_beta  # decimal
+            impact_pct_100 = impact_pct * 100.0
+            impact_amount = effective_portfolio_value * impact_pct
             results.append(
                 {
                     "scenario": s["name"],
-                    "impact_pct": impact_pct * 100.0,
+                    "impact_pct": float(impact_pct_100),
+                    "impact_amount": float(impact_amount),
+                    "impact_value": float(impact_amount),  # توافق مع واجهات قديمة
+                    "market_change_pct": float(market_chg * 100.0),
+                    "weighted_beta": float(weighted_beta),
+                    "beta_proxy_used": float(weighted_beta),
+                    "direction": "positive" if impact_pct_100 > 0 else ("negative" if impact_pct_100 < 0 else "neutral"),
                     "color": s["color"],
+                    "assumption_quality": "تقريبي (Heuristic)",
                 }
             )
 
         if weighted_beta >= 1.20:
-            insight = "المحفظة عالية التذبذب (ميول مضاربية/حساسية للسوق)"
+            profile = "عالية التذبذب"
+            insight = "المحفظة عالية التذبذب (ميول مضاربية/حساسية مرتفعة للسوق)"
         elif weighted_beta <= 0.60:
+            profile = "دفاعية"
             insight = "المحفظة دفاعية (حساسية منخفضة للسوق)"
         else:
+            profile = "متوازنة"
             insight = "المحفظة متوازنة"
 
-        return {"scenarios": results, "insight": insight}
+        crash_pct = None
+        for r in results:
+            if "انهيار" in str(r.get("scenario", "")):
+                crash_pct = _sf(r.get("impact_pct"), None)
+                break
+
+        if crash_pct is None:
+            action_hint = "استخدم النتيجة كمؤشر حساسية سريع فقط."
+        elif crash_pct <= -15:
+            action_hint = "الهزة المحتملة مرتفعة نسبيًا: فكّر برفع السيولة/تخفيف المراكز عالية الحساسية."
+        elif crash_pct <= -10:
+            action_hint = "الهزة المحتملة متوسطة: راقب التركّز والسيولة وحدد نقاط تخفيف."
+        else:
+            action_hint = "الهزة المحتملة ضمن نطاق مقبول نسبيًا: حافظ على الانضباط وإدارة المخاطر."
+
+        assumption_quality = "تقريبي (Heuristic/Beta Proxy)"
+        if positions_count > 0 and sukuk_count == positions_count:
+            assumption_quality = "تقريبي جدًا (محفظة صكوك/دفاعية)"
+        elif losing_heavy_count > 0 or high_risk_count > 0:
+            assumption_quality = "تقريبي مع حساسية مُعدّلة للمراكز"
+
+        return {
+            "scenarios": results,
+            "insight": insight,
+            "portfolio_profile": profile,
+            "portfolio_value_used": float(effective_portfolio_value),
+            "open_positions_value": float(total_val),
+            "weighted_beta": float(weighted_beta),
+            "beta_proxy_used": float(weighted_beta),
+            "method": "heuristic_beta_proxy",
+            "assumption_quality": assumption_quality,
+            "action_hint": action_hint,
+            "meta": {
+                "positions_count": positions_count,
+                "sukuk_count": sukuk_count,
+                "speculative_positions_count": high_risk_count,
+                "deep_loser_positions_count": losing_heavy_count,
+            },
+        }
 
     except Exception:
-        return {"scenarios": [], "insight": "غير متاح"}
-
+        try:
+            log.exception("run_stress_test failed")
+        except Exception:
+            pass
+        return {
+            "scenarios": [],
+            "insight": "غير متاح",
+            "method": "heuristic_beta_proxy",
+            "assumption_quality": "غير متاح",
+        }
 
 # =========================================================
 # ✅ 3) Rebalancing Suggestions (upgraded, same signature)
@@ -298,8 +381,7 @@ def generate_rebalancing_suggestions(trades_df, cash_pct):
                 idx = int(w.idxmax())
                 sym = str(open_trades.loc[idx].get("symbol", "-"))
             except Exception:
-                import logging
-                logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/portfolio.py:299')
+                pass
             suggestions.append(("danger", f"🎯 تركّز عالي: أكبر مركز ≈ {max_w*100:.1f}% ({sym}) — خفف/وزّع"))
 
         # Loss control suggestions
@@ -324,8 +406,7 @@ def generate_rebalancing_suggestions(trades_df, cash_pct):
                     if spec_ratio >= 0.60:
                         suggestions.append(("warn", "⚡ نسبة المضاربة مرتفعة (>60%) — خفف تذبذب المحفظة أو ارفع كاش"))
         except Exception:
-            import logging
-            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/portfolio.py:324')
+            pass
 
         # Sector balance (if sector exists)
         if any(c in open_trades.columns for c in ["sector", "Sector", "industry", "Industry"]):
@@ -339,12 +420,10 @@ def generate_rebalancing_suggestions(trades_df, cash_pct):
                     if top_share >= 0.55 and top_sector != "Unknown":
                         suggestions.append(("warn", f"🏷️ تركّز قطاعي: {top_sector} ≈ {top_share*100:.1f}% — فكر بالتنويع"))
             except Exception:
-                import logging
-                logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/portfolio.py:338')
+                pass
 
     except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/portfolio.py:341')
+        pass
 
     return suggestions
 
