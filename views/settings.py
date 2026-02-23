@@ -191,7 +191,8 @@ def view_settings():
                     "إذا رغبت، أنشئ مجلد assets/ وضع داخله: logo_full.png و logo_mark.png و logo_app.png"
                 )
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at views/settings.py:193')
 
     if st.button("🔎 تشخيص قاعدة البيانات", key="db_diag"):
         rep = db_healthcheck()
