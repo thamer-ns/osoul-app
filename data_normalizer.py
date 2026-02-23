@@ -40,7 +40,8 @@ def ensure_datetime_index(df: pd.DataFrame) -> pd.DataFrame:
     try:
         d = d.sort_index()
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at data_normalizer.py:42')
     return d
 
 
