@@ -334,6 +334,33 @@ def render_financial_dashboard_ui(symbol):
                 for label, meta in meta_rows:
                     st.write(f"- **{label}:** {meta}")
 
+                # Phase 2: richer audit details without changing layout
+                def _pct(x):
+                    try:
+                        return f"{float(x)*100:.2f}%" if x is not None else "—"
+                    except Exception:
+                        return "—"
+                def _num(x):
+                    try:
+                        return f"{float(x):.4f}" if x is not None else "—"
+                    except Exception:
+                        return "—"
+
+                st.markdown("**تفاصيل ROE (توحيد التعريف):**")
+                st.write(f"- ROE المستخدم حاليًا في التقييم: **{_pct(metrics.get('ROE'))}**")
+                st.write(f"- ROE Ending Equity: **{_pct(metrics.get('ROE_Ending_Equity'))}**")
+                st.write(f"- ROE Average Equity (الموصى به غالبًا): **{_pct(metrics.get('ROE_Average_Equity'))}**")
+                st.write(f"- ROE Selected/Basis: **{metrics.get('ROE_Basis_Used', '—')}**")
+
+                st.markdown("**تفاصيل الرفع المالي (Debt/Equity):**")
+                st.write(f"- D/E الحقيقي (LTD/Equity): **{_num(metrics.get('Debt_to_Equity_True'))}**")
+                st.write(f"- Proxy (Liabilities/Assets): **{_num(metrics.get('Debt_to_Equity_Proxy'))}**")
+                st.write(f"- القيمة المعروضة الحالية: **{_num(metrics.get('Debt_to_Equity'))}**")
+
+                st.markdown("**تفاصيل Altman حسب القطاع:**")
+                st.write(f"- Sector Profile: **{metrics.get('Altman_Sector_Profile', '—')}**")
+                st.write(f"- Applicable: **{'نعم' if int(metrics.get('Altman_Z_Applicable', 1) or 0) == 1 else 'لا'}**")
+
             st.markdown("---")
 
             # ---- Charts selector
