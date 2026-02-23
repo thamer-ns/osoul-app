@@ -95,6 +95,53 @@ def view_portfolio(fin, key):
         op = sub.copy()
         cl = pd.DataFrame()
 
+    # ✅ تحديث أسعار المراكز المفتوحة + إعادة احتساب الربح/الخسارة فورياً
+    # مهم: لا نستبدل السعر الحالي بـ 0 إذا فشل جلب السعر المباشر.
+    live_data_cache = {}
+    try:
+        if not op.empty and "symbol" in op.columns:
+            if "symbol" in op.columns:
+                op["symbol"] = op["symbol"].astype(str).apply(_normalize_symbol)
+
+            symbols = _clean_symbols_list(op["symbol"].astype(str).tolist()) if "symbol" in op.columns else []
+            live_data_cache = fetch_batch_data(symbols) if symbols else {}
+
+            old_cp = pd.to_numeric(op.get("current_price", pd.Series(index=op.index, dtype=float)), errors="coerce")
+            live_cp = op["symbol"].apply(lambda x: (live_data_cache.get(x) or {}).get("price", None))
+            live_cp = pd.to_numeric(live_cp, errors="coerce")
+            op["current_price"] = live_cp.where(live_cp > 0, old_cp)
+
+            op["prev_close"] = op["symbol"].apply(lambda x: (live_data_cache.get(x) or {}).get("prev_close", None))
+            op["prev_close"] = pd.to_numeric(op["prev_close"], errors="coerce")
+            if "prev_close" in op.columns:
+                prevc = pd.to_numeric(op["prev_close"], errors="coerce")
+                currc = pd.to_numeric(op["current_price"], errors="coerce")
+                op["day_change"] = ((currc - prevc) / prevc.replace(0, pd.NA)) * 100.0
+                op["day_change"] = pd.to_numeric(op["day_change"], errors="coerce").fillna(0.0)
+
+            # إعادة احتساب القيم المعروضة بعد تحديث السعر الحالي
+            qty = pd.to_numeric(op.get("quantity", pd.Series(index=op.index, dtype=float)), errors="coerce").fillna(0.0)
+            entry = pd.to_numeric(op.get("entry_price", pd.Series(index=op.index, dtype=float)), errors="coerce").fillna(0.0)
+            cp = pd.to_numeric(op.get("current_price", pd.Series(index=op.index, dtype=float)), errors="coerce").fillna(entry)
+
+            if "total_cost" not in op.columns:
+                op["total_cost"] = qty * entry
+            else:
+                op["total_cost"] = pd.to_numeric(op["total_cost"], errors="coerce").fillna(qty * entry)
+
+            op["market_value"] = qty * cp
+            op["gain"] = op["market_value"] - op["total_cost"]
+
+            tc = pd.to_numeric(op["total_cost"], errors="coerce")
+            op["gain_pct"] = ((pd.to_numeric(op["gain"], errors="coerce") / tc.replace(0, pd.NA)) * 100.0)
+            op["gain_pct"] = pd.to_numeric(op["gain_pct"], errors="coerce").fillna(0.0)
+
+            total_mv = float(pd.to_numeric(op.get("market_value", pd.Series(dtype=float)), errors="coerce").fillna(0.0).sum())
+            if total_mv > 0:
+                op["weight"] = (pd.to_numeric(op["market_value"], errors="coerce").fillna(0.0) / total_mv) * 100.0
+    except Exception:
+        pass
+
     t1, t2 = st.tabs(["الصفقات القائمة", "الأرشيف"])
 
     with t1:
@@ -265,22 +312,43 @@ def view_portfolio(fin, key):
             sort_by = c_sort.selectbox(f"فرز {ts} حسب:", sort_opts, key=f"s_op_{key}")
 
             symbols = _clean_symbols_list(op["symbol"].astype(str).tolist()) if "symbol" in op.columns else []
-            try:
-                live_data = fetch_batch_data(symbols) if symbols else {}
-            except Exception:
-                live_data = {}
+            if not live_data_cache:
+                try:
+                    live_data = fetch_batch_data(symbols) if symbols else {}
+                except Exception:
+                    live_data = {}
+            else:
+                live_data = live_data_cache
 
             if "symbol" in op.columns:
                 op["symbol"] = op["symbol"].astype(str).apply(_normalize_symbol)
 
-            op["current_price"] = op["symbol"].apply(lambda x: live_data.get(x, {}).get("price", 0))
-            op["prev_close"] = op["symbol"].apply(lambda x: live_data.get(x, {}).get("prev_close", 0))
+            # لا نستبدل السعر الحالي المحسوب/المخزن بصفر عند فشل مزود الأسعار
+            old_cp = pd.to_numeric(op.get("current_price", pd.Series(index=op.index, dtype=float)), errors="coerce")
+            live_cp = op["symbol"].apply(lambda x: (live_data.get(x) or {}).get("price", None))
+            live_cp = pd.to_numeric(live_cp, errors="coerce")
+            op["current_price"] = live_cp.where(live_cp > 0, old_cp)
+
+            op["prev_close"] = op["symbol"].apply(lambda x: (live_data.get(x) or {}).get("prev_close", None))
+            op["prev_close"] = pd.to_numeric(op["prev_close"], errors="coerce")
 
             op["day_change"] = op.apply(
-                lambda r: ((r.get("current_price", 0) - r.get("prev_close", 0)) / r.get("prev_close", 1) * 100)
-                if (r.get("prev_close", 0) and r.get("prev_close", 0) > 0) else 0,
+                lambda r: ((float(r.get("current_price", 0) or 0) - float(r.get("prev_close", 0) or 0)) / float(r.get("prev_close", 1) or 1) * 100)
+                if (pd.notna(r.get("prev_close", None)) and float(r.get("prev_close", 0) or 0) > 0) else 0,
                 axis=1
             )
+
+            # ✅ مزامنة الربح/الخسارة مع السعر الحالي المعروض (إصلاح خطأ المبلغ الحالي)
+            q = pd.to_numeric(op.get("quantity", pd.Series(index=op.index, dtype=float)), errors="coerce").fillna(0.0)
+            ep = pd.to_numeric(op.get("entry_price", pd.Series(index=op.index, dtype=float)), errors="coerce").fillna(0.0)
+            tc = pd.to_numeric(op.get("total_cost", pd.Series(index=op.index, dtype=float)), errors="coerce")
+            tc = tc.fillna(q * ep)
+            cp = pd.to_numeric(op.get("current_price", pd.Series(index=op.index, dtype=float)), errors="coerce").fillna(ep)
+            op["total_cost"] = tc
+            op["market_value"] = q * cp
+            op["gain"] = op["market_value"] - op["total_cost"]
+            op["gain_pct"] = ((pd.to_numeric(op["gain"], errors="coerce") / tc.replace(0, pd.NA)) * 100.0)
+            op["gain_pct"] = pd.to_numeric(op["gain_pct"], errors="coerce").fillna(0.0)
             op["status_ar"] = "مفتوحة"
 
             if "الربح" in sort_by and "gain" in op.columns:
