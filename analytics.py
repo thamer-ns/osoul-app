@@ -503,12 +503,18 @@ def _build_external_cashflows(dep: pd.DataFrame, wit: pd.DataFrame, ret: pd.Data
 def _xnpv(rate: float, cashflows: List[Tuple[pd.Timestamp, float]]) -> float:
     if rate <= -0.999999:
         return np.inf
+    if not cashflows:
+        return np.inf
     t0 = cashflows[0][0]
     total = 0.0
+    base = (1 + rate)
     for t, c in cashflows:
         days = (t - t0).days
-        total += c / ((1 + rate) ** (days / 365.0))
-    return total
+        try:
+            total += float(c) / (base ** (days / 365.0))
+        except Exception:
+            return np.inf
+    return float(total) if np.isfinite(total) else np.inf
 
 
 def _xirr_newton(cashflows: List[Tuple[pd.Timestamp, float]], guess: float = 0.1) -> Optional[float]:
@@ -573,8 +579,8 @@ def _xirr_bisect(cashflows: List[Tuple[pd.Timestamp, float]], lo=-0.95, hi=5.0) 
 
 def compute_portfolio_xirr(dep: pd.DataFrame, wit: pd.DataFrame, ret: pd.DataFrame, ending_value: float):
     ending_value = float(ending_value or 0.0)
-    if ending_value <= 0:
-        return None, "ending_value<=0"
+    if ending_value < 0:
+        return None, "ending_value<0"
 
     cashflows = _build_external_cashflows(dep, wit, ret, ending_value)
     if not cashflows or len(cashflows) < 2:
