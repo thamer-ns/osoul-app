@@ -9,7 +9,7 @@ import streamlit as st
 from components import render_kpi, render_ticker_card
 from data_source import get_company_details
 from database import fetch_table
-from market_data import get_chart_history, fetch_batch_data, get_ticker_symbol
+from market_data import get_chart_history
 from views.shared import (
     _clean_symbols_list,
     _normalize_symbol,
@@ -52,31 +52,31 @@ def _safe_float(x, default=None):
         return default
 
 
-def _safe_get_last_price_change(symbol: str):
-    """Try to get live price + % change, then fallback to recent history."""
+def _fmt_money_ar(x, default="—"):
+    v = _safe_float(x, None)
+    if v is None:
+        return default
     try:
-        norm = get_ticker_symbol(symbol) or str(symbol or "").strip().upper()
+        sign = "+" if v > 0 else ("-" if v < 0 else "")
+        return f"{sign}{abs(v):,.0f} ر.س"
+    except Exception:
+        return default
 
-        # 1) مباشر (snapshot)
-        try:
-            snap = fetch_batch_data([norm]) or {}
-            d = snap.get(norm) or snap.get(str(symbol or "").strip().upper()) or {}
-            if isinstance(d, dict) and d:
-                last = _safe_float(d.get("price"), None)
-                prev = _safe_float(d.get("prev_close", d.get("previous_close")), None)
-                if isinstance(last, (int, float)) and last and last > 0:
-                    chg = None
-                    if isinstance(prev, (int, float)) and prev and prev > 0:
-                        chg = (float(last) / float(prev) - 1.0) * 100.0
-                    else:
-                        chg = _safe_float(d.get("change_pct", d.get("change_percent")), None)
-                    return float(last), (float(chg) if isinstance(chg, (int, float)) else None)
-        except Exception:
-            import logging
-            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at views/analysis/__init__.py:74')
 
-        # 2) آخر الإغلاقات (fallback)
-        df = get_chart_history(norm or symbol, period="5d", interval="1d")
+def _fmt_pct_ar(x, default="—"):
+    v = _safe_float(x, None)
+    if v is None:
+        return default
+    try:
+        return f"{v:+.2f}%"
+    except Exception:
+        return default
+
+
+def _safe_get_last_price_change(symbol: str):
+    """Try to get last close + % change. Safe fallback if data missing."""
+    try:
+        df = get_chart_history(symbol, period="5d", interval="1d")
         if df is None:
             return None, None
         if not isinstance(df, pd.DataFrame):
@@ -88,6 +88,7 @@ def _safe_get_last_price_change(symbol: str):
         if df.empty:
             return None, None
 
+        # normalize columns
         cols = {str(c).lower(): c for c in df.columns}
         c_close = cols.get("close") or ("Close" if "Close" in df.columns else None)
         if c_close is None:
@@ -178,22 +179,115 @@ def view_analysis(fin):
     trades = fin.get("all_trades", pd.DataFrame())
 
     # --------------------------------------------------------
-    # Stress test (كما هو—فقط تحسين إخراج بسيط)
+    # Stress test (محسّن: أوضح للمستخدم + أثر % وقيمة + توضيح الافتراضات)
     # --------------------------------------------------------
     if not trades.empty and "status" in trades.columns:
         status = _safe_status_series(trades)
         open_pos = trades[status == "open"].copy()
 
-        st.subheader("📊 اختبار التحمل")
+        st.subheader("📊 اختبار التحمل (تقديري) للمحفظة المفتوحة")
+        st.caption("يحاكي أثر تحركات السوق العامة على محفظتك اعتمادًا على حساسية تقديرية للمراكز (ليس توقعًا ولا ضمانًا، وليس VaR إحصائيًا).")
+
         res = run_stress_test(_safe_float(fin.get("market_val_open", 0), 0) or 0, open_pos)
         if res.get("scenarios"):
-            c_stress, c_insight = st.columns([3, 1])
-            with c_stress:
-                sdf = pd.DataFrame(res["scenarios"])
-                if not sdf.empty and "scenario" in sdf.columns and "impact_pct" in sdf.columns:
-                    st.plotly_chart(px.bar(sdf, x="scenario", y="impact_pct"), width="stretch")
-            with c_insight:
-                st.info(res.get("insight", ""))
+            sdf = pd.DataFrame(res["scenarios"])
+            if not sdf.empty and {"scenario", "impact_pct"}.issubset(set(sdf.columns)):
+                sdf["impact_pct"] = pd.to_numeric(sdf["impact_pct"], errors="coerce").fillna(0.0).astype(float)
+                if "impact_amount" in sdf.columns:
+                    sdf["impact_amount"] = pd.to_numeric(sdf["impact_amount"], errors="coerce").fillna(0.0).astype(float)
+                else:
+                    base_val = _safe_float(res.get("portfolio_value_used"), 0) or 0
+                    sdf["impact_amount"] = sdf["impact_pct"] / 100.0 * float(base_val)
+
+                # ترتيب واضح (الأسوأ -> الأفضل) مع أشرطة أفقية مناسبة للـ RTL
+                order = [
+                    "انهيار (-20%)",
+                    "تصحيح (-10%)",
+                    "نزيف بطيء (-6%)",
+                    "انتعاش (+10%)",
+                    "طفرة (+20%)",
+                ]
+                try:
+                    sdf["scenario"] = pd.Categorical(sdf["scenario"], categories=order, ordered=True)
+                    sdf = sdf.sort_values("scenario").reset_index(drop=True)
+                except Exception:
+                    pass
+
+                sdf["_color"] = sdf.get("color", "")
+                sdf["_sign"] = sdf["impact_pct"].apply(lambda x: "إيجابي" if x > 0 else ("سلبي" if x < 0 else "محايد"))
+                # fallback ألوان إذا لم ترجع من المحرك
+                sdf.loc[sdf["impact_pct"] < 0, "_color"] = sdf.loc[sdf["impact_pct"] < 0, "_color"].replace("", "#DC2626")
+                sdf.loc[sdf["impact_pct"] > 0, "_color"] = sdf.loc[sdf["impact_pct"] > 0, "_color"].replace("", "#16A34A")
+                sdf.loc[sdf["impact_pct"] == 0, "_color"] = sdf.loc[sdf["impact_pct"] == 0, "_color"].replace("", "#64748B")
+
+                sdf["impact_label"] = sdf.apply(
+                    lambda r: f"{_fmt_pct_ar(r.get('impact_pct'))} | {_fmt_money_ar(r.get('impact_amount'))}",
+                    axis=1,
+                )
+
+                beta_proxy = _safe_float(res.get("weighted_beta") or res.get("beta_proxy_used"), None)
+                profile = str(res.get("portfolio_profile") or res.get("insight") or "—")
+                pval_used = _safe_float(res.get("portfolio_value_used") or fin.get("market_val_open", 0), None)
+                assumption_quality = str(res.get("assumption_quality") or "تقريبي")
+                action_hint = str(res.get("action_hint") or "")
+
+                k1, k2, k3 = st.columns(3)
+                with k1:
+                    render_kpi("حساسية المحفظة (Beta Proxy)", f"{beta_proxy:.2f}" if beta_proxy is not None else "—", "neutral", "🧪")
+                with k2:
+                    render_kpi("تصنيف المحفظة", profile, "blue", "🧭")
+                with k3:
+                    render_kpi("قيمة المحفظة المفتوحة", f"{pval_used:,.0f} ر.س" if pval_used is not None else "—", "neutral", "💼")
+
+                fig = px.bar(
+                    sdf,
+                    x="impact_pct",
+                    y="scenario",
+                    orientation="h",
+                    text="impact_label",
+                    color="_color",
+                    color_discrete_map="identity",
+                    custom_data=["impact_amount", "_sign", "impact_label"],
+                )
+                fig.update_traces(
+                    textposition="outside",
+                    cliponaxis=False,
+                    hovertemplate=(
+                        "السيناريو: %{y}<br>"
+                        "الأثر المتوقع: %{x:+.2f}%<br>"
+                        "الأثر بالقيمة: %{customdata[0]:+,.0f} ر.س<br>"
+                        "الاتجاه: %{customdata[1]}<extra></extra>"
+                    ),
+                )
+                fig.add_vline(x=0, line_width=1.5, line_dash="dash", line_color="#64748B")
+                fig.update_layout(
+                    height=max(320, 76 * max(1, len(sdf))),
+                    margin=dict(l=20, r=20, t=10, b=20),
+                    showlegend=False,
+                    xaxis_title="الأثر المتوقع على المحفظة (%)",
+                    yaxis_title="سيناريو السوق",
+                    bargap=0.28,
+                )
+                fig.update_yaxes(categoryorder="array", categoryarray=order[::-1])
+
+                st.plotly_chart(fig, use_container_width=True)
+
+                st.info(str(res.get("insight") or ""))
+                st.caption(
+                    f"طريقة الحساب: حساسية تقديرية (Heuristic/Beta Proxy) | جودة الافتراض: {assumption_quality}"
+                    + (f" | قيمة مستخدمة للحساب: {_fmt_money_ar(pval_used)}" if pval_used is not None else "")
+                )
+                if action_hint:
+                    st.success(f"💡 ماذا يعني هذا لك؟ {action_hint}")
+
+                with st.expander("🔎 تفاصيل وافتراضات الاختبار", expanded=False):
+                    st.markdown("- **هذا الاختبار تقديري** وليس توقعًا للسوق أو ضمانًا للنتائج.")
+                    st.markdown("- يعتمد على **نوع الأصل + الاستراتيجية + الخسائر الحالية** لبناء Beta Proxy للمحفظة.")
+                    st.markdown("- لا يأخذ في الحسبان ارتباطات القطاعات، التذبذب التاريخي الفعلي، السيولة، الفجوات، أو مخاطر خاصة بكل سهم.")
+                    st.markdown("- استخدمه لمقارنة حساسية محفظتك **قبل/بعد إعادة التوازن** وليس كبديل لإدارة المخاطر التفصيلية.")
+        else:
+            st.info(str(res.get("insight") or "لا توجد سيناريوهات متاحة حاليًا."))
+
         st.markdown("---")
 
     # --------------------------------------------------------
