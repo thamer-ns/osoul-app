@@ -63,7 +63,8 @@ def _is_missing(x) -> bool:
             if hasattr(pd, "isna") and pd.isna(x):
                 return True
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/utils.py:65')
         # numpy NaN
         try:
             import numpy as np
@@ -73,7 +74,8 @@ def _is_missing(x) -> bool:
                 except Exception:
                     return False
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/utils.py:75')
         return False
     except Exception:
         return False
@@ -89,7 +91,8 @@ def _safe_float_none(x):
             if isinstance(x, (np.floating, np.integer)):
                 return float(x)
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/utils.py:91')
         s = str(x).replace(",", "").strip()
         if s.lower() in ("nan", "none", ""):
             return None
