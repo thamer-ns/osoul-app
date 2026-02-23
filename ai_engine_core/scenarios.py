@@ -83,7 +83,8 @@ def build_scenarios(
                 if res <= 0:
                     res = hi
             except Exception:
-                pass
+                import logging
+                logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/scenarios.py:85')
 
 
         # -----------------------------
@@ -101,7 +102,8 @@ def build_scenarios(
                     if lo2 > 0 and lo2 < last_price:
                         sup = lo2
                 except Exception:
-                    pass
+                    import logging
+                    logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/scenarios.py:103')
 
             if res > 0 and res <= last_price and price_df is not None and getattr(price_df, "empty", True) is False:
                 try:
@@ -109,7 +111,8 @@ def build_scenarios(
                     if hi2 > 0 and hi2 > last_price:
                         res = hi2
                 except Exception:
-                    pass
+                    import logging
+                    logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/scenarios.py:111')
 
         # Risk gates suggestion (for long/base: stop must be below entry)
         stop = 0.0
