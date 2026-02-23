@@ -242,12 +242,14 @@ def _compute_altman_z_best_effort(symbol: str, curr_row: pd.Series, yahoo_info: 
         tl = _safe_float(curr_row.get("total_liabilities", 0))
         sales = _safe_float(curr_row.get("revenue", 0))
 
-        ebit = 0.0
-        retained = 0.0  # optional if not available
+        # Prefer statement fields first, then fallback heuristic from Yahoo EBITDA
+        ebit = _best_key(curr_row, ["ebit", "operating_income", "operatingIncome"], default=0.0)
+        retained = _best_key(curr_row, ["retained_earnings", "retainedEarnings"], default=0.0)  # optional
 
-        ebitda = _safe_float(yahoo_info.get("ebitda"))
-        if ebitda > 0:
-            ebit = 0.7 * ebitda
+        if ebit <= 0:
+            ebitda = _safe_float(yahoo_info.get("ebitda"))
+            if ebitda > 0:
+                ebit = 0.7 * ebitda
 
         mve = _safe_float(yahoo_info.get("marketCap"))
 
@@ -268,12 +270,14 @@ def _compute_altman_z_best_effort(symbol: str, curr_row: pd.Series, yahoo_info: 
 def _compute_sgr(roe: float, yahoo_info: dict) -> dict:
     out = {"SGR": 0.0, "Payout_Ratio": 0.0, "Retention_Ratio": 0.0, "SGR_Estimated": 0}
     try:
-        payout = _safe_float(yahoo_info.get("payoutRatio"))
-        if payout <= 0 or payout >= 1:
+        # ✅ لا تعتبر payout=0 أو payout=1 خطأ؛ كلاهما قد يكون صحيحاً.
+        payout_raw = yahoo_info.get("payoutRatio") if isinstance(yahoo_info, dict) else None
+        payout = _safe_float_none(payout_raw)
+        if payout is None or payout < 0 or payout > 1:
             payout = 0.30
             out["SGR_Estimated"] = 1
 
-        retention = max(0.0, min(1.0, 1.0 - payout))
+        retention = max(0.0, min(1.0, 1.0 - float(payout)))
         out["Payout_Ratio"] = float(payout)
         out["Retention_Ratio"] = float(retention)
         out["SGR"] = float(_safe_float(roe) * retention)
@@ -571,7 +575,7 @@ def get_advanced_fundamental_ratios(symbol):
     # --------------------------
     # Data Quality / Completeness flags for UI + AI calibration
     # --------------------------
-    essential = ["revenue", "net_income", "equity", "operating_cash_flow"]
+    essential = ["revenue", "net_income", "total_equity", "operating_cash_flow"]
     missing = []
     for k in essential:
         try:
