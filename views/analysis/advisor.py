@@ -37,7 +37,8 @@ def _ai_quick_parse(rep) -> dict:
         try:
             return _extract_ai(rep) or {}
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at views/analysis/advisor.py:39')
 
     # fallback بسيط
     if not isinstance(rep, dict):
