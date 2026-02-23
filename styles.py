@@ -1664,6 +1664,65 @@ input[type="url"] {
   text-align: left !important;
 }
 
+
+/* =====================================================
+   FINAL PATCH: internal icon/order fixes (RTL safe)
+   - يصلّح انقلاب ترتيب الأيقونات/التفاصيل داخل العناصر
+   - لا يغيّر RTL العام للتطبيق
+   ===================================================== */
+/* Material icon fonts must keep their own font-family */
+.material-icons{ font-family: 'Material Icons' !important; }
+.material-symbols-outlined{ font-family: 'Material Symbols Outlined' !important; }
+.material-symbols-rounded{ font-family: 'Material Symbols Rounded' !important; }
+.material-symbols-sharp{ font-family: 'Material Symbols Sharp' !important; }
+
+/* Keep icon glyphs/SVG stable (no bidi weirdness) */
+.stApp svg,
+.stApp i.material-icons,
+.stApp .material-symbols-outlined,
+.stApp .material-symbols-rounded,
+.stApp .material-symbols-sharp{
+  direction: ltr !important;
+  unicode-bidi: isolate !important;
+  text-align: center !important;
+}
+
+/* Restore normal inner order for BaseWeb wrappers (some earlier rules reversed internals) */
+[data-baseweb="input"] > div,
+[data-baseweb="textarea"] > div,
+[data-baseweb="select"] > div,
+[data-baseweb="button"] > div{
+  flex-direction: row !important;
+}
+
+/* Keep labels/buttons readable with emoji/icons in Arabic */
+button,
+button *,
+[data-testid="stRadio"] label,
+[data-testid="stCheckbox"] label,
+[data-testid="stSelectbox"] label,
+[data-testid="stMultiSelect"] label{
+  unicode-bidi: plaintext !important;
+}
+
+/* Expander summary arrow + text spacing in RTL (arrow on the right) */
+div[data-testid="stExpander"] details summary{
+  padding-right: 44px !important;
+  padding-left: 12px !important;
+}
+div[data-testid="stExpander"] details summary::after{
+  right: 16px !important;
+  left: auto !important;
+}
+
+/* Metrics / small UI rows: preserve child order under RTL without accidental reverse */
+[data-testid="stMetric"] > div,
+[data-testid="stMetric"] div,
+[data-testid="stAlert"] > div,
+[data-testid="stToast"] > div{
+  direction: rtl !important;
+}
+
 </style>
         """
 
