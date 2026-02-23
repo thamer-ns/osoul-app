@@ -97,7 +97,8 @@ def portfolio_gates(trades_df: pd.DataFrame, symbol: str, cash_pct: float):
             w = (_safe_float(row.iloc[0].get("market_value"), 0.0) / total_mv) * 100.0
             gates["symbol_weight_pct"] = round(w, 2)
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/portfolio_risk.py:99')
 
     return gates
 
@@ -117,33 +118,19 @@ def max_drawdown(equity: pd.Series) -> float:
     """Max drawdown as a positive fraction (e.g. 0.25 = -25%)."""
     if equity is None or len(equity) < 2:
         return 0.0
-    eq = pd.to_numeric(equity, errors="coerce")
-    eq = eq.replace([math.inf, -math.inf], pd.NA).dropna().astype(float)
-    if eq.empty or len(eq) < 2:
+    eq = pd.to_numeric(equity, errors="coerce").dropna()
+    if eq.empty:
         return 0.0
-
-    # الحساب التقليدي للـ MDD يفترض قيم equity موجبة. عند وجود 0/سالب
-    # نتجنب القسمة على صفر والنتائج غير المنطقية.
     peak = eq.cummax()
-    valid = peak > 0
-    if not bool(valid.any()):
-        return 0.0
-
-    dd = pd.Series(0.0, index=eq.index, dtype=float)
-    dd.loc[valid] = (eq.loc[valid] / peak.loc[valid]) - 1.0
-    if dd.empty:
-        return 0.0
-    out = float(max(0.0, -float(dd.min())))
-    # إزالة -0.0
-    return 0.0 if abs(out) < 1e-15 else out
+    dd = (eq / peak) - 1.0
+    return float((-dd.min()) if not dd.empty else 0.0)
 
 
 def var_es_historical(returns: pd.Series, alpha: float = 0.05) -> tuple[float, float]:
     """Historical VaR/ES. Returns (VaR, ES) as positive loss fractions."""
     if returns is None or len(returns) < 10:
         return 0.0, 0.0
-    r = pd.to_numeric(returns, errors="coerce")
-    r = r.replace([math.inf, -math.inf], pd.NA).dropna().astype(float)
+    r = pd.to_numeric(returns, errors="coerce").dropna()
     if r.empty:
         return 0.0, 0.0
     q = r.quantile(alpha)
@@ -181,8 +168,7 @@ def compute_perf_metrics(
             "es_95": 0.0,
         }
 
-    eq = pd.to_numeric(equity, errors="coerce")
-    eq = eq.replace([math.inf, -math.inf], pd.NA).dropna().astype(float)
+    eq = pd.to_numeric(equity, errors="coerce").dropna()
     if eq.empty or len(eq) < 2:
         return {
             "total_return": 0.0,
@@ -195,27 +181,8 @@ def compute_perf_metrics(
             "es_95": 0.0,
         }
 
-    # هذه المؤشرات تفترض equity موجبة. إذا ظهرت قيم <=0 فنعيد مقاييس آمنة
-    # بدل مخرجات مضللة/لانهائية (pct_change على قيم سالبة/صفر).
-    if bool((eq <= 0).any()):
-        return {
-            "total_return": 0.0,
-            "cagr": 0.0,
-            "volatility": 0.0,
-            "sharpe": 0.0,
-            "sortino": 0.0,
-            "max_drawdown": max_drawdown(eq),
-            "var_95": 0.0,
-            "es_95": 0.0,
-        }
-
-    rets = eq.pct_change()
-    rets = pd.to_numeric(rets, errors="coerce")
-    rets = rets.replace([math.inf, -math.inf], pd.NA).dropna().astype(float)
-
-    start_eq = float(eq.iloc[0]) if len(eq) else 0.0
-    end_eq = float(eq.iloc[-1]) if len(eq) else 0.0
-    total_return = float((end_eq / start_eq) - 1.0) if start_eq > 0 else 0.0
+    rets = eq.pct_change().dropna()
+    total_return = float(eq.iloc[-1] / eq.iloc[0] - 1.0)
 
     # CAGR
     cagr = 0.0
@@ -227,42 +194,26 @@ def compute_perf_metrics(
             if len(d) >= 2:
                 years = (d.iloc[-1] - d.iloc[0]).days / 365.25
                 if years > 0:
-                    if start_eq > 0 and end_eq > 0:
-                        cagr = float((end_eq / start_eq) ** (1 / years) - 1.0)
+                    cagr = float((eq.iloc[-1] / eq.iloc[0]) ** (1 / years) - 1.0)
         except Exception:
             cagr = 0.0
     else:
         # fallback based on periods
-        years = max((len(eq) - 1), 0) / float(periods_per_year)
-        if years > 0 and start_eq > 0 and end_eq > 0:
-            cagr = float((end_eq / start_eq) ** (1 / years) - 1.0)
+        years = len(eq) / float(periods_per_year)
+        if years > 0:
+            cagr = float((eq.iloc[-1] / eq.iloc[0]) ** (1 / years) - 1.0)
 
     # Volatility
     vol = float(rets.std(ddof=0) * math.sqrt(periods_per_year)) if len(rets) else 0.0
-    if not math.isfinite(vol):
-        vol = 0.0
 
     # Sharpe / Sortino
     rf_per_period = risk_free_rate / periods_per_year
-    excess = (rets - rf_per_period) if len(rets) else pd.Series(dtype=float)
-
-    rets_std = float(rets.std(ddof=0)) if len(rets) else 0.0
-    if len(rets) and rets_std > 1e-12 and math.isfinite(rets_std):
-        sharpe = float(excess.mean() / rets_std * math.sqrt(periods_per_year))
-    else:
-        sharpe = 0.0
+    excess = rets - rf_per_period
+    sharpe = float(excess.mean() / (rets.std(ddof=0) + 1e-12) * math.sqrt(periods_per_year)) if len(rets) else 0.0
 
     downside = rets[rets < 0]
     downside_std = float(downside.std(ddof=0)) if len(downside) else 0.0
-    if len(rets) and len(downside) and downside_std > 1e-12 and math.isfinite(downside_std):
-        sortino = float(excess.mean() / downside_std * math.sqrt(periods_per_year))
-    else:
-        sortino = 0.0
-
-    if not math.isfinite(sharpe):
-        sharpe = 0.0
-    if not math.isfinite(sortino):
-        sortino = 0.0
+    sortino = float(excess.mean() / (downside_std + 1e-12) * math.sqrt(periods_per_year)) if len(rets) else 0.0
 
     mdd = max_drawdown(eq)
     var95, es95 = var_es_historical(rets, alpha=0.05)
