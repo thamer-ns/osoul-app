@@ -172,7 +172,8 @@ def calculate_portfolio_risk_score(trades_df, cash_percent):
         try:
             log.exception("calculate_portfolio_risk_score failed")
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/portfolio.py:174')
         return None
 
 
@@ -297,7 +298,8 @@ def generate_rebalancing_suggestions(trades_df, cash_pct):
                 idx = int(w.idxmax())
                 sym = str(open_trades.loc[idx].get("symbol", "-"))
             except Exception:
-                pass
+                import logging
+                logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/portfolio.py:299')
             suggestions.append(("danger", f"🎯 تركّز عالي: أكبر مركز ≈ {max_w*100:.1f}% ({sym}) — خفف/وزّع"))
 
         # Loss control suggestions
@@ -322,7 +324,8 @@ def generate_rebalancing_suggestions(trades_df, cash_pct):
                     if spec_ratio >= 0.60:
                         suggestions.append(("warn", "⚡ نسبة المضاربة مرتفعة (>60%) — خفف تذبذب المحفظة أو ارفع كاش"))
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/portfolio.py:324')
 
         # Sector balance (if sector exists)
         if any(c in open_trades.columns for c in ["sector", "Sector", "industry", "Industry"]):
@@ -336,10 +339,12 @@ def generate_rebalancing_suggestions(trades_df, cash_pct):
                     if top_share >= 0.55 and top_sector != "Unknown":
                         suggestions.append(("warn", f"🏷️ تركّز قطاعي: {top_sector} ≈ {top_share*100:.1f}% — فكر بالتنويع"))
             except Exception:
-                pass
+                import logging
+                logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/portfolio.py:338')
 
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/portfolio.py:341')
 
     return suggestions
 
