@@ -198,7 +198,8 @@ def _analyze_market_structure(df):
                     score -= 1
                     obs.append("🎯 OTE: السعر قريب 50% فيبو (منطقة بيع أفضل)")
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/technicals.py:200')
 
     return score, obs
 
@@ -383,7 +384,8 @@ def _analyze_ichimoku(df):
             feats["ichi_tk_cross_dn"] = 1
             obs.append("🔀 تقاطع تنكن تحت كيجن (إشارة دعم للبيع)")
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/technicals.py:385')
 
     # Strong Ichimoku
     try:
@@ -397,7 +399,8 @@ def _analyze_ichimoku(df):
             feats["ichi_bear"] = 1
             obs.append("⛔ Ichimoku هابط قوي (شينكو+سحابة+سعر)")
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/technicals.py:399')
 
     return score, obs, feats
 
@@ -466,10 +469,12 @@ def _analyze_financial_golden_rules(symbol):
             if int(fflags.get("fund_low_liquidity") or 0) == 1:
                 obs.append("⚠️ سيولة ضعيفة (Current Ratio منخفض)")
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/technicals.py:468')
 
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/technicals.py:471')
 
     metrics["_fund_features"] = feats
     return score, obs, metrics
@@ -593,7 +598,8 @@ def _detect_rsi_divergence(df, ind: dict, lookback=80):
                 score -= 2
                 obs.append("🔴 Divergence RSI سلبي (قمة أعلى بالسعر + RSI أقل)")
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/technicals.py:595')
 
     return score, obs, feats
 
@@ -765,7 +771,8 @@ def _analyze_ma_trend(ind: dict):
                 score -= 2
                 obs.append("☠️ Death Cross (MA50 كسر MA200 للأسفل)")
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/technicals.py:767')
 
     return score, obs, feats
 
@@ -820,7 +827,8 @@ def _analyze_momentum_signals(ind: dict):
                 score -= 1
                 obs.append("🔀 MACD تقاطع هابط (إشارة دعم للبيع)")
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/technicals.py:822')
 
     # Stoch cross
     k = ind.get("stoch_k")
@@ -838,7 +846,8 @@ def _analyze_momentum_signals(ind: dict):
                 score -= 1
                 obs.append("🎛️ Stochastic تقاطع هابط")
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/technicals.py:840')
 
     return score, obs, feats
 
@@ -909,7 +918,8 @@ def _detect_double_top_bottom(df, lookback=180, tol=0.015):
                     score -= 2
                     obs.append("⛰️ Double Top (قمتين متقاربتين) — احتمال انعكاس سلبي")
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/technicals.py:911')
 
     # Double Bottom
     try:
@@ -922,7 +932,8 @@ def _detect_double_top_bottom(df, lookback=180, tol=0.015):
                     score += 2
                     obs.append("🏞️ Double Bottom (قاعين متقاربين) — احتمال انعكاس إيجابي")
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/technicals.py:924')
 
     return score, obs, feats
 
@@ -961,6 +972,7 @@ def _analyze_relative_strength_vs_tasi(symbol: str):
             obs.append("📌 Relative Strength محايد مقابل تاسي")
 
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/technicals.py:963')
 
     return score, obs, feats
