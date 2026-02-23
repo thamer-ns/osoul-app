@@ -1,27 +1,267 @@
 from __future__ import annotations
 
 # financial_analysis/store.py
+import logging
 import pandas as pd
 import json
 from typing import Any, Dict, Optional
 
-from database import execute_query, fetch_table, fetch_df
+from database import execute_query, fetch_table, fetch_df, get_connection, put_connection, table_exists
 from market_data import get_ticker_symbol, _symbol_variants
 from .utils import _safe_float, _safe_float_none, _safe_date_str
 
-# Canonical table name for full/raw financial statements storage
+logger = logging.getLogger(__name__)
 _TABLE_NAME = "financialstatements_raw"
+
+
+
+# ==============================================================
+# 🔧 Schema compatibility / migration-safe helpers
+# ==============================================================
+def _db_kind() -> str:
+    conn = None
+    kind = "sqlite"
+    try:
+        conn, kind = get_connection()
+        return str(kind or "sqlite")
+    except Exception:
+        logger.exception("Failed to detect DB kind in financial_analysis.store")
+        return "sqlite"
+    finally:
+        try:
+            if conn is not None:
+                put_connection(conn, kind)
+        except Exception:
+            logger.exception("Failed to return DB connection while detecting kind")
+
+
+def _table_columns(table_name: str) -> set[str]:
+    cols: set[str] = set()
+    conn = None
+    kind = "sqlite"
+    try:
+        conn, kind = get_connection()
+        cur = conn.cursor()
+        if kind == "postgres":
+            cur.execute(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = %s
+                  AND table_schema IN (current_schema(), 'public')
+                """,
+                (table_name,),
+            )
+            cols = {str(r[0]).lower() for r in (cur.fetchall() or [])}
+        else:
+            cur.execute(f"PRAGMA table_info({table_name})")
+            cols = {str(r[1]).lower() for r in (cur.fetchall() or [])}
+    except Exception:
+        logger.exception("Failed reading columns for table %s", table_name)
+        cols = set()
+    finally:
+        try:
+            if conn is not None:
+                put_connection(conn, kind)
+        except Exception:
+            logger.exception("Failed returning DB connection after reading columns for %s", table_name)
+    return cols
+
+
+def _exec_best_effort(sql: str, *, log_level: str = "warning") -> bool:
+    ok = False
+    try:
+        ok = bool(execute_query(sql))
+    except Exception:
+        logger.exception("DB execute threw in _exec_best_effort")
+        ok = False
+    if not ok:
+        if log_level == "debug":
+            logger.debug("Best-effort SQL failed: %s", sql)
+        elif log_level == "error":
+            logger.error("Best-effort SQL failed: %s", sql)
+        else:
+            logger.warning("Best-effort SQL failed: %s", sql)
+    return ok
+
+
+def _ensure_financialstatements_table_compat() -> None:
+    """Migration-safe shim for light table schema (date/date_str compatibility)."""
+    if not table_exists("financialstatements"):
+        return
+
+    kind = _db_kind()
+    cols = _table_columns("financialstatements")
+    if not cols:
+        return
+
+    if "date_str" not in cols:
+        if kind == "postgres":
+            _exec_best_effort("ALTER TABLE financialstatements ADD COLUMN IF NOT EXISTS date_str TEXT")
+        else:
+            _exec_best_effort("ALTER TABLE financialstatements ADD COLUMN date_str TEXT")
+        cols = _table_columns("financialstatements")
+
+    if "date_str" in cols and "date" in cols:
+        _exec_best_effort(
+            """
+            UPDATE financialstatements
+            SET date_str = COALESCE(NULLIF(CAST(date_str AS TEXT), ''), CAST(date AS TEXT))
+            WHERE date IS NOT NULL
+            """,
+            log_level="debug",
+        )
+
+    _exec_best_effort(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_financialstatements_uq
+        ON financialstatements(symbol, date_str, period_type)
+        """,
+        log_level="debug",
+    )
+
+
+def _ensure_financialstatements_raw_schema() -> None:
+    """Create/upgrade financialstatements_raw to support legacy + new columns safely."""
+    kind = _db_kind()
+    if not table_exists(_TABLE_NAME):
+        if kind == "postgres":
+            ddl = f"""
+            CREATE TABLE IF NOT EXISTS {_TABLE_NAME} (
+                id BIGSERIAL PRIMARY KEY,
+                symbol TEXT,
+                date_str TEXT,
+                period_type TEXT,
+                source TEXT,
+                payload TEXT,
+                statement TEXT,
+                as_of DATE,
+                scale TEXT DEFAULT 'raw',
+                currency TEXT,
+                data_json JSONB,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            );
+            """
+        else:
+            ddl = f"""
+            CREATE TABLE IF NOT EXISTS {_TABLE_NAME} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT,
+                date_str TEXT,
+                period_type TEXT,
+                source TEXT,
+                payload TEXT,
+                statement TEXT,
+                as_of TEXT,
+                scale TEXT DEFAULT 'raw',
+                currency TEXT,
+                data_json TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            );
+            """
+        _exec_best_effort(ddl, log_level="error")
+
+    cols = _table_columns(_TABLE_NAME)
+    if not cols:
+        return
+
+    add_cols: list[tuple[str, str]] = []
+    if "date_str" not in cols:
+        add_cols.append(("date_str", "TEXT"))
+    if "period_type" not in cols:
+        add_cols.append(("period_type", "TEXT"))
+    if "source" not in cols:
+        add_cols.append(("source", "TEXT"))
+    if "payload" not in cols:
+        add_cols.append(("payload", "TEXT"))
+    if "statement" not in cols:
+        add_cols.append(("statement", "TEXT"))
+    if "as_of" not in cols:
+        add_cols.append(("as_of", "DATE" if kind == "postgres" else "TEXT"))
+    if "scale" not in cols:
+        add_cols.append(("scale", "TEXT"))
+    if "currency" not in cols:
+        add_cols.append(("currency", "TEXT"))
+    if "data_json" not in cols:
+        add_cols.append(("data_json", "JSONB" if kind == "postgres" else "TEXT"))
+    if "updated_at" not in cols:
+        add_cols.append(("updated_at", "TIMESTAMPTZ" if kind == "postgres" else "TEXT"))
+    if "created_at" not in cols:
+        add_cols.append(("created_at", "TIMESTAMPTZ" if kind == "postgres" else "TEXT"))
+
+    for col_name, col_type in add_cols:
+        if kind == "postgres":
+            _exec_best_effort(f"ALTER TABLE {_TABLE_NAME} ADD COLUMN IF NOT EXISTS {col_name} {col_type}")
+        else:
+            _exec_best_effort(f"ALTER TABLE {_TABLE_NAME} ADD COLUMN {col_name} {col_type}")
+
+    cols = _table_columns(_TABLE_NAME)
+    if not cols:
+        return
+
+    if "as_of" in cols and "date_str" in cols:
+        _exec_best_effort(
+            f"""
+            UPDATE {_TABLE_NAME}
+            SET as_of = COALESCE(as_of, NULLIF(CAST(date_str AS TEXT), ''))
+            WHERE date_str IS NOT NULL
+            """,
+            log_level="debug",
+        )
+    if "data_json" in cols and "payload" in cols:
+        _exec_best_effort(
+            f"""
+            UPDATE {_TABLE_NAME}
+            SET data_json = COALESCE(data_json, NULLIF(payload, ''))
+            WHERE payload IS NOT NULL
+            """,
+            log_level="debug",
+        )
+    if "date_str" in cols and "as_of" in cols:
+        _exec_best_effort(
+            f"""
+            UPDATE {_TABLE_NAME}
+            SET date_str = COALESCE(NULLIF(CAST(date_str AS TEXT), ''), CAST(as_of AS TEXT))
+            WHERE as_of IS NOT NULL
+            """,
+            log_level="debug",
+        )
+    if "payload" in cols and "data_json" in cols:
+        _exec_best_effort(
+            f"""
+            UPDATE {_TABLE_NAME}
+            SET payload = COALESCE(payload, CAST(data_json AS TEXT))
+            WHERE data_json IS NOT NULL
+            """,
+            log_level="debug",
+        )
+    if "scale" in cols:
+        _exec_best_effort(f"UPDATE {_TABLE_NAME} SET scale = COALESCE(NULLIF(scale, ''), 'raw')", log_level="debug")
+    if "updated_at" in cols:
+        _exec_best_effort(f"UPDATE {_TABLE_NAME} SET updated_at = COALESCE(updated_at, CURRENT_TIMESTAMP)", log_level="debug")
+
+    _exec_best_effort(
+        f"""
+        CREATE UNIQUE INDEX IF NOT EXISTS {_TABLE_NAME}_uq
+        ON {_TABLE_NAME} (symbol, statement, period_type, as_of, scale)
+        """,
+        log_level="debug",
+    )
 
 
 # ==============================================================
 # 💾 DB Save / Fetch
 # ==============================================================
+
 def save_financial_record(symbol, date_str, data, period_type="Annual", source="Manual"):
     """
-    ✅ إصلاح أسماء الجداول:
-    - financialstatements (lowercase) بدون quotes
+    حفظ السجل المالي الخفيف مع توافق خلفي لعمود التاريخ (date/date_str) وتسجيل واضح للأخطاء.
     """
     try:
+        _ensure_financialstatements_table_compat()
+
         symbol = get_ticker_symbol(symbol)
         date_str = _safe_date_str(date_str)
         period_type = str(period_type or "Annual").strip().title()
@@ -38,11 +278,22 @@ def save_financial_record(symbol, date_str, data, period_type="Annual", source="
             "current_liabilities",
             "long_term_debt",
         ]
-
         vals = {k: _safe_float_none((data or {}).get(k, None)) for k in keys}
 
-        total_abs = sum(abs(float(v)) for v in vals.values() if v is not None)
-        if total_abs == 0:
+        numeric_abs = []
+        for v in vals.values():
+            try:
+                if v is None:
+                    continue
+                fv = float(v)
+                if pd.notna(fv):
+                    numeric_abs.append(abs(fv))
+            except Exception:
+                logger.warning("Non-numeric financial value skipped while saving financial record", exc_info=True)
+                continue
+
+        if not numeric_abs or sum(numeric_abs) == 0:
+            logger.warning("Skipping empty financial record for %s (%s)", symbol, date_str)
             return False
 
         query = """
@@ -84,9 +335,11 @@ def save_financial_record(symbol, date_str, data, period_type="Annual", source="
                 vals["long_term_debt"],
             ),
         )
+        if not ok:
+            logger.error("Failed to save financial record for %s %s (%s)", symbol, date_str, period_type)
         return bool(ok)
-    except Exception as e:
-        print(f"DB Error: {e}")
+    except Exception:
+        logger.exception("DB Error in save_financial_record(symbol=%r, date_str=%r)", symbol, date_str)
         return False
 
 
@@ -95,6 +348,7 @@ def get_stored_financials_df(symbol, period_type="Annual"):
     ✅ يرجع DataFrame من financialstatements
     """
     try:
+        _ensure_financialstatements_table_compat()
         raw_symbol = symbol
         symbol = get_ticker_symbol(symbol)
         variants = _symbol_variants(raw_symbol)
@@ -134,6 +388,7 @@ def get_stored_financials_df(symbol, period_type="Annual"):
 
         return df
     except Exception:
+        logger.exception("Failed to fetch stored financials for %s (%s)", symbol, period_type)
         return pd.DataFrame()
 
 
@@ -142,41 +397,18 @@ def get_stored_financials_df(symbol, period_type="Annual"):
 # ==============================================================
 # 🧱 Full Statements RAW storage (compatible with older versions)
 # ==============================================================
+
 def ensure_financialstatements_raw_table() -> None:
-    """Create table if it doesn't exist (Postgres/Supabase friendly).
+    """Create/upgrade raw statements table in a migration-safe way.
 
-    ✅ مهم: بعض المستخدمين لديهم نسخة قديمة من الجدول بدون UNIQUE/Index مناسب،
-    وبالتالي جملة ON CONFLICT تفشل (no unique constraint).
-    لذلك ننشئ Unique Index بشكل آمن (IF NOT EXISTS) حتى لو كان الجدول موجود مسبقًا.
+    يدعم النسخ القديمة (date_str/payload) والنسخة الأحدث (statement/as_of/data_json)
+    بدون حذف البيانات الحالية.
     """
-    ddl = f"""
-    CREATE TABLE IF NOT EXISTS {_TABLE_NAME} (
-        id BIGSERIAL PRIMARY KEY,
-        symbol TEXT NOT NULL,
-        statement TEXT NOT NULL, -- income|balance|cashflow
-        period_type TEXT NOT NULL, -- Annual|Quarterly|TTM
-        as_of DATE NOT NULL,
-        scale TEXT NOT NULL DEFAULT 'raw', -- raw|thousands
-        currency TEXT,
-        source TEXT,
-        data_json JSONB NOT NULL,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-    """
-    execute_query(ddl)
-
-    # ✅ Ensure unique index exists for UPSERT (even if table existed before)
     try:
-        execute_query(
-            f"""CREATE UNIQUE INDEX IF NOT EXISTS {_TABLE_NAME}_uq
-            ON {_TABLE_NAME} (symbol, statement, period_type, as_of, scale);"""
-        )
+        _ensure_financialstatements_raw_schema()
     except Exception:
-        pass
-
+        logger.exception("Failed ensuring financialstatements_raw schema compatibility")
     return
-
 
 
 def save_full_statement_record(
@@ -212,11 +444,12 @@ def save_full_statement_record(
 
     payload = json.dumps(data or {}, ensure_ascii=False)
 
+    # نكتب الحقول القديمة والجديدة معًا قدر الإمكان للحفاظ على التوافق الخلفي.
     query = f"""
     INSERT INTO {_TABLE_NAME}
-        (symbol, statement, period_type, as_of, scale, currency, source, data_json, updated_at)
+        (symbol, statement, period_type, as_of, scale, currency, source, data_json, date_str, payload, updated_at)
     VALUES
-        (%s, %s, %s, %s::date, %s, %s, %s, %s::jsonb, NOW())
+        (%s, %s, %s, %s::date, %s, %s, %s, %s::jsonb, %s, %s, NOW())
     ON CONFLICT (symbol, statement, period_type, as_of, scale)
     DO UPDATE SET
         currency = EXCLUDED.currency,
@@ -225,8 +458,11 @@ def save_full_statement_record(
         updated_at = NOW()
     ;
     """
-    params = (sym, st, ptype, as_of_d, sc, currency, source[:50], payload)
-    return bool(execute_query(query, params))
+    params = (sym, st, ptype, as_of_d, sc, currency, source[:50], payload, as_of_d, payload)
+    ok = bool(execute_query(query, params))
+    if not ok:
+        logger.error("Failed to save full statement record for %s/%s %s %s", sym, st, ptype, as_of_d)
+    return ok
 
 
 def fetch_full_statement_records(
@@ -255,7 +491,20 @@ def fetch_full_statement_records(
     """
     df = fetch_df(query, (sym, st, ptype, sc))
     if df is None or df.empty:
-        return pd.DataFrame()
+        # legacy fallback: table may only have date_str/payload and no statement split
+        try:
+            q_legacy = f"""
+            SELECT date_str AS as_of, payload AS data_json
+            FROM {_TABLE_NAME}
+            WHERE symbol = %s AND LOWER(TRIM(period_type)) = LOWER(TRIM(%s))
+            ORDER BY date_str DESC
+            """
+            df = fetch_df(q_legacy, (sym, ptype))
+        except Exception:
+            logger.exception("Legacy fallback fetch failed for financialstatements_raw")
+            df = pd.DataFrame()
+        if df is None or df.empty:
+            return pd.DataFrame()
 
     cols = {}
     for _, row in df.iterrows():
@@ -328,6 +577,7 @@ def get_full_statements_freshness(
         else:
             completeness = "none"
     except Exception:
+        logger.exception("Failed completeness check for full statements freshness")
         completeness = "none"
 
     # normalize serialization
@@ -337,6 +587,7 @@ def get_full_statements_freshness(
         elif updated_at is not None:
             updated_at = str(updated_at)
     except Exception:
+        logger.exception("Failed to normalize updated_at in full statements freshness")
         updated_at = None
 
     try:
@@ -347,6 +598,7 @@ def get_full_statements_freshness(
         else:
             sources = [str(s) for s in list(sources) if s]
     except Exception:
+        logger.exception("Failed to normalize sources in full statements freshness")
         sources = []
 
     return {"updated_at": updated_at, "sources": sources, "completeness": completeness}
@@ -370,4 +622,5 @@ def has_full_statement(symbol: str, statement: str = None, period_type: str = "A
                 return True
         return False
     except Exception:
+        logger.exception("has_full_statement failed for %s / %s / %s", symbol, statement, period_type)
         return False
