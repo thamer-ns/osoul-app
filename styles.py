@@ -1115,8 +1115,7 @@ button[aria-label="Open sidebar"]{
             flex-direction: row-reverse !important;
         }
 
-        /* لا تعكس كل الأعمدة داخليًا؛ نحافظ على ترتيب st.columns في RTL (الأول يمينًا) */
-        div[data-testid="stHorizontalBlock"] { flex-direction: row !important; }
+        div[data-testid="stHorizontalBlock"] { flex-direction: row-reverse !important; }
 
         section[data-testid="stSidebar"] {
             order: 2 !important;
@@ -1553,174 +1552,76 @@ div[data-testid="stTabs"] [role="tab"]{
 
 
 /* =====================================================
-   FINAL HARD RTL OVERRIDE (patch 2026-02-23)
-   - يعالج رجوع الواجهة إلى LTR في بعض إصدارات Streamlit/المتصفحات
-   - يُبقي السايدبار على اليمين بدون كسر بقية الميزات
+   FINAL RTL SAFETY OVERRIDES (surgical)
+   - Prevent internal controls/icons from being mirrored
+   - Keep only real st.columns rows reversed in RTL
    ===================================================== */
-html, body,
-.stApp,
-[data-testid="stAppViewContainer"],
-[data-testid="stMain"],
-[data-testid="stSidebar"],
-.block-container{
-  direction: rtl !important;
-  text-align: right !important;
-}
 
-/* اجعل أول عنصر في st.columns يظهر يمينًا (لا row-reverse هنا) */
+/* 1) Reset generic horizontal wrappers (many internal widgets use these) */
 div[data-testid="stHorizontalBlock"],
 div[data-testid="stColumns"],
 .stHorizontalBlock,
 .stColumns{
-  direction: rtl !important;
-  flex-direction: row !important;
+    flex-direction: row !important;
 }
 
-/* ترتيب طبقة التطبيق: السايدبار يمين الشاشة */
-div[data-testid="stAppViewContainer"] > div,
-div[data-testid="stAppViewContainer"] > div:first-child,
-div[data-testid="stAppViewContainer"] > div:first-child > div{
-  flex-direction: row-reverse !important;
+/* 2) Reverse ONLY actual Streamlit columns so first column appears on the RIGHT */
+div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]),
+div[data-testid="stColumns"]:has(> div[data-testid="column"]),
+.stHorizontalBlock:has(> div[data-testid="column"]),
+.stColumns:has(> div[data-testid="column"]){
+    direction: ltr !important;       /* avoid bidi side effects on layout engine */
+    flex-direction: row-reverse !important;
 }
 
-/* تثبيت السايدبار يمينًا مهما تغيّر DOM */
-section[data-testid="stSidebar"],
-div[data-testid="stSidebar"],
-[data-testid="stSidebar"]{
-  right: 0 !important;
-  left: auto !important;
-  inset-inline-end: 0 !important;
-  inset-inline-start: auto !important;
-  text-align: right !important;
+div[data-testid="stHorizontalBlock"]:has(> div[data-testid="column"]) > div[data-testid="column"],
+div[data-testid="stColumns"]:has(> div[data-testid="column"]) > div[data-testid="column"],
+.stHorizontalBlock:has(> div[data-testid="column"]) > div[data-testid="column"],
+.stColumns:has(> div[data-testid="column"]) > div[data-testid="column"]{
+    direction: rtl !important;
+    text-align: right !important;
 }
 
-/* استثناءات LTR للكود/JSON حتى لا تتشوّه */
-pre, code,
-[data-testid="stCodeBlock"] pre,
-[data-testid="stJson"] pre,
-[data-testid="stCodeBlock"] pre code,
-[data-testid="stJson"] pre code{
-  direction: ltr !important;
-  text-align: left !important;
-}
-
-
-
-/* =====================================================
-   ABSOLUTE LAST RTL REPAIR (round 2)
-   - Forces document/UI RTL even when earlier CSS blocks conflict
-   - Keeps code/JSON widgets in LTR
-   ===================================================== */
-html, body, #root, .stApp,
-[data-testid="stAppViewContainer"],
-[data-testid="stMain"],
-[data-testid="stMainBlockContainer"],
-[data-testid="stSidebar"],
-[data-testid="stSidebarContent"],
-.block-container {
-  direction: rtl !important;
-  text-align: right !important;
-}
-
-/* Fix common Streamlit row containers so first column appears on the RIGHT */
-div[data-testid="stHorizontalBlock"],
-div[data-testid="stColumns"],
-.stHorizontalBlock,
-.stColumns {
-  direction: rtl !important;
-  flex-direction: row-reverse !important;
-}
-
-/* Column content itself should stay RTL */
-div[data-testid="column"],
-[data-testid="stVerticalBlock"] > div[data-testid="column"] {
-  direction: rtl !important;
-  text-align: right !important;
-}
-
-/* Sidebar pinned to the right across versions */
-section[data-testid="stSidebar"],
-[data-testid="stSidebar"] {
-  right: 0 !important;
-  left: auto !important;
-  inset-inline-end: 0 !important;
-  inset-inline-start: auto !important;
-}
-
-/* Labels, captions, markdown, and normal widget text */
-label, p, span, li, div, h1, h2, h3, h4, h5, h6 {
-  text-align: right;
-}
-
-/* Preserve LTR for technical blocks */
-pre, code,
-[data-testid="stCodeBlock"] pre,
-[data-testid="stJson"] pre,
-[data-testid="stCodeBlock"] pre code,
-[data-testid="stJson"] pre code,
-input[type="email"],
-input[type="url"] {
-  direction: ltr !important;
-  text-align: left !important;
-}
-
-
-/* =====================================================
-   FINAL PATCH: internal icon/order fixes (RTL safe)
-   - يصلّح انقلاب ترتيب الأيقونات/التفاصيل داخل العناصر
-   - لا يغيّر RTL العام للتطبيق
-   ===================================================== */
-/* Material icon fonts must keep their own font-family */
-.material-icons{ font-family: 'Material Icons' !important; }
-.material-symbols-outlined{ font-family: 'Material Symbols Outlined' !important; }
-.material-symbols-rounded{ font-family: 'Material Symbols Rounded' !important; }
-.material-symbols-sharp{ font-family: 'Material Symbols Sharp' !important; }
-
-/* Keep icon glyphs/SVG stable (no bidi weirdness) */
-.stApp svg,
-.stApp i.material-icons,
-.stApp .material-symbols-outlined,
-.stApp .material-symbols-rounded,
-.stApp .material-symbols-sharp{
-  direction: ltr !important;
-  unicode-bidi: isolate !important;
-  text-align: center !important;
-}
-
-/* Restore normal inner order for BaseWeb wrappers (some earlier rules reversed internals) */
+/* 3) BaseWeb internals: keep text RTL but do not mirror decorative/icon wrappers */
 [data-baseweb="input"] > div,
 [data-baseweb="textarea"] > div,
-[data-baseweb="select"] > div,
-[data-baseweb="button"] > div{
-  flex-direction: row !important;
+[data-baseweb="select"] > div{
+    direction: rtl !important;
+    text-align: right !important;
+    flex-direction: row !important;
+}
+[data-baseweb="input"] input,
+[data-baseweb="textarea"] textarea,
+[data-baseweb="select"] input{
+    direction: rtl !important;
+    text-align: right !important;
 }
 
-/* Keep labels/buttons readable with emoji/icons in Arabic */
-button,
-button *,
-[data-testid="stRadio"] label,
-[data-testid="stCheckbox"] label,
-[data-testid="stSelectbox"] label,
-[data-testid="stMultiSelect"] label{
-  unicode-bidi: plaintext !important;
+/* 4) Icons/SVG/emoji spans: isolate from bidi so they don't flip/turn into text */
+.stApp svg,
+.stApp [role="img"],
+.stApp [data-testid="stIconMaterial"],
+.stApp [data-testid="stIconMaterial"] *,
+.stApp .material-icons,
+.stApp .material-symbols-outlined,
+.stApp .material-symbols-rounded,
+.stApp .material-symbols-sharp,
+.stApp [class*="material-symbols"],
+.stApp span[translate="no"]{
+    direction: ltr !important;
+    text-align: center !important;
+    unicode-bidi: isolate !important;
+    letter-spacing: normal !important;
 }
 
-/* Expander summary arrow + text spacing in RTL (arrow on the right) */
-div[data-testid="stExpander"] details summary{
-  padding-right: 44px !important;
-  padding-left: 12px !important;
+/* 5) Expander summary / button content alignment in RTL without reversing icon glyphs */
+div[data-testid="stExpander"] details summary,
+div[data-testid="stExpander"] details summary *{
+    text-align: right !important;
 }
-div[data-testid="stExpander"] details summary::after{
-  right: 16px !important;
-  left: auto !important;
-}
-
-/* Metrics / small UI rows: preserve child order under RTL without accidental reverse */
-[data-testid="stMetric"] > div,
-[data-testid="stMetric"] div,
-[data-testid="stAlert"] > div,
-[data-testid="stToast"] > div{
-  direction: rtl !important;
+.stApp button,
+.stApp button *{
+    unicode-bidi: plaintext !important;
 }
 
 </style>
