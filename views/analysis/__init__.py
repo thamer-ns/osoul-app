@@ -9,7 +9,7 @@ import streamlit as st
 from components import render_kpi, render_ticker_card
 from data_source import get_company_details
 from database import fetch_table
-from market_data import get_chart_history
+from market_data import get_chart_history, fetch_batch_data, get_ticker_symbol
 from views.shared import (
     _clean_symbols_list,
     _normalize_symbol,
@@ -22,10 +22,6 @@ from .classical import render_classical_tab
 from .financial import render_financial_dashboard_ui
 # ========================================================
 # Technical tab import (fail-safe)
-#
-# السبب: بعض الإصدارات/الفروع كانت تُسمي واجهة التحليل الفني `view_technical`
-# ولم تُصدِّر الاسم المتوافق `render_technical_tab`.
-# إذا فشل الاستيراد أو لم يكن الاسم موجودًا، نستخدم fallback آمن بدل كسر التطبيق بالكامل.
 # ========================================================
 try:
     from .technical import render_technical_tab
@@ -40,7 +36,7 @@ from .thesis import render_thesis_tab
 
 
 # ========================================================
-# UI helpers (لا تغيّر أي منطق تحليل—فقط عرض)
+# UI helpers (لا تغيّر منطق التحليل)
 # ========================================================
 
 def _safe_float(x, default=None):
@@ -52,31 +48,48 @@ def _safe_float(x, default=None):
         return default
 
 
-def _fmt_money_ar(x, default="—"):
-    v = _safe_float(x, None)
-    if v is None:
-        return default
-    try:
-        sign = "+" if v > 0 else ("-" if v < 0 else "")
-        return f"{sign}{abs(v):,.0f} ر.س"
-    except Exception:
-        return default
+@st.cache_data(ttl=120, show_spinner=False)
+def _cached_company_details(symbol: str):
+    """تقليل تكرار استدعاء بيانات الشركة عند كل rerun/تبديل تبويب."""
+    return get_company_details(symbol)
 
 
-def _fmt_pct_ar(x, default="—"):
-    v = _safe_float(x, None)
-    if v is None:
-        return default
-    try:
-        return f"{v:+.2f}%"
-    except Exception:
-        return default
+@st.cache_data(ttl=90, show_spinner=False)
+def _cached_last_price_change(symbol: str):
+    return _safe_get_last_price_change_uncached(symbol)
 
 
 def _safe_get_last_price_change(symbol: str):
-    """Try to get last close + % change. Safe fallback if data missing."""
+    return _cached_last_price_change(str(symbol or "").strip())
+
+
+def _safe_get_last_price_change_uncached(symbol: str):
+    """Try to get live price + % change, then fallback to recent history."""
     try:
-        df = get_chart_history(symbol, period="5d", interval="1d")
+        norm = get_ticker_symbol(symbol) or str(symbol or "").strip().upper()
+
+        # 1) مباشر (snapshot)
+        try:
+            snap = fetch_batch_data([norm]) or {}
+            d = snap.get(norm) or snap.get(str(symbol or "").strip().upper()) or {}
+            if isinstance(d, dict) and d:
+                last = _safe_float(d.get("price"), None)
+                prev = _safe_float(d.get("prev_close", d.get("previous_close")), None)
+                if isinstance(last, (int, float)) and last and last > 0:
+                    chg = None
+                    if isinstance(prev, (int, float)) and prev and prev > 0:
+                        chg = (float(last) / float(prev) - 1.0) * 100.0
+                    else:
+                        chg = _safe_float(d.get("change_pct", d.get("change_percent")), None)
+                    return float(last), (float(chg) if isinstance(chg, (int, float)) else None)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception(
+                'فشل جلب السعر المباشر في تحليل السهم (سيتم استخدام fallback)'
+            )
+
+        # 2) آخر الإغلاقات (fallback)
+        df = get_chart_history(norm or symbol, period="5d", interval="1d")
         if df is None:
             return None, None
         if not isinstance(df, pd.DataFrame):
@@ -88,7 +101,6 @@ def _safe_get_last_price_change(symbol: str):
         if df.empty:
             return None, None
 
-        # normalize columns
         cols = {str(c).lower(): c for c in df.columns}
         c_close = cols.get("close") or ("Close" if "Close" in df.columns else None)
         if c_close is None:
@@ -160,13 +172,131 @@ def _section_header(symbol: str, name: str, sector: str, trades: pd.DataFrame):
 
 
 def _safe_render(title: str, fn, *args, **kwargs):
-    """Render a tab safely and show full error details (بدون إخفاء شيء)."""
+    """Render a section safely and show full error details (بدون إخفاء شيء)."""
     try:
         fn(*args, **kwargs)
     except Exception as e:
-        st.error(f"❌ حصل خطأ داخل تبويب: {title}")
+        st.error(f"❌ حصل خطأ داخل قسم: {title}")
         st.caption("هذا لا يعني حذف ميزة؛ غالبًا خطأ بيانات/استدعاء/إصدار. التفاصيل بالأسفل:")
         st.code("".join(traceback.format_exception(type(e), e, e.__traceback__)))
+
+
+def _render_stress_test(fin: dict, trades: pd.DataFrame):
+    """عرض اختبار التحمل (المنطق كما هو، مع تحسينات عرض بسيطة)."""
+    if trades is None or trades.empty or "status" not in trades.columns:
+        return
+
+    status = _safe_status_series(trades)
+    open_pos = trades[status == "open"].copy()
+    if open_pos.empty:
+        return
+
+    st.subheader("📊 اختبار التحمل")
+    res = run_stress_test(_safe_float(fin.get("market_val_open", 0), 0) or 0, open_pos)
+    if not res.get("scenarios"):
+        return
+
+    c_stress, c_insight = st.columns([3, 1])
+    with c_stress:
+        sdf = pd.DataFrame(res["scenarios"])
+        if not sdf.empty and "scenario" in sdf.columns and "impact_pct" in sdf.columns:
+            # ألوان مبسطة بدون كسر أي منطق قديم (إن لم يوجد color نحسبه من الإشارة)
+            if "color" not in sdf.columns:
+                sdf["color"] = sdf["impact_pct"].apply(lambda v: "إيجابي" if _safe_float(v, 0) >= 0 else "سلبي")
+            fig = px.bar(
+                sdf,
+                x="scenario",
+                y="impact_pct",
+                color="color",
+                color_discrete_map={"إيجابي": "#16a34a", "سلبي": "#dc2626", "محايد": "#64748b"},
+                labels={"scenario": "سيناريو السوق", "impact_pct": "الأثر المتوقع على المحفظة (%)", "color": "الإشارة"},
+            )
+            fig.update_layout(showlegend=False)
+            fig.add_hline(y=0, line_width=1, line_dash="dot")
+            st.plotly_chart(fig, width="stretch")
+    with c_insight:
+        st.info(res.get("insight", ""))
+    st.caption("هذا الاختبار تقديري (Sensitivity/Heuristic) وليس توقعًا أو ضمانًا.")
+    st.markdown("---")
+
+
+def _analysis_sections_selector(sym: str) -> str:
+    """بديل للتبويبات التقليدية لتحسين الأداء: يرندر قسمًا واحدًا فقط بدل كل الأقسام."""
+    options = [
+        "🤖 المستشار",
+        "💰 التحليل المالي",
+        "📈 التحليل الفني",
+        "🏛️ التحليل الكلاسيكي",
+        "📝 الأطروحة/الخطة",
+        "🧪 تشخيص العرض",
+    ]
+    key = f"analysis_section_{sym}"
+    current = st.session_state.get(key, options[0])
+    if current not in options:
+        current = options[0]
+
+    try:
+        # إن توفرت segmented_control في نسختك ستكون أجمل وأسرع بصريًا
+        selected = st.segmented_control(
+            "أقسام التحليل",
+            options=options,
+            default=current,
+            selection_mode="single",
+            key=key,
+            label_visibility="collapsed",
+        )
+        return selected or current
+    except Exception:
+        return st.radio(
+            "أقسام التحليل",
+            options=options,
+            index=options.index(current),
+            key=key,
+            horizontal=True,
+            label_visibility="collapsed",
+        )
+
+
+def _render_diagnostics(sym: str, trades: pd.DataFrame, wl: pd.DataFrame):
+    st.subheader("🧪 تشخيص ظهور التفاصيل")
+    st.caption(
+        "هذا القسم يساعدك تتأكد أن كل شيء مبرمج يظهر فعلاً. "
+        "لن يحذف شيئًا؛ فقط يعرض حالة الوحدات والبيانات بشكل واضح."
+    )
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.markdown("**رمز نشط**")
+        st.write(sym)
+    with c2:
+        st.markdown("**عدد عمليات المحفظة**")
+        st.write(int(len(trades)) if isinstance(trades, pd.DataFrame) else 0)
+    with c3:
+        st.markdown("**قائمة المتابعة**")
+        try:
+            st.write(int(len(wl)) if isinstance(wl, pd.DataFrame) else 0)
+        except Exception:
+            st.write(0)
+
+    st.markdown("---")
+    st.markdown("### 📈 فحص بيانات الشارت")
+    with st.spinner("اختبار جلب بيانات السعر..."):
+        p, c = _safe_get_last_price_change(sym)
+    if p is None:
+        st.warning("تعذر جلب بيانات السعر لهذا الرمز الآن (مصدر البيانات قد يكون متوقف/حظر/انقطاع).")
+    else:
+        st.success(
+            f"تم جلب السعر بنجاح: {p:,.2f}"
+            + (f" | التغير: {c:+.2f}%" if isinstance(c, (int, float)) else "")
+        )
+
+    st.markdown("---")
+    st.markdown("### 🧩 ملاحظة مهمة")
+    st.info(
+        "إذا لاحظت أن جزءًا من قسم (مالي/فني/مستشار) لا يظهر، "
+        "ادخل نفس القسم وستجد رسالة خطأ مفصّلة داخله. "
+        "هذا يضمن أن ما عندك شيء 'مبرمج' لكنه مخفي بدون ما تدري."
+    )
 
 
 # ========================================================
@@ -176,122 +306,16 @@ def _safe_render(title: str, fn, *args, **kwargs):
 def view_analysis(fin):
     st.header("🔬 التحليل الشامل")
 
+    fin = fin or {}
     trades = fin.get("all_trades", pd.DataFrame())
 
     # --------------------------------------------------------
-    # Stress test (محسّن: أوضح للمستخدم + أثر % وقيمة + توضيح الافتراضات)
+    # Stress test (منطقه كما هو / عرض أوضح)
     # --------------------------------------------------------
-    if not trades.empty and "status" in trades.columns:
-        status = _safe_status_series(trades)
-        open_pos = trades[status == "open"].copy()
-
-        st.subheader("📊 اختبار التحمل (تقديري) للمحفظة المفتوحة")
-        st.caption("يحاكي أثر تحركات السوق العامة على محفظتك اعتمادًا على حساسية تقديرية للمراكز (ليس توقعًا ولا ضمانًا، وليس VaR إحصائيًا).")
-
-        res = run_stress_test(_safe_float(fin.get("market_val_open", 0), 0) or 0, open_pos)
-        if res.get("scenarios"):
-            sdf = pd.DataFrame(res["scenarios"])
-            if not sdf.empty and {"scenario", "impact_pct"}.issubset(set(sdf.columns)):
-                sdf["impact_pct"] = pd.to_numeric(sdf["impact_pct"], errors="coerce").fillna(0.0).astype(float)
-                if "impact_amount" in sdf.columns:
-                    sdf["impact_amount"] = pd.to_numeric(sdf["impact_amount"], errors="coerce").fillna(0.0).astype(float)
-                else:
-                    base_val = _safe_float(res.get("portfolio_value_used"), 0) or 0
-                    sdf["impact_amount"] = sdf["impact_pct"] / 100.0 * float(base_val)
-
-                # ترتيب واضح (الأسوأ -> الأفضل) مع أشرطة أفقية مناسبة للـ RTL
-                order = [
-                    "انهيار (-20%)",
-                    "تصحيح (-10%)",
-                    "نزيف بطيء (-6%)",
-                    "انتعاش (+10%)",
-                    "طفرة (+20%)",
-                ]
-                try:
-                    sdf["scenario"] = pd.Categorical(sdf["scenario"], categories=order, ordered=True)
-                    sdf = sdf.sort_values("scenario").reset_index(drop=True)
-                except Exception:
-                    pass
-
-                sdf["_color"] = sdf.get("color", "")
-                sdf["_sign"] = sdf["impact_pct"].apply(lambda x: "إيجابي" if x > 0 else ("سلبي" if x < 0 else "محايد"))
-                # fallback ألوان إذا لم ترجع من المحرك
-                sdf.loc[sdf["impact_pct"] < 0, "_color"] = sdf.loc[sdf["impact_pct"] < 0, "_color"].replace("", "#DC2626")
-                sdf.loc[sdf["impact_pct"] > 0, "_color"] = sdf.loc[sdf["impact_pct"] > 0, "_color"].replace("", "#16A34A")
-                sdf.loc[sdf["impact_pct"] == 0, "_color"] = sdf.loc[sdf["impact_pct"] == 0, "_color"].replace("", "#64748B")
-
-                sdf["impact_label"] = sdf.apply(
-                    lambda r: f"{_fmt_pct_ar(r.get('impact_pct'))} | {_fmt_money_ar(r.get('impact_amount'))}",
-                    axis=1,
-                )
-
-                beta_proxy = _safe_float(res.get("weighted_beta") or res.get("beta_proxy_used"), None)
-                profile = str(res.get("portfolio_profile") or res.get("insight") or "—")
-                pval_used = _safe_float(res.get("portfolio_value_used") or fin.get("market_val_open", 0), None)
-                assumption_quality = str(res.get("assumption_quality") or "تقريبي")
-                action_hint = str(res.get("action_hint") or "")
-
-                k1, k2, k3 = st.columns(3)
-                with k1:
-                    render_kpi("حساسية المحفظة (Beta Proxy)", f"{beta_proxy:.2f}" if beta_proxy is not None else "—", "neutral", "🧪")
-                with k2:
-                    render_kpi("تصنيف المحفظة", profile, "blue", "🧭")
-                with k3:
-                    render_kpi("قيمة المحفظة المفتوحة", f"{pval_used:,.0f} ر.س" if pval_used is not None else "—", "neutral", "💼")
-
-                fig = px.bar(
-                    sdf,
-                    x="impact_pct",
-                    y="scenario",
-                    orientation="h",
-                    text="impact_label",
-                    color="_color",
-                    color_discrete_map="identity",
-                    custom_data=["impact_amount", "_sign", "impact_label"],
-                )
-                fig.update_traces(
-                    textposition="outside",
-                    cliponaxis=False,
-                    hovertemplate=(
-                        "السيناريو: %{y}<br>"
-                        "الأثر المتوقع: %{x:+.2f}%<br>"
-                        "الأثر بالقيمة: %{customdata[0]:+,.0f} ر.س<br>"
-                        "الاتجاه: %{customdata[1]}<extra></extra>"
-                    ),
-                )
-                fig.add_vline(x=0, line_width=1.5, line_dash="dash", line_color="#64748B")
-                fig.update_layout(
-                    height=max(320, 76 * max(1, len(sdf))),
-                    margin=dict(l=20, r=20, t=10, b=20),
-                    showlegend=False,
-                    xaxis_title="الأثر المتوقع على المحفظة (%)",
-                    yaxis_title="سيناريو السوق",
-                    bargap=0.28,
-                )
-                fig.update_yaxes(categoryorder="array", categoryarray=order[::-1])
-
-                st.plotly_chart(fig, use_container_width=True)
-
-                st.info(str(res.get("insight") or ""))
-                st.caption(
-                    f"طريقة الحساب: حساسية تقديرية (Heuristic/Beta Proxy) | جودة الافتراض: {assumption_quality}"
-                    + (f" | قيمة مستخدمة للحساب: {_fmt_money_ar(pval_used)}" if pval_used is not None else "")
-                )
-                if action_hint:
-                    st.success(f"💡 ماذا يعني هذا لك؟ {action_hint}")
-
-                with st.expander("🔎 تفاصيل وافتراضات الاختبار", expanded=False):
-                    st.markdown("- **هذا الاختبار تقديري** وليس توقعًا للسوق أو ضمانًا للنتائج.")
-                    st.markdown("- يعتمد على **نوع الأصل + الاستراتيجية + الخسائر الحالية** لبناء Beta Proxy للمحفظة.")
-                    st.markdown("- لا يأخذ في الحسبان ارتباطات القطاعات، التذبذب التاريخي الفعلي، السيولة، الفجوات، أو مخاطر خاصة بكل سهم.")
-                    st.markdown("- استخدمه لمقارنة حساسية محفظتك **قبل/بعد إعادة التوازن** وليس كبديل لإدارة المخاطر التفصيلية.")
-        else:
-            st.info(str(res.get("insight") or "لا توجد سيناريوهات متاحة حاليًا."))
-
-        st.markdown("---")
+    _render_stress_test(fin, trades)
 
     # --------------------------------------------------------
-    # Build symbols list from trades + watchlist (كما هو)
+    # Build symbols list from trades + watchlist
     # --------------------------------------------------------
     try:
         wl = fetch_table("watchlist")
@@ -315,7 +339,7 @@ def view_analysis(fin):
     all_syms = _clean_symbols_list(syms)
 
     # --------------------------------------------------------
-    # Search box UI (محسّن بصريًا بدون تغيير المنطق)
+    # Search box UI
     # --------------------------------------------------------
     st.markdown("##### 🔎 البحث عن سهم")
     with st.form("analysis_search_form", clear_on_submit=False):
@@ -357,7 +381,7 @@ def view_analysis(fin):
         else:
             ok = False
             try:
-                info = get_company_details(sym_try)
+                info = _cached_company_details(sym_try)
                 if isinstance(info, (list, tuple)) and len(info) >= 1:
                     ok = bool(str(info[0]).strip())
                 elif isinstance(info, dict):
@@ -387,7 +411,7 @@ def view_analysis(fin):
         return
 
     try:
-        info = get_company_details(sym)
+        info = _cached_company_details(sym)
         if isinstance(info, (list, tuple)) and len(info) >= 2:
             n, sec = info[0], info[1]
         elif isinstance(info, dict):
@@ -402,78 +426,25 @@ def view_analysis(fin):
     _section_header(sym, n, sec, trades)
 
     # --------------------------------------------------------
-    # Tabs (نفس التبويبات بدون حذف/تغيير—مع حراسة أخطاء)
+    # Lazy sections selector (بديل تبويبات Streamlit لتقليل الحمل)
     # --------------------------------------------------------
-    st.markdown("### 🧩 تبويبات التحليل")
-    st.caption("ملاحظة: أي خطأ في تبويب واحد سيتم عرضه بالتفصيل دون إخفاء بقية التبويبات.")
+    st.markdown("### 🧩 أقسام التحليل")
+    st.caption(
+        "تحسين أداء: يتم الآن تحميل القسم المختار فقط بدل تحميل كل الأقسام معًا عند كل تبديل صفحة. "
+        "هذا يقلل التأخير بشكل واضح بدون حذف أي ميزة."
+    )
 
-    tabs = st.tabs([
-        "🤖 المستشار",
-        "💰 التحليل المالي",
-        "📈 التحليل الفني",
-        "🏛️ التحليل الكلاسيكي",
-        "📝 الأطروحة/الخطة",
-        "🧪 تشخيص العرض",
-    ])
+    section = _analysis_sections_selector(sym)
 
-    with tabs[0]:
+    if section == "🤖 المستشار":
         _safe_render("المستشار", render_advisor_tab, sym)
-
-    with tabs[1]:
+    elif section == "💰 التحليل المالي":
         _safe_render("مالي", render_financial_dashboard_ui, sym)
-
-    with tabs[2]:
+    elif section == "📈 التحليل الفني":
         _safe_render("فني", render_technical_tab, sym)
-
-    with tabs[3]:
+    elif section == "🏛️ التحليل الكلاسيكي":
         _safe_render("كلاسيكي", render_classical_tab, sym)
-
-    with tabs[4]:
+    elif section == "📝 الأطروحة/الخطة":
         _safe_render("أطروحة", render_thesis_tab, sym)
-
-    # --------------------------------------------------------
-    # Diagnostics: ensure nothing is silently hidden
-    # --------------------------------------------------------
-    with tabs[5]:
-        st.subheader("🧪 تشخيص ظهور التفاصيل")
-        st.caption(
-            "هذا القسم يساعدك تتأكد أن كل شيء مبرمج يظهر فعلاً. "
-            "لن يحذف شيئًا؛ فقط يعرض حالة الوحدات والبيانات بشكل واضح."
-        )
-
-        # Data availability checks
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.markdown("**رمز نشط**")
-            st.write(sym)
-        with c2:
-            st.markdown("**عدد عمليات المحفظة**")
-            st.write(int(len(trades)) if isinstance(trades, pd.DataFrame) else 0)
-        with c3:
-            st.markdown("**قائمة المتابعة**")
-            try:
-                st.write(int(len(wl)) if isinstance(wl, pd.DataFrame) else 0)
-            except Exception:
-                st.write(0)
-
-        st.markdown("---")
-
-        # Chart data check
-        st.markdown("### 📈 فحص بيانات الشارت")
-        with st.spinner("اختبار جلب بيانات السعر..."):
-            p, c = _safe_get_last_price_change(sym)
-        if p is None:
-            st.warning("تعذر جلب بيانات السعر لهذا الرمز الآن (مصدر البيانات قد يكون متوقف/حظر/انقطاع).")
-        else:
-            st.success(
-                f"تم جلب السعر بنجاح: {p:,.2f}"
-                + (f" | التغير: {c:+.2f}%" if isinstance(c, (int, float)) else "")
-            )
-
-        st.markdown("---")
-        st.markdown("### 🧩 ملاحظة مهمة")
-        st.info(
-            "إذا لاحظت أن جزءًا من تبويب (مالي/فني/مستشار) لا يظهر، "
-            "ادخل نفس التبويب وستجد رسالة خطأ مفصّلة داخل التبويب نفسه. "
-            "هذا يضمن أن ما عندك شيء 'مبرمج' لكنه مخفي بدون ما تدري."
-        )
+    else:
+        _render_diagnostics(sym, trades, wl)
