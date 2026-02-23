@@ -95,7 +95,8 @@ def _analyze_sr(df):
                 feats["broke_support_confirm"] = 1
                 obs.append("🧨 كسر دعم مؤكّد (إغلاق يومين تحت المنطقة)")
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/risk.py:97')
 
     if highs:
         res = min(highs, key=lambda x: abs(close - x))
@@ -184,7 +185,8 @@ def _risk_gates(report: dict) -> dict:
                 gates["pass"] = False
                 gates["reasons"].append("R:R أقل من 1.2 — مخاطرة غير مناسبة")
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/risk.py:186')
 
     feats = report.get("features") or {}
 
@@ -197,7 +199,8 @@ def _risk_gates(report: dict) -> dict:
             gates["pass"] = False
             gates["reasons"].append("كسر دعم مؤكّد — يمنع الشراء")
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/risk.py:199')
 
     # Gate 3: OCF negative
     try:
@@ -205,7 +208,8 @@ def _risk_gates(report: dict) -> dict:
             gates["pass"] = False
             gates["reasons"].append("التدفق النقدي التشغيلي سالب — مخاطرة عالية للاستثمار")
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/risk.py:207')
 
     # Gate 4: Data Quality (Fundamental)
     try:
@@ -217,7 +221,8 @@ def _risk_gates(report: dict) -> dict:
             gates["pass"] = False
             gates["reasons"].append(f"بوابة جودة البيانات: FAIL (Score={dq_score}/100) — يمنع توصية شراء قوية")
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/risk.py:219')
 
     return gates
 
