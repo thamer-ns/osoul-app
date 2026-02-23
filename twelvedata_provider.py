@@ -421,44 +421,64 @@ def get_quote(symbol: str) -> Dict[str, Any]:
 
     Returns:
       {"ok": bool, "price": float, "prev_close": float, "chg_pct": float, "raw": ...}
-
-    Notes:
-    - For indices (TASI), Twelve Data typically supports the symbol "TASI".
-    - If prev_close is missing, we fall back to last known close from time_series.
     """
     key = get_api_key()
     if not key:
         return {"ok": False, "reason": "missing_api_key"}
 
-    sym = resolve_symbol(symbol)
+    meta = resolve_symbol_meta(symbol)
+    sym = str(meta.get("symbol") or "").strip()
+    exch = str(meta.get("exchange") or "").strip()
+    if not sym:
+        return {"ok": False, "reason": "empty_symbol"}
+
+    def _num(x) -> float:
+        try:
+            if x is None:
+                return 0.0
+            if isinstance(x, str):
+                x = x.replace(",", "").replace("%", "").strip()
+                if x.lower() in ("", "nan", "none", "null"):
+                    return 0.0
+            return float(x)
+        except Exception:
+            return 0.0
 
     # SDK path
-    try:
-        client = TDClient(apikey=key)
-        data = client.quote(symbol=sym).as_json()
-        if isinstance(data, dict) and str(data.get("status", "")).lower() != "error":
-            price = float(data.get("close") or data.get("price") or data.get("last") or 0.0)
-            prev = float(data.get("previous_close") or data.get("prev_close") or 0.0)
-            chg_pct = float(data.get("percent_change") or data.get("change_percent") or 0.0)
-            return {"ok": price > 0, "price": price, "prev_close": prev, "chg_pct": chg_pct, "raw": data}
-    except Exception:
-        pass
+    if _HAS_SDK and TDClient is not None:
+        try:
+            _throttle(min_gap_s=0.8)
+            client = TDClient(apikey=key)
+            kwargs = {"symbol": sym}
+            if exch:
+                kwargs["exchange"] = exch
+            data = client.quote(**kwargs).as_json()
+            if isinstance(data, dict) and str(data.get("status", "")).lower() != "error":
+                price = _num(data.get("close") or data.get("price") or data.get("last"))
+                prev = _num(data.get("previous_close") or data.get("prev_close"))
+                chg_pct = _num(data.get("percent_change") or data.get("change_percent"))
+                return {"ok": price > 0, "price": price, "prev_close": prev, "chg_pct": chg_pct, "raw": data}
+        except Exception:
+            pass
 
     # HTTP fallback
     if requests:
         try:
             _throttle(min_gap_s=0.8)
+            params = {"apikey": key, "symbol": sym}
+            if exch:
+                params["exchange"] = exch
             r = requests.get(
                 "https://api.twelvedata.com/quote",
-                params={"apikey": key, "symbol": sym},
+                params=params,
                 timeout=10,
                 headers={"User-Agent": "Mozilla/5.0"},
             )
             data = r.json()
             if isinstance(data, dict) and str(data.get("status", "")).lower() != "error":
-                price = float(data.get("close") or data.get("price") or data.get("last") or 0.0)
-                prev = float(data.get("previous_close") or data.get("prev_close") or 0.0)
-                chg_pct = float(data.get("percent_change") or data.get("change_percent") or 0.0)
+                price = _num(data.get("close") or data.get("price") or data.get("last"))
+                prev = _num(data.get("previous_close") or data.get("prev_close"))
+                chg_pct = _num(data.get("percent_change") or data.get("change_percent"))
                 return {"ok": price > 0, "price": price, "prev_close": prev, "chg_pct": chg_pct, "raw": data}
             return {"ok": False, "reason": str(data.get("message") or data.get("error") or "quote_error"), "raw": data}
         except Exception as e:
