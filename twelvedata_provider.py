@@ -47,7 +47,8 @@ def get_api_key() -> str:
         if k:
             return str(k).strip()
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at twelvedata_provider.py:49')
     return str(os.environ.get("TWELVEDATA_API_KEY", "")).strip()
 
 
@@ -72,7 +73,8 @@ def _throttle(key: str = "_td_last_call_ts", min_gap_s: float = 1.2):
             time.sleep(wait)
         st.session_state[key] = time.time()
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at twelvedata_provider.py:74')
 
 
 def _interval_map(interval: str) -> str:
@@ -177,7 +179,8 @@ def resolve_symbol_meta(symbol: str, default_exchange: str = "XSAU") -> Dict[str
                     "exchange": str(best.get("exchange") or (default_exchange if is_numeric else "")).strip(),
                 }
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at twelvedata_provider.py:179')
 
     # HTTP fallback
     if requests:
@@ -197,7 +200,8 @@ def resolve_symbol_meta(symbol: str, default_exchange: str = "XSAU") -> Dict[str
                     "exchange": str(best.get("exchange") or (default_exchange if is_numeric else "")).strip(),
                 }
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at twelvedata_provider.py:199')
 
     return {"symbol": query_symbol if query_symbol else s_up, "exchange": (default_exchange if is_numeric else "")}
 
@@ -396,7 +400,8 @@ def get_api_usage() -> Dict[str, Any]:
             data = client.get_api_usage().as_json()
             return {"ok": True, "data": data}
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at twelvedata_provider.py:398')
 
     # HTTP fallback
     if requests:
@@ -459,7 +464,8 @@ def get_quote(symbol: str) -> Dict[str, Any]:
                 chg_pct = _num(data.get("percent_change") or data.get("change_percent"))
                 return {"ok": price > 0, "price": price, "prev_close": prev, "chg_pct": chg_pct, "raw": data}
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at twelvedata_provider.py:461')
 
     # HTTP fallback
     if requests:
