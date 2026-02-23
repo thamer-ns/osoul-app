@@ -68,7 +68,8 @@ def _compute_indicators(df: pd.DataFrame):
         out["macd_signal"] = signal
         out["macd_hist"] = hist
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/indicators.py:70')
 
     # =========================================================
     # ATR (Wilder)
@@ -83,7 +84,8 @@ def _compute_indicators(df: pd.DataFrame):
         atr14 = tr.ewm(alpha=1/14, adjust=False, min_periods=14).mean()
         out["atr14"] = atr14
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/indicators.py:85')
 
     # =========================================================
     # ADX (14) + DI
@@ -119,7 +121,8 @@ def _compute_indicators(df: pd.DataFrame):
         out["plus_di14"] = plus_di.bfill()
         out["minus_di14"] = minus_di.bfill()
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/indicators.py:121')
 
     # =========================================================
     # Stochastic (14,3)
@@ -132,7 +135,8 @@ def _compute_indicators(df: pd.DataFrame):
         out["stoch_k"] = k.bfill()
         out["stoch_d"] = d.bfill()
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/indicators.py:134')
 
     # =========================================================
     # OBV
@@ -142,7 +146,8 @@ def _compute_indicators(df: pd.DataFrame):
         obv = (direction * vol).fillna(0.0).cumsum()
         out["obv"] = obv
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/indicators.py:144')
 
     # =========================================================
     # Volatility (20)
@@ -151,7 +156,8 @@ def _compute_indicators(df: pd.DataFrame):
         ret = close.pct_change().replace([np.inf, -np.inf], 0).fillna(0)
         out["vol20"] = ret.rolling(20).std().bfill()
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/indicators.py:153')
 
     # =========================================================
     # Fib + Range (120 lookback)
@@ -166,6 +172,7 @@ def _compute_indicators(df: pd.DataFrame):
             out["range_high"] = hh
             out["range_low"] = ll
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/indicators.py:168')
 
     return out
