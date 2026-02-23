@@ -68,7 +68,8 @@ def log_ai_signal(
         if ok:
             return signal_id
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/logging_learning.py:70')
 
     try:
         ok = _try_exec(
