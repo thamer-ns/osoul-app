@@ -1,7 +1,11 @@
 # app.py
+from __future__ import annotations
+
 import os
 import sys
-from typing import Optional
+from typing import Optional, Tuple
+
+import streamlit as st
 
 # Load local environment variables for development (safe no-op on Streamlit Cloud)
 try:
@@ -10,18 +14,9 @@ try:
 except Exception:
     pass
 
-import streamlit as st
-
-# Arabic UI: translate Streamlit default placeholders (called after set_page_config)
-try:
-    from components import inject_streamlit_ar_i18n
-except Exception:
-    inject_streamlit_ar_i18n = None
 
 # -----------------------------------------------------------------------------
-# 🔧 Import bootstrap
-# بعض الرفعّات إلى GitHub تضع المشروع داخل مجلد فرعي (مثل: osoul-app-main).
-# هذا البلوك يجعل imports تعمل حتى لو تغيّر مسار التشغيل.
+# 🔧 Import bootstrap (supports running from root or nested folder in deployments)
 # -----------------------------------------------------------------------------
 _BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 _PARENT_DIR = os.path.dirname(_BASE_DIR)
@@ -29,8 +24,8 @@ _PARENT_DIR = os.path.dirname(_BASE_DIR)
 _candidates = [
     _BASE_DIR,
     _PARENT_DIR,
-    os.path.join(_BASE_DIR, 'osoul-app-main'),
-    os.path.join(_BASE_DIR, 'osoul-app'),
+    os.path.join(_BASE_DIR, "osoul-app-main"),
+    os.path.join(_BASE_DIR, "osoul-app"),
 ]
 for _p in _candidates:
     try:
@@ -39,34 +34,8 @@ for _p in _candidates:
     except Exception:
         pass
 
-# الآن imports
-try:
-    from config import APP_NAME, APP_ICON
-except Exception:
-    APP_NAME, APP_ICON = 'أُصول', '📈'
 
-from database import init_db
-from styles import apply_custom_css
-
-# ✅ (اختياري) إذا ضفت apply_ui_css داخل styles.py
-try:
-    from styles import apply_ui_css
-except Exception:
-    apply_ui_css = None
-
-try:
-    from components import inject_component_styles
-except Exception:
-    inject_component_styles = None
-
-# ✅ (اختياري) هيدر احترافي (شعار + اسم + وصف + شريط حالة) بدون لمس منطق التحليل
-try:
-    from components import render_app_header
-except Exception:
-    render_app_header = None
-
-
-def _safe_image(path: str, width: Optional[int] = None):
+def _safe_image(path: str, width: Optional[int] = None) -> None:
     try:
         if path and os.path.exists(path):
             st.image(path, width=width)
@@ -74,85 +43,132 @@ def _safe_image(path: str, width: Optional[int] = None):
         pass
 
 
-@st.cache_data(show_spinner=False)
-def _init_db_once():
+def _load_app_config() -> Tuple[str, str]:
+    """Load app title/icon without hard-failing if config is temporarily broken."""
+    try:
+        from config import APP_NAME, APP_ICON  # type: ignore
+        name = str(APP_NAME or "أُصول")
+        icon = str(APP_ICON or "📈")
+        return name, icon
+    except Exception:
+        return "أُصول", "📈"
+
+
+@st.cache_resource(show_spinner=False)
+def _init_db_once() -> tuple[bool, str]:
     """تهيئة DB مرة واحدة (خاصة في Streamlit Cloud)."""
     try:
+        from database import init_db  # import here to avoid early import side-effects
         init_db()
-        return True, ''
+        return True, ""
     except Exception as e:
         return False, str(e)
 
 
-def main():
-    st.set_page_config(
-        page_title=APP_NAME,
-        page_icon=APP_ICON if isinstance(APP_ICON, str) and len(APP_ICON) <= 4 else '📈',
-        layout='wide',
-        initial_sidebar_state='expanded',
-    )
+def _apply_global_ui_once() -> None:
+    """Apply CSS/i18n/component styles safely once per session after set_page_config."""
+    if st.session_state.get("___global_ui_applied"):
+        return
 
-    # i18n (DOM translation) يجب أن يأتي بعد set_page_config
+    st.session_state["___global_ui_applied"] = True
+
+    # Optional imports: keep app working even if a cosmetic helper is missing.
+    try:
+        from styles import apply_custom_css  # type: ignore
+    except Exception:
+        apply_custom_css = None
+
+    try:
+        from styles import apply_ui_css  # type: ignore
+    except Exception:
+        apply_ui_css = None
+
+    try:
+        from components import inject_streamlit_ar_i18n  # type: ignore
+    except Exception:
+        inject_streamlit_ar_i18n = None
+
+    try:
+        from components import inject_component_styles  # type: ignore
+    except Exception:
+        inject_component_styles = None
+
+    try:
+        from components import render_app_header  # type: ignore
+    except Exception:
+        render_app_header = None
+
+    # i18n should come after set_page_config so DOM is initialized.
     try:
         if inject_streamlit_ar_i18n:
             inject_streamlit_ar_i18n(True)
     except Exception:
         pass
 
-    # CSS (آمن)
     try:
-        apply_custom_css()
+        if apply_custom_css:
+            apply_custom_css()
     except Exception:
         pass
 
-    # CSS إضافي (اختياري)
-    if apply_ui_css:
-        try:
+    try:
+        if apply_ui_css:
             apply_ui_css()
-        except Exception:
-            pass
+    except Exception:
+        pass
 
-    # أنماط المكوّنات (اختياري)
-    if inject_component_styles:
-        try:
+    try:
+        if inject_component_styles:
             inject_component_styles()
-        except Exception:
-            pass
+    except Exception:
+        pass
 
-    # Header (اختياري)
-    if render_app_header:
-        try:
-            render_app_header('أصولي', 'منصة الذكاء الكمي للأسواق')
-        except Exception:
-            pass
+    try:
+        if render_app_header:
+            render_app_header("أصولي", "منصة الذكاء الكمي للأسواق")
+    except Exception:
+        pass
+
+
+def main() -> None:
+    app_name, app_icon = _load_app_config()
+
+    # MUST be the first Streamlit command.
+    st.set_page_config(
+        page_title=app_name,
+        page_icon=app_icon if isinstance(app_icon, str) and len(app_icon) <= 4 else "📈",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
+
+    _apply_global_ui_once()
 
     # -------------------------
     # DB Init
     # -------------------------
     ok, err = _init_db_once()
     if not ok:
-        st.error('❌ فشل تهيئة قاعدة البيانات. تأكد من DATABASE_URL في Secrets/Env.')
+        st.error("❌ فشل تهيئة قاعدة البيانات. تأكد من DATABASE_URL في Secrets/Env.")
         if err:
             st.caption(err)
 
     # -------------------------
-    # Auth Gate (من security.py)
+    # Auth Gate (supports multiple security.py variants)
     # -------------------------
     try:
-        # توافق مع نسخ security المختلفة
         try:
-            from security import login_system
+            from security import login_system  # type: ignore
         except Exception:
-            from security import require_login as login_system
+            from security import require_login as login_system  # type: ignore
     except Exception as e:
-        st.error('فشل تحميل نظام تسجيل الدخول (security.py).')
+        st.error("فشل تحميل نظام تسجيل الدخول (security.py).")
         st.code(str(e))
         st.stop()
 
     try:
         auth_ok = bool(login_system())
     except Exception as e:
-        st.error('حدث خطأ أثناء نظام تسجيل الدخول.')
+        st.error("حدث خطأ أثناء نظام تسجيل الدخول.")
         st.code(str(e))
         st.stop()
 
@@ -160,22 +176,22 @@ def main():
         st.stop()
 
     # -------------------------
-    # Router / Views
+    # Router / Views (import after set_page_config + auth to reduce side effects)
     # -------------------------
     try:
-        from views import router
+        from views import router  # type: ignore
     except Exception as e:
-        st.error('فشل تحميل واجهات التطبيق (views).')
+        st.error("فشل تحميل واجهات التطبيق (views).")
         st.code(str(e))
         st.stop()
 
     try:
         router()
     except Exception as e:
-        st.error('حدث خطأ غير متوقع في التطبيق.')
+        st.error("حدث خطأ غير متوقع في التطبيق.")
         st.code(str(e))
         st.stop()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
