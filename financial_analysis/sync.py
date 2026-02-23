@@ -68,7 +68,8 @@ def _df_to_dict_for_date(df, d) -> dict:
                 if pd.isna(v):
                     continue
             except Exception:
-                pass
+                import logging
+                logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/sync.py:70')
             try:
                 out[str(k)] = float(v)
             except Exception:
