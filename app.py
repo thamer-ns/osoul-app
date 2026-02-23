@@ -66,11 +66,11 @@ def _init_db_once() -> tuple[bool, str]:
 
 
 def _apply_global_ui_once() -> None:
-    """Apply CSS/i18n/component styles safely once per session after set_page_config."""
-    if st.session_state.get("___global_ui_applied"):
-        return
+    """Apply CSS/i18n/component styles after set_page_config on EVERY rerun.
 
-    st.session_state["___global_ui_applied"] = True
+    مهم: CSS المحقون عبر st.markdown لا يستمر بين reruns، لذلك لا نستخدم
+    session_state flag لمنع إعادة الحقن، وإلا ترجع الواجهة افتراضيًا (LTR).
+    """
 
     # Optional imports: keep app working even if a cosmetic helper is missing.
     try:
@@ -141,7 +141,7 @@ def main() -> None:
         initial_sidebar_state="expanded",
     )
 
-    _apply_global_ui_once()
+    _apply_global_ui_once()  # apply CSS every rerun (Streamlit rebuilds DOM)
 
     # -------------------------
     # DB Init
