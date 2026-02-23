@@ -323,6 +323,17 @@ def render_financial_dashboard_ui(symbol):
                 unsafe_allow_html=True,
             )
 
+            with st.expander("🧾 تعريفات/مصادر المؤشرات (تدقيق)", expanded=False):
+                meta_rows = [
+                    ("ROE", metrics.get("ROE_Method", "—")),
+                    ("Debt/Equity", metrics.get("Debt_to_Equity_Method", "—")),
+                    ("FCF", metrics.get("FCF_Quality", "—")),
+                    ("PEG", metrics.get("PEG_Source", "—")),
+                    ("Altman Z", metrics.get("Altman_Z_Model", "—")),
+                ]
+                for label, meta in meta_rows:
+                    st.write(f"- **{label}:** {meta}")
+
             st.markdown("---")
 
             # ---- Charts selector
