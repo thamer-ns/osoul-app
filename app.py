@@ -1,6 +1,7 @@
 # app.py
 import os
 import sys
+from typing import Optional
 
 # Load local environment variables for development (safe no-op on Streamlit Cloud)
 try:
@@ -11,68 +12,170 @@ except Exception:
 
 import streamlit as st
 
-# -----------------------------------------------------------------------------
-# 🔧 Import bootstrap
-# -----------------------------------------------------------------------------
-ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
-
-PARENT_DIR = os.path.dirname(ROOT_DIR)
-if PARENT_DIR and PARENT_DIR not in sys.path:
-    sys.path.insert(0, PARENT_DIR)
-
-# -----------------------------------------------------------------------------
-# 🧩 App configuration
-# -----------------------------------------------------------------------------
-try:
-    import config
-    page_title = getattr(config, "APP_NAME", "أُصول")
-    page_icon = getattr(config, "APP_ICON", "📈")
-except Exception:
-    page_title = "أُصول"
-    page_icon = "📈"
-
-st.set_page_config(
-    page_title=page_title,
-    page_icon=page_icon,
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-# -----------------------------------------------------------------------------
-# ✅ Global UI / RTL / Theme CSS (هذا هو اللي يرجّع الشكل كما كان)
-# -----------------------------------------------------------------------------
-try:
-    from styles import apply_custom_css
-except Exception:
-    apply_custom_css = None
-
-# Arabic UI: translate Streamlit default placeholders
+# Arabic UI: translate Streamlit default placeholders (called after set_page_config)
 try:
     from components import inject_streamlit_ar_i18n
 except Exception:
     inject_streamlit_ar_i18n = None
 
-# حقن الستايل مرة واحدة من البداية (مهم لتسجيل الدخول + RTL)
-if "___css_applied" not in st.session_state:
-    st.session_state["___css_applied"] = True
+# -----------------------------------------------------------------------------
+# 🔧 Import bootstrap
+# بعض الرفعّات إلى GitHub تضع المشروع داخل مجلد فرعي (مثل: osoul-app-main).
+# هذا البلوك يجعل imports تعمل حتى لو تغيّر مسار التشغيل.
+# -----------------------------------------------------------------------------
+_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+_PARENT_DIR = os.path.dirname(_BASE_DIR)
+
+_candidates = [
+    _BASE_DIR,
+    _PARENT_DIR,
+    os.path.join(_BASE_DIR, 'osoul-app-main'),
+    os.path.join(_BASE_DIR, 'osoul-app'),
+]
+for _p in _candidates:
     try:
-        if apply_custom_css:
-            apply_custom_css()
+        if _p and os.path.isdir(_p) and _p not in sys.path:
+            sys.path.insert(0, _p)
     except Exception:
         pass
+
+# الآن imports
+try:
+    from config import APP_NAME, APP_ICON
+except Exception:
+    APP_NAME, APP_ICON = 'أُصول', '📈'
+
+from database import init_db
+from styles import apply_custom_css
+
+# ✅ (اختياري) إذا ضفت apply_ui_css داخل styles.py
+try:
+    from styles import apply_ui_css
+except Exception:
+    apply_ui_css = None
+
+try:
+    from components import inject_component_styles
+except Exception:
+    inject_component_styles = None
+
+# ✅ (اختياري) هيدر احترافي (شعار + اسم + وصف + شريط حالة) بدون لمس منطق التحليل
+try:
+    from components import render_app_header
+except Exception:
+    render_app_header = None
+
+
+def _safe_image(path: str, width: Optional[int] = None):
+    try:
+        if path and os.path.exists(path):
+            st.image(path, width=width)
+    except Exception:
+        pass
+
+
+@st.cache_data(show_spinner=False)
+def _init_db_once():
+    """تهيئة DB مرة واحدة (خاصة في Streamlit Cloud)."""
+    try:
+        init_db()
+        return True, ''
+    except Exception as e:
+        return False, str(e)
+
+
+def main():
+    st.set_page_config(
+        page_title=APP_NAME,
+        page_icon=APP_ICON if isinstance(APP_ICON, str) and len(APP_ICON) <= 4 else '📈',
+        layout='wide',
+        initial_sidebar_state='expanded',
+    )
+
+    # i18n (DOM translation) يجب أن يأتي بعد set_page_config
     try:
         if inject_streamlit_ar_i18n:
             inject_streamlit_ar_i18n(True)
     except Exception:
         pass
 
-# -----------------------------------------------------------------------------
-# ✅ Auth + Main Router (يرجع المحافظ + النافبار + التفاصيل)
-# -----------------------------------------------------------------------------
-from security import require_login  # noqa: E402
-from views import router  # noqa: E402
+    # CSS (آمن)
+    try:
+        apply_custom_css()
+    except Exception:
+        pass
 
-if require_login():
-    router()
+    # CSS إضافي (اختياري)
+    if apply_ui_css:
+        try:
+            apply_ui_css()
+        except Exception:
+            pass
+
+    # أنماط المكوّنات (اختياري)
+    if inject_component_styles:
+        try:
+            inject_component_styles()
+        except Exception:
+            pass
+
+    # Header (اختياري)
+    if render_app_header:
+        try:
+            render_app_header('أصولي', 'منصة الذكاء الكمي للأسواق')
+        except Exception:
+            pass
+
+    # -------------------------
+    # DB Init
+    # -------------------------
+    ok, err = _init_db_once()
+    if not ok:
+        st.error('❌ فشل تهيئة قاعدة البيانات. تأكد من DATABASE_URL في Secrets/Env.')
+        if err:
+            st.caption(err)
+
+    # -------------------------
+    # Auth Gate (من security.py)
+    # -------------------------
+    try:
+        # توافق مع نسخ security المختلفة
+        try:
+            from security import login_system
+        except Exception:
+            from security import require_login as login_system
+    except Exception as e:
+        st.error('فشل تحميل نظام تسجيل الدخول (security.py).')
+        st.code(str(e))
+        st.stop()
+
+    try:
+        auth_ok = bool(login_system())
+    except Exception as e:
+        st.error('حدث خطأ أثناء نظام تسجيل الدخول.')
+        st.code(str(e))
+        st.stop()
+
+    if not auth_ok:
+        st.stop()
+
+    # -------------------------
+    # Router / Views
+    # -------------------------
+    try:
+        from views import router
+    except Exception as e:
+        st.error('فشل تحميل واجهات التطبيق (views).')
+        st.code(str(e))
+        st.stop()
+
+    try:
+        router()
+    except Exception as e:
+        st.error('حدث خطأ غير متوقع في التطبيق.')
+        st.code(str(e))
+        st.stop()
+
+
+if __name__ == '__main__':
+    main()
