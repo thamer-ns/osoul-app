@@ -53,7 +53,8 @@ def _series_health_metrics(x: pd.Series) -> Dict[str, Any]:
         x2 = x2.sort_index()
         x = x2
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/data_quality.py:55')
 
     # pct change stability
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -133,7 +134,8 @@ def assess_fundamental_quality(
                     issues2.append(f"نقص/صفر في أحدث فترة (ملخص): {', '.join(miss)}")
                     score -= min(50, 8 * len(miss))
             except Exception:
-                pass
+                import logging
+                logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/data_quality.py:135')
             score = int(max(0, min(100, round(score))))
             passed = score >= 55
             return {
@@ -261,7 +263,8 @@ def assess_fundamental_quality(
                     issues.append("عدم اتساق محتمل في الميزانية: الأصول لا تساوي (الالتزامات + حقوق الملكية) ضمن هامش مقبول.")
                     score -= min(15, bad * 7)
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/data_quality.py:263')
 
 # cross-consistency: net income vs operating CF
     try:
@@ -279,7 +282,8 @@ def assess_fundamental_quality(
                     issues.append("تناقض محتمل: صافي الربح موجب بينما التدفق التشغيلي سالب لعدة فترات (قد يشير لجودة أرباح منخفضة أو بيانات غير متسقة).")
                     score -= min(12, bad * 4)
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/data_quality.py:281')
 
     score = int(max(0, min(100, round(score))))
     passed = score >= 55  # threshold
