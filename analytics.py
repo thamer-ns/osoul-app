@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import List, Tuple, Optional, Dict, Any
 
 from database import fetch_table, execute_query
-from market_data import fetch_batch_data
+from market_data import fetch_batch_data, get_ticker_symbol
 
 
 # ============================================================
@@ -394,9 +394,15 @@ def update_prices():
         live_data = fetch_batch_data(open_syms)
 
         for sym in open_syms:
-            d = live_data.get(sym, {}) or {}
+            norm_sym = get_ticker_symbol(sym) or str(sym).strip().upper()
+            d = (
+                live_data.get(sym, {})
+                or live_data.get(str(sym).strip().upper(), {})
+                or live_data.get(norm_sym, {})
+                or {}
+            )
             price = _safe_float(d.get("price", 0.0), 0.0)
-            prev_close = _safe_float(d.get("prev_close", 0.0), 0.0)
+            prev_close = _safe_float(d.get("prev_close", d.get("previous_close", 0.0)), 0.0)
 
             q = _price_quality_flags(price, prev_close)
             if not q["ok"]:
