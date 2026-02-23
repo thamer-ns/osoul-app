@@ -117,14 +117,16 @@ def view_signals(fin: dict):
             if not df.empty and "symbol" in df.columns:
                 symbols.update([get_ticker_symbol(s) for s in df["symbol"].astype(str).tolist() if str(s).strip()])
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at views/signals.py:119')
 
     try:
         wl = fetch_table("watchlist")
         if wl is not None and not wl.empty and "symbol" in wl.columns:
             symbols.update([get_ticker_symbol(s) for s in wl["symbol"].astype(str).tolist() if str(s).strip()])
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at views/signals.py:126')
 
     symbols = sorted(symbols)
     if not symbols:
