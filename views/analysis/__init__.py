@@ -9,7 +9,7 @@ import streamlit as st
 from components import render_kpi, render_ticker_card
 from data_source import get_company_details
 from database import fetch_table
-from market_data import get_chart_history
+from market_data import get_chart_history, fetch_batch_data, get_ticker_symbol
 from views.shared import (
     _clean_symbols_list,
     _normalize_symbol,
@@ -53,9 +53,29 @@ def _safe_float(x, default=None):
 
 
 def _safe_get_last_price_change(symbol: str):
-    """Try to get last close + % change. Safe fallback if data missing."""
+    """Try to get live price + % change, then fallback to recent history."""
     try:
-        df = get_chart_history(symbol, period="5d", interval="1d")
+        norm = get_ticker_symbol(symbol) or str(symbol or "").strip().upper()
+
+        # 1) مباشر (snapshot)
+        try:
+            snap = fetch_batch_data([norm]) or {}
+            d = snap.get(norm) or snap.get(str(symbol or "").strip().upper()) or {}
+            if isinstance(d, dict) and d:
+                last = _safe_float(d.get("price"), None)
+                prev = _safe_float(d.get("prev_close", d.get("previous_close")), None)
+                if isinstance(last, (int, float)) and last and last > 0:
+                    chg = None
+                    if isinstance(prev, (int, float)) and prev and prev > 0:
+                        chg = (float(last) / float(prev) - 1.0) * 100.0
+                    else:
+                        chg = _safe_float(d.get("change_pct", d.get("change_percent")), None)
+                    return float(last), (float(chg) if isinstance(chg, (int, float)) else None)
+        except Exception:
+            pass
+
+        # 2) آخر الإغلاقات (fallback)
+        df = get_chart_history(norm or symbol, period="5d", interval="1d")
         if df is None:
             return None, None
         if not isinstance(df, pd.DataFrame):
@@ -67,7 +87,6 @@ def _safe_get_last_price_change(symbol: str):
         if df.empty:
             return None, None
 
-        # normalize columns
         cols = {str(c).lower(): c for c in df.columns}
         c_close = cols.get("close") or ("Close" if "Close" in df.columns else None)
         if c_close is None:
