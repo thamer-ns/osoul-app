@@ -45,8 +45,7 @@ def _safe_cash_pct(fin: dict, open_market_val: float) -> float:
         if isinstance(fin, dict) and "cash_pct" in fin:
             return float(_sf(fin.get("cash_pct", 0.0), 0.0))
     except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at views/portfolio.py:47')
+        pass
 
     cash = _sf((fin or {}).get("cash", 0.0), 0.0) if isinstance(fin, dict) else 0.0
     pv = float(max(0.0, cash + _sf(open_market_val, 0.0)))
@@ -62,6 +61,74 @@ def _risk_score_badge(score: float) -> str:
     if score >= 35:
         return "neutral"
     return "success"
+
+
+def _refresh_open_positions_with_live_prices(op: pd.DataFrame):
+    """تحديث أسعار الصفقات المفتوحة وإعادة حساب market_value/gain/gain_pct بشكل آمن."""
+    if op is None or op.empty:
+        return op, {}
+
+    df = op.copy()
+    live_data = {}
+
+    try:
+        if "symbol" in df.columns:
+            df["symbol"] = df["symbol"].astype(str).apply(_normalize_symbol)
+            symbols = _clean_symbols_list(df["symbol"].astype(str).tolist())
+            live_data = fetch_batch_data(symbols) if symbols else {}
+    except Exception:
+        live_data = {}
+
+    # تأكد من الأعمدة الرقمية الأساسية
+    for c in ["quantity", "entry_price", "total_cost", "current_price", "market_value", "gain", "gain_pct"]:
+        if c not in df.columns:
+            df[c] = 0.0
+        df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    # لو total_cost مفقود/صفري نحسبه من الكمية * سعر الدخول
+    missing_cost = df["total_cost"].isna() | (df["total_cost"] <= 0)
+    df.loc[missing_cost, "total_cost"] = (df.loc[missing_cost, "quantity"].fillna(0.0) * df.loc[missing_cost, "entry_price"].fillna(0.0))
+
+    # التحديث من البيانات المباشرة — لا نستبدل السعر بصفر عند فشل المزود
+    def _live_price(sym, fallback):
+        try:
+            v = _sf((live_data.get(sym) or {}).get("price"), None)
+            return float(v) if (v is not None and float(v) > 0) else float(_sf(fallback, 0.0))
+        except Exception:
+            return float(_sf(fallback, 0.0))
+
+    def _live_prev(sym, fallback):
+        try:
+            d = live_data.get(sym) or {}
+            v = d.get("prev_close", d.get("previous_close"))
+            v = _sf(v, None)
+            return float(v) if (v is not None and float(v) > 0) else float(_sf(fallback, 0.0))
+        except Exception:
+            return float(_sf(fallback, 0.0))
+
+    if "symbol" in df.columns:
+        old_cp = df["current_price"].copy()
+        old_pc = pd.to_numeric(df["prev_close"], errors="coerce") if "prev_close" in df.columns else pd.Series([0.0] * len(df), index=df.index)
+        df["current_price"] = [
+            _live_price(sym, fallback if pd.notna(fallback) and float(fallback) > 0 else ep)
+            for sym, fallback, ep in zip(df["symbol"], old_cp, df["entry_price"])
+        ]
+        df["prev_close"] = [
+            _live_prev(sym, fallback)
+            for sym, fallback in zip(df["symbol"], old_pc)
+        ]
+
+    # إعادة الحساب بعد تحديث السعر الحالي (هذا هو سبب الخطأ الظاهر للمستخدم)
+    q = df["quantity"].fillna(0.0)
+    cp = df["current_price"].fillna(0.0)
+    tc = df["total_cost"].fillna(0.0)
+    df["market_value"] = q * cp
+    df["gain"] = df["market_value"] - tc
+    df["gain_pct"] = 0.0
+    mask = tc != 0
+    df.loc[mask, "gain_pct"] = (df.loc[mask, "gain"] / tc[mask]) * 100.0
+
+    return df, live_data
 
 
 def view_portfolio(fin, key):
@@ -95,6 +162,9 @@ def view_portfolio(fin, key):
     else:
         op = sub.copy()
         cl = pd.DataFrame()
+
+    # تحديث الأسعار الحية للصفقات المفتوحة وإعادة حساب القيم قبل الـ KPI/الجدول
+    op, _live_data_cache = _refresh_open_positions_with_live_prices(op)
 
     t1, t2 = st.tabs(["الصفقات القائمة", "الأرشيف"])
 
@@ -265,17 +335,16 @@ def view_portfolio(fin, key):
             c_sort, _ = st.columns([1, 3])
             sort_by = c_sort.selectbox(f"فرز {ts} حسب:", sort_opts, key=f"s_op_{key}")
 
-            symbols = _clean_symbols_list(op["symbol"].astype(str).tolist()) if "symbol" in op.columns else []
-            try:
-                live_data = fetch_batch_data(symbols) if symbols else {}
-            except Exception:
-                live_data = {}
+            # الأسعار تم تحديثها مسبقًا قبل الـ KPI؛ هنا فقط نعيد حساب التغير اليومي ونستخدم كاش الأسعار إن وجد
+            live_data = _live_data_cache if isinstance(_live_data_cache, dict) else {}
 
             if "symbol" in op.columns:
                 op["symbol"] = op["symbol"].astype(str).apply(_normalize_symbol)
 
-            op["current_price"] = op["symbol"].apply(lambda x: live_data.get(x, {}).get("price", 0))
-            op["prev_close"] = op["symbol"].apply(lambda x: live_data.get(x, {}).get("prev_close", 0))
+            if "prev_close" not in op.columns:
+                op["prev_close"] = 0.0
+            op["prev_close"] = pd.to_numeric(op["prev_close"], errors="coerce").fillna(0.0)
+            op["current_price"] = pd.to_numeric(op.get("current_price", 0.0), errors="coerce").fillna(0.0)
 
             op["day_change"] = op.apply(
                 lambda r: ((r.get("current_price", 0) - r.get("prev_close", 0)) / r.get("prev_close", 1) * 100)
