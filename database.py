@@ -26,7 +26,8 @@ def _set_last_db_error(msg: str) -> None:
     try:
         st.session_state["_db_last_error"] = (msg or "")[:2000]
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at database.py:28')
 
 try:
     import psycopg2
@@ -179,7 +180,8 @@ def get_connection() -> Tuple[Any, str]:
             try:
                 conn.execute("PRAGMA foreign_keys = ON;")
             except Exception:
-                pass
+                import logging
+                logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at database.py:181')
             return conn, "sqlite"
         except Exception as e:
             raise RuntimeError(f"Failed to open sqlite fallback: {e}") from e
@@ -204,11 +206,13 @@ def put_connection(conn, kind: str):
                 pool.putconn(conn)
                 return
             except Exception:
-                pass
+                import logging
+                logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at database.py:206')
     try:
         conn.close()
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at database.py:210')
 
 
 def db_healthcheck() -> Dict[str, Any]:
@@ -311,7 +315,8 @@ def execute_query(query: str, params: Optional[Tuple[Any, ...]] = None) -> bool:
         try:
             conn.rollback()
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at database.py:313')
         return False
     finally:
         put_connection(conn, kind)
@@ -353,7 +358,8 @@ def fetch_table(t: str) -> pd.DataFrame:
                     if not df.empty:
                         return df
                 except Exception:
-                    pass
+                    import logging
+                    logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at database.py:355')
 
                 # Try explicit public schema
                 try:
@@ -361,7 +367,8 @@ def fetch_table(t: str) -> pd.DataFrame:
                     if not df.empty:
                         return df
                 except Exception:
-                    pass
+                    import logging
+                    logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at database.py:363')
 
             # Fallback to raw connection (still works, but pandas warns)
             try:
@@ -369,7 +376,8 @@ def fetch_table(t: str) -> pd.DataFrame:
                 if not df.empty:
                     return df
             except Exception:
-                pass
+                import logging
+                logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at database.py:371')
 
             # Quoted fallback on raw conn
             try:
@@ -403,7 +411,8 @@ def fetch_df(query: str, params: Optional[Tuple[Any, ...]] = None) -> pd.DataFra
                         return pd.read_sql(q2, engine)
                     return pd.read_sql(_sql_text(q2), engine, params=p2)
                 except Exception:
-                    pass
+                    import logging
+                    logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at database.py:405')
         # fallback (sqlite or postgres without engine)
         return pd.read_sql(q, conn, params=params or ())
     except Exception as e:
@@ -557,20 +566,23 @@ def _migrate_users_table_schema():
             try:
                 cur.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
             except Exception:
-                pass
+                import logging
+                logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at database.py:559')
             if "password" in cols:
                 try:
                     cur.execute(
                         "UPDATE users SET password_hash = password WHERE password_hash IS NULL AND password IS NOT NULL"
                     )
                 except Exception:
-                    pass
+                    import logging
+                    logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at database.py:566')
         conn.commit()
     except Exception:
         try:
             conn.rollback()
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at database.py:572')
     finally:
         put_connection(conn, kind)
 
@@ -640,7 +652,8 @@ def db_create_user(username: str, password: str, email: str = "") -> bool:
         try:
             conn.rollback()
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at database.py:642')
         return False
     finally:
         put_connection(conn, kind)
