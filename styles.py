@@ -1604,6 +1604,66 @@ pre, code,
   text-align: left !important;
 }
 
+
+
+/* =====================================================
+   ABSOLUTE LAST RTL REPAIR (round 2)
+   - Forces document/UI RTL even when earlier CSS blocks conflict
+   - Keeps code/JSON widgets in LTR
+   ===================================================== */
+html, body, #root, .stApp,
+[data-testid="stAppViewContainer"],
+[data-testid="stMain"],
+[data-testid="stMainBlockContainer"],
+[data-testid="stSidebar"],
+[data-testid="stSidebarContent"],
+.block-container {
+  direction: rtl !important;
+  text-align: right !important;
+}
+
+/* Fix common Streamlit row containers so first column appears on the RIGHT */
+div[data-testid="stHorizontalBlock"],
+div[data-testid="stColumns"],
+.stHorizontalBlock,
+.stColumns {
+  direction: rtl !important;
+  flex-direction: row-reverse !important;
+}
+
+/* Column content itself should stay RTL */
+div[data-testid="column"],
+[data-testid="stVerticalBlock"] > div[data-testid="column"] {
+  direction: rtl !important;
+  text-align: right !important;
+}
+
+/* Sidebar pinned to the right across versions */
+section[data-testid="stSidebar"],
+[data-testid="stSidebar"] {
+  right: 0 !important;
+  left: auto !important;
+  inset-inline-end: 0 !important;
+  inset-inline-start: auto !important;
+}
+
+/* Labels, captions, markdown, and normal widget text */
+label, p, span, li, div, h1, h2, h3, h4, h5, h6 {
+  text-align: right;
+}
+
+/* Preserve LTR for technical blocks */
+pre, code,
+[data-testid="stCodeBlock"] pre,
+[data-testid="stJson"] pre,
+[data-testid="stCodeBlock"] pre code,
+[data-testid="stJson"] pre code,
+input[type="email"],
+input[type="url"] {
+  direction: ltr !important;
+  text-align: left !important;
+}
+
 </style>
         """
 
