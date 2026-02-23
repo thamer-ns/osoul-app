@@ -128,7 +128,8 @@ def _build_signal_events(df: pd.DataFrame, ind: dict, limit: int = 12) -> list:
             elif prev >= 0 and curr < 0:
                 events.append({"type":"Price","event":"Close crossed below SMA20","at": str(df.index[-1])})
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/reporting.py:130')
 
     return events[:limit]
 
@@ -332,7 +333,8 @@ def generate_ai_report(symbol, timeframe="1D"):
                     if isinstance(v, (bool, int)):
                         features[str(k)] = int(v)
             except Exception:
-                pass
+                import logging
+                logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/reporting.py:334')
 
         # Numeric features (safe)
         try:
@@ -359,7 +361,8 @@ def generate_ai_report(symbol, timeframe="1D"):
             if ind.get("fib382") is not None:
                 features["fib382"] = float(ind["fib382"])
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/reporting.py:361')
 
         # =========================
         # Advanced indicators (optional + cached)
@@ -381,7 +384,8 @@ def generate_ai_report(symbol, timeframe="1D"):
                     try:
                         save_advanced_indicators(symbol=symbol, interval=str(interval), payload=adv_pack)
                     except Exception:
-                        pass
+                        import logging
+                        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/reporting.py:383')
 
             # Merge numeric features
             if isinstance(adv_pack, dict):
@@ -420,7 +424,8 @@ def generate_ai_report(symbol, timeframe="1D"):
                     if str(rs.get("label") or "").strip():
                         tech_reasons.append(f"📌 Relative Strength vs TASI: {rs.get('label')}")
             except Exception:
-                pass
+                import logging
+                logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/reporting.py:422')
 
 
         # =========================================================
@@ -511,7 +516,8 @@ def generate_ai_report(symbol, timeframe="1D"):
                         try:
                             features[str(kk)] = int(vv)
                         except Exception:
-                            pass
+                            import logging
+                            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/reporting.py:513')
 
         if abs(user_delta) > 0:
             tech_score = float(tech_score + user_delta)
@@ -592,7 +598,8 @@ def generate_ai_report(symbol, timeframe="1D"):
                 confidence = max(0.0, min(100.0, float(confidence) + (float(adv_c) - 50.0) * 0.15))
                 confidence_label = f"{confidence_label} + مؤشرات متقدمة"
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/reporting.py:594')
 
         # =========================
         # ✅ Data Quality Gate -> calibrate confidence + refuse strong recommendations
@@ -629,7 +636,8 @@ def generate_ai_report(symbol, timeframe="1D"):
                 clr = "#ffc107"
                 strat = "الثقة منخفضة أو البيانات ناقصة — لا نعطي توصية قوية حتى تتحسن الجودة/الاكتمال."
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/reporting.py:631')
 
         # If data quality FAIL, force downgrade for buy/value calls
         try:
@@ -639,7 +647,8 @@ def generate_ai_report(symbol, timeframe="1D"):
                     clr = "#ffc107"
                     strat = "تم تخفيض قوة التوصية بسبب فشل بوابة جودة البيانات (نقص/عدم اتساق)."
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/reporting.py:641')
 
         explainability = _build_explainability(tech_reasons, fund_reasons, total_score, tech_score, fund_score)
         explainability["confidence_note"] = f"Confidence={int(confidence)}% ({confidence_label})"
@@ -705,7 +714,8 @@ def generate_ai_report(symbol, timeframe="1D"):
                 report["color"] = "#ffc107"
                 report["strategy"] = "تم رفض التوصية بسبب: " + " | ".join(report["risk_gates"]["reasons"])
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/reporting.py:707')
 
         signal_id = None
         try:
