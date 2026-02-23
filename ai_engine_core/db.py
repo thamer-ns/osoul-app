@@ -42,7 +42,8 @@ def _get_db_kind() -> str:
             try:
                 put_connection(conn, kind)
             except Exception:
-                pass
+                import logging
+                logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/db.py:44')
     except Exception:
         return "none"
 
@@ -107,7 +108,8 @@ def fetch_table(table: str, limit: Optional[int] = None):
         try:
             recs = recs[: max(0, int(limit))]
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/db.py:109')
     return recs
 
 
@@ -361,7 +363,8 @@ def list_user_rules() -> list:
         if hasattr(rows, "to_dict"):
             return rows.to_dict("records")  # type: ignore
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/db.py:363')
     try:
         return list(rows)
     except Exception:
@@ -418,7 +421,8 @@ def load_advanced_indicators(symbol: str, timeframe: str) -> Optional[Dict[str, 
                 if len(hit) > 0:
                     rec = hit.iloc[-1].to_dict()
             except Exception:
-                pass
+                import logging
+                logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/db.py:420')
         else:
             for r in rows:
                 try:
@@ -555,5 +559,6 @@ def list_outcomes(signal_id: Optional[str] = None) -> list:
             if isinstance(r, dict) and r.get("signal_id") == signal_id:
                 filtered.append(r)
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/db.py:557')
     return filtered
