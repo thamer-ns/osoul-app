@@ -72,7 +72,8 @@ def _safe_get_last_price_change(symbol: str):
                         chg = _safe_float(d.get("change_pct", d.get("change_percent")), None)
                     return float(last), (float(chg) if isinstance(chg, (int, float)) else None)
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at views/analysis/__init__.py:74')
 
         # 2) آخر الإغلاقات (fallback)
         df = get_chart_history(norm or symbol, period="5d", interval="1d")
