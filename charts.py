@@ -84,7 +84,8 @@ def _ensure_datetime_index(df: pd.DataFrame) -> pd.DataFrame:
         try:
             d.index = pd.to_datetime(d.index, errors="coerce")
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at charts.py:86')
 
     # تنظيف
     d = d[~pd.isna(d.index)]
@@ -92,7 +93,8 @@ def _ensure_datetime_index(df: pd.DataFrame) -> pd.DataFrame:
     try:
         d = d.sort_index()
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at charts.py:94')
 
     return d
 
@@ -194,7 +196,8 @@ def _fetch_history(symbol: str, period: str, interval: str):
     except TypeError:
         pass
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at charts.py:196')
 
     # بعض النسخ: (symbol, period, interval)
     try:
@@ -202,7 +205,8 @@ def _fetch_history(symbol: str, period: str, interval: str):
     except TypeError:
         pass
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at charts.py:204')
 
     # بعض النسخ: (symbol, period)
     try:
@@ -210,7 +214,8 @@ def _fetch_history(symbol: str, period: str, interval: str):
     except TypeError:
         pass
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at charts.py:212')
 
     # fallback أخير
     try:
