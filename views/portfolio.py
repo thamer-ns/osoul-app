@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # views/portfolio.py
 import streamlit as st
 from feature_flags import get_flag
@@ -27,13 +29,17 @@ except Exception:
     portfolio_risk_gates = None
 
 
-def _sf(x, default=0.0) -> float:
+def _sf(x, default=0.0):
+    """Safe float cast with support for default=None (important for live price fallbacks)."""
     try:
-        if x is None:
-            return float(default)
+        if x is None or x == "":
+            return (None if default is None else float(default))
         return float(x)
     except Exception:
-        return float(default)
+        try:
+            return (None if default is None else float(default))
+        except Exception:
+            return None if default is None else 0.0
 
 
 def _safe_cash_pct(fin: dict, open_market_val: float) -> float:
