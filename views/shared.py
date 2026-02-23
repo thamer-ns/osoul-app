@@ -154,11 +154,13 @@ def _ensure_ui_once():
     try:
         inject_component_styles()
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at views/shared.py:156')
     try:
         inject_streamlit_ar_i18n(True)
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at views/shared.py:160')
 
 def _sym_key(sym: str) -> str:
     return (sym or "").replace(".", "_").replace("-", "_").replace(" ", "_")
@@ -190,7 +192,8 @@ def _clean_symbols_list(values) -> list:
             if s and s != ".SR" and s.lower() != "nan":
                 out.append(s)
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at views/shared.py:192')
     return list(sorted(set(out)))
 
 def _to_float(x, default=None):
@@ -1155,7 +1158,8 @@ def _build_tv_like_plot(df: pd.DataFrame, title: str = "", show_rangeslider: boo
         try:
             d.index = pd.to_datetime(d.index, errors="coerce")
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at views/shared.py:1157')
         d = d[~pd.isna(d.index)]
         d = d.sort_index()
         x = d.index
@@ -1270,7 +1274,8 @@ def _render_tv_like_chart(symbol: str, period: str, interval: str, show_rangesli
             if isinstance(df.index, pd.DatetimeIndex):
                 df = df.reset_index().rename(columns={"index": "date"})
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at views/shared.py:1272')
 
     try:
         fig = _build_tv_like_plot(df, title=f"{symbol} | {period} | {interval}", show_rangeslider=show_rangeslider)
