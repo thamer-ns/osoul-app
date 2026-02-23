@@ -39,12 +39,24 @@ def _best_key(row: pd.Series, keys: List[str], default=0.0):
     return _safe_float_none(default) if default is None else _safe_float(default)
 
 
+def _first_present_key(row: pd.Series, keys: List[str]):
+    """Return first key that exists in row and is not missing-like."""
+    try:
+        for k in keys:
+            if k in row.index and not _is_missing(row.get(k, None)):
+                return k
+    except Exception:
+        pass
+    return None
+
+
 def _compute_dupont(curr_row: pd.Series) -> dict:
     out = {
         "DuPont_Profit_Margin": 0.0,
         "DuPont_Asset_Turnover": 0.0,
         "DuPont_Equity_Multiplier": 0.0,
         "ROE": 0.0,
+        "ROE_Method": "DuPont (NI/Revenue × Revenue/Assets × Assets/Equity) أو NI/Equity (Ending Equity)",
         "ROA": 0.0,
         "Asset_Turnover": 0.0,
     }
@@ -74,34 +86,41 @@ def _compute_dupont(curr_row: pd.Series) -> dict:
 
 def _compute_liquidity_leverage(curr_row: pd.Series, prev_row: pd.Series = None) -> dict:
     out = {
-        "Current_Ratio": 0.0,
-        "Working_Capital": 0.0,
-        "Debt_to_Equity": 0.0,
-        "Liabilities_to_Assets": 0.0,
-        "LT_Debt_Trend": 0.0,
+        "Current_Ratio": None,
+        "Working_Capital": None,
+        "Debt_to_Equity": None,
+        "Debt_to_Equity_Method": "Unavailable (missing inputs)",
+        "Liabilities_to_Assets": None,
+        "LT_Debt_Trend": None,
     }
     try:
-        ca = _safe_float(curr_row.get("current_assets", 0))
-        cl = _safe_float(curr_row.get("current_liabilities", 0))
-        ltd = _safe_float(curr_row.get("long_term_debt", 0))
-        liab = _safe_float(curr_row.get("total_liabilities", 0))
-        assets = _safe_float(curr_row.get("total_assets", 0))
-        eq = _safe_float(curr_row.get("total_equity", 0))
+        ca = _v(curr_row.get("current_assets"))
+        cl = _v(curr_row.get("current_liabilities"))
+        ltd = _v(curr_row.get("long_term_debt"))
+        liab = _v(curr_row.get("total_liabilities"))
+        assets = _v(curr_row.get("total_assets"))
+        eq = _v(curr_row.get("total_equity"))
 
-        wc = ca - cl
-        cr = _safe_div(ca, cl, 0.0)
-        dte = _safe_div(ltd, eq, 0.0) if eq > 0 else _safe_div(liab, assets, 0.0)
-        lta = _safe_div(liab, assets, 0.0)
+        if ca is not None and cl is not None:
+            out["Working_Capital"] = ca - cl
+        out["Current_Ratio"] = _d(ca, cl)
 
-        out["Working_Capital"] = float(wc)
-        out["Current_Ratio"] = float(cr)
-        out["Debt_to_Equity"] = float(dte)
-        out["Liabilities_to_Assets"] = float(lta)
+        dte = _d(ltd, eq)
+        if dte is not None:
+            out["Debt_to_Equity"] = dte
+            out["Debt_to_Equity_Method"] = "Long-term Debt / Total Equity"
+        else:
+            dte_fallback = _d(liab, assets)
+            out["Debt_to_Equity"] = dte_fallback
+            if dte_fallback is not None:
+                out["Debt_to_Equity_Method"] = "Fallback: Total Liabilities / Total Assets"
+
+        out["Liabilities_to_Assets"] = _d(liab, assets)
 
         if prev_row is not None:
-            ltd_p = _safe_float(prev_row.get("long_term_debt", 0))
-            if ltd_p != 0:
-                out["LT_Debt_Trend"] = float((ltd - ltd_p) / abs(ltd_p))
+            ltd_p = _v(prev_row.get("long_term_debt"))
+            if ltd is not None and ltd_p not in (None, 0):
+                out["LT_Debt_Trend"] = (ltd - ltd_p) / abs(ltd_p)
     except Exception:
         pass
     return out
@@ -156,28 +175,24 @@ def _compute_efficiency_pack(curr_row: pd.Series) -> dict:
 
 
 def _compute_cashflow_pack(curr_row: pd.Series) -> dict:
-    """
-    Best-effort FCF:
-    - FCF = OCF - Capex (if capex exists)
-    """
-    out = {
-        "Free_Cash_Flow": 0.0,
-        "FCF_Margin": 0.0,
-        "FCF_to_NetIncome": 0.0,
-    }
+    out = {"Free_Cash_Flow": None, "FCF_Margin": None, "FCF_to_NetIncome": None, "FCF_Quality": "Unavailable (OCF missing)"}
     try:
-        ocf = _safe_float(curr_row.get("operating_cash_flow", 0))
-        capex = _best_key(curr_row, ["capex", "capital_expenditure", "capitalExpenditures"], default=0.0)
-        rev = _safe_float(curr_row.get("revenue", 0))
-        ni = _safe_float(curr_row.get("net_income", 0))
+        ocf = _v(curr_row.get("operating_cash_flow"))
+        capex_key = _first_present_key(curr_row, ["capex", "capital_expenditure", "capitalExpenditures"])
+        capex = _best_key(curr_row, ["capex", "capital_expenditure", "capitalExpenditures"], default=None)
+        rev = _v(curr_row.get("revenue"))
+        ni = _v(curr_row.get("net_income"))
 
-        # capex is usually negative in some sources; treat as cash outflow magnitude
-        capex_out = abs(_safe_float(capex))
+        if ocf is None:
+            return out
+
+        capex_out = abs(_safe_float_none(capex) or 0.0) if capex is not None else 0.0
         fcf = ocf - capex_out
 
-        out["Free_Cash_Flow"] = float(fcf)
-        out["FCF_Margin"] = float(_safe_div(fcf, rev, 0.0)) if rev > 0 else 0.0
-        out["FCF_to_NetIncome"] = float(_safe_div(fcf, ni, 0.0)) if ni != 0 else (1.0 if fcf > 0 else 0.0)
+        out["Free_Cash_Flow"] = fcf
+        out["FCF_Margin"] = _d(fcf, rev)
+        out["FCF_to_NetIncome"] = _d(fcf, ni)
+        out["FCF_Quality"] = (f"FCF = OCF - |Capex| (source: {capex_key})" if capex_key else "FCF proxy = OCF (Capex missing)")
     except Exception:
         pass
     return out
@@ -229,6 +244,7 @@ def _compute_altman_z_best_effort(symbol: str, curr_row: pd.Series, yahoo_info: 
     out = {
         "Altman_Z": 0.0,
         "Altman_Z_Quality": "partial",
+        "Altman_Z_Model": "Altman Z (Public Manufacturing, Approx - Partial Inputs)",
     }
     try:
         ta = _safe_float(curr_row.get("total_assets", 0))
@@ -238,18 +254,18 @@ def _compute_altman_z_best_effort(symbol: str, curr_row: pd.Series, yahoo_info: 
         ca = _safe_float(curr_row.get("current_assets", 0))
         cl = _safe_float(curr_row.get("current_liabilities", 0))
         wc = ca - cl
-
         tl = _safe_float(curr_row.get("total_liabilities", 0))
         sales = _safe_float(curr_row.get("revenue", 0))
 
-        # Prefer statement fields first, then fallback heuristic from Yahoo EBITDA
-        ebit = _best_key(curr_row, ["ebit", "operating_income", "operatingIncome"], default=0.0)
-        retained = _best_key(curr_row, ["retained_earnings", "retainedEarnings"], default=0.0)  # optional
-
+        retained = _safe_float(_best_key(curr_row, ["retained_earnings", "retainedEarnings"], default=0.0))
+        ebit_direct = _safe_float(_best_key(curr_row, ["ebit", "operating_income", "operatingIncome"], default=0.0))
+        ebit = ebit_direct
+        ebit_proxy_used = False
         if ebit <= 0:
             ebitda = _safe_float(yahoo_info.get("ebitda"))
             if ebitda > 0:
                 ebit = 0.7 * ebitda
+                ebit_proxy_used = True
 
         mve = _safe_float(yahoo_info.get("marketCap"))
 
@@ -257,11 +273,37 @@ def _compute_altman_z_best_effort(symbol: str, curr_row: pd.Series, yahoo_info: 
         z += 1.2 * _safe_div(wc, ta, 0.0)
         z += 1.4 * _safe_div(retained, ta, 0.0)
         z += 3.3 * _safe_div(ebit, ta, 0.0)
-        z += 0.6 * _safe_div(mve, tl, 0.0) if tl > 0 else 0.0
+        z += (0.6 * _safe_div(mve, tl, 0.0)) if tl > 0 else 0.0
         z += 1.0 * _safe_div(sales, ta, 0.0)
 
         out["Altman_Z"] = float(z)
-        out["Altman_Z_Quality"] = "full" if (ebit > 0 and mve > 0 and sales > 0 and tl > 0) else "partial"
+
+        has_re = retained != 0
+        has_ebit = ebit > 0
+        has_mve = mve > 0
+        has_sales = sales > 0
+        has_tl = tl > 0
+
+        if has_re and has_ebit and has_mve and has_sales and has_tl and (not ebit_proxy_used):
+            out["Altman_Z_Quality"] = "full"
+            out["Altman_Z_Model"] = "Altman Z (Public Manufacturing)"
+        else:
+            out["Altman_Z_Quality"] = "partial"
+            reasons = []
+            if not has_re:
+                reasons.append("RE_missing")
+            if not has_ebit:
+                reasons.append("EBIT_missing")
+            if ebit_proxy_used:
+                reasons.append("EBIT_from_EBITDA_proxy")
+            if not has_mve:
+                reasons.append("MVE_missing")
+            if not has_tl:
+                reasons.append("TL_missing")
+            if not has_sales:
+                reasons.append("Sales_missing")
+            if reasons:
+                out["Altman_Z_Model"] = "Altman Z (Public Manufacturing, Approx - " + ",".join(reasons) + ")"
     except Exception:
         pass
     return out
@@ -270,14 +312,14 @@ def _compute_altman_z_best_effort(symbol: str, curr_row: pd.Series, yahoo_info: 
 def _compute_sgr(roe: float, yahoo_info: dict) -> dict:
     out = {"SGR": 0.0, "Payout_Ratio": 0.0, "Retention_Ratio": 0.0, "SGR_Estimated": 0}
     try:
-        # ✅ لا تعتبر payout=0 أو payout=1 خطأ؛ كلاهما قد يكون صحيحاً.
-        payout_raw = yahoo_info.get("payoutRatio") if isinstance(yahoo_info, dict) else None
-        payout = _safe_float_none(payout_raw)
-        if payout is None or payout < 0 or payout > 1:
+        payout_raw = _safe_float_none(yahoo_info.get("payoutRatio"))
+        if payout_raw is None or payout_raw < 0 or payout_raw > 1:
             payout = 0.30
             out["SGR_Estimated"] = 1
+        else:
+            payout = float(payout_raw)
 
-        retention = max(0.0, min(1.0, 1.0 - float(payout)))
+        retention = max(0.0, min(1.0, 1.0 - payout))
         out["Payout_Ratio"] = float(payout)
         out["Retention_Ratio"] = float(retention)
         out["SGR"] = float(_safe_float(roe) * retention)
@@ -291,6 +333,7 @@ def _compute_valuation_pack(yahoo_info: dict) -> dict:
         "PE_Trailing": 0.0,
         "PE_Forward": 0.0,
         "PEG": 0.0,
+        "PEG_Source": "Yahoo:pegRatio (missing)",
         "PB": 0.0,
         "MarketCap": 0.0,
         "EV": 0.0,
@@ -300,7 +343,15 @@ def _compute_valuation_pack(yahoo_info: dict) -> dict:
     try:
         out["PE_Trailing"] = float(_safe_float(yahoo_info.get("trailingPE")))
         out["PE_Forward"] = float(_safe_float(yahoo_info.get("forwardPE")))
-        out["PEG"] = float(_safe_float(yahoo_info.get("pegRatio")))
+
+        peg_raw = _safe_float_none(yahoo_info.get("pegRatio"))
+        if peg_raw is None:
+            out["PEG"] = 0.0
+            out["PEG_Source"] = "Yahoo:pegRatio (missing)"
+        else:
+            out["PEG"] = float(peg_raw)
+            out["PEG_Source"] = "Yahoo:pegRatio"
+
         out["PB"] = float(_safe_float(yahoo_info.get("priceToBook")))
         out["MarketCap"] = float(_safe_float(yahoo_info.get("marketCap")))
         out["EV"] = float(_safe_float(yahoo_info.get("enterpriseValue")))
@@ -666,6 +717,52 @@ def get_advanced_fundamental_ratios(symbol):
         metrics.update(cfp)
         metrics.update(grp)
 
+        # -----------------------------------------------------
+        # Definition metadata (audit-friendly; no UI breaking changes)
+        # -----------------------------------------------------
+        try:
+            roe_v = _safe_float_none(metrics.get("ROE"))
+            pm_v = _safe_float_none(metrics.get("DuPont_Profit_Margin"))
+            at_v = _safe_float_none(metrics.get("DuPont_Asset_Turnover"))
+            em_v = _safe_float_none(metrics.get("DuPont_Equity_Multiplier"))
+            if roe_v is None:
+                metrics["ROE_Method"] = "Unavailable (missing inputs)"
+            elif (pm_v is not None) and (at_v is not None) and (em_v is not None):
+                metrics["ROE_Method"] = "DuPont 3-step (ending equity basis)"
+            else:
+                metrics["ROE_Method"] = "NI / Equity (ending equity)"
+        except Exception:
+            pass
+
+        try:
+            dte_v = _safe_float_none(metrics.get("Debt_to_Equity"))
+            ltd = _safe_float_none(curr.get("long_term_debt"))
+            eq_now = _safe_float_none(curr.get("total_equity"))
+            liab = _safe_float_none(curr.get("total_liabilities"))
+            assets = _safe_float_none(curr.get("total_assets"))
+            if dte_v is None:
+                metrics["Debt_to_Equity_Method"] = "Unavailable (missing inputs)"
+            elif ltd is not None and eq_now not in (None, 0):
+                metrics["Debt_to_Equity_Method"] = "Long-term Debt / Total Equity"
+            elif liab is not None and assets not in (None, 0):
+                metrics["Debt_to_Equity_Method"] = "Fallback: Total Liabilities / Total Assets"
+            else:
+                metrics["Debt_to_Equity_Method"] = "Best effort"
+        except Exception:
+            pass
+
+        try:
+            ocf = _safe_float_none(curr.get("operating_cash_flow"))
+            capex_key = _first_present_key(curr, ["capex", "capital_expenditure", "capitalExpenditures"])
+            if ocf is None:
+                metrics["FCF_Quality"] = "Unavailable (OCF missing)"
+            elif capex_key:
+                metrics["FCF_Quality"] = f"FCF = OCF - |Capex| (source: {capex_key})"
+            else:
+                metrics["FCF_Quality"] = "FCF proxy = OCF (Capex missing)"
+        except Exception:
+            pass
+
         metrics.update(_compute_valuation_pack(info))
 
         # Graham Fair value
@@ -895,6 +992,76 @@ def _compute_interest_coverage_best_effort(curr_row: pd.Series, yahoo_info: dict
         if ebit is not None and ie not in (None, 0):
             out["Interest_Coverage"] = ebit / abs(ie)
             out["Interest_Coverage_Quality"] = "full"
+    except Exception:
+        pass
+    return out
+
+
+# =============================================================
+# ✅ FINAL OVERRIDES (audit metadata)
+# توضع في نهاية الملف لتضمن أنها النسخة الفعّالة حتى لو وُجدت تعريفات مكررة أعلى الملف.
+# =============================================================
+def _compute_liquidity_leverage(curr_row: pd.Series, prev_row: pd.Series = None) -> dict:
+    out = {
+        "Current_Ratio": None,
+        "Working_Capital": None,
+        "Debt_to_Equity": None,
+        "Debt_to_Equity_Method": "Unavailable (missing inputs)",
+        "Liabilities_to_Assets": None,
+        "LT_Debt_Trend": None,
+    }
+    try:
+        ca = _v(curr_row.get("current_assets"))
+        cl = _v(curr_row.get("current_liabilities"))
+        ltd = _v(curr_row.get("long_term_debt"))
+        liab = _v(curr_row.get("total_liabilities"))
+        assets = _v(curr_row.get("total_assets"))
+        eq = _v(curr_row.get("total_equity"))
+
+        if ca is not None and cl is not None:
+            out["Working_Capital"] = ca - cl
+        out["Current_Ratio"] = _d(ca, cl)
+
+        dte = _d(ltd, eq)
+        if dte is not None:
+            out["Debt_to_Equity"] = dte
+            out["Debt_to_Equity_Method"] = "Long-term Debt / Total Equity"
+        else:
+            dte_fallback = _d(liab, assets)
+            out["Debt_to_Equity"] = dte_fallback
+            if dte_fallback is not None:
+                out["Debt_to_Equity_Method"] = "Fallback: Total Liabilities / Total Assets"
+
+        out["Liabilities_to_Assets"] = _d(liab, assets)
+
+        if prev_row is not None:
+            ltd_p = _v(prev_row.get("long_term_debt"))
+            if ltd is not None and ltd_p not in (None, 0):
+                out["LT_Debt_Trend"] = (ltd - ltd_p) / abs(ltd_p)
+    except Exception:
+        pass
+    return out
+
+
+def _compute_cashflow_pack(curr_row: pd.Series) -> dict:
+    out = {"Free_Cash_Flow": None, "FCF_Margin": None, "FCF_to_NetIncome": None, "FCF_Quality": "Unavailable (OCF missing)"}
+    try:
+        ocf = _v(curr_row.get("operating_cash_flow"))
+        capex_key = _first_present_key(curr_row, ["capex", "capital_expenditure", "capitalExpenditures"])
+        capex = _best_key(curr_row, ["capex", "capital_expenditure", "capitalExpenditures"], default=None)
+        rev = _v(curr_row.get("revenue"))
+        ni = _v(curr_row.get("net_income"))
+
+        if ocf is None:
+            return out
+
+        capex_out = abs(_safe_float_none(capex) or 0.0) if capex is not None else 0.0
+        fcf = ocf - capex_out
+
+        out["Free_Cash_Flow"] = fcf
+        out["FCF_Margin"] = _d(fcf, rev)
+        out["FCF_to_NetIncome"] = _d(fcf, ni)
+        out["FCF_Quality"] = (f"FCF = OCF - |Capex| (source: {capex_key})" if capex_key else "FCF proxy = OCF (Capex missing)")
     except Exception:
         pass
     return out
