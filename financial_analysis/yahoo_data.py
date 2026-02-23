@@ -46,7 +46,8 @@ def _yahoo_throttle_wait(url: str):
         store[key] = time.time()
         st.session_state["_yahoo_last_call_ts"] = store
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/yahoo_data.py:48')
 
 def _set_last_diag(url=None, status=None, error=None, snippet=None, hint=None):
     try:
@@ -61,7 +62,8 @@ def _set_last_diag(url=None, status=None, error=None, snippet=None, hint=None):
             }
         )
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/yahoo_data.py:63')
 
 
 def get_last_yahoo_diagnostics() -> Dict[str, Any]:
@@ -271,7 +273,8 @@ def _extract_stmt_list(root: dict, key: str) -> list:
             if isinstance(v, list) and v and isinstance(v[0], dict):
                 return v
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/yahoo_data.py:273')
     return []
 
 
@@ -455,7 +458,8 @@ def _get_financial_statements_cached(sym: str, ptype: str = "Annual", refresh: b
             if d:
                 records = [{"date": d.get("date") or datetime.now().strftime("%Y-12-31"), "data": d}]
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/yahoo_data.py:457')
 
     if not records and ptype == "Annual":
         try:
@@ -463,7 +467,8 @@ def _get_financial_statements_cached(sym: str, ptype: str = "Annual", refresh: b
             if d2:
                 records = [{"date": d2.get("date") or datetime.now().strftime("%Y-12-31"), "data": d2}]
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/yahoo_data.py:465')
 
     if records:
         for rec in records:
@@ -624,7 +629,8 @@ def fetch_full_financial_statements_yahoo_json(
                         try:
                             acc[k] = float(acc.get(k, 0.0) + float(v or 0.0))
                         except Exception:
-                            pass
+                            import logging
+                            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/yahoo_data.py:626')
                 return acc
 
             ttm_date = (q_inc[0].get("date") if q_inc else datetime.utcnow().strftime("%Y-%m-%d"))
@@ -634,7 +640,8 @@ def fetch_full_financial_statements_yahoo_json(
             }
         except Exception:
             # ignore TTM failures
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/yahoo_data.py:635')
 
     # Remove empty
     out = {k: v for k, v in out.items() if v and any((v.get("income") or v.get("balance") or v.get("cashflow")))}
