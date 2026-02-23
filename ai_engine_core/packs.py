@@ -104,7 +104,8 @@ def build_technical_pack(
         if isinstance(ind.get("atr14"), pd.Series) and not pd.isna(ind["atr14"].iloc[-1]):
             features["atr14"] = float(ind["atr14"].iloc[-1])
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/packs.py:106')
 
 
     # -------------------------------
@@ -125,7 +126,8 @@ def build_technical_pack(
                             if isinstance(v, (int, float, bool)):
                                 features[f"adv_{k}"] = float(v)
                         except Exception:
-                            pass
+                            import logging
+                            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/packs.py:127')
 
                 # Evidence عربية
                 adv_evidence = adv.get("evidence") or []
@@ -140,7 +142,8 @@ def build_technical_pack(
                         if sig_text.strip():
                             reasons.append(f"إشارات متقدمة: {sig_text}")
                     except Exception:
-                        pass
+                        import logging
+                        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/packs.py:142')
 
                 # Confidence boost محدود
                 adv_conf = adv.get("confidence")
@@ -154,7 +157,8 @@ def build_technical_pack(
 
                     save_advanced_indicators(symbol=str(symbol), interval=str(timeframe), pack=adv)
                 except Exception:
-                    pass
+                    import logging
+                    logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/packs.py:156')
         except Exception:  # pragma: no cover
             reasons.append("⚠️ تعذر حساب بعض المؤشرات المتقدمة (تم تجاهلها بأمان).")
 
