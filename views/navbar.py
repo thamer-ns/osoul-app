@@ -73,11 +73,13 @@ def _safe_set_query_page(page: str):
         st.query_params['page'] = page
         return
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at views/navbar.py:75')
     try:
         st.experimental_set_query_params(page=page)
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at views/navbar.py:79')
 
 
 def sync_page_from_query_params_once():
