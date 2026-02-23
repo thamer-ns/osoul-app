@@ -15,7 +15,8 @@ def _ensure_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = [str(c[-1]) for c in df.columns]
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/ohlcv.py:17')
 
     cols = {c: c for c in df.columns}
     lower = {str(c).lower(): c for c in df.columns}
@@ -63,7 +64,8 @@ def _ensure_ohlcv_columns(df: pd.DataFrame) -> pd.DataFrame:
         try:
             df[c] = pd.to_numeric(df[c], errors="coerce")
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/ohlcv.py:65')
 
     df = df.dropna(subset=["Open", "High", "Low", "Close"]).copy()
     return df
