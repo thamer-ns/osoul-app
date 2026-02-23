@@ -750,63 +750,80 @@ def get_tasi_data():
     """جلب مؤشر تاسي (TASI) بأولوية Twelve Data ثم بقية المصادر.
 
     Returns:
-      (tasi_value, change_percent)
+      (tasi_value, change_percent)  أو (None, None) عند التعذر
     """
-    # 1) Twelve Data Quote (أفضلية)
+    # 1) Twelve Data Quote (أفضلية) مع دعم exchange للمؤشرات
     try:
         from twelvedata_provider import get_quote, get_time_series
 
-        q = get_quote("TASI")
-        if isinstance(q, dict) and q.get("ok"):
-            curr = _safe_float(q.get("price") or 0.0)
-            prev = _safe_float(q.get("prev_close") or 0.0)
-            chg = _safe_float(q.get("chg_pct") or 0.0)
+        for qsym in ("TASI", "^TASI.SR", "^TASI"):
+            q = get_quote(qsym)
+            if isinstance(q, dict) and q.get("ok"):
+                curr = _safe_float(q.get("price") or 0.0)
+                prev = _safe_float(q.get("prev_close") or 0.0)
+                chg = _safe_float(q.get("chg_pct") or 0.0)
 
-            # Compute prev/percent from candles if missing
-            if (prev <= 0 or chg == 0.0) and curr > 0:
-                h = get_time_series("TASI", interval="1d", years=1, outputsize=10)
-                if isinstance(h, pd.DataFrame) and not h.empty and "Close" in h.columns:
-                    closes = h["Close"].dropna()
-                    if len(closes) >= 2:
-                        prev = float(closes.iloc[-2])
-                        if prev > 0:
-                            chg = ((curr - prev) / prev) * 100.0
+                # إذا النسبة/الإغلاق السابق مفقودة نحسبها من الشموع
+                if curr > 0 and (prev <= 0 or chg == 0.0):
+                    try:
+                        h = get_time_series("TASI", interval="1d", years=1, outputsize=10)
+                        if isinstance(h, pd.DataFrame) and not h.empty and "Close" in h.columns:
+                            closes = pd.to_numeric(h["Close"], errors="coerce").dropna()
+                            if len(closes) >= 2:
+                                prev = float(closes.iloc[-2])
+                                if prev > 0:
+                                    chg = ((curr - prev) / prev) * 100.0
+                    except Exception:
+                        pass
 
-            if _is_reasonable_price(curr):
-                return float(curr), round(_safe_float(chg), 2)
+                if _is_reasonable_price(curr):
+                    return float(curr), round(_safe_float(chg), 2)
     except Exception:
         pass
 
-    # 2) TradingView best-effort
+    # 2) TradingView best-effort (قد يرجع السعر فقط)
     try:
         if requests:
             url = "https://www.tradingview.com/symbols/TADAWUL-TASI/"
             r = _http_get(url, timeout=8, retries=1)
             if r:
-                txt = r.text or ""
-                m2 = re.search(r'property="og:price:amount"\s+content="([0-9]+(?:\.[0-9]+)?)"', txt)
+                txt_ = r.text or ""
+                m2 = re.search(r'property="og:price:amount"\s+content="([0-9]+(?:\.[0-9]+)?)"', txt_)
                 curr = _safe_float(m2.group(1)) if m2 else 0.0
                 if _is_reasonable_price(curr):
                     return float(curr), 0.0
     except Exception:
         pass
 
-    # 3) Yahoo (yfinance) كحل أخير
+    # 3) Yahoo/yfinance كحل أخير (أكثر من رمز + محاولة حساب التغير)
     try:
-        # بعض البيئات تستخدم ^TASI أو ^TASI.SR غير ثابت — نجرب عدة أشكال
         for ysym in ("^TASI", "^TASI.SR", "TASI.SR"):
             try:
                 t = yf.Ticker(ysym)
                 info = getattr(t, "fast_info", None) or {}
                 p = _safe_float(info.get("lastPrice", 0.0) if isinstance(info, dict) else 0.0)
+                prev = _safe_float(info.get("previousClose", 0.0) if isinstance(info, dict) else 0.0)
+                if not _is_reasonable_price(p):
+                    try:
+                        h = t.history(period="5d", interval="1d")
+                        h = _normalize_ohlcv_columns(h)
+                        if isinstance(h, pd.DataFrame) and not h.empty and "Close" in h.columns:
+                            closes = pd.to_numeric(h["Close"], errors="coerce").dropna()
+                            if len(closes) >= 1:
+                                p = float(closes.iloc[-1])
+                            if len(closes) >= 2 and prev <= 0:
+                                prev = float(closes.iloc[-2])
+                    except Exception:
+                        pass
                 if _is_reasonable_price(p):
-                    return float(p), 0.0
+                    chg = ((p - prev) / prev) * 100.0 if prev > 0 else 0.0
+                    return float(p), round(float(chg), 2)
             except Exception:
                 continue
     except Exception:
         pass
 
-    return 0.0, 0.0
+    return None, None
 
 # ============================================================
 # 📉 Chart History (للرسم البياني والذكاء الاصطناعي)
@@ -820,97 +837,106 @@ def get_chart_history(symbol: str, period: str = None, interval: str = "1d", yea
     """جلب شموع OHLCV (يابانية) بأولوية Twelve Data ثم بقية المصادر.
 
     الهدف: توفير بيانات كافية للرسوم/المؤشرات/المستشار بدون انهيار.
-    - Twelve Data أولاً (Daily خام) ثم نقوم بعمل Resample للفواصل Weekly/Monthly لضمان توفر 10+ سنوات عند الحاجة.
+    - Twelve Data أولاً (Daily خام للـ weekly/monthly) ثم Resample عند الحاجة.
+    - يدعم 4H عبر جلب 1H ثم إعادة التجميع.
     - Yahoo/yfinance كحل أخير فقط.
     """
     sym = get_ticker_symbol(symbol) or str(symbol or "").strip().upper()
     if not sym:
         return pd.DataFrame()
 
-    # Normalize interval
-    itv = (interval or "1d").strip().lower()
+    req_interval = (interval or "1d").strip().lower()
+    itv = req_interval
+
+    # Normalize interval aliases
     if itv in ("d", "1day", "day"):
         itv = "1d"
-    if itv in ("w", "1week", "week"):
+    elif itv in ("w", "1week", "week"):
         itv = "1wk"
-    if itv in ("m", "1month", "month"):
+    elif itv in ("m", "1month", "month"):
         itv = "1mo"
+    elif itv in ("4h", "240m", "4hr", "4hours"):
+        itv = "1h"  # fetch base then resample to 4H
+    elif itv in ("60m", "60min"):
+        itv = "1h"
 
-    # Choose span: monthly/weekly require longer history to meet min candles
+    # Choose span
     years_needed = int(years or 5)
-    if itv in ("1wk", "1mo"):
+    if req_interval in ("1wk", "1w", "week", "1mo", "month"):
         years_needed = max(years_needed, 15)
 
-    # --- Twelve Data first ---
+    # Twelve Data: fetch daily for weekly/monthly, else fetch requested/base interval
+    td_fetch_interval = "1d" if itv in ("1wk", "1mo") else itv
+
     df = pd.DataFrame()
     try:
         from twelvedata_provider import get_time_series as td_get_ts
-
-        # Fetch DAILY always then resample if needed
-        base = td_get_ts(sym, interval="1d", years=years_needed, outputsize=5000)
+        base = td_get_ts(sym, interval=td_fetch_interval, years=years_needed, outputsize=5000)
         if isinstance(base, pd.DataFrame) and not base.empty:
             df = base.copy()
+            try:
+                df.attrs["source"] = "twelvedata"
+            except Exception:
+                pass
     except Exception:
         df = pd.DataFrame()
 
-    # Normalize Twelve Data output (fix casing / MultiIndex / tuple columns)
     df = _normalize_ohlcv_columns(df) if isinstance(df, pd.DataFrame) else pd.DataFrame()
 
-    # Resample for weekly/monthly if needed
+    # Resample weekly/monthly/4H if needed
     try:
-        if isinstance(df, pd.DataFrame) and not df.empty and itv in ("1wk", "1mo"):
+        if isinstance(df, pd.DataFrame) and not df.empty and (req_interval in ("1wk", "1w", "week", "1mo", "month", "4h", "240m", "4hr", "4hours")):
             d = _normalize_ohlcv_columns(df).copy()
-            # ensure datetime index
             if not isinstance(d.index, pd.DatetimeIndex):
                 if "Date" in d.columns:
                     d["Date"] = pd.to_datetime(d["Date"], errors="coerce")
                     d = d.set_index("Date")
                 else:
                     d.index = pd.to_datetime(d.index, errors="coerce")
-            d = d.sort_index()
-            o = d["Open"]
-            h = d["High"]
-            l = d["Low"]
-            c = d["Close"]
-            v = d["Volume"] if "Volume" in d.columns else None
-
-            rule = "W-FRI" if itv == "1wk" else "M"
-            out = pd.DataFrame(
-                {
-                    "Open": o.resample(rule).first(),
-                    "High": h.resample(rule).max(),
-                    "Low": l.resample(rule).min(),
-                    "Close": c.resample(rule).last(),
-                }
-            )
-            if v is not None:
-                out["Volume"] = v.resample(rule).sum()
-            out = out.dropna(subset=["Open", "High", "Low", "Close"])
-            df = out
+            d = d[~pd.isna(d.index)].sort_index()
+            if d.empty:
+                df = pd.DataFrame()
+            else:
+                rule = "W-FRI" if req_interval in ("1wk", "1w", "week") else ("M" if req_interval in ("1mo", "month") else "4H")
+                out = pd.DataFrame({
+                    "Open": pd.to_numeric(d["Open"], errors="coerce").resample(rule).first(),
+                    "High": pd.to_numeric(d["High"], errors="coerce").resample(rule).max(),
+                    "Low": pd.to_numeric(d["Low"], errors="coerce").resample(rule).min(),
+                    "Close": pd.to_numeric(d["Close"], errors="coerce").resample(rule).last(),
+                })
+                if "Volume" in d.columns:
+                    out["Volume"] = pd.to_numeric(d["Volume"], errors="coerce").fillna(0).resample(rule).sum()
+                out = out.dropna(subset=["Open", "High", "Low", "Close"])
+                df = out
     except Exception:
         pass
 
-    # --- Fallback: yfinance (last resort) ---
+    # Fallback: yfinance
     if df is None or df.empty:
         try:
-            yf_sym = sym if sym.endswith(".SR") else f"{sym}.SR"
+            if sym.startswith("^") or "=" in sym or "-" in sym or "." in sym:
+                yf_sym = sym
+            else:
+                yf_sym = f"{sym}.SR"
             prd = period or (f"{years_needed}y" if years_needed else "5y")
-            d2 = yf.download(yf_sym, period=prd, interval=("1d" if itv in ("1wk", "1mo") else itv), progress=False)
+            yf_itv = "1d" if itv in ("1wk", "1mo") else itv
+            d2 = yf.download(yf_sym, period=prd, interval=yf_itv, progress=False)
             if isinstance(d2, pd.DataFrame) and not d2.empty:
-                d2 = d2.rename(columns={"open": "Open", "high": "High", "low": "Low", "close": "Close", "volume": "Volume"})
-                # if need resample
-                if itv in ("1wk", "1mo"):
+                d2 = _normalize_ohlcv_columns(d2)
+                try:
+                    d2.attrs["source"] = "yfinance"
+                except Exception:
+                    pass
+                if req_interval in ("1wk", "1w", "week", "1mo", "month", "4h", "240m", "4hr", "4hours"):
                     d2 = d2.sort_index()
-                    rule = "W-FRI" if itv == "1wk" else "M"
-                    out = pd.DataFrame(
-                        {
-                            "Open": d2["Open"].resample(rule).first(),
-                            "High": d2["High"].resample(rule).max(),
-                            "Low": d2["Low"].resample(rule).min(),
-                            "Close": d2["Close"].resample(rule).last(),
-                            "Volume": d2["Volume"].resample(rule).sum() if "Volume" in d2.columns else np.nan,
-                        }
-                    )
+                    rule = "W-FRI" if req_interval in ("1wk", "1w", "week") else ("M" if req_interval in ("1mo", "month") else "4H")
+                    out = pd.DataFrame({
+                        "Open": d2["Open"].resample(rule).first(),
+                        "High": d2["High"].resample(rule).max(),
+                        "Low": d2["Low"].resample(rule).min(),
+                        "Close": d2["Close"].resample(rule).last(),
+                        "Volume": d2["Volume"].resample(rule).sum() if "Volume" in d2.columns else np.nan,
+                    })
                     out = out.dropna(subset=["Open", "High", "Low", "Close"])
                     df = out
                 else:
@@ -918,18 +944,13 @@ def get_chart_history(symbol: str, period: str = None, interval: str = "1d", yea
         except Exception:
             pass
 
-
-
-    # Final normalize columns (robust)
     df = _normalize_ohlcv_columns(df) if isinstance(df, pd.DataFrame) else pd.DataFrame()
     if df is None or df.empty:
         return pd.DataFrame()
 
-    # Ensure standard columns exist (and avoid KeyError)
     cols = ["Open", "High", "Low", "Close", "Volume"]
     if "Volume" not in df.columns:
         df["Volume"] = 0.0
-
     needed = ["Open", "High", "Low", "Close"]
     if not all(c in df.columns for c in needed):
         return pd.DataFrame()
@@ -937,25 +958,12 @@ def get_chart_history(symbol: str, period: str = None, interval: str = "1d", yea
     df = df[cols].copy()
     df = df.dropna(subset=needed, how="any")
 
-    # If user requested 4H, resample the fetched 1H data to 4H
-    try:
-        if req_interval in ["4h", "240m", "4hr", "4hours"] and df is not None and not df.empty:
-            df = df.resample("4H").agg({
-                "Open": "first",
-                "High": "max",
-                "Low": "min",
-                "Close": "last",
-                "Volume": "sum",
-            }).dropna(subset=["Open", "High", "Low", "Close"])
-    except Exception:
-        pass
-
     # Data lineage (best-effort)
     try:
         lineage = {
             "symbol": str(sym),
             "interval": str(req_interval),
-            "fetched_interval": str(interval),
+            "fetched_interval": str(td_fetch_interval if (getattr(df, "attrs", {}).get("source") == "twelvedata") else itv),
             "period": str(period),
             "rows": int(len(df)) if df is not None else 0,
             "start": str(df.index.min()) if df is not None and not df.empty else None,
@@ -1063,23 +1071,37 @@ def get_relative_strength_vs_tasi(symbol: str, period: str = None, interval: str
 def fetch_batch_data(symbols_list: list):
     """جلب الأسعار (Snapshot) بأولوية Twelve Data ثم بقية المصادر.
 
-    الترتيب:
-    1) Twelve Data (Quote/آخر إغلاق)  ✅
-    2) Google Finance
-    3) TradingView
-    4) Investing
-    5) Argaam
-    6) Yahoo (yfinance) كحل أخير جدًا (قد يسبب 429/حظر)
+    ملاحظات توافق مهمة:
+    - يعيد مفاتيح alias: prev_close + previous_close ، change_pct + change_percent
+    - يخزن النتائج تحت الرمز الخام والمطبع لتفادي مشاكل عدم التطابق بين 1150 و 1150.SR
     """
     results: Dict[str, Dict[str, Any]] = {}
     if not symbols_list:
         return results
 
-    # Try import Twelve Data provider
     try:
         from twelvedata_provider import get_quote as td_get_quote, get_time_series as td_get_ts
     except Exception:
         td_get_quote, td_get_ts = None, None
+
+    def _store_keys(raw_symbol: str, norm_symbol: str, payload: Dict[str, Any]):
+        keys = []
+        for k in (raw_symbol, str(raw_symbol).strip().upper(), norm_symbol):
+            if k:
+                keys.append(str(k).strip().upper())
+        try:
+            for v in _symbol_variants(norm_symbol):
+                if v:
+                    keys.append(str(v).strip().upper())
+        except Exception:
+            pass
+        # unique preserving order
+        seen = set()
+        for k in keys:
+            if not k or k in seen:
+                continue
+            seen.add(k)
+            results[k] = dict(payload)
 
     input_symbols = [str(s).strip().upper() for s in symbols_list if str(s).strip()]
     for raw_sym in input_symbols:
@@ -1091,7 +1113,7 @@ def fetch_batch_data(symbols_list: list):
         year_low = 0.0
         source = "failed"
 
-        # 1) Twelve Data (أفضلية)
+        # 1) Twelve Data
         if td_get_quote:
             try:
                 q = td_get_quote(norm)
@@ -1100,17 +1122,16 @@ def fetch_batch_data(symbols_list: list):
                     pc = _safe_float(q.get("prev_close", 0.0))
                     if _is_reasonable_price(p):
                         price = float(p)
-                        prev_close = float(pc) if pc > 0 else float(p)
+                        prev_close = float(pc) if pc > 0 else 0.0
                         source = "twelvedata"
             except Exception:
                 pass
 
-            # لو prev_close غير متوفر نحسبه من آخر شمعتين
             if price > 0 and prev_close <= 0 and td_get_ts:
                 try:
                     h = td_get_ts(norm, interval="1d", years=1, outputsize=10)
                     if isinstance(h, pd.DataFrame) and not h.empty and "Close" in h.columns:
-                        closes = h["Close"].dropna()
+                        closes = pd.to_numeric(h["Close"], errors="coerce").dropna()
                         if len(closes) >= 2:
                             prev_close = float(closes.iloc[-2])
                 except Exception:
@@ -1122,7 +1143,7 @@ def fetch_batch_data(symbols_list: list):
             p = _safe_float(g.get("price", 0.0))
             if _is_reasonable_price(p):
                 price = float(p)
-                prev_close = float(_safe_float(g.get("prev_close", p))) or float(p)
+                prev_close = float(_safe_float(g.get("prev_close", p))) or 0.0
                 year_high = float(_safe_float(g.get("year_high", 0.0)))
                 year_low = float(_safe_float(g.get("year_low", 0.0)))
                 source = "google_finance"
@@ -1133,7 +1154,7 @@ def fetch_batch_data(symbols_list: list):
             p = _safe_float(tv.get("price", 0.0))
             if _is_reasonable_price(p):
                 price = float(p)
-                prev_close = float(_safe_float(tv.get("prev_close", p))) or float(p)
+                prev_close = float(_safe_float(tv.get("prev_close", p))) or 0.0
                 source = "tradingview"
 
         # 4) Investing
@@ -1142,7 +1163,7 @@ def fetch_batch_data(symbols_list: list):
             p = _safe_float(inv.get("price", 0.0))
             if _is_reasonable_price(p):
                 price = float(p)
-                prev_close = float(_safe_float(inv.get("prev_close", p))) or float(p)
+                prev_close = float(_safe_float(inv.get("prev_close", p))) or 0.0
                 source = "investing"
 
         # 5) Argaam
@@ -1151,36 +1172,50 @@ def fetch_batch_data(symbols_list: list):
             p = _safe_float(ar.get("price", 0.0))
             if _is_reasonable_price(p):
                 price = float(p)
-                prev_close = float(_safe_float(ar.get("prev_close", p))) or float(p)
+                prev_close = float(_safe_float(ar.get("prev_close", p))) or 0.0
                 source = "argaam"
 
-        # 6) Yahoo (yfinance) آخر شيء
+        # 6) Yahoo (آخر شيء) مع احترام المؤشرات/الرموز المؤهلة
         if price <= 0:
             try:
-                yf_sym = norm if norm.endswith(".SR") else f"{norm}.SR"
+                if norm.startswith("^") or "=" in norm or "-" in norm or "." in norm:
+                    yf_sym = norm
+                else:
+                    yf_sym = f"{norm}.SR"
                 t = yf.Ticker(yf_sym)
                 info = getattr(t, "fast_info", None) or {}
                 p = _safe_float(info.get("lastPrice", 0.0) if isinstance(info, dict) else 0.0)
+                pc = _safe_float(info.get("previousClose", 0.0) if isinstance(info, dict) else 0.0)
+                if not _is_reasonable_price(p):
+                    h = t.history(period="5d", interval="1d")
+                    h = _normalize_ohlcv_columns(h)
+                    if isinstance(h, pd.DataFrame) and not h.empty and "Close" in h.columns:
+                        closes = pd.to_numeric(h["Close"], errors="coerce").dropna()
+                        if len(closes) >= 1:
+                            p = float(closes.iloc[-1])
+                        if len(closes) >= 2 and pc <= 0:
+                            pc = float(closes.iloc[-2])
                 if _is_reasonable_price(p):
                     price = float(p)
-                    prev_close = float(price)
+                    prev_close = float(pc) if pc > 0 else 0.0
                     source = "yahoo_yfinance"
             except Exception:
                 pass
 
-        change_pct = 0.0
-        if prev_close > 0 and price > 0:
-            change_pct = ((price - prev_close) / prev_close) * 100.0
+        change_pct = ((price - prev_close) / prev_close) * 100.0 if (prev_close > 0 and price > 0) else 0.0
 
-        results[norm] = {
+        payload = {
             "symbol": norm,
             "price": float(price) if price else 0.0,
+            "prev_close": float(prev_close) if prev_close else 0.0,
             "previous_close": float(prev_close) if prev_close else 0.0,
+            "change_pct": float(round(_safe_float(change_pct), 2)) if price and prev_close else 0.0,
             "change_percent": float(round(_safe_float(change_pct), 2)) if price and prev_close else 0.0,
             "year_high": float(year_high) if year_high else 0.0,
             "year_low": float(year_low) if year_low else 0.0,
             "source": source,
         }
+        _store_keys(raw_sym, norm, payload)
 
     return results
 
