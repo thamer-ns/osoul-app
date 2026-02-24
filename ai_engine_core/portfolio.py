@@ -1,3 +1,16 @@
+
+def compute_market_value(quantity, current_price) -> float:
+    """حساب القيمة السوقية للمركز = الكمية × السعر الحالي."""
+    try:
+        return float(quantity) * float(current_price)
+    except Exception:
+        try:
+            q = 0.0 if quantity is None else float(quantity)
+            p = 0.0 if current_price is None else float(current_price)
+            return q * p
+        except Exception:
+            return 0.0
+
 # ai_engine_core/portfolio.py
 
 import math
