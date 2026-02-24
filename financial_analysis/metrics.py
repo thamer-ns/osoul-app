@@ -39,198 +39,19 @@ def _best_key(row: pd.Series, keys: List[str], default=0.0):
     return _safe_float_none(default) if default is None else _safe_float(default)
 
 
-def _compute_dupont(curr_row: pd.Series) -> dict:
-    out = {
-        "DuPont_Profit_Margin": 0.0,
-        "DuPont_Asset_Turnover": 0.0,
-        "DuPont_Equity_Multiplier": 0.0,
-        "ROE": 0.0,
-        "ROA": 0.0,
-        "Asset_Turnover": 0.0,
-    }
-    try:
-        rev = _safe_float(curr_row.get("revenue", 0))
-        ni = _safe_float(curr_row.get("net_income", 0))
-        assets = _safe_float(curr_row.get("total_assets", 0))
-        eq = _safe_float(curr_row.get("total_equity", 0))
+# removed duplicate shadowed definition of _compute_dupont; kept later improved version\n
 
-        pm = _safe_div(ni, rev, 0.0)
-        at = _safe_div(rev, assets, 0.0)
-        em = _safe_div(assets, eq, 0.0)
+# removed duplicate shadowed definition of _compute_liquidity_leverage; kept later improved version\n
 
-        roe = pm * at * em if (pm and at and em) else _safe_div(ni, eq, 0.0)
-        roa = _safe_div(ni, assets, 0.0)
+# removed duplicate shadowed definition of _compute_earnings_quality; kept later improved version\n
 
-        out["DuPont_Profit_Margin"] = float(pm)
-        out["DuPont_Asset_Turnover"] = float(at)
-        out["DuPont_Equity_Multiplier"] = float(em)
-        out["ROE"] = float(roe)
-        out["ROA"] = float(roa)
-        out["Asset_Turnover"] = float(at)
-    except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/metrics.py:70')
-    return out
+# removed duplicate shadowed definition of _compute_efficiency_pack; kept later improved version\n
 
+# removed duplicate shadowed definition of _compute_cashflow_pack; kept later improved version\n
 
-def _compute_liquidity_leverage(curr_row: pd.Series, prev_row: pd.Series = None) -> dict:
-    out = {
-        "Current_Ratio": 0.0,
-        "Working_Capital": 0.0,
-        "Debt_to_Equity": 0.0,
-        "Liabilities_to_Assets": 0.0,
-        "LT_Debt_Trend": 0.0,
-    }
-    try:
-        ca = _safe_float(curr_row.get("current_assets", 0))
-        cl = _safe_float(curr_row.get("current_liabilities", 0))
-        ltd = _safe_float(curr_row.get("long_term_debt", 0))
-        liab = _safe_float(curr_row.get("total_liabilities", 0))
-        assets = _safe_float(curr_row.get("total_assets", 0))
-        eq = _safe_float(curr_row.get("total_equity", 0))
+# removed duplicate shadowed definition of _compute_growth_pack; kept later improved version\n
 
-        wc = ca - cl
-        cr = _safe_div(ca, cl, 0.0)
-        dte = _safe_div(ltd, eq, 0.0) if eq > 0 else _safe_div(liab, assets, 0.0)
-        lta = _safe_div(liab, assets, 0.0)
-
-        out["Working_Capital"] = float(wc)
-        out["Current_Ratio"] = float(cr)
-        out["Debt_to_Equity"] = float(dte)
-        out["Liabilities_to_Assets"] = float(lta)
-
-        if prev_row is not None:
-            ltd_p = _safe_float(prev_row.get("long_term_debt", 0))
-            if ltd_p != 0:
-                out["LT_Debt_Trend"] = float((ltd - ltd_p) / abs(ltd_p))
-    except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/metrics.py:105')
-    return out
-
-
-def _compute_earnings_quality(curr_row: pd.Series) -> dict:
-    out = {
-        "OCF_to_NetIncome": 0.0,
-        "Accruals_to_Assets": 0.0,
-        "OCF_Margin": 0.0,
-    }
-    try:
-        ni = _safe_float(curr_row.get("net_income", 0))
-        ocf = _safe_float(curr_row.get("operating_cash_flow", 0))
-        assets = _safe_float(curr_row.get("total_assets", 0))
-        rev = _safe_float(curr_row.get("revenue", 0))
-
-        out["OCF_to_NetIncome"] = float(_safe_div(ocf, ni, 0.0)) if ni != 0 else (1.0 if ocf > 0 else 0.0)
-        out["Accruals_to_Assets"] = float(_safe_div((ni - ocf), assets, 0.0))
-        out["OCF_Margin"] = float(_safe_div(ocf, rev, 0.0))
-    except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/metrics.py:125')
-    return out
-
-
-def _compute_efficiency_pack(curr_row: pd.Series) -> dict:
-    """
-    Best-effort margins:
-    - Gross / Operating / Net margin
-    Depends on availability in stored financials.
-    """
-    out = {
-        "Gross_Margin": 0.0,
-        "Operating_Margin": 0.0,
-        "Net_Margin": 0.0,
-    }
-    try:
-        rev = _safe_float(curr_row.get("revenue", 0))
-        if rev <= 0:
-            return out
-
-        gp = _best_key(curr_row, ["gross_profit", "grossProfit"], default=0.0)
-        op_inc = _best_key(curr_row, ["operating_income", "operatingIncome", "ebit"], default=0.0)
-        ni = _safe_float(curr_row.get("net_income", 0))
-
-        out["Gross_Margin"] = float(_safe_div(gp, rev, 0.0))
-        out["Operating_Margin"] = float(_safe_div(op_inc, rev, 0.0))
-        out["Net_Margin"] = float(_safe_div(ni, rev, 0.0))
-    except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/metrics.py:153')
-    return out
-
-
-def _compute_cashflow_pack(curr_row: pd.Series) -> dict:
-    """
-    Best-effort FCF:
-    - FCF = OCF - Capex (if capex exists)
-    """
-    out = {
-        "Free_Cash_Flow": 0.0,
-        "FCF_Margin": 0.0,
-        "FCF_to_NetIncome": 0.0,
-    }
-    try:
-        ocf = _safe_float(curr_row.get("operating_cash_flow", 0))
-        capex = _best_key(curr_row, ["capex", "capital_expenditure", "capitalExpenditures"], default=0.0)
-        rev = _safe_float(curr_row.get("revenue", 0))
-        ni = _safe_float(curr_row.get("net_income", 0))
-
-        # capex is usually negative in some sources; treat as cash outflow magnitude
-        capex_out = abs(_safe_float(capex))
-        fcf = ocf - capex_out
-
-        out["Free_Cash_Flow"] = float(fcf)
-        out["FCF_Margin"] = float(_safe_div(fcf, rev, 0.0)) if rev > 0 else 0.0
-        out["FCF_to_NetIncome"] = float(_safe_div(fcf, ni, 0.0)) if ni != 0 else (1.0 if fcf > 0 else 0.0)
-    except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/metrics.py:181')
-    return out
-
-
-def _compute_growth_pack(curr_row: pd.Series, prev_row: pd.Series) -> dict:
-    out = {
-        "Revenue_Growth_YoY": 0.0,
-        "NetIncome_Growth_YoY": 0.0,
-    }
-    try:
-        rev_c = _safe_float(curr_row.get("revenue", 0))
-        rev_p = _safe_float(prev_row.get("revenue", 0))
-        ni_c = _safe_float(curr_row.get("net_income", 0))
-        ni_p = _safe_float(prev_row.get("net_income", 0))
-
-        if rev_p != 0:
-            out["Revenue_Growth_YoY"] = float((rev_c - rev_p) / abs(rev_p))
-        if ni_p != 0:
-            out["NetIncome_Growth_YoY"] = float((ni_c - ni_p) / abs(ni_p))
-    except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/metrics.py:201')
-    return out
-
-
-def _compute_interest_coverage_best_effort(curr_row: pd.Series, yahoo_info: dict) -> dict:
-    """
-    Best-effort:
-    - Interest coverage = EBIT / Interest expense
-    Interest expense often missing; fallback to Yahoo if possible (rare).
-    """
-    out = {"Interest_Coverage": 0.0, "Interest_Coverage_Quality": "partial"}
-    try:
-        ebit = _best_key(curr_row, ["ebit", "operating_income", "operatingIncome"], default=0.0)
-        ie = _best_key(curr_row, ["interest_expense", "interestExpense"], default=0.0)
-
-        if ie == 0:
-            # very best-effort: try Yahoo
-            ie = _safe_float(yahoo_info.get("interestExpense"))
-        if ie != 0:
-            out["Interest_Coverage"] = float(_safe_div(ebit, abs(ie), 0.0))
-            out["Interest_Coverage_Quality"] = "full"
-    except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/metrics.py:223')
-    return out
-
+# removed duplicate shadowed definition of _compute_interest_coverage_best_effort; kept later improved version\n
 
 def _compute_altman_z_best_effort(symbol: str, curr_row: pd.Series, yahoo_info: dict) -> dict:
     out = {
@@ -268,8 +89,7 @@ def _compute_altman_z_best_effort(symbol: str, curr_row: pd.Series, yahoo_info: 
         out["Altman_Z"] = float(z)
         out["Altman_Z_Quality"] = "full" if (ebit > 0 and mve > 0 and sales > 0 and tl > 0) else "partial"
     except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/metrics.py:263')
+        pass
     return out
 
 
@@ -286,8 +106,7 @@ def _compute_sgr(roe: float, yahoo_info: dict) -> dict:
         out["Retention_Ratio"] = float(retention)
         out["SGR"] = float(_safe_float(roe) * retention)
     except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/metrics.py:280')
+        pass
     return out
 
 
@@ -312,8 +131,7 @@ def _compute_valuation_pack(yahoo_info: dict) -> dict:
         out["EV_to_EBITDA"] = float(_safe_float(yahoo_info.get("enterpriseToEbitda")))
         out["Dividend_Yield"] = float(_safe_float(yahoo_info.get("dividendYield")))
     except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/metrics.py:305')
+        pass
     return out
 
 
@@ -361,8 +179,7 @@ def _build_fund_flags(metrics: dict) -> Dict[str, int]:
         if (peg > 0 and peg <= 1.2) and (pe > 0 and pe <= 16):
             flags["fund_undervalued"] = 1
     except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/metrics.py:353')
+        pass
     return {k: int(v) for k, v in flags.items()}
 
 
@@ -465,8 +282,7 @@ def _score_fundamentals(metrics: dict) -> Tuple[int, str, List[str]]:
             score -= 1
 
     except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/metrics.py:456')
+        pass
 
     score = int(max(0, min(10, score)))
 
@@ -683,8 +499,7 @@ def get_advanced_fundamental_ratios(symbol):
             if eps > 0 and bvps > 0:
                 metrics["Fair_Value_Graham"] = float((22.5 * eps * bvps) ** 0.5)
         except Exception:
-            import logging
-            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/metrics.py:673')
+            pass
 
         metrics.update(_compute_altman_z_best_effort(symbol, curr, info))
         metrics.update(_compute_interest_coverage_best_effort(curr, info))
@@ -719,8 +534,7 @@ def get_advanced_fundamental_ratios(symbol):
         metrics["_fund_flags"] = _build_fund_flags(metrics)
 
     except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/metrics.py:708')
+        pass
 
     return metrics
 
@@ -770,8 +584,7 @@ def _compute_dupont(curr_row: pd.Series) -> dict:
         out["ROA"] = roa
         out["Asset_Turnover"] = at
     except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/metrics.py:758')
+        pass
     return out
 
 
@@ -807,8 +620,7 @@ def _compute_liquidity_leverage(curr_row: pd.Series, prev_row: pd.Series = None)
             if ltd is not None and ltd_p not in (None, 0):
                 out["LT_Debt_Trend"] = (ltd - ltd_p) / abs(ltd_p)
     except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/metrics.py:794')
+        pass
     return out
 
 
@@ -833,8 +645,7 @@ def _compute_earnings_quality(curr_row: pd.Series) -> dict:
             out["Accruals_to_Assets"] = _d((ni - ocf), assets)
         out["OCF_Margin"] = _d(ocf, rev)
     except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/metrics.py:819')
+        pass
     return out
 
 
@@ -853,8 +664,7 @@ def _compute_efficiency_pack(curr_row: pd.Series) -> dict:
         out["Operating_Margin"] = _d(op_inc, rev)
         out["Net_Margin"] = _d(ni, rev)
     except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/metrics.py:838')
+        pass
     return out
 
 
@@ -876,8 +686,7 @@ def _compute_cashflow_pack(curr_row: pd.Series) -> dict:
         out["FCF_Margin"] = _d(fcf, rev)
         out["FCF_to_NetIncome"] = _d(fcf, ni)
     except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/metrics.py:860')
+        pass
     return out
 
 
@@ -894,8 +703,7 @@ def _compute_growth_pack(curr_row: pd.Series, prev_row: pd.Series) -> dict:
         if ni_c is not None and ni_p not in (None, 0):
             out["NetIncome_Growth_YoY"] = (ni_c - ni_p) / abs(ni_p)
     except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/metrics.py:877')
+        pass
     return out
 
 
@@ -912,6 +720,5 @@ def _compute_interest_coverage_best_effort(curr_row: pd.Series, yahoo_info: dict
             out["Interest_Coverage"] = ebit / abs(ie)
             out["Interest_Coverage_Quality"] = "full"
     except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/metrics.py:894')
+        pass
     return out
