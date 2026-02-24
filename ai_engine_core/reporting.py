@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 # ai_engine_core/reporting.py
 
 import traceback
@@ -128,8 +129,7 @@ def _build_signal_events(df: pd.DataFrame, ind: dict, limit: int = 12) -> list:
             elif prev >= 0 and curr < 0:
                 events.append({"type":"Price","event":"Close crossed below SMA20","at": str(df.index[-1])})
     except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/reporting.py:130')
+        pass
 
     return events[:limit]
 
@@ -333,8 +333,7 @@ def generate_ai_report(symbol, timeframe="1D"):
                     if isinstance(v, (bool, int)):
                         features[str(k)] = int(v)
             except Exception:
-                import logging
-                logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/reporting.py:334')
+                pass
 
         # Numeric features (safe)
         try:
@@ -361,8 +360,7 @@ def generate_ai_report(symbol, timeframe="1D"):
             if ind.get("fib382") is not None:
                 features["fib382"] = float(ind["fib382"])
         except Exception:
-            import logging
-            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/reporting.py:361')
+            pass
 
         # =========================
         # Advanced indicators (optional + cached)
@@ -384,8 +382,7 @@ def generate_ai_report(symbol, timeframe="1D"):
                     try:
                         save_advanced_indicators(symbol=symbol, interval=str(interval), payload=adv_pack)
                     except Exception:
-                        import logging
-                        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/reporting.py:383')
+                        pass
 
             # Merge numeric features
             if isinstance(adv_pack, dict):
@@ -424,8 +421,7 @@ def generate_ai_report(symbol, timeframe="1D"):
                     if str(rs.get("label") or "").strip():
                         tech_reasons.append(f"📌 Relative Strength vs TASI: {rs.get('label')}")
             except Exception:
-                import logging
-                logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/reporting.py:422')
+                pass
 
 
         # =========================================================
@@ -470,9 +466,13 @@ def generate_ai_report(symbol, timeframe="1D"):
             regime = "UNK"
 
         try:
-            sec = str(sector) if sector else "UNK"
+            # sector may be computed later; safely extract from fundamentals first to avoid UnboundLocalError
+            _info_ctx = (fund_res or {}).get("info") if isinstance(fund_res, dict) else {}
+            _sector_ctx = (_info_ctx or {}).get("sector") or (_info_ctx or {}).get("Sector") or (_info_ctx or {}).get("industry") or None
+            sec = str(_sector_ctx) if _sector_ctx else "UNK"
             ctx_key = f"mkt={market_trend}|reg={regime}|sec={sec}"
         except Exception:
+            logger.exception("Failed to build self-learning ctx_key")
             ctx_key = None
 
         # Multi-horizon evaluation defaults by timeframe
@@ -516,8 +516,7 @@ def generate_ai_report(symbol, timeframe="1D"):
                         try:
                             features[str(kk)] = int(vv)
                         except Exception:
-                            import logging
-                            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/reporting.py:513')
+                            pass
 
         if abs(user_delta) > 0:
             tech_score = float(tech_score + user_delta)
@@ -598,8 +597,7 @@ def generate_ai_report(symbol, timeframe="1D"):
                 confidence = max(0.0, min(100.0, float(confidence) + (float(adv_c) - 50.0) * 0.15))
                 confidence_label = f"{confidence_label} + مؤشرات متقدمة"
         except Exception:
-            import logging
-            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/reporting.py:594')
+            pass
 
         # =========================
         # ✅ Data Quality Gate -> calibrate confidence + refuse strong recommendations
@@ -636,8 +634,7 @@ def generate_ai_report(symbol, timeframe="1D"):
                 clr = "#ffc107"
                 strat = "الثقة منخفضة أو البيانات ناقصة — لا نعطي توصية قوية حتى تتحسن الجودة/الاكتمال."
         except Exception:
-            import logging
-            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/reporting.py:631')
+            pass
 
         # If data quality FAIL, force downgrade for buy/value calls
         try:
@@ -647,8 +644,7 @@ def generate_ai_report(symbol, timeframe="1D"):
                     clr = "#ffc107"
                     strat = "تم تخفيض قوة التوصية بسبب فشل بوابة جودة البيانات (نقص/عدم اتساق)."
         except Exception:
-            import logging
-            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/reporting.py:641')
+            pass
 
         explainability = _build_explainability(tech_reasons, fund_reasons, total_score, tech_score, fund_score)
         explainability["confidence_note"] = f"Confidence={int(confidence)}% ({confidence_label})"
@@ -714,23 +710,37 @@ def generate_ai_report(symbol, timeframe="1D"):
                 report["color"] = "#ffc107"
                 report["strategy"] = "تم رفض التوصية بسبب: " + " | ".join(report["risk_gates"]["reasons"])
         except Exception:
-            import logging
-            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/reporting.py:707')
+            pass
 
         signal_id = None
         try:
             if get_flag("enable_self_learning", True):
+                learn_features = {
+                    "total_score": float(total_score),
+                    "confidence": float(confidence),
+                    "market_trend": market_trend,
+                    "regime": regime,
+                    "ctx_key": ctx_key,
+                }
+                learn_report = report if isinstance(report, dict) else {"report": report}
+                if isinstance(learn_report, dict) and "recommendation" not in learn_report:
+                    learn_report = {**learn_report, "recommendation": rec}
                 signal_id = log_ai_signal(
                     symbol,
                     timeframe,
-                    rec,
-                    float(total_score),
-                    float(confidence),
-                    report,
+                    learn_features,
+                    learn_report,
+                    sector=sector,
+                    strategy_name=strategy_name,
+                    data_quality=(fund_res or {}).get("data_quality") if isinstance(fund_res, dict) else None,
+                    category=("buy" if str(rec).startswith("شراء") else "sell" if str(rec).startswith("بيع") else "watch"),
+                    signal_key=f"{timeframe}|{rec}|{market_trend}|{regime}",
+                    meta={"ctx_key": ctx_key},
                     market_trend=market_trend,
                     regime=regime,
                 )
         except Exception:
+            logger.exception("Self-learning signal logging failed")
             signal_id = None
 
         if signal_id:
