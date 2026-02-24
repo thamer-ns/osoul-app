@@ -5,6 +5,11 @@ import numpy as np
 
 from .technicals import _pivot_points
 
+try:
+    from .liquidity_gate import evaluate_liquidity_gate
+except Exception:
+    evaluate_liquidity_gate = None
+
 
 def _support_resistance_zones(df, lookback=120, max_levels=6):
     """
@@ -223,6 +228,17 @@ def _risk_gates(report: dict) -> dict:
     except Exception:
         import logging
         logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/risk.py:219')
+
+    # Gate 5: Liquidity (if reporting layer attached liquidity features)
+    try:
+        liq_pass = feats.get("liquidity_pass", None)
+        rec = str(report.get("recommendation") or "")
+        is_buy_like = ("شراء" in rec) or ("Buy" in rec) or ("Strong" in rec)
+        if liq_pass is not None and int(liq_pass) == 0 and is_buy_like:
+            gates["pass"] = False
+            gates["reasons"].append("سيولة منخفضة — تم حظر التوصية الشرائية القوية")
+    except Exception:
+        pass
 
     return gates
 
