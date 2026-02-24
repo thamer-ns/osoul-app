@@ -421,7 +421,7 @@ def fetch_df(query: str, params: Optional[Tuple[Any, ...]] = None) -> pd.DataFra
     finally:
         put_connection(conn, kind)
 
-def db_user_exists(username: str) -> Optional[bool]:
+def db_user_exists_legacy_424(username: str) -> Optional[bool]:
     """Return True/False if known, or None if DB error."""
     u = (username or "").strip()
     if not u:
@@ -476,7 +476,7 @@ def get_user_schema(username: str) -> str:
     return "public"
 
 
-def db_get_user_schema(username: str) -> str:
+def db_get_user_schema_legacy_479(username: str) -> str:
     return get_user_schema(username)
 
 
