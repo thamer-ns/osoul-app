@@ -1,4 +1,4 @@
-#time_series.py
+#time_Series.py
 # coding: utf-8
 """Compatibility shim for case-sensitive filesystems.
 
