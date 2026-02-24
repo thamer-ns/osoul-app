@@ -47,8 +47,7 @@ def render_financial_dashboard_ui(symbol):
                     fig = px.bar(plot_df.sort_values("date"), x="Year", y=cols, barmode="group")
                     st.plotly_chart(fig, width="stretch")
             except Exception:
-                import logging
-                logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/ui.py:49')
+                pass
 
             with st.expander("البيانات التفصيلية"):
                 st.dataframe(df, width="stretch")
@@ -71,8 +70,7 @@ def render_financial_dashboard_ui(symbol):
                     }
                     st.json(adv)
                 except Exception:
-                    import logging
-                    logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at financial_analysis/ui.py:72')
+                    pass
 
     with tab_data_mgmt:
         st.info("يدعم: PDF تداول / Excel/CSV / Copy-Paste من المتصفح (TradingView/أرقام/Investing/Google Finance)")
