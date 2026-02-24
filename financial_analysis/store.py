@@ -483,8 +483,16 @@ def fetch_full_statement_records(
     if sc not in ("raw", "thousands"):
         sc = "thousands"
 
-    query = f"""
+    if _db_kind() == "postgres":
+        query = f"""
     SELECT as_of::text AS as_of, data_json
+    FROM {_TABLE_NAME}
+    WHERE symbol = %s AND statement = %s AND period_type = %s AND scale = %s
+    ORDER BY as_of DESC;
+    """
+    else:
+        query = f"""
+    SELECT CAST(as_of AS TEXT) AS as_of, data_json
     FROM {_TABLE_NAME}
     WHERE symbol = %s AND statement = %s AND period_type = %s AND scale = %s
     ORDER BY as_of DESC;
@@ -547,23 +555,23 @@ def get_full_statements_freshness(
     if sc not in ("raw", "thousands"):
         sc = "thousands"
 
-    # latest update + sources (portable: Postgres/SQLite)
+    # latest update + sources (Postgres/SQLite compatible)
     if _db_kind() == "postgres":
         q = f"""
-        SELECT
-          MAX(updated_at) AS updated_at,
-          ARRAY_AGG(DISTINCT source) AS sources
-        FROM {_TABLE_NAME}
-        WHERE symbol=%s AND period_type=%s AND scale=%s;
-        """
+    SELECT
+      MAX(updated_at) AS updated_at,
+      ARRAY_AGG(DISTINCT source) AS sources
+    FROM {_TABLE_NAME}
+    WHERE symbol=%s AND period_type=%s AND scale=%s;
+    """
     else:
         q = f"""
-        SELECT
-          MAX(updated_at) AS updated_at,
-          GROUP_CONCAT(DISTINCT source) AS sources
-        FROM {_TABLE_NAME}
-        WHERE symbol=%s AND period_type=%s AND scale=%s;
-        """
+    SELECT
+      MAX(updated_at) AS updated_at,
+      GROUP_CONCAT(DISTINCT source) AS sources
+    FROM {_TABLE_NAME}
+    WHERE symbol=%s AND period_type=%s AND scale=%s;
+    """
     meta = fetch_df(q, (sym, ptype, sc))
     updated_at = None
     sources = []
@@ -601,7 +609,7 @@ def get_full_statements_freshness(
 
     try:
         if isinstance(sources, str):
-            sources = [x.strip() for x in str(sources).split(',') if str(x).strip()]
+            sources = [s.strip() for s in sources.split(",") if str(s).strip()]
         elif sources is None:
             sources = []
         else:
