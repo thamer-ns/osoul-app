@@ -39,7 +39,7 @@ def _best_key(row: pd.Series, keys: List[str], default=0.0):
     return _safe_float_none(default) if default is None else _safe_float(default)
 
 
-def _compute_dupont_legacy_42(curr_row: pd.Series) -> dict:
+def __compute_dupont__shadowed_1(curr_row: pd.Series) -> dict:
     out = {
         "DuPont_Profit_Margin": 0.0,
         "DuPont_Asset_Turnover": 0.0,
@@ -73,7 +73,7 @@ def _compute_dupont_legacy_42(curr_row: pd.Series) -> dict:
     return out
 
 
-def _compute_liquidity_leverage_legacy_76(curr_row: pd.Series, prev_row: pd.Series = None) -> dict:
+def __compute_liquidity_leverage__shadowed_1(curr_row: pd.Series, prev_row: pd.Series = None) -> dict:
     out = {
         "Current_Ratio": 0.0,
         "Working_Capital": 0.0,
@@ -109,7 +109,7 @@ def _compute_liquidity_leverage_legacy_76(curr_row: pd.Series, prev_row: pd.Seri
     return out
 
 
-def _compute_earnings_quality_legacy_112(curr_row: pd.Series) -> dict:
+def __compute_earnings_quality__shadowed_1(curr_row: pd.Series) -> dict:
     out = {
         "OCF_to_NetIncome": 0.0,
         "Accruals_to_Assets": 0.0,
@@ -130,7 +130,7 @@ def _compute_earnings_quality_legacy_112(curr_row: pd.Series) -> dict:
     return out
 
 
-def _compute_efficiency_pack_legacy_133(curr_row: pd.Series) -> dict:
+def __compute_efficiency_pack__shadowed_1(curr_row: pd.Series) -> dict:
     """
     Best-effort margins:
     - Gross / Operating / Net margin
@@ -159,7 +159,7 @@ def _compute_efficiency_pack_legacy_133(curr_row: pd.Series) -> dict:
     return out
 
 
-def _compute_cashflow_pack_legacy_162(curr_row: pd.Series) -> dict:
+def __compute_cashflow_pack__shadowed_1(curr_row: pd.Series) -> dict:
     """
     Best-effort FCF:
     - FCF = OCF - Capex (if capex exists)
@@ -188,7 +188,7 @@ def _compute_cashflow_pack_legacy_162(curr_row: pd.Series) -> dict:
     return out
 
 
-def _compute_growth_pack_legacy_191(curr_row: pd.Series, prev_row: pd.Series) -> dict:
+def __compute_growth_pack__shadowed_1(curr_row: pd.Series, prev_row: pd.Series) -> dict:
     out = {
         "Revenue_Growth_YoY": 0.0,
         "NetIncome_Growth_YoY": 0.0,
@@ -209,7 +209,7 @@ def _compute_growth_pack_legacy_191(curr_row: pd.Series, prev_row: pd.Series) ->
     return out
 
 
-def _compute_interest_coverage_best_effort_legacy_212(curr_row: pd.Series, yahoo_info: dict) -> dict:
+def __compute_interest_coverage_best_effort__shadowed_1(curr_row: pd.Series, yahoo_info: dict) -> dict:
     """
     Best-effort:
     - Interest coverage = EBIT / Interest expense
