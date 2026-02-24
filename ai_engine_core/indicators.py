@@ -4,18 +4,23 @@ import pandas as pd
 import numpy as np
 
 
-def _ffill_no_lookahead(series: pd.Series, *, fallback=None) -> pd.Series:
-    """Forward-fill only (no future leakage). Optionally fill remaining NaNs with a constant."""
+def _ffill_no_lookahead(series, default=None):
+    """Forward-fill only (no bfill) to avoid lookahead bias in historical bars."""
     try:
-        out = pd.to_numeric(series, errors="coerce").astype(float).ffill()
+        s = pd.to_numeric(series, errors="coerce") if series is not None else pd.Series(dtype=float)
+        s = s.ffill()
+        return s if default is None else s.fillna(default)
     except Exception:
-        out = pd.Series(series).ffill()
-    if fallback is not None:
-        try:
-            out = out.fillna(fallback)
-        except Exception:
-            pass
-    return out
+        if series is None:
+            s = pd.Series(dtype=float)
+        else:
+            try:
+                s = pd.Series(series)
+            except Exception:
+                s = pd.Series(dtype=float)
+        s = s.ffill()
+        return s if default is None else s.fillna(default)
+
 
 
 def _compute_indicators(df: pd.DataFrame):
@@ -65,7 +70,7 @@ def _compute_indicators(df: pd.DataFrame):
 
         rs = avg_gain / avg_loss.replace(0, np.nan)
         rsi = 100 - (100 / (1 + rs))
-        out["rsi14"] = _ffill_no_lookahead(rsi, fallback=50)
+        out["rsi14"] = _ffill_no_lookahead(rsi, 50)
     except Exception:
         out["rsi14"] = pd.Series([50] * len(df), index=df.index)
 
