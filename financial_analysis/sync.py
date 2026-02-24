@@ -27,15 +27,34 @@ def sync_auto_multi_sources(symbol: str, prefer: str = "yahoo") -> Tuple[bool, s
     saved = 0
     notes: List[str] = []
 
+    # ✅ Provider failover summary (Yahoo-safe + APIs + HTML best-effort)
     try:
-        d = fetch_financials_from_argaam(symbol) or {}
-        if isinstance(d, dict) and d:
-            dt = d.get("date") or _safe_date_str(date.today())  # fallback: today (avoid passing symbol as date)
-            if save_financial_record(symbol, dt, d, "Annual", "Argaam"):
-                saved += 1
-                notes.append("تمت المحاولة من أرقام")
+        from .yahoo_data import fetch_financial_statements_multi_source
+        recs = fetch_financial_statements_multi_source(symbol, period_type="Annual") or []
+        for rec in recs[:3]:
+            d = (rec or {}).get("data") or {}
+            dt = (rec or {}).get("date") or _safe_date_str(date.today())
+            src = str((rec or {}).get("_source") or "External")
+            if isinstance(d, dict) and d:
+                if save_financial_record(symbol, dt, d, "Annual", src):
+                    saved += 1
+                    notes.append(f"تمت المحاولة من {src}")
+        # avoid duplicate notes spam
+        notes = list(dict.fromkeys(notes))
     except Exception as e:
-        notes.append(f"أرقام فشل: {e}")
+        notes.append(f"بدائل المصادر فشلت: {e}")
+
+    # Legacy HTML fallbacks (extra chance if multi-source returned nothing)
+    if saved == 0:
+        try:
+            d = fetch_financials_from_argaam(symbol) or {}
+            if isinstance(d, dict) and d:
+                dt = d.get("date") or _safe_date_str(date.today())
+                if save_financial_record(symbol, dt, d, "Annual", "Argaam"):
+                    saved += 1
+                    notes.append("تمت المحاولة من أرقام")
+        except Exception as e:
+            notes.append(f"أرقام فشل: {e}")
 
     if saved == 0:
         try:
@@ -275,7 +294,7 @@ def sync_full_yahoo(symbol: str, period: str = 'all', *, include_ttm: bool = Tru
     For Annual/Quarterly (or all) (+ optional TTM derived)
     Values are stored in *thousands* to match Yahoo UI.
     """
-    from .yahoo_data import fetch_full_financial_statements_yahoo_json, diagnose_quote_summary
+    from .yahoo_data import fetch_full_financial_statements_multi_source, diagnose_quote_summary
     from .store_full import save_full_statement_record, has_full_statement, fetch_full_statement_records
 
     # ----------------------------------------------------------
@@ -327,7 +346,7 @@ def sync_full_yahoo(symbol: str, period: str = 'all', *, include_ttm: bool = Tru
                     return True, "⚠️ تم عرض آخر قوائم كاملة محفوظة (تجنبًا لضرب Yahoo أثناء التحديثات)."
                 return False, "⚠️ تم إيقاف المحاولة مؤقتًا لتجنب 429. أعد المحاولة بعد دقيقة."
 
-            data = fetch_full_financial_statements_yahoo_json(
+            data = fetch_full_financial_statements_multi_source(
                 symbol,
                 period_type=period_type_req,
                 as_thousands=True,
@@ -357,14 +376,14 @@ def sync_full_yahoo(symbol: str, period: str = 'all', *, include_ttm: bool = Tru
             if has_full_statement(symbol):
                 # just confirm we can read them
                 _ = fetch_full_statement_records(symbol, "income", "Annual")
-                return True, "⚠️ Yahoo غير متاح الآن. تم عرض آخر قوائم كاملة محفوظة." + details
+                return True, "⚠️ المصدر الحالي غير متاح الآن. تم عرض آخر قوائم كاملة محفوظة." + details
 
             # fallback to summary (multi sources) so the rest of the app can still work
             ok2, msg2 = sync_auto_multi_sources(symbol, prefer="yahoo")
             if ok2:
-                return True, "⚠️ لم تُجلب القوائم الكاملة من Yahoo، لكن تم تحديث القوائم الأساسية من مصادر بديلة. " + msg2 + details
+                return True, "⚠️ لم تُجلب القوائم الكاملة من المصدر الحالي، لكن تم تحديث القوائم الأساسية من مصادر بديلة. " + msg2 + details
 
-            return False, "❌ لم يتم جلب أي بيانات كاملة من Yahoo." + details + "\n"
+            return False, "❌ لم يتم جلب أي بيانات كاملة من المصادر المتاحة." + details + "\n"
 
         saved = 0
         requested = (period or 'all').lower()
@@ -393,7 +412,7 @@ def sync_full_yahoo(symbol: str, period: str = 'all', *, include_ttm: bool = Tru
                         as_of=d,
                         data=payload,
                         scale="thousands",
-                        source="YahooJSON",
+                        source=(r or {}).get("_source") or "YahooJSON",
                     )
                     if ok:
                         saved += 1
