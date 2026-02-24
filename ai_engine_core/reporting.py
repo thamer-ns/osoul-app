@@ -59,6 +59,22 @@ from .risk import (
 from .user_rules import load_user_rules, _eval_user_rule
 from .logging_learning import log_ai_signal, _get_weight, get_effective_weight
 
+# Optional post-scoring gates/calibration (safe imports)
+try:
+    from .liquidity_gate import evaluate_liquidity_gate
+except Exception:
+    evaluate_liquidity_gate = None
+
+try:
+    from .multi_timeframe import evaluate_daily_weekly_alignment
+except Exception:
+    evaluate_daily_weekly_alignment = None
+
+try:
+    from .scoring_calibration import calibrate_score
+except Exception:
+    calibrate_score = None
+
 
 def _timeframe_to_interval(timeframe: str) -> str:
     tf = str(timeframe or "").strip().upper()
@@ -611,6 +627,99 @@ def generate_ai_report(symbol, timeframe="1D"):
             logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/reporting.py:594')
 
         # =========================
+        # ✅ Liquidity Gate + MTF Alignment + Score Normalization
+        # =========================
+        calibration_payload = {}
+        liquidity_gate_res = None
+        mtf_alignment_res = None
+        score_calibration_res = None
+
+        # 1) score normalization by timeframe/sector (confidence tuning + strong-call guard)
+        try:
+            if callable(calibrate_score):
+                score_calibration_res = calibrate_score(float(total_score), timeframe=str(timeframe), sector=sector)
+                if isinstance(score_calibration_res, dict):
+                    calibration_payload["score_normalization"] = score_calibration_res
+                    if score_calibration_res.get("available"):
+                        try:
+                            confidence = max(0.0, min(100.0, float(confidence) + float(score_calibration_res.get("confidence_delta") or 0.0)))
+                        except Exception:
+                            pass
+                        if score_calibration_res.get("percentile") is not None:
+                            try:
+                                features["score_percentile"] = float(score_calibration_res.get("percentile"))
+                            except Exception:
+                                pass
+                        if score_calibration_res.get("zscore") is not None:
+                            try:
+                                features["score_z"] = float(score_calibration_res.get("zscore"))
+                            except Exception:
+                                pass
+                        if (not bool(score_calibration_res.get("strong_ok", True))) and (("Strong" in str(rec)) or ("💎" in str(rec))):
+                            rec = "⚠️ شراء بحذر / مراقبة"
+                            clr = "#ffc107"
+                            strat = "تم تخفيف التوصية: السكور الحالي أقل من المعتاد مقارنة بتاريخ نفس الفاصل/القطاع."
+                            tech_reasons.append("📊 تطبيع السكور: القوة الحالية ليست عالية بما يكفي تاريخيًا لإشارة قوية.")
+        except Exception:
+            try:
+                import logging
+                logging.getLogger(__name__).exception("score normalization gate failed")
+            except Exception:
+                pass
+
+        # 2) liquidity gate (execution realism)
+        try:
+            if callable(evaluate_liquidity_gate):
+                liquidity_gate_res = evaluate_liquidity_gate(df)
+                if isinstance(liquidity_gate_res, dict):
+                    calibration_payload["liquidity_gate"] = liquidity_gate_res
+                    for k, v in (liquidity_gate_res.get("features") or {}).items():
+                        features[str(k)] = v
+                    cap = liquidity_gate_res.get("confidence_cap")
+                    if isinstance(cap, (int, float)):
+                        confidence = min(float(confidence), float(cap))
+                    for rr in (liquidity_gate_res.get("reasons") or []):
+                        tech_reasons.append(str(rr))
+                    liq_pass = bool(liquidity_gate_res.get("pass", True))
+                    if (not liq_pass) and (("Strong" in str(rec)) or ("💎" in str(rec)) or ("شراء" in str(rec)) or ("مضاربة" in str(rec))):
+                        rec = "⚠️ إشارة موجودة لكن السيولة ضعيفة"
+                        clr = "#ffc107"
+                        strat = "تم تخفيف التوصية لأن سيولة السهم منخفضة وقد تجعل التنفيذ أصعب وأكثر خطورة."
+        except Exception:
+            try:
+                import logging
+                logging.getLogger(__name__).exception("liquidity gate failed")
+            except Exception:
+                pass
+
+        # 3) daily/weekly alignment gate (top-down confirmation)
+        try:
+            _interval_l = str(interval or "").lower().strip()
+            if callable(evaluate_daily_weekly_alignment) and _interval_l in {"1d", "d", "day", "daily"}:
+                _bias = "buy" if float(total_score) >= 2 else ("sell" if float(total_score) <= -2 else "neutral")
+                mtf_alignment_res = evaluate_daily_weekly_alignment(df, daily_bias=_bias)
+                if isinstance(mtf_alignment_res, dict):
+                    calibration_payload["multi_timeframe"] = mtf_alignment_res
+                    try:
+                        confidence = max(0.0, min(100.0, float(confidence) + float(mtf_alignment_res.get("confidence_delta") or 0.0)))
+                    except Exception:
+                        pass
+                    features["mtf_applied"] = 1 if bool(mtf_alignment_res.get("applied")) else 0
+                    features["mtf_aligned"] = 1 if bool(mtf_alignment_res.get("aligned")) else 0
+                    if str(mtf_alignment_res.get("reason") or "").strip():
+                        tech_reasons.append(str(mtf_alignment_res.get("reason")))
+                    if (not bool(mtf_alignment_res.get("aligned", True))) and (_bias == "buy") and (("Strong" in str(rec)) or ("💎" in str(rec)) or ("شراء" in str(rec)) or ("مضاربة" in str(rec))):
+                        rec = "⚠️ شراء بحذر / مراقبة"
+                        clr = "#ffc107"
+                        strat = "تم تخفيف التوصية بسبب تعارض الاتجاه اليومي مع الاتجاه الأسبوعي."
+        except Exception:
+            try:
+                import logging
+                logging.getLogger(__name__).exception("multi-timeframe gate failed")
+            except Exception:
+                pass
+
+        # =========================
         # ✅ Data Quality Gate -> calibrate confidence + refuse strong recommendations
         # =========================
         dq = None
@@ -659,6 +768,9 @@ def generate_ai_report(symbol, timeframe="1D"):
             import logging
             logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/reporting.py:641')
 
+        tech_reasons = _dedup_limit(tech_reasons, limit=12) or ["حركة السعر طبيعية"]
+        fund_reasons = _dedup_limit(fund_reasons, limit=8) or ["المؤشرات المالية طبيعية"]
+
         explainability = _build_explainability(tech_reasons, fund_reasons, total_score, tech_score, fund_score)
         explainability["confidence_note"] = f"Confidence={int(confidence)}% ({confidence_label})"
 
@@ -692,7 +804,7 @@ def generate_ai_report(symbol, timeframe="1D"):
             "confidence_label": confidence_label,
             "explainability": explainability,
             "features": features,
-            "calibration": {},
+            "calibration": calibration_payload if isinstance(calibration_payload, dict) else {},
             "strategy_name": strategy_name,
             "sector": sector,
             "risk_plan": risk_plan,
@@ -711,6 +823,8 @@ def generate_ai_report(symbol, timeframe="1D"):
         # Attach multi-timeframe helpers
         report["signal_events"] = signal_events or []
         report["engine_meta"]["why_wrong"] = (why_wrong or [])[:5]
+        if isinstance(calibration_payload, dict) and calibration_payload:
+            report["engine_meta"]["calibration_applied"] = list(calibration_payload.keys())
         if data_lineage:
             report["engine_meta"]["data_lineage"] = data_lineage
 
