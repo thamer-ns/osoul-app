@@ -46,8 +46,7 @@ def _get_twelvedata_key() -> str:
         if k:
             return str(k).strip()
     except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at market_data.py:48')
+        pass
     return str(os.environ.get("TWELVEDATA_API_KEY", "")).strip()
 
 
@@ -379,16 +378,14 @@ def _ensure_datetime_index(df: pd.DataFrame) -> pd.DataFrame:
         try:
             d.index = pd.to_datetime(d.index, errors="coerce")
         except Exception:
-            import logging
-            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at market_data.py:380')
+            pass
 
     d = d[~pd.isna(d.index)]
     d = d[~d.index.duplicated(keep="last")]
     try:
         d = d.sort_index()
     except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at market_data.py:387')
+        pass
 
     return d
 
@@ -732,8 +729,7 @@ def fetch_price_from_yahoo(symbol: str) -> Dict[str, float]:
                     if prev_close <= 0 and len(h) >= 2:
                         prev_close = _safe_float(h["Close"].iloc[-2])
             except Exception:
-                import logging
-                logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at market_data.py:731')
+                pass
 
         return {
             "price": float(last_price) if _is_reasonable_price(last_price) else 0.0,
@@ -778,14 +774,12 @@ def get_tasi_data():
                                 if prev > 0:
                                     chg = ((curr - prev) / prev) * 100.0
                     except Exception:
-                        import logging
-                        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at market_data.py:776')
+                        pass
 
                 if _is_reasonable_price(curr):
                     return float(curr), round(_safe_float(chg), 2)
     except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at market_data.py:781')
+        pass
 
     # 2) TradingView best-effort (قد يرجع السعر فقط)
     try:
@@ -799,8 +793,7 @@ def get_tasi_data():
                 if _is_reasonable_price(curr):
                     return float(curr), 0.0
     except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at market_data.py:795')
+        pass
 
     # 3) Yahoo/yfinance كحل أخير (أكثر من رمز + محاولة حساب التغير)
     try:
@@ -821,16 +814,14 @@ def get_tasi_data():
                             if len(closes) >= 2 and prev <= 0:
                                 prev = float(closes.iloc[-2])
                     except Exception:
-                        import logging
-                        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at market_data.py:816')
+                        pass
                 if _is_reasonable_price(p):
                     chg = ((p - prev) / prev) * 100.0 if prev > 0 else 0.0
                     return float(p), round(float(chg), 2)
             except Exception:
                 continue
     except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at market_data.py:823')
+        pass
 
     return None, None
 
@@ -886,8 +877,7 @@ def get_chart_history(symbol: str, period: str = None, interval: str = "1d", yea
             try:
                 df.attrs["source"] = "twelvedata"
             except Exception:
-                import logging
-                logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at market_data.py:879')
+                pass
     except Exception:
         df = pd.DataFrame()
 
@@ -907,7 +897,7 @@ def get_chart_history(symbol: str, period: str = None, interval: str = "1d", yea
             if d.empty:
                 df = pd.DataFrame()
             else:
-                rule = "W-FRI" if req_interval in ("1wk", "1w", "week") else ("M" if req_interval in ("1mo", "month") else "4H")
+                rule = "W-THU" if req_interval in ("1wk", "1w", "week") else ("M" if req_interval in ("1mo", "month") else "4H")  # Saudi market week closes on Thursday
                 out = pd.DataFrame({
                     "Open": pd.to_numeric(d["Open"], errors="coerce").resample(rule).first(),
                     "High": pd.to_numeric(d["High"], errors="coerce").resample(rule).max(),
@@ -919,8 +909,7 @@ def get_chart_history(symbol: str, period: str = None, interval: str = "1d", yea
                 out = out.dropna(subset=["Open", "High", "Low", "Close"])
                 df = out
     except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at market_data.py:911')
+        pass
 
     # Fallback: yfinance
     if df is None or df.empty:
@@ -937,11 +926,10 @@ def get_chart_history(symbol: str, period: str = None, interval: str = "1d", yea
                 try:
                     d2.attrs["source"] = "yfinance"
                 except Exception:
-                    import logging
-                    logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at market_data.py:928')
+                    pass
                 if req_interval in ("1wk", "1w", "week", "1mo", "month", "4h", "240m", "4hr", "4hours"):
                     d2 = d2.sort_index()
-                    rule = "W-FRI" if req_interval in ("1wk", "1w", "week") else ("M" if req_interval in ("1mo", "month") else "4H")
+                    rule = "W-THU" if req_interval in ("1wk", "1w", "week") else ("M" if req_interval in ("1mo", "month") else "4H")
                     out = pd.DataFrame({
                         "Open": d2["Open"].resample(rule).first(),
                         "High": d2["High"].resample(rule).max(),
@@ -954,8 +942,7 @@ def get_chart_history(symbol: str, period: str = None, interval: str = "1d", yea
                 else:
                     df = d2
         except Exception:
-            import logging
-            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at market_data.py:944')
+            pass
 
     df = _normalize_ohlcv_columns(df) if isinstance(df, pd.DataFrame) else pd.DataFrame()
     if df is None or df.empty:
@@ -987,16 +974,13 @@ def get_chart_history(symbol: str, period: str = None, interval: str = "1d", yea
         try:
             df.attrs["data_lineage"] = lineage
         except Exception:
-            import logging
-            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at market_data.py:976')
+            pass
         try:
             _LAST_LINEAGE[_sym_key(sym)] = lineage
         except Exception:
-            import logging
-            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at market_data.py:980')
+            pass
     except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at market_data.py:982')
+        pass
 
     return df
 
@@ -1110,8 +1094,7 @@ def fetch_batch_data(symbols_list: list):
                 if v:
                     keys.append(str(v).strip().upper())
         except Exception:
-            import logging
-            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at market_data.py:1096')
+            pass
         # unique preserving order
         seen = set()
         for k in keys:
@@ -1142,8 +1125,7 @@ def fetch_batch_data(symbols_list: list):
                         prev_close = float(pc) if pc > 0 else 0.0
                         source = "twelvedata"
             except Exception:
-                import logging
-                logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at market_data.py:1127')
+                pass
 
             if price > 0 and prev_close <= 0 and td_get_ts:
                 try:
@@ -1153,8 +1135,7 @@ def fetch_batch_data(symbols_list: list):
                         if len(closes) >= 2:
                             prev_close = float(closes.iloc[-2])
                 except Exception:
-                    import logging
-                    logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at market_data.py:1137')
+                    pass
 
         # 2) Google Finance
         if price <= 0:
@@ -1219,8 +1200,7 @@ def fetch_batch_data(symbols_list: list):
                     prev_close = float(pc) if pc > 0 else 0.0
                     source = "yahoo_yfinance"
             except Exception:
-                import logging
-                logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at market_data.py:1202')
+                pass
 
         change_pct = ((price - prev_close) / prev_close) * 100.0 if (prev_close > 0 and price > 0) else 0.0
 
@@ -1259,8 +1239,7 @@ def get_static_info(symbol: str) -> Dict[str, Any]:
             if sec:
                 sector = sec
     except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at market_data.py:1241')
+        pass
 
     return {
         "symbol": sym,
