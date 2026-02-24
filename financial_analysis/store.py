@@ -547,14 +547,23 @@ def get_full_statements_freshness(
     if sc not in ("raw", "thousands"):
         sc = "thousands"
 
-    # latest update + sources
-    q = f"""
-    SELECT
-      MAX(updated_at) AS updated_at,
-      ARRAY_AGG(DISTINCT source) AS sources
-    FROM {_TABLE_NAME}
-    WHERE symbol=%s AND period_type=%s AND scale=%s;
-    """
+    # latest update + sources (portable: Postgres/SQLite)
+    if _db_kind() == "postgres":
+        q = f"""
+        SELECT
+          MAX(updated_at) AS updated_at,
+          ARRAY_AGG(DISTINCT source) AS sources
+        FROM {_TABLE_NAME}
+        WHERE symbol=%s AND period_type=%s AND scale=%s;
+        """
+    else:
+        q = f"""
+        SELECT
+          MAX(updated_at) AS updated_at,
+          GROUP_CONCAT(DISTINCT source) AS sources
+        FROM {_TABLE_NAME}
+        WHERE symbol=%s AND period_type=%s AND scale=%s;
+        """
     meta = fetch_df(q, (sym, ptype, sc))
     updated_at = None
     sources = []
@@ -592,7 +601,7 @@ def get_full_statements_freshness(
 
     try:
         if isinstance(sources, str):
-            sources = [sources]
+            sources = [x.strip() for x in str(sources).split(',') if str(x).strip()]
         elif sources is None:
             sources = []
         else:
