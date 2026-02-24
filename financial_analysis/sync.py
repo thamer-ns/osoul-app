@@ -2,6 +2,7 @@ from __future__ import annotations
 
 # financial_analysis/sync.py
 from typing import Tuple, List
+from datetime import date
 
 import yfinance as yf
 import pandas as pd
@@ -29,7 +30,7 @@ def sync_auto_multi_sources(symbol: str, prefer: str = "yahoo") -> Tuple[bool, s
     try:
         d = fetch_financials_from_argaam(symbol) or {}
         if isinstance(d, dict) and d:
-            dt = d.get("date") or _safe_date_str(pd.Timestamp.utcnow())  # safer fallback
+            dt = d.get("date") or _safe_date_str(date.today())  # fallback: today (avoid passing symbol as date)
             if save_financial_record(symbol, dt, d, "Annual", "Argaam"):
                 saved += 1
                 notes.append("تمت المحاولة من أرقام")
@@ -40,7 +41,7 @@ def sync_auto_multi_sources(symbol: str, prefer: str = "yahoo") -> Tuple[bool, s
         try:
             d2 = fetch_financials_from_google_finance(symbol) or {}
             if isinstance(d2, dict) and d2:
-                dt = d2.get("date") or _safe_date_str(pd.Timestamp.utcnow())
+                dt = d2.get("date") or _safe_date_str(date.today())
                 if save_financial_record(symbol, dt, d2, "Annual", "GoogleFinance"):
                     saved += 1
                     notes.append("تمت المحاولة من Google Finance")
@@ -355,7 +356,7 @@ def sync_full_yahoo(symbol: str, period: str = 'all', *, include_ttm: bool = Tru
             # fallback to stored full statements if exist
             if has_full_statement(symbol):
                 # just confirm we can read them
-                _ = fetch_full_statement_records(symbol, "income", period_type="Annual").head(1)
+                _ = fetch_full_statement_records(symbol, "income", "Annual")
                 return True, "⚠️ Yahoo غير متاح الآن. تم عرض آخر قوائم كاملة محفوظة." + details
 
             # fallback to summary (multi sources) so the rest of the app can still work
