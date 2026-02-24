@@ -1,16 +1,3 @@
-
-def compute_market_value(quantity, current_price) -> float:
-    """حساب القيمة السوقية للمركز = الكمية × السعر الحالي."""
-    try:
-        return float(quantity) * float(current_price)
-    except Exception:
-        try:
-            q = 0.0 if quantity is None else float(quantity)
-            p = 0.0 if current_price is None else float(current_price)
-            return q * p
-        except Exception:
-            return 0.0
-
 # ai_engine_core/portfolio.py
 
 import math
@@ -80,6 +67,15 @@ def _infer_asset_type(row: pd.Series) -> str:
     s = str(row.get("asset_type", "") or "").strip()
     return s if s else "Equity"
 
+
+
+
+def compute_market_value(quantity, current_price) -> float:
+    """Helper used by tests/UI sanity checks: quantity * current_price (safe float conversion)."""
+    try:
+        return float(_sf(quantity, 0.0)) * float(_sf(current_price, 0.0))
+    except Exception:
+        return 0.0
 
 # =========================================================
 # ✅ 1) Portfolio Risk Score (upgraded, but same signature)
