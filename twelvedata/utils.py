@@ -5,7 +5,10 @@ import inspect
 import operator
 import functools
 import textwrap
-import pytimeparse
+try:
+    import pytimeparse  # type: ignore
+except Exception:  # pragma: no cover
+    from . import _pytimeparse_fallback as pytimeparse
 
 from .exceptions import BadRequestError
 
