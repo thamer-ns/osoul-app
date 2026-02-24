@@ -176,7 +176,7 @@ def view_portfolio(fin, key):
         total_pct = (total_gain / total_cost * 100) if total_cost else 0.0
 
         with k1: render_kpi("إجمالي التكلفة", safe_fmt(total_cost), "neutral")
-        with k2: render_kpi("سعر السوق", safe_fmt(total_market), "blue")
+        with k2: render_kpi("القيمة السوقية", safe_fmt(total_market), "blue")
         with k3: render_kpi("الربح/الخسارة", safe_fmt(total_gain), "success" if total_gain >= 0 else "danger")
         with k4: render_kpi("النسبة %", f"{total_pct:.2f}%", "success" if total_pct >= 0 else "danger", "٪")
 
@@ -385,7 +385,7 @@ def view_portfolio(fin, key):
                     ("entry_price", "سعر الشراء", "money"),
                     ("total_cost", "التكلفة", "money"),
                     ("current_price", "السعر الحالي", "money"),
-                    ("market_value", "سعر السوق", "money"),
+                    ("market_value", "القيمة السوقية", "money"),
                     ("gain", "الربح والخسارة", "colorful"),
                     ("gain_pct", "نسبة الربح والخسارة", "percent"),
                     ("weight", "وزن السهم", "percent"),
