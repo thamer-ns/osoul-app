@@ -16,3 +16,4 @@ yfinance>=0.2.0,<1.0.0
 pytimeparse>=1.1.8
 websocket-client>=1.6.0,<2.0.0
 python-dotenv>=1.0.0,<2.0.0
+xlrd>=2.0.1
