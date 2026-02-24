@@ -1,7 +1,10 @@
 import time
 from datetime import datetime
 import re
-from typing import Dict, List, Any
+import os
+import random
+import logging
+from typing import Dict, List, Any, Optional, Tuple
 
 import pandas as pd
 import streamlit as st
@@ -26,6 +29,95 @@ _LAST_YAHOO_DIAGNOSTICS = {
     "snippet": None,
     "hint": None,
 }
+
+
+# ==============================
+# Provider settings / secrets helpers
+# ==============================
+def _secret_get(name: str, default=None):
+    try:
+        if hasattr(st, "secrets") and name in st.secrets:
+            return st.secrets.get(name, default)  # type: ignore[attr-defined]
+    except Exception:
+        pass
+    try:
+        return os.getenv(name, default)
+    except Exception:
+        return default
+
+
+def _provider_order_financials() -> List[str]:
+    """Priority order for statement providers (compliant failover, not bypass).
+
+    Example in secrets: FINANCIALS_PROVIDER_ORDER = "yahoo,eodhd,fmp,alphavantage,argaam,google"
+    """
+    raw = str(_secret_get("FINANCIALS_PROVIDER_ORDER", "") or "").strip()
+    default = ["yahoo", "eodhd", "fmp", "alphavantage", "argaam", "google"]
+    if not raw:
+        return default
+    allow = {"yahoo", "eodhd", "fmp", "alphavantage", "argaam", "google"}
+    out = []
+    seen = set()
+    for part in raw.split(','):
+        p = str(part or '').strip().lower()
+        if p and p in allow and p not in seen:
+            out.append(p); seen.add(p)
+    for p in default:
+        if p not in seen:
+            out.append(p)
+    return out
+
+
+_HTTP_PROVIDER_FAIL_TS: Dict[str, float] = {}
+_HTTP_PROVIDER_COOLDOWN_SEC = 30.0
+
+
+def _generic_http_json(url: str, *, params: Optional[dict] = None, timeout: int = 10, provider: str = "generic", headers: Optional[dict] = None) -> dict:
+    """Small resilient JSON getter for external providers (compliant retries/backoff)."""
+    if not requests:
+        return {}
+    provider = str(provider or "generic").lower()
+    now = time.time()
+    last_fail = float(_HTTP_PROVIDER_FAIL_TS.get(provider, 0.0) or 0.0)
+    if last_fail and (now - last_fail) < _HTTP_PROVIDER_COOLDOWN_SEC:
+        return {}
+
+    ses = _yf_session() or requests.Session()
+    req_headers = {"Accept": "application/json,text/plain,*/*"}
+    req_headers.update(headers or {})
+
+    for attempt in range(3):
+        try:
+            r = ses.get(url, params=params, timeout=timeout, headers=req_headers)
+            status = int(getattr(r, 'status_code', 0) or 0)
+            txt = (getattr(r, 'text', '') or '').strip()
+            if status == 200:
+                try:
+                    return r.json() or {}
+                except Exception:
+                    # Some APIs return JSON with text/plain content-type
+                    import json
+                    return json.loads(txt) if txt else {}
+
+            if status in (429, 500, 502, 503, 504):
+                _HTTP_PROVIDER_FAIL_TS[provider] = time.time()
+                time.sleep(min(4.0, (0.6 * (2 ** attempt)) + random.uniform(0.0, 0.2)))
+                continue
+
+            if status in (401, 403):
+                _HTTP_PROVIDER_FAIL_TS[provider] = time.time()
+                return {}
+
+            # Non-retryable/unknown
+            _HTTP_PROVIDER_FAIL_TS[provider] = time.time()
+            return {}
+        except Exception:
+            _HTTP_PROVIDER_FAIL_TS[provider] = time.time()
+            time.sleep(min(3.0, (0.4 * (2 ** attempt)) + random.uniform(0.0, 0.2)))
+    return {}
+
+
+# ==============================
 
 
 # ==============================
@@ -450,7 +542,7 @@ def _get_financial_statements_cached(sym: str, ptype: str = "Annual", refresh: b
     if (not refresh) and (stored is not None) and (not stored.empty):
         return stored
 
-    records = fetch_financial_statements_yahoo_json(sym, ptype)
+    records = fetch_financial_statements_multi_source(sym, ptype)
 
     if not records and ptype == "Annual":
         try:
@@ -479,7 +571,7 @@ def _get_financial_statements_cached(sym: str, ptype: str = "Annual", refresh: b
                 d,
                 data,
                 period_type=ptype,
-                source="YahooJSON" if isinstance(data, dict) and "revenue" in data else "External",
+                source=(rec.get("_source") if isinstance(rec, dict) else None) or ("YahooJSON" if isinstance(data, dict) and "revenue" in data else "External"),
             )
         return get_stored_financials_df(sym, ptype)
 
@@ -655,6 +747,333 @@ def fetch_full_financial_statements_yahoo_html(*args, **kwargs) -> Dict[str, Any
     نضيف scraper خفيف هنا. حاليًا نرجع {} بشكل آمن.
     """
     return {}
+
+
+# ==============================================================
+# 🌐 External API Providers (official/paid-friendly fallbacks)
+# ==============================================================
+def _period_norm(period_type: str = "All") -> str:
+    p = str(period_type or "All").strip().lower()
+    if p in ("annual", "a", "year", "yearly"):
+        return "Annual"
+    if p in ("quarterly", "q", "quarter"):
+        return "Quarterly"
+    return "All"
+
+
+def _trim_periods(period_type: str, annual: List[dict], quarterly: List[dict]) -> Tuple[List[dict], List[dict]]:
+    pn = _period_norm(period_type)
+    if pn == "Annual":
+        return annual or [], []
+    if pn == "Quarterly":
+        return [], quarterly or []
+    return annual or [], quarterly or []
+
+
+def _safe_num(v, default=0.0) -> float:
+    try:
+        if v is None or v == "":
+            return float(default)
+        if isinstance(v, dict):
+            return _yf_raw(v, default)
+        return float(str(v).replace(',', '').strip())
+    except Exception:
+        return float(default)
+
+
+def _map_summary_fields(stmt_kind: str, row: dict) -> dict:
+    d = row or {}
+    k = (stmt_kind or '').lower()
+    if k == 'income':
+        return {
+            'revenue': _safe_num(d.get('revenue') or d.get('totalRevenue') or d.get('total_revenue')),
+            'net_income': _safe_num(d.get('netIncome') or d.get('net_income') or d.get('netIncomeApplicableToCommonShares')),
+        }
+    if k == 'balance':
+        return {
+            'total_assets': _safe_num(d.get('totalAssets') or d.get('total_assets')),
+            'total_liabilities': _safe_num(d.get('totalLiabilities') or d.get('totalLiab') or d.get('total_liabilities')),
+            'total_equity': _safe_num(d.get('totalStockholdersEquity') or d.get('totalStockholderEquity') or d.get('total_equity') or d.get('totalShareholderEquity')),
+            'current_assets': _safe_num(d.get('totalCurrentAssets') or d.get('currentAssets') or d.get('total_current_assets')),
+            'current_liabilities': _safe_num(d.get('totalCurrentLiabilities') or d.get('currentLiabilities') or d.get('total_current_liabilities')),
+            'long_term_debt': _safe_num(d.get('longTermDebt') or d.get('long_term_debt') or d.get('longTermDebtNoncurrent')),
+        }
+    if k == 'cashflow':
+        return {
+            'operating_cash_flow': _safe_num(d.get('operatingCashFlow') or d.get('operatingCashflow') or d.get('totalCashFromOperatingActivities') or d.get('netCashProvidedByOperatingActivities')),
+        }
+    return {}
+
+
+def _merge_summary_from_full_bundle(bundle: Dict[str, Dict[str, List[Dict[str, Any]]]], period_type: str = 'Annual') -> List[Dict[str, Any]]:
+    pn = _period_norm(period_type)
+    target = bundle.get(pn) or {}
+    if not target:
+        return []
+    by_date: Dict[str, Dict[str, Any]] = {}
+    src_by_date: Dict[str, str] = {}
+    for kind in ('income', 'balance', 'cashflow'):
+        for rec in (target.get(kind) or []):
+            d = str((rec or {}).get('date') or '').strip()
+            payload = (rec or {}).get('data') or {}
+            if not d or not isinstance(payload, dict):
+                continue
+            row = by_date.setdefault(d, {})
+            row.update(_map_summary_fields(kind, payload))
+            src = str((rec or {}).get('_source') or '')
+            if src:
+                src_by_date[d] = src
+
+    out = []
+    for d in sorted(by_date.keys(), reverse=True):
+        row = by_date[d]
+        keys = ['revenue','net_income','total_assets','total_liabilities','total_equity','operating_cash_flow','current_assets','current_liabilities','long_term_debt']
+        data = {k: float(row.get(k, 0.0) or 0.0) for k in keys}
+        if sum(abs(v) for v in data.values()) <= 0:
+            continue
+        out.append({'date': d, 'data': data, '_source': src_by_date.get(d)})
+    return out
+
+
+def _to_thousands(data: dict, as_thousands: bool) -> dict:
+    out = {}
+    for k, v in (data or {}).items():
+        try:
+            val = _safe_num(v, 0.0)
+            out[str(k)] = (val / 1000.0) if as_thousands else val
+        except Exception:
+            continue
+    return out
+
+
+def _normalize_fmp_records(recs: List[dict], as_thousands: bool = True, source: str = 'FMP') -> List[Dict[str, Any]]:
+    out = []
+    for r in (recs or []):
+        if not isinstance(r, dict):
+            continue
+        d = _safe_date_str(r.get('date') or r.get('fillingDate') or r.get('acceptedDate'))
+        payload = {k: v for k, v in r.items() if k not in ('symbol','reportedCurrency','cik','calendarYear','period','link','finalLink','acceptedDate')}
+        if not payload:
+            continue
+        out.append({'date': d, 'data': _to_thousands(payload, as_thousands), '_source': source})
+    return out
+
+
+def _normalize_alphavantage_records(recs: List[dict], as_thousands: bool = True, source: str = 'AlphaVantage') -> List[Dict[str, Any]]:
+    out = []
+    for r in (recs or []):
+        if not isinstance(r, dict):
+            continue
+        d = _safe_date_str(r.get('fiscalDateEnding') or r.get('reportedDate'))
+        payload = {k: v for k, v in r.items() if k not in ('fiscalDateEnding','reportedCurrency')}
+        if not payload:
+            continue
+        out.append({'date': d, 'data': _to_thousands(payload, as_thousands), '_source': source})
+    return out
+
+
+def _normalize_eodhd_section(sec: dict, as_thousands: bool = True, source: str = 'EODHD') -> Tuple[List[dict], List[dict]]:
+    """Normalize EODHD section in either array-form or dict-of-date form."""
+    def _iter_rows(container):
+        if isinstance(container, list):
+            for x in container:
+                if isinstance(x, dict):
+                    yield x
+        elif isinstance(container, dict):
+            for d, payload in container.items():
+                if isinstance(payload, dict):
+                    row = dict(payload)
+                    row.setdefault('date', d)
+                    yield row
+
+    yearly = list(_iter_rows((sec or {}).get('yearly') or (sec or {}).get('annual')))
+    quarterly = list(_iter_rows((sec or {}).get('quarterly')))
+    return _normalize_fmp_records(yearly, as_thousands=as_thousands, source=source), _normalize_fmp_records(quarterly, as_thousands=as_thousands, source=source)
+
+
+def _attach_ttm(bundle: Dict[str, Dict[str, List[Dict[str, Any]]]]) -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
+    if 'Quarterly' not in bundle:
+        return bundle
+    q = bundle.get('Quarterly') or {}
+    q_inc = (q.get('income') or [])[:4]
+    q_cf = (q.get('cashflow') or [])[:4]
+    if not q_inc:
+        return bundle
+    def _sum4(recs):
+        acc = {}
+        src = None
+        for rec in recs:
+            src = src or rec.get('_source')
+            for k, v in ((rec or {}).get('data') or {}).items():
+                try:
+                    acc[k] = float(acc.get(k, 0.0) + float(v or 0.0))
+                except Exception:
+                    continue
+        return acc, src
+    ttm_date = str(q_inc[0].get('date') or datetime.utcnow().strftime('%Y-%m-%d'))
+    inc_sum, src_i = _sum4(q_inc)
+    cf_sum, src_c = _sum4(q_cf) if q_cf else ({}, None)
+    ttm = {'income': [{ 'date': ttm_date, 'data': inc_sum, '_source': src_i }] if inc_sum else []}
+    if cf_sum:
+        ttm['cashflow'] = [{ 'date': ttm_date, 'data': cf_sum, '_source': src_c }]
+    if ttm.get('income') or ttm.get('cashflow'):
+        bundle['TTM'] = ttm
+    return bundle
+
+
+def _build_bundle(annual_income=None, annual_balance=None, annual_cash=None, q_income=None, q_balance=None, q_cash=None, include_ttm: bool = True) -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
+    out: Dict[str, Dict[str, List[Dict[str, Any]]]] = {}
+    if annual_income or annual_balance or annual_cash:
+        out['Annual'] = {'income': annual_income or [], 'balance': annual_balance or [], 'cashflow': annual_cash or []}
+    if q_income or q_balance or q_cash:
+        out['Quarterly'] = {'income': q_income or [], 'balance': q_balance or [], 'cashflow': q_cash or []}
+    if include_ttm:
+        out = _attach_ttm(out)
+    return {k: v for k, v in out.items() if v and any(v.get(x) for x in ('income','balance','cashflow'))}
+
+
+def _fetch_full_fmp(symbol: str, period_type: str = 'All', *, as_thousands: bool = True, include_ttm: bool = True) -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
+    key = str(_secret_get('FMP_API_KEY', '') or '').strip()
+    if not key or not requests:
+        return {}
+    sym = get_ticker_symbol(symbol)
+    base = 'https://financialmodelingprep.com/api/v3'
+    pn = _period_norm(period_type)
+
+    def _one(path: str, period: str):
+        url = f"{base}/{path}/{sym}"
+        data = _generic_http_json(url, params={'period': period, 'limit': 8, 'apikey': key}, provider='fmp')
+        return data if isinstance(data, list) else []
+
+    a = q = None
+    if pn in ('All','Annual'):
+        a = {
+            'income': _normalize_fmp_records(_one('income-statement', 'annual'), as_thousands, 'FMP'),
+            'balance': _normalize_fmp_records(_one('balance-sheet-statement', 'annual'), as_thousands, 'FMP'),
+            'cashflow': _normalize_fmp_records(_one('cash-flow-statement', 'annual'), as_thousands, 'FMP'),
+        }
+    if pn in ('All','Quarterly'):
+        q = {
+            'income': _normalize_fmp_records(_one('income-statement', 'quarter'), as_thousands, 'FMP'),
+            'balance': _normalize_fmp_records(_one('balance-sheet-statement', 'quarter'), as_thousands, 'FMP'),
+            'cashflow': _normalize_fmp_records(_one('cash-flow-statement', 'quarter'), as_thousands, 'FMP'),
+        }
+    return _build_bundle(
+        annual_income=(a or {}).get('income'), annual_balance=(a or {}).get('balance'), annual_cash=(a or {}).get('cashflow'),
+        q_income=(q or {}).get('income'), q_balance=(q or {}).get('balance'), q_cash=(q or {}).get('cashflow'),
+        include_ttm=include_ttm,
+    )
+
+
+def _fetch_full_alphavantage(symbol: str, period_type: str = 'All', *, as_thousands: bool = True, include_ttm: bool = True) -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
+    key = str(_secret_get('ALPHAVANTAGE_API_KEY', '') or '').strip()
+    if not key or not requests:
+        return {}
+    sym = get_ticker_symbol(symbol)
+    pn = _period_norm(period_type)
+    base = 'https://www.alphavantage.co/query'
+    fn_map = [('income','INCOME_STATEMENT'), ('balance','BALANCE_SHEET'), ('cashflow','CASH_FLOW')]
+    annual = {}
+    quarterly = {}
+    for label, fn in fn_map:
+        data = _generic_http_json(base, params={'function': fn, 'symbol': sym, 'apikey': key}, provider='alphavantage')
+        if not isinstance(data, dict) or data.get('Note') or data.get('Information'):
+            return {}
+        if pn in ('All','Annual'):
+            annual[label] = _normalize_alphavantage_records(data.get('annualReports') or [], as_thousands, 'AlphaVantage')
+        if pn in ('All','Quarterly'):
+            quarterly[label] = _normalize_alphavantage_records(data.get('quarterlyReports') or [], as_thousands, 'AlphaVantage')
+    return _build_bundle(
+        annual_income=annual.get('income'), annual_balance=annual.get('balance'), annual_cash=annual.get('cashflow'),
+        q_income=quarterly.get('income'), q_balance=quarterly.get('balance'), q_cash=quarterly.get('cashflow'),
+        include_ttm=include_ttm,
+    )
+
+
+def _fetch_full_eodhd(symbol: str, period_type: str = 'All', *, as_thousands: bool = True, include_ttm: bool = True) -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
+    key = str(_secret_get('EODHD_API_KEY', '') or '').strip()
+    if not key or not requests:
+        return {}
+    sym = get_ticker_symbol(symbol)
+    url = f'https://eodhistoricaldata.com/api/fundamentals/{sym}'
+    data = _generic_http_json(url, params={'api_token': key, 'fmt': 'json'}, provider='eodhd', timeout=14)
+    if not isinstance(data, dict) or not data:
+        return {}
+    fin = (data.get('Financials') or {}) if isinstance(data, dict) else {}
+    inc_a, inc_q = _normalize_eodhd_section(fin.get('Income_Statement') or fin.get('IncomeStatement') or {}, as_thousands, 'EODHD')
+    bs_a, bs_q = _normalize_eodhd_section(fin.get('Balance_Sheet') or fin.get('BalanceSheet') or {}, as_thousands, 'EODHD')
+    cf_a, cf_q = _normalize_eodhd_section(fin.get('Cash_Flow') or fin.get('CashFlow') or {}, as_thousands, 'EODHD')
+    inc_a, inc_q = _trim_periods(period_type, inc_a, inc_q)
+    bs_a, bs_q = _trim_periods(period_type, bs_a, bs_q)
+    cf_a, cf_q = _trim_periods(period_type, cf_a, cf_q)
+    return _build_bundle(annual_income=inc_a, annual_balance=bs_a, annual_cash=cf_a, q_income=inc_q, q_balance=bs_q, q_cash=cf_q, include_ttm=include_ttm)
+
+
+def fetch_full_financial_statements_multi_source(symbol: str, period_type: str = 'All', *, as_thousands: bool = True, include_ttm: bool = True) -> Dict[str, Dict[str, List[Dict[str, Any]]]]:
+    """Try Yahoo first, then configured API providers (EODHD/FMP/AlphaVantage).
+
+    This is a *compliant failover* approach (cache + backoff + alternate providers),
+    not a mechanism to bypass website protections.
+    """
+    order = _provider_order_financials()
+    for provider in order:
+        try:
+            if provider == 'yahoo':
+                bundle = fetch_full_financial_statements_yahoo_json(symbol, period_type=period_type, as_thousands=as_thousands, include_ttm=include_ttm) or {}
+            elif provider == 'eodhd':
+                bundle = _fetch_full_eodhd(symbol, period_type=period_type, as_thousands=as_thousands, include_ttm=include_ttm) or {}
+            elif provider == 'fmp':
+                bundle = _fetch_full_fmp(symbol, period_type=period_type, as_thousands=as_thousands, include_ttm=include_ttm) or {}
+            elif provider == 'alphavantage':
+                bundle = _fetch_full_alphavantage(symbol, period_type=period_type, as_thousands=as_thousands, include_ttm=include_ttm) or {}
+            else:
+                bundle = {}
+            if isinstance(bundle, dict) and bundle:
+                return bundle
+        except Exception:
+            logging.getLogger(__name__).exception('Provider failed: %s', provider)
+            continue
+    return {}
+
+
+def fetch_financial_statements_multi_source(symbol: str, period_type: str = 'Annual') -> List[Dict[str, Any]]:
+    """Summary statements records with provider failover.
+
+    Order: Yahoo -> API providers (via full bundle collapse) -> Argaam -> Google Finance (best-effort HTML).
+    """
+    sym = get_ticker_symbol(symbol)
+    ptype = _period_norm(period_type)
+    if ptype == 'All':
+        ptype = 'Annual'
+
+    # 1) Yahoo first (fast, already normalized)
+    recs = fetch_financial_statements_yahoo_json(sym, ptype)
+    if recs:
+        for r in recs:
+            if isinstance(r, dict):
+                r.setdefault('_source', 'YahooJSON')
+        return recs
+
+    # 2) API providers via full-bundle normalization
+    bundle = fetch_full_financial_statements_multi_source(sym, period_type=ptype, as_thousands=False, include_ttm=False)
+    recs = _merge_summary_from_full_bundle(bundle, period_type=ptype)
+    if recs:
+        return recs
+
+    # 3) HTML best-effort fallbacks (annual only)
+    if ptype == 'Annual':
+        try:
+            from .parsers import fetch_financials_from_argaam, fetch_financials_from_google_finance
+            d = fetch_financials_from_argaam(sym) or {}
+            if d:
+                return [{'date': d.get('date') or datetime.now().strftime('%Y-12-31'), 'data': d, '_source': 'Argaam'}]
+            d2 = fetch_financials_from_google_finance(sym) or {}
+            if d2:
+                return [{'date': d2.get('date') or datetime.now().strftime('%Y-12-31'), 'data': d2, '_source': 'GoogleFinance'}]
+        except Exception:
+            pass
+
+    return []
 
 
 # Alias used by UI
