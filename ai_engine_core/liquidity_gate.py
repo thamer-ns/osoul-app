@@ -4,7 +4,7 @@ from typing import Any, Dict
 
 import pandas as pd
 
-#liquidity_gate.py
+
 def _to_num(s):
     try:
         return pd.to_numeric(s, errors="coerce")
