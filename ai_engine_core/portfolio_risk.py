@@ -5,7 +5,7 @@ from typing import Optional
 import pandas as pd
 
 
-def _safe_float(x, default=0.0):
+def _safe_float_legacy_8(x, default=0.0):
     try:
         return float(x) if x is not None else float(default)
     except Exception:
