@@ -7,7 +7,10 @@ implementation in `time_Series.py`.
 """
 
 import time
-import pytimeparse
+try:
+    import pytimeparse  # type: ignore
+except Exception:  # pragma: no cover
+    from . import _pytimeparse_fallback as pytimeparse
 import re
 import itertools
 from collections import OrderedDict, Counter
