@@ -1,16 +1,11 @@
 # coding: utf-8
+"""Backward-compatible alias.
 
-class TwelveDataError(Exception):
-    """Base exception for Twelvedata SDK compatibility."""
+This project vendors parts of the Twelve Data Python SDK.
+Upstream code imports `twelvedata.exceptions`, but an older vendored copy used a
+misspelled file name: `excptions.py`.
 
+Keep this module so any legacy imports keep working.
+"""
 
-class InvalidApiKeyError(TwelveDataError):
-    pass
-
-
-class BadRequestError(TwelveDataError):
-    pass
-
-
-class InternalServerError(TwelveDataError):
-    pass
+from .exceptions import *  # noqa: F401,F403
