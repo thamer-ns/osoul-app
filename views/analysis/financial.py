@@ -142,7 +142,7 @@ def render_data_import_ui_content(symbol):
                     count = 0
                     for r in results:
                         if save_financial_record(
-                            final_symbol, r["date"], r["data"], period_type="Annual", source="File/Paste"
+                            final_symbol, r["date"], r["data"], period_type=r.get("period_type", "Annual"), source="File/Paste"
                         ):
                             count += 1
                     st.success(f"تم حفظ {count} سجلات لشركة {final_symbol}.")
@@ -191,8 +191,7 @@ def render_financial_dashboard_ui(symbol):
                     + _badge_line("ربع سنوي", meta_q)
                 )
         except Exception:
-            import logging
-            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at views/analysis/financial.py:193')
+            pass
         df_annual = get_financial_statements(canon_sym or symbol, "Annual")
         df_quarter = get_financial_statements(canon_sym or symbol, "Quarterly")
 
