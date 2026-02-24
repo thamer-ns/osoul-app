@@ -1,2 +1,13 @@
-# compatibility shim for typo in legacy package filename (excptions.py)
-from .excptions import *  # noqa: F401,F403
+# Compatibility exceptions module for vendored twelvedata package.
+
+class TwelveDataError(Exception):
+    pass
+
+class InvalidApiKeyError(TwelveDataError):
+    pass
+
+class BadRequestError(TwelveDataError):
+    pass
+
+class InternalServerError(TwelveDataError):
+    pass
