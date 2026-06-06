@@ -452,10 +452,17 @@ def view_portfolio(fin, key):
                         e_id = trade_options[selected_trade]
                         if e_id:
                             rw = op[op["id"] == e_id].iloc[0]
-                            st.markdown(f"**الشركة:** {rw.get('company_name','-')}  
-**الرمز:** {rw.get('symbol','-')}  
-**الكمية:** {rw.get('quantity',0)}  
-**سعر الشراء:** {rw.get('entry_price',0)}")
+                            st.markdown(
+    f"""
+**الشركة:** {rw.get('company_name', '-')}
+
+**الرمز:** {rw.get('symbol', '-')}
+
+**الكمية:** {rw.get('quantity', 0)}
+
+**سعر الشراء:** {rw.get('entry_price', 0)}
+"""
+)
                             with st.form(f"frm_edit_{key}_{e_id}"):
                                 nq = st.number_input("الكمية", value=float(rw.get("quantity", 1)), min_value=0.001, step=0.001, key=f"edit_q_{key}_{e_id}")
                                 np_ = st.number_input("سعر الشراء", value=float(rw.get("entry_price", 0)), min_value=0.0, key=f"edit_p_{key}_{e_id}")
