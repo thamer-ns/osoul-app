@@ -580,7 +580,7 @@ def view_add_trade():
                 )
                 st.success("تم")
                 st.cache_data.clear()
-                                        st.cache_resource.clear()
+                st.cache_resource.clear()
                 st.rerun()
             else:
                 st.error(msg)
