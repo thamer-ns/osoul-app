@@ -425,10 +425,16 @@ def view_portfolio(fin, key):
                         st.info("لا توجد صفقات لاختيارها")
 
             with c_a2:
-                with st.expander("✏️ تعديل صفقة (تصحيح خطأ)"):
-                    if "id" in op.columns and len(op["id"].tolist()) > 0:
+               with st.expander("✏️ تعديل صفقة (مفتوحة أو مغلقة)"):
+
+    edit_df = pd.concat(
+        [op, cl],
+        ignore_index=True
+    ).drop_duplicates(subset=["id"])
+
+    if "id" in edit_df.columns and len(edit_df["id"].tolist()) > 0:
                         trade_options = {}
-                        for _, row_opt in op.iterrows():
+                        for _, row_opt in edit_df.iterrows():
                             trade_id = row_opt.get("id")
                             company = (
                                 row_opt.get("company_name")
@@ -438,7 +444,16 @@ def view_portfolio(fin, key):
                                 or "بدون اسم"
                             )
                             symbol = str(row_opt.get("symbol", "")).strip()
-                            trade_options[f"{company} ({symbol}) - ID:{trade_id}"] = trade_id
+                            status_txt = str(row_opt.get("status", "")).lower()
+
+if status_txt in ["close", "closed"]:
+    state = "مغلقة"
+else:
+    state = "مفتوحة"
+
+trade_options[
+    f"[{state}] {company} ({symbol}) - ID:{trade_id}"
+] = trade_id
 
                         if not trade_options:
                             st.warning("لا توجد صفقات متاحة للتعديل")
@@ -451,7 +466,7 @@ def view_portfolio(fin, key):
                         )
                         e_id = trade_options[selected_trade]
                         if e_id:
-                            rw = op[op["id"] == e_id].iloc[0]
+                            rw = edit_df[edit_df["id"] == e_id].iloc[0]
                             st.markdown(
     f"""
 **الشركة:** {rw.get('company_name', '-')}
