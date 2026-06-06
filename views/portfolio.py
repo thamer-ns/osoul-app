@@ -417,6 +417,7 @@ def view_portfolio(fin, key):
                                         )
                                         st.success("تم البيع")
                                         st.cache_data.clear()
+                                        st.cache_resource.clear()
                                         st.rerun()
                                     else:
                                         st.error(msg)
@@ -426,11 +427,37 @@ def view_portfolio(fin, key):
             with c_a2:
                 with st.expander("✏️ تعديل صفقة (تصحيح خطأ)"):
                     if "id" in op.columns and len(op["id"].tolist()) > 0:
-                        e_id = st.selectbox("اختر الصفقة", op["id"].tolist(), key=f"edit_{key}")
+                        trade_options = {}
+                        for _, row_opt in op.iterrows():
+                            trade_id = row_opt.get("id")
+                            company = (
+                                row_opt.get("company_name")
+                                or row_opt.get("name")
+                                or row_opt.get("stock_name")
+                                or row_opt.get("company")
+                                or "بدون اسم"
+                            )
+                            symbol = str(row_opt.get("symbol", "")).strip()
+                            trade_options[f"{company} ({symbol}) - ID:{trade_id}"] = trade_id
+
+                        if not trade_options:
+                            st.warning("لا توجد صفقات متاحة للتعديل")
+                            return
+
+                        selected_trade = st.selectbox(
+                            "اختر الصفقة المراد تعديلها",
+                            list(trade_options.keys()),
+                            key=f"edit_{key}"
+                        )
+                        e_id = trade_options[selected_trade]
                         if e_id:
                             rw = op[op["id"] == e_id].iloc[0]
+                            st.markdown(f"**الشركة:** {rw.get('company_name','-')}  
+**الرمز:** {rw.get('symbol','-')}  
+**الكمية:** {rw.get('quantity',0)}  
+**سعر الشراء:** {rw.get('entry_price',0)}")
                             with st.form(f"frm_edit_{key}_{e_id}"):
-                                nq = st.number_input("الكمية", value=float(rw.get("quantity", 1)), min_value=1.0, key=f"edit_q_{key}_{e_id}")
+                                nq = st.number_input("الكمية", value=float(rw.get("quantity", 1)), min_value=0.001, step=0.001, key=f"edit_q_{key}_{e_id}")
                                 np_ = st.number_input("سعر الشراء", value=float(rw.get("entry_price", 0)), min_value=0.0, key=f"edit_p_{key}_{e_id}")
                                 try:
                                     nd_val = pd.to_datetime(rw.get("date", date.today())).date()
@@ -446,6 +473,7 @@ def view_portfolio(fin, key):
                                         )
                                         st.success("تم التعديل")
                                         st.cache_data.clear()
+                                        st.cache_resource.clear()
                                         st.rerun()
                                     else:
                                         st.error(msg)
@@ -516,7 +544,7 @@ def view_add_trade():
         s_raw = c1.text_input("رمز السهم (مثال: 1120)", key="add_sym")
         typ = c2.selectbox("نوع الصفقة", ["استثمار", "مضاربة", "صكوك"], key="add_typ")
         c3, c4, c5 = st.columns(3)
-        q = c3.number_input("الكمية", min_value=1.0, key="add_q")
+        q = c3.number_input("الكمية", min_value=0.001, step=0.001, key="add_q")
         p = c4.number_input("السعر", min_value=0.0, key="add_p")
         d = c5.date_input("التاريخ", date.today(), key="add_d")
 
@@ -545,6 +573,7 @@ def view_add_trade():
                 )
                 st.success("تم")
                 st.cache_data.clear()
+                                        st.cache_resource.clear()
                 st.rerun()
             else:
                 st.error(msg)
