@@ -1,3 +1,4 @@
+REBALANCE_COOLDOWN_DAYS = 30
 # ai_engine_core/portfolio.py
 
 import math
@@ -384,7 +385,7 @@ def generate_rebalancing_suggestions(trades_df, cash_pct):
         max_w = float(w.max()) if len(w) else 0.0
 
         # Concentration suggestions
-        if max_w >= 0.45:
+        if max_w >= 0.35:
             sym = "-"
             try:
                 idx = int(w.idxmax())
@@ -412,7 +413,7 @@ def generate_rebalancing_suggestions(trades_df, cash_pct):
                 n = int(len(open_trades))
                 if n > 0:
                     spec_ratio = spec_cnt / n
-                    if spec_ratio >= 0.60:
+                    if spec_ratio >= 0.70:
                         suggestions.append(("warn", "⚡ نسبة المضاربة مرتفعة (>60%) — خفف تذبذب المحفظة أو ارفع كاش"))
         except Exception:
             pass
