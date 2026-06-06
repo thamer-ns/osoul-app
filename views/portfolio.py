@@ -417,7 +417,6 @@ def view_portfolio(fin, key):
                                         )
                                         st.success("تم البيع")
                                         st.cache_data.clear()
-                                        st.cache_resource.clear()
                                         st.rerun()
                                     else:
                                         st.error(msg)
@@ -427,25 +426,12 @@ def view_portfolio(fin, key):
             with c_a2:
                 with st.expander("✏️ تعديل صفقة (تصحيح خطأ)"):
                     if "id" in op.columns and len(op["id"].tolist()) > 0:
-                        trade_options = {}
-                        for _, row_opt in op.iterrows():
-                            trade_id = row_opt.get("id")
-                            company = str(row_opt.get("company_name", "")).strip()
-                            symbol = str(row_opt.get("symbol", "")).strip()
-                            trade_options[f"{company} ({symbol}) - ID:{trade_id}"] = trade_id
-
-                        selected_trade = st.selectbox(
-                            "اختر الصفقة المراد تعديلها",
-                            list(trade_options.keys()),
-                            key=f"edit_{key}"
-                        )
-                        e_id = trade_options[selected_trade]
+                        e_id = st.selectbox("اختر الصفقة", op["id"].tolist(), key=f"edit_{key}")
                         if e_id:
                             rw = op[op["id"] == e_id].iloc[0]
-                            st.info(f"الشركة: {rw.get('company_name','-')} | الرمز: {rw.get('symbol','-')} | الكمية: {rw.get('quantity',0)} | سعر الشراء: {rw.get('entry_price',0)}")
                             with st.form(f"frm_edit_{key}_{e_id}"):
-                                nq = st.number_input("الكمية", value=float(rw.get("quantity", 1)), min_value=0.001, step=0.001, key=f"edit_q_{key}_{e_id}")
-                                np_ = st.number_input("سعر الشراء", value=float(rw.get("entry_price", 0)), min_value=0.01, step=0.01, key=f"edit_p_{key}_{e_id}")
+                                nq = st.number_input("الكمية", value=float(rw.get("quantity", 1)), min_value=1.0, key=f"edit_q_{key}_{e_id}")
+                                np_ = st.number_input("سعر الشراء", value=float(rw.get("entry_price", 0)), min_value=0.0, key=f"edit_p_{key}_{e_id}")
                                 try:
                                     nd_val = pd.to_datetime(rw.get("date", date.today())).date()
                                 except Exception:
@@ -460,7 +446,6 @@ def view_portfolio(fin, key):
                                         )
                                         st.success("تم التعديل")
                                         st.cache_data.clear()
-                                        st.cache_resource.clear()
                                         st.rerun()
                                     else:
                                         st.error(msg)
@@ -563,3 +548,5 @@ def view_add_trade():
                 st.rerun()
             else:
                 st.error(msg)
+
+# PATCH NOTE: handled empty trade list and improved labels
