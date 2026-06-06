@@ -384,7 +384,7 @@ def generate_rebalancing_suggestions(trades_df, cash_pct):
         max_w = float(w.max()) if len(w) else 0.0
 
         # Concentration suggestions
-        if max_w >= 0.35:
+        if max_w >= 0.45:
             sym = "-"
             try:
                 idx = int(w.idxmax())
@@ -412,7 +412,7 @@ def generate_rebalancing_suggestions(trades_df, cash_pct):
                 n = int(len(open_trades))
                 if n > 0:
                     spec_ratio = spec_cnt / n
-                    if spec_ratio >= 0.70:
+                    if spec_ratio >= 0.60:
                         suggestions.append(("warn", "⚡ نسبة المضاربة مرتفعة (>60%) — خفف تذبذب المحفظة أو ارفع كاش"))
         except Exception:
             pass
@@ -533,3 +533,5 @@ def portfolio_risk_gates(trades_df, cash_percent) -> Dict[str, Any]:
         gates["reasons"].append("تعذر تقييم بوابات المخاطر")
 
     return gates
+
+# PATCH NOTE: rebalancing cooldown recommended
