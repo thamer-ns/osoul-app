@@ -21,7 +21,24 @@ jobs:
           python-version: "3.11"
 
       - name: Apply reviewed warning fixes
-        run: python scripts/apply_warning_fixes.py
+        id: apply
+        continue-on-error: true
+        run: python scripts/apply_warning_fixes.py > warning-fix.log 2>&1
+
+      - name: Upload warning fixer diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: warning-fix-diagnostics
+          path: warning-fix.log
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Stop on warning fixer failure
+        if: steps.apply.outcome == 'failure'
+        run: |
+          cat warning-fix.log
+          exit 1
 
       - name: Commit warning fixes
         run: |
