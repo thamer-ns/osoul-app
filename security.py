@@ -1,30 +1,40 @@
-# security.py
-import datetime
+"""Authentication and input validation for Osoli.
+
+Security properties:
+- bcrypt is mandatory; no unsalted SHA fallback.
+- persistent login accepts only an HMAC-signed, expiring token.
+- new registrations use the strong password policy.
+- session-local rate limiting slows brute-force attempts.
+- AUTH_SECRET is mandatory unless an explicit development override is enabled.
+"""
+from __future__ import annotations
+
+import base64
+import datetime as dt
+import hashlib
+import hmac
 import os
 import re
-import time
-import hmac
-import hashlib
-import base64
+import secrets
 import textwrap
-
-try:
-    import extra_streamlit_components as stx  # type: ignore
-    _HAS_COOKIE_MANAGER = True
-except Exception:
-    stx = None  # type: ignore
-    _HAS_COOKIE_MANAGER = False
+import time
+from typing import Optional
 
 import streamlit as st
 
 import config
 from config import APP_ICON, APP_NAME, LOGO_FULL_PATH
-from database import db_create_user, db_verify_user, db_user_exists, fetch_table
+from database import db_create_user, db_user_exists, db_verify_user
 
+try:
+    import extra_streamlit_components as stx  # type: ignore
+except Exception:  # pragma: no cover
+    stx = None
 
-# ============================================================
-# 1) Validation Helpers
-# ============================================================
+TOKEN_COOKIE = "osoul_auth_v3"
+MAX_LOGIN_ATTEMPTS = int(os.getenv("OSOUL_MAX_LOGIN_ATTEMPTS", "5"))
+LOCK_SECONDS = int(os.getenv("OSOUL_LOGIN_LOCK_SECONDS", "900"))
+
 
 def validate_trade_inputs(quantity, price):
     try:
@@ -32,533 +42,312 @@ def validate_trade_inputs(quantity, price):
         p = float(price)
     except Exception:
         return False, "الرجاء إدخال أرقام صحيحة"
-    if q <= 0 or p <= 0:
-        return False, "القيم يجب أن تكون أكبر من صفر"
+    if not (0 < q <= 1_000_000_000):
+        return False, "الكمية يجب أن تكون أكبر من صفر وضمن حد منطقي"
+    if not (0 < p <= 1_000_000_000):
+        return False, "السعر يجب أن يكون أكبر من صفر وضمن حد منطقي"
     return True, ""
 
 
-def _validate_username(u: str):
-    u = (u or "").strip()
-    if len(u) < 3:
-        return False, "اسم المستخدم قصير جداً"
-    if len(u) > 30:
-        return False, "اسم المستخدم طويل جداً"
-    if not re.match(r"^[A-Za-z0-9_\-\.]+$", u):
-        return False, "اسم المستخدم يجب أن يحتوي أحرف/أرقام/._- فقط"
+def _norm(value: object) -> str:
+    return str(value or "").strip()
+
+
+def _validate_username(username: str):
+    username = _norm(username)
+    if not 3 <= len(username) <= 30:
+        return False, "اسم المستخدم يجب أن يكون بين 3 و30 حرفًا"
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", username):
+        return False, "اسم المستخدم يقبل الأحرف الإنجليزية والأرقام و ._- فقط"
     return True, ""
 
 
 def _validate_password(password: str, mode: str = "login"):
-    """Password policy.
-    - login: accept legacy passwords/PINs without forcing new length.
-    - register/change: prefer strong password (MIN_PASSWORD_LEN) or legacy numeric PIN (>=6) if enabled.
-    """
-    p = _norm(password)
-
-    if len(p) < 1:
+    password = str(password or "")
+    if not password:
         return False, "أدخل كلمة المرور"
-    if len(p) > 200:
-        return False, "كلمة المرور طويلة جداً"
-
-    allow_legacy = getattr(config, "ALLOW_LEGACY_PIN", True)
-
+    if len(password) > 200:
+        return False, "كلمة المرور طويلة جدًا"
     if mode == "login":
-        # لا نكسر الحسابات القديمة: نقبل كلمة المرور كما هي ثم نتحقق من الهاش في قاعدة البيانات
         return True, ""
 
-    # register / change
-    if allow_legacy and p.isdigit():
-        if len(p) < 6:
-            return False, "الرمز قصير جداً (6 أرقام على الأقل)"
-        return True, ""
-
-    min_len = int(getattr(config, "MIN_PASSWORD_LEN", 8) or 8)
-    if len(p) < min_len:
-        extra = " (أو استخدم PIN رقمي 6 أرقام للحسابات القديمة)" if allow_legacy else ""
-        return False, f"كلمة المرور قصيرة جداً ({min_len} أحرف على الأقل){extra}"
-
-    # توجيه بسيط لتحسين الأمان (بدون كسر المستخدمين)
-    if not re.search(r"[A-Za-z]", p) or not re.search(r"\d", p):
-        return False, "يفضّل أن تحتوي كلمة المرور على حروف وأرقام لزيادة الأمان"
-
+    minimum = int(os.getenv("OSOUL_MIN_PASSWORD_LEN", "10"))
+    if len(password) < minimum:
+        return False, f"كلمة المرور يجب ألا تقل عن {minimum} أحرف"
+    checks = [
+        bool(re.search(r"[A-Za-z]", password)),
+        bool(re.search(r"\d", password)),
+        bool(re.search(r"[^A-Za-z0-9]", password)),
+    ]
+    if sum(checks) < 2:
+        return False, "استخدم مزيجًا من الحروف والأرقام والرموز"
+    if password.lower() in {"password", "password123", "1234567890", "qwerty123"}:
+        return False, "اختر كلمة مرور غير شائعة"
     return True, ""
-def _norm(s):
-    return (s or "").strip()
 
-
-# ============================================================
-# 2) Cookie Manager (Defensive)
-# ============================================================
-
-def _get_cookie_manager():
-    """
-    Cookie manager is optional and can fail on some deployments.
-    We keep everything defensive so the app never crashes.
-    """
-    if not _HAS_COOKIE_MANAGER:
-        return None
-    try:
-        if "_cookie_manager" not in st.session_state:
-            # key ثابت لتجنب مشاكل re-mounting
-            st.session_state._cookie_manager = stx.CookieManager(key="osoul_auth_manager")
-        return st.session_state._cookie_manager
-    except Exception:
-        return None
-
-
-def _get_cookie_user(cookie_manager):
-    try:
-        if not cookie_manager:
-            return None
-        # بعض الإصدارات تغيرت تواقيعها؛ نستخدم keyword args لتفادي Mapping.get crash
-        try:
-            return cookie_manager.get(cookie="osoul_user")  # type: ignore
-        except TypeError:
-            return cookie_manager.get("osoul_user")  # type: ignore
-    except Exception:
-        return None
-
-
-def _set_cookie(cookie_manager, key: str, value: str, days: int = 30):
-    """
-    Set cookie safely.
-    - Uses unique widget keys to prevent Streamlit key collisions.
-    - Uses keyword args where possible for compatibility.
-    """
-    if not cookie_manager:
-        return False
-    try:
-        exp = datetime.datetime.utcnow() + datetime.timedelta(days=int(days))
-        # extra_streamlit_components expects datetime in some versions
-        try:
-            cookie_manager.set(  # type: ignore
-                cookie=key,
-                val=value,
-                expires_at=exp,
-                key=f"ck_set_{key}_{int(time.time()*1000)}",
-            )
-        except TypeError:
-            # fallback to positional signature
-            cookie_manager.set(  # type: ignore
-                key,
-                value,
-                exp,
-                key=f"ck_set_{key}_{int(time.time()*1000)}",
-            )
-        return True
-    except Exception:
-        return False
-
-
-def _delete_cookie(cookie_manager, key: str):
-    if not cookie_manager:
-        return False
-    try:
-        # delete via setting expired cookie
-        past = datetime.datetime.utcnow() - datetime.timedelta(days=1)
-        try:
-            cookie_manager.set(  # type: ignore
-                cookie=key,
-                val="",
-                expires_at=past,
-                key=f"ck_del_{key}_{int(time.time()*1000)}",
-            )
-        except TypeError:
-            cookie_manager.set(  # type: ignore
-                key,
-                "",
-                past,
-                key=f"ck_del_{key}_{int(time.time()*1000)}",
-            )
-        return True
-    except Exception:
-        return False
-
-
-# ============================================================
-# 3) Auth Token (Signed) for persistent login
-# ============================================================
 
 def _auth_secret() -> str:
-    """
-    Return the secret used to sign auth cookies.
-    Order:
-      1) st.secrets["AUTH_SECRET"]
-      2) env AUTH_SECRET
-      3) fallback (weak) - not recommended for production
-    """
-    s = None
+    value = ""
     try:
-        s = st.secrets.get("AUTH_SECRET", None)
+        value = str(st.secrets.get("AUTH_SECRET", "") or "")
     except Exception:
-        s = None
-
-    if not s:
-        s = os.environ.get("AUTH_SECRET", "")
-
-    # fallback (works but you should set a real secret)
-    if not s:
-        s = "OSOUL_DEFAULT_DEV_SECRET_CHANGE_ME"
-    return str(s)
-
-
-def _b64u(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).decode("utf-8").rstrip("=")
+        value = ""
+    value = value or os.getenv("AUTH_SECRET", "")
+    if value and len(value) >= 32:
+        return value
+    allow_dev = os.getenv("OSOUL_ALLOW_EPHEMERAL_AUTH_SECRET", "0").lower() in {"1", "true", "yes", "on"}
+    if allow_dev:
+        if "_ephemeral_auth_secret" not in st.session_state:
+            st.session_state["_ephemeral_auth_secret"] = secrets.token_urlsafe(48)
+        return str(st.session_state["_ephemeral_auth_secret"])
+    raise RuntimeError("AUTH_SECRET غير مضبوط أو أقصر من 32 حرفًا")
 
 
-def _b64u_decode(s: str) -> bytes:
-    s = (s or "").strip()
-    pad = "=" * ((4 - len(s) % 4) % 4)
-    return base64.urlsafe_b64decode((s + pad).encode("utf-8"))
+def _b64_encode(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
 
 
 def _sign(payload: str) -> str:
-    key = _auth_secret().encode("utf-8")
-    sig = hmac.new(key, payload.encode("utf-8"), hashlib.sha256).digest()
-    return _b64u(sig)
+    digest = hmac.new(_auth_secret().encode(), payload.encode(), hashlib.sha256).digest()
+    return _b64_encode(digest)
 
 
-def _make_auth_token(username: str, days: int = 30) -> str:
-    """
-    Token format: v3.<exp_ts>.<username>.<sig>
-    """
-    exp = int(time.time() + int(days) * 86400)
-    u = _norm(username)
-    payload = f"v3.{exp}.{u}"
-    sig = _sign(payload)
-    return f"{payload}.{sig}"
+def _make_token(username: str, days: int) -> str:
+    issued = int(time.time())
+    expires = issued + max(1, int(days)) * 86400
+    nonce = secrets.token_urlsafe(12)
+    payload = f"v4.{issued}.{expires}.{_norm(username)}.{nonce}"
+    return f"{payload}.{_sign(payload)}"
 
 
-
-def _verify_auth_token(token: str):
-    """Verify signed auth token.
-
-    Returns (username, exp_ts) if valid else None.
-    Token format: v3.<exp>.<username>.<sig>
-    """
+def _verify_token(token: str):
     try:
-        token = _norm(token)
-        if not token:
+        parts = _norm(token).split(".")
+        if len(parts) != 6 or parts[0] != "v4":
             return None
-        parts = token.split(".")
-        if len(parts) != 4:
+        version, issued_s, expires_s, username, nonce, signature = parts
+        payload = ".".join([version, issued_s, expires_s, username, nonce])
+        if not hmac.compare_digest(_sign(payload), signature):
             return None
-        ver, exp_s, username, sig = parts
-        if ver != "v3":
+        issued, expires = int(issued_s), int(expires_s)
+        now = int(time.time())
+        if issued > now + 300 or expires <= now or expires - issued > 31 * 86400:
             return None
-        exp = int(exp_s)
-        if exp <= int(time.time()):
+        if not db_user_exists(username):
             return None
-        payload = f"{ver}.{exp}.{username}"
-        good = _sign(payload)
-        if not hmac.compare_digest(good, sig):
-            return None
-        u = _norm(username)
-        if not u:
-            return None
-        return u, exp
+        return username, expires
     except Exception:
         return None
 
 
-
-def _user_exists_in_db(username: str) -> bool:
+def _cookie_manager():
+    if stx is None:
+        return None
     try:
-        return bool(db_user_exists(username))
+        if "_osoul_cookie_manager" not in st.session_state:
+            st.session_state["_osoul_cookie_manager"] = stx.CookieManager(key="osoul_cookie_manager_v4")
+        return st.session_state["_osoul_cookie_manager"]
     except Exception:
-        try:
-            # fallback using table query
-            df = fetch_table("users")
-            if df is None or df.empty:
-                return False
-            return _norm(username) in set(df["username"].astype(str))
-        except Exception:
-            return False
+        return None
 
 
-# ============================================================
-# 5) Session bootstrap from cookie
-# ============================================================
-
-def _bootstrap_auth_from_cookie():
-    """
-    Called once per page load to restore session from cookies when Remember me is enabled.
-    Never crashes the app if cookies are broken/unavailable.
-    """
-    if st.session_state.get("_bootstrapped_auth", False):
-        return
-    st.session_state["_bootstrapped_auth"] = True
-
-    cm = _get_cookie_manager()
-    if not cm:
-        return
-
-    s = st.session_state
-    if s.get("logged_in"):
-        return
-
-    cookie_user = _norm(_get_cookie_user(cm))
-    cookie_token = None
-
-    # try new token cookie first
+def _cookie_get(manager, key: str) -> Optional[str]:
+    if manager is None:
+        return None
     try:
         try:
-            cookie_token = _norm(cm.get(cookie="osoul_auth_v2"))  # type: ignore
+            return manager.get(cookie=key)
         except TypeError:
-            cookie_token = _norm(cm.get("osoul_auth_v2"))  # type: ignore
+            return manager.get(key)
     except Exception:
-        cookie_token = None
+        return None
 
-    # fallback legacy cookie
-    if not cookie_token:
+
+def _cookie_set(manager, key: str, value: str, days: int) -> bool:
+    if manager is None:
+        return False
+    expires = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=days)
+    widget_key = f"cookie_set_{key}_{int(time.time() * 1000)}"
+    try:
         try:
-            try:
-                cookie_token = _norm(cm.get(cookie="osoul_auth"))  # type: ignore
-            except TypeError:
-                cookie_token = _norm(cm.get("osoul_auth"))  # type: ignore
-        except Exception:
-            cookie_token = None
+            manager.set(cookie=key, val=value, expires_at=expires, key=widget_key)
+        except TypeError:
+            manager.set(key, value, expires, key=widget_key)
+        return True
+    except Exception:
+        return False
 
-    if cookie_token:
-        ver = _verify_auth_token(cookie_token)
-        if ver and _user_exists_in_db(ver[0]):
-            u, exp = ver
-            s["logged_in"] = True
-            s["username"] = u
-            s["auth_exp"] = int(exp)
-            return
 
-    if cookie_user:
-        exists = _user_exists_in_db(cookie_user)
-        if exists:
-            s["logged_in"] = True
-            s["username"] = cookie_user
-            s["auth_exp"] = int(time.time()) + 4*3600
-            return
-
-    # if we have cookies but cannot validate, clear them (avoid loop)
-    tries = int(s.get("_cookie_bootstrap_tries", 0))
-    s["_cookie_bootstrap_tries"] = tries + 1
-    if (cookie_token is None and cookie_user is None) and tries < 2:
+def _cookie_delete(manager, key: str) -> None:
+    if manager is None:
         return
-    _delete_cookie(cm, "osoul_user")
-    _delete_cookie(cm, "osoul_auth")
-    _delete_cookie(cm, "osoul_auth_v2")
+    expires = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)
+    try:
+        try:
+            manager.set(cookie=key, val="", expires_at=expires, key=f"cookie_del_{int(time.time()*1000)}")
+        except TypeError:
+            manager.set(key, "", expires, key=f"cookie_del_{int(time.time()*1000)}")
+    except Exception:
+        pass
 
 
-# ============================================================
-# 6) Public Auth API for UI
-# ============================================================
+def _bootstrap_cookie_session() -> None:
+    if st.session_state.get("_auth_cookie_checked"):
+        return
+    st.session_state["_auth_cookie_checked"] = True
+    manager = _cookie_manager()
+    token = _cookie_get(manager, TOKEN_COOKIE)
+    verified = _verify_token(token or "") if token else None
+    if not verified:
+        if token:
+            _cookie_delete(manager, TOKEN_COOKIE)
+        return
+    username, expires = verified
+    st.session_state.update(logged_in=True, username=username, auth_exp=expires, last_seen=time.time())
 
-def logout_user():
-    st.session_state["logged_in"] = False
-    st.session_state["username"] = None
-    st.session_state.pop("auth_exp", None)
-    st.session_state.pop("last_seen", None)
 
-    cm = _get_cookie_manager()
-    if cm:
-        _delete_cookie(cm, "osoul_user")
-        _delete_cookie(cm, "osoul_auth")
-        _delete_cookie(cm, "osoul_auth_v2")
+def _login_lock_remaining() -> int:
+    locked_until = int(st.session_state.get("_login_locked_until", 0) or 0)
+    return max(0, locked_until - int(time.time()))
 
-    st.success("✅ تم تسجيل الخروج")
+
+def _record_failed_login() -> None:
+    attempts = int(st.session_state.get("_login_attempts", 0) or 0) + 1
+    st.session_state["_login_attempts"] = attempts
+    if attempts >= MAX_LOGIN_ATTEMPTS:
+        st.session_state["_login_locked_until"] = int(time.time()) + LOCK_SECONDS
+        st.session_state["_login_attempts"] = 0
 
 
 def login_user(username: str, password: str, remember_me: bool = False, **kwargs):
-    # Backward-compatible: callers may pass remember=<bool> instead of remember_me
-    if 'remember' in kwargs and kwargs['remember'] is not None:
-        remember_me = bool(kwargs['remember'])
+    if kwargs.get("remember") is not None:
+        remember_me = bool(kwargs["remember"])
+    remaining = _login_lock_remaining()
+    if remaining:
+        return False, f"محاولات كثيرة. أعد المحاولة بعد {remaining // 60 + 1} دقيقة"
+
     username = _norm(username)
-    password = _norm(password)
-
-    ok_u, msg_u = _validate_username(username)
-    if not ok_u:
-        return False, msg_u
-
-    ok_p, msg_p = _validate_password(password, mode="login")
-    if not ok_p:
-        return False, msg_p
+    ok, message = _validate_username(username)
+    if not ok:
+        return False, message
+    ok, message = _validate_password(password, "login")
+    if not ok:
+        return False, message
 
     try:
-        ok = db_verify_user(username, password)
+        verified = bool(db_verify_user(username, str(password)))
     except Exception:
-        ok = False
+        verified = False
+    if not verified:
+        _record_failed_login()
+        return False, "بيانات الدخول غير صحيحة"
 
-    if not ok:
-        return False, "❌ بيانات الدخول غير صحيحة"
-
-    st.session_state["logged_in"] = True
-    st.session_state["username"] = username
-
-    cm = _get_cookie_manager()
-    if cm:
-        # Always set user cookie (session-level or persistent)
-        # If remember_me -> persistent 30 days with signed token
-        if remember_me:
-            token = _make_auth_token(username, days=30)
-            st.session_state["auth_exp"] = int(time.time()) + 30*86400
-            _set_cookie(cm, "osoul_user", username, days=30)
-            _set_cookie(cm, "osoul_auth_v2", token, days=30)
-        else:
-            # Session cookie (expires quickly, but still survives refresh)
-            # Some browsers treat cookies without expires as session cookies.
-            # We'll keep short expiry for stability.
-            token = _make_auth_token(username, days=1)
-            st.session_state["auth_exp"] = int(time.time()) + 1*86400
-            _set_cookie(cm, "osoul_user", username, days=1)
-            _set_cookie(cm, "osoul_auth_v2", token, days=1)
-
-    return True, "✅ تم تسجيل الدخول بنجاح"
+    st.session_state["_login_attempts"] = 0
+    days = 30 if remember_me else 1
+    expires = int(time.time()) + days * 86400
+    st.session_state.update(logged_in=True, username=username, auth_exp=expires, last_seen=time.time())
+    _cookie_set(_cookie_manager(), TOKEN_COOKIE, _make_token(username, days), days)
+    return True, "تم تسجيل الدخول بنجاح"
 
 
 def register_user(username: str, password: str):
     username = _norm(username)
-    password = _norm(password)
-
-    ok_u, msg_u = _validate_username(username)
-    if not ok_u:
-        return False, msg_u
-
-    ok_p, msg_p = _validate_password(password, mode="login")
-    if not ok_p:
-        return False, msg_p
-
-    if _user_exists_in_db(username):
-        return False, "❌ اسم المستخدم موجود مسبقاً"
-
+    ok, message = _validate_username(username)
+    if not ok:
+        return False, message
+    ok, message = _validate_password(password, "register")
+    if not ok:
+        return False, message
+    if db_user_exists(username):
+        return False, "اسم المستخدم موجود مسبقًا"
     try:
-        db_create_user(username, password)
-        return True, "✅ تم إنشاء الحساب بنجاح"
+        if not db_create_user(username, str(password)):
+            return False, "تعذر إنشاء الحساب"
+        return True, "تم إنشاء الحساب بنجاح"
     except Exception:
-        return False, "❌ حدث خطأ أثناء إنشاء الحساب"
+        return False, "تعذر إنشاء الحساب"
 
 
-def require_login():
-    """Ensure authentication before continuing.
+def logout_user():
+    _cookie_delete(_cookie_manager(), TOKEN_COOKIE)
+    for key in ("logged_in", "username", "auth_exp", "last_seen", "user_id", "portfolio_id"):
+        st.session_state.pop(key, None)
 
-    Returns True if authenticated, otherwise renders login/register UI and returns False.
-    """
-    _bootstrap_auth_from_cookie()
 
-    from datetime import datetime, timedelta
-
-    # ✅ session idle timeout
-    if st.session_state.get("logged_in"):
-        # ✅ hard token expiry (even if session is active)
-        exp = st.session_state.get("auth_exp")
-        if exp and int(time.time()) > int(exp):
-            logout_user()
-            st.warning("انتهت صلاحية الجلسة. الرجاء تسجيل الدخول مرة أخرى.")
-
-        now = datetime.utcnow()
-        last = st.session_state.get("last_seen")
-        idle_minutes = int(getattr(config, "SESSION_IDLE_MINUTES", 120) or 120)
-        if last and isinstance(last, datetime) and (now - last) > timedelta(minutes=idle_minutes):
-            logout_user()
-            st.warning("انتهت الجلسة بسبب عدم النشاط. الرجاء تسجيل الدخول مرة أخرى.")
-        else:
-            st.session_state["last_seen"] = now
-            return True
-
-    # ===== Landing / Auth UI =====
-    # Prefer full logo if available; fallback to APP_ICON
-    def _b64_image(path: str):
-        try:
-            if not path:
-                return None
-            if not os.path.isabs(path):
-                path = os.path.join(os.path.dirname(__file__), path)
-            if not os.path.exists(path):
-                return None
-            with open(path, 'rb') as f:
-                return base64.b64encode(f.read()).decode('utf-8')
-        except Exception:
-            return None
-
-    icon_html = None
+def _render_brand() -> None:
+    logo = str(APP_ICON)
     try:
-        b64_logo = _b64_image(LOGO_FULL_PATH)
-        if b64_logo:
-            icon_html = (
-                f"<img src='data:image/png;base64,{b64_logo}' "
-                "style='width:42px;height:42px;vertical-align:middle;border-radius:12px;'/>"
-            )
+        path = LOGO_FULL_PATH
+        if path and os.path.exists(path):
+            with open(path, "rb") as handle:
+                encoded = base64.b64encode(handle.read()).decode()
+            logo = f"<img src='data:image/png;base64,{encoded}' style='width:44px;height:44px;border-radius:12px'/>"
     except Exception:
-        icon_html = None
-
-    if not icon_html:
-        try:
-            if isinstance(APP_ICON, str) and (APP_ICON.lower().endswith((".png", ".jpg", ".jpeg", ".webp")) or "/" in APP_ICON):
-                b64 = _b64_image(APP_ICON)
-                icon_html = (
-                    f"<img src='data:image/png;base64,{b64}' style='width:34px;height:34px;vertical-align:middle;border-radius:10px;'/>"
-                    if b64 else "📈"
-                )
-            else:
-                icon_html = str(APP_ICON)
-        except Exception:
-            icon_html = "📈"
-
+        pass
     st.markdown(
         textwrap.dedent(
             f"""
             <div class="landing-hero">
-              <div class="landing-title">{icon_html} {APP_NAME}</div>
-              <div class="landing-sub">منصة عربية لتحليل المحافظ، إدارة المخاطر، والباكتيست — بواجهة احترافية وواضحة.</div>
+              <div class="landing-title">{logo} {APP_NAME}</div>
+              <div class="landing-sub">منصة عربية لإدارة المحافظ والتحليل الفني والمالي وإدارة المخاطر.</div>
             </div>
             """
         ).strip(),
         unsafe_allow_html=True,
     )
 
-    tab1, tab2 = st.tabs(["تسجيل الدخول", "إنشاء حساب"])
 
-    with tab1:
-        st.subheader("تسجيل الدخول")
+def require_login():
+    try:
+        _auth_secret()
+    except RuntimeError as exc:
+        st.error("إعداد الأمان غير مكتمل. أضف AUTH_SECRET جديدًا في Secrets.")
+        st.caption(str(exc))
+        return False
+
+    _bootstrap_cookie_session()
+    if st.session_state.get("logged_in"):
+        now = int(time.time())
+        expires = int(st.session_state.get("auth_exp", 0) or 0)
+        idle_minutes = int(os.getenv("OSOUL_SESSION_IDLE_MINUTES", "120"))
+        last_seen = float(st.session_state.get("last_seen", now) or now)
+        if expires <= now or now - last_seen > idle_minutes * 60:
+            logout_user()
+            st.warning("انتهت الجلسة. سجل الدخول مرة أخرى.")
+        else:
+            st.session_state["last_seen"] = float(now)
+            return True
+
+    _render_brand()
+    login_tab, register_tab = st.tabs(["تسجيل الدخول", "إنشاء حساب"])
+    with login_tab:
         with st.form("login_form", clear_on_submit=False):
-            u = st.text_input("اسم المستخدم", key="login_username")
-            p = st.text_input("كلمة المرور", type="password", key="login_password")
-            if getattr(config, "ALLOW_LEGACY_PIN", True):
-                st.caption("إذا كانت كلمة مرورك القديمة PIN رقمي (6 أرقام أو أكثر)، اكتبها كما هي وسيتم قبولها.")
-
-            remember = st.checkbox("تذكرني", value=True, key="remember_me")
+            username = st.text_input("اسم المستخدم")
+            password = st.text_input("كلمة المرور", type="password")
+            remember = st.checkbox("تذكرني لمدة 30 يومًا", value=False)
             submitted = st.form_submit_button("دخول", use_container_width=True)
-
         if submitted:
-            ok, msg = login_user(u, p, remember_me=remember)
+            ok, message = login_user(username, password, remember_me=remember)
             if ok:
-                st.success(msg)
+                st.success(message)
                 st.rerun()
             else:
-                st.error(msg)
+                st.error(message)
 
-    with tab2:
-        st.subheader("إنشاء حساب جديد")
+    with register_tab:
         with st.form("register_form", clear_on_submit=False):
-            u2 = st.text_input("اسم المستخدم", key="reg_username")
-            p2 = st.text_input("كلمة المرور", type="password", key="reg_password")
-
-            if getattr(config, "ALLOW_LEGACY_PIN", True):
-                st.caption("للإصدار القديم: يمكنك استخدام PIN رقمي (6 أرقام+). أو استخدم كلمة مرور قوية (8 أحرف+ حروف/أرقام).")
+            username = st.text_input("اسم المستخدم", key="register_username")
+            password = st.text_input("كلمة المرور القوية", type="password", key="register_password")
+            confirm = st.text_input("تأكيد كلمة المرور", type="password", key="register_confirm")
+            submitted = st.form_submit_button("إنشاء الحساب", use_container_width=True)
+        if submitted:
+            if password != confirm:
+                st.error("كلمتا المرور غير متطابقتين")
             else:
-                st.caption("يفضل كلمة مرور قوية (8 أحرف+ حروف/أرقام).")
-
-            submitted2 = st.form_submit_button("إنشاء الحساب", use_container_width=True)
-
-        if submitted2:
-            ok, msg = register_user(u2, p2)
-            if ok:
-                st.success(msg + " يمكنك الآن تسجيل الدخول.")
-            else:
-                st.error(msg)
-
+                ok, message = register_user(username, password)
+                st.success(message) if ok else st.error(message)
     return False
 
-# ============================================================
-# 8) Backward-compatible alias
-# ============================================================
 
 def login_system():
-    """Alias for older code paths expecting login_system()."""
     return require_login()
