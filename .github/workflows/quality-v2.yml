@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   autofix:
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/agent/osoul-production-hardening-v2' && github.actor != 'github-actions[bot]' }}
+    if: ${{ github.actor != 'github-actions[bot]' && (github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/agent/osoul-production-hardening-v2')) }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
