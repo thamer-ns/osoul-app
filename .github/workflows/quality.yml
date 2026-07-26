@@ -40,7 +40,15 @@ jobs:
           OSOUL_REQUIRE_DB: "0"
           OSOUL_ALLOW_SQLITE_FALLBACK: "1"
           SQLITE_PATH: /tmp/osoul_ci.db
-        run: pytest
+        run: pytest --junitxml=pytest-results.xml
+
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-results
+          path: pytest-results.xml
+          if-no-files-found: ignore
 
   secret-scan:
     runs-on: ubuntu-latest
