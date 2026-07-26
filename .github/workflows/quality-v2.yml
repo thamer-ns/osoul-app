@@ -35,14 +35,34 @@ jobs:
         run: >-
           ruff check
           --select E9,F63,F7,F82
-          app.py security.py database_security_hardening.py tenant_scope.py
-          ai_tenant_hardening.py analytics_hardening.py market_data_hardening.py
-          backup_system.py technical_indicators ai_engine_core/packs.py
-          views/portfolio.py views/dashboard.py views/cash.py views/sukuk.py
-          views/settings.py views/analysis/technical.py views/__init__.py tests
+          app.py security.py database_security_hardening.py
+          database_write_hardening.py tenant_scope.py ai_tenant_hardening.py
+          analytics_hardening.py market_data_hardening.py backup_system.py
+          technical_indicators ai_engine_core/packs.py views/portfolio.py
+          views/dashboard.py views/cash.py views/sukuk.py views/settings.py
+          views/analysis/technical.py views/__init__.py tests
 
       - name: XIRR tests
-        run: pytest -q --tb=short tests/test_analytics_hardening.py
+        id: xirr
+        continue-on-error: true
+        run: >-
+          pytest -q --tb=long --junitxml=xirr-results.xml
+          tests/test_analytics_hardening.py
+
+      - name: Upload XIRR diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xirr-diagnostics
+          path: xirr-results.xml
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Stop on XIRR failure
+        if: steps.xirr.outcome == 'failure'
+        run: |
+          cat xirr-results.xml
+          exit 1
 
       - name: Advanced technical tests
         run: pytest -q --tb=short tests/test_advanced_v2.py
