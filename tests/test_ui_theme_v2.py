@@ -16,9 +16,16 @@ def test_canonical_theme_restores_cairo_and_global_rtl():
 def test_canonical_theme_avoids_previous_destructive_overrides():
     css = build_app_css("light")
     assert ".stApp *" not in css
-    assert 'transform:translateX(100%)' not in css
+    assert "transform:translateX(100%)" not in css
     assert '[data-testid="stTooltipHoverTarget"]' not in css
     assert 'button[title="View fullscreen"]' not in css
+
+
+def test_streamlit_material_icons_keep_their_native_font():
+    css = build_app_css("light")
+    assert '[data-testid="stIconMaterial"]' in css
+    assert "font-family:'Material Symbols Rounded' !important" in css
+    assert "keyboard_double_arrow" not in css
 
 
 def test_legacy_theme_aliases_are_safe():
