@@ -179,6 +179,9 @@ def install_lab_runtime_guards() -> bool:
 
     import backtester
 
+    # backtester imported fetch_table by value before this guard was installed.
+    # Replace that local reference as well, otherwise lab history reads remain global.
+    backtester.fetch_table = _scoped_lab_fetch
     original_persist = backtester._persist_run_to_db
 
     def persist_scoped(*args: Any, **kwargs: Any):
