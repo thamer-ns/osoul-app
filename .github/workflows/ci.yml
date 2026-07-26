@@ -33,13 +33,26 @@ jobs:
           market_data_hardening.py technical_indicators ai_engine_core/packs.py
           views/portfolio.py views/dashboard.py views/analysis/technical.py tests
 
-      - name: Tests
+      - name: Test corrected XIRR
+        run: pytest -q --tb=short tests/test_analytics_hardening.py
+
+      - name: Test advanced technical contract
+        run: pytest -q --tb=short tests/test_advanced_v2.py
+
+      - name: Test tenant SQL isolation
+        env:
+          OSOUL_REQUIRE_DB: "0"
+          OSOUL_ALLOW_SQLITE_FALLBACK: "1"
+          SQLITE_PATH: "/tmp/osoul_test.db"
+        run: pytest -q --tb=short tests/test_tenant_scope_sql.py
+
+      - name: Run complete test suite
         env:
           OSOUL_ALLOW_EPHEMERAL_AUTH_SECRET: "1"
           OSOUL_REQUIRE_DB: "0"
           OSOUL_ALLOW_SQLITE_FALLBACK: "1"
           SQLITE_PATH: "/tmp/osoul_test.db"
-        run: pytest -q
+        run: pytest -q --tb=short
 
   secret-history:
     runs-on: ubuntu-latest
