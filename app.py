@@ -74,13 +74,17 @@ def _apply_global_ui() -> None:
 
 def _install_runtime_hardening(username: str) -> None:
     """Install compatibility fixes before any page modules are imported."""
-    from ai_tenant_hardening import register_ai_tenant_tables
+    from ai_tenant_hardening import (
+        install_ai_learning_scope,
+        register_ai_tenant_tables,
+    )
     from analytics_hardening import install_analytics_hardening
     from market_data_hardening import install_market_data_hardening
     from tenant_scope import install_tenant_scope
 
     register_ai_tenant_tables()
     install_tenant_scope(username)
+    install_ai_learning_scope()
     install_market_data_hardening()
     install_analytics_hardening()
 
