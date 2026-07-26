@@ -94,14 +94,19 @@ def main() -> None:
         st.stop()
 
     try:
+        from ai_runtime_v2 import install_ai_runtime_guards
         from tenant_db import ensure_tenant_schema
         from tenant_runtime import install_runtime_guards
 
-        if not ensure_tenant_schema() or not install_runtime_guards():
-            st.warning("تعذر إكمال ترقية عزل بيانات المستخدمين. أوقف إدخال البيانات حتى مراجعة السجل.")
+        if (
+            not ensure_tenant_schema()
+            or not install_runtime_guards()
+            or not install_ai_runtime_guards()
+        ):
+            st.warning("تعذر إكمال ترقية عزل البيانات والتحليل. أوقف إدخال البيانات حتى مراجعة السجل.")
             st.stop()
     except Exception as exc:
-        _safe_error("تعذر تهيئة عزل بيانات المستخدمين", exc)
+        _safe_error("تعذر تهيئة عزل البيانات والتحليل", exc)
         st.stop()
 
     try:
