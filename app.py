@@ -54,7 +54,9 @@ def _apply_global_ui() -> None:
     try:
         from components import inject_component_styles, inject_streamlit_ar_i18n
 
-        helpers.extend([lambda: inject_streamlit_ar_i18n(True), inject_component_styles])
+        helpers.extend(
+            [lambda: inject_streamlit_ar_i18n(True), inject_component_styles]
+        )
     except Exception:
         pass
     for helper in helpers:
@@ -72,10 +74,12 @@ def _apply_global_ui() -> None:
 
 def _install_runtime_hardening(username: str) -> None:
     """Install compatibility fixes before any page modules are imported."""
+    from ai_tenant_hardening import register_ai_tenant_tables
     from analytics_hardening import install_analytics_hardening
     from market_data_hardening import install_market_data_hardening
     from tenant_scope import install_tenant_scope
 
+    register_ai_tenant_tables()
     install_tenant_scope(username)
     install_market_data_hardening()
     install_analytics_hardening()
