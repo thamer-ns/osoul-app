@@ -1,8 +1,9 @@
 """Per-session database isolation for Osoli.
 
 The database wrapper is installed once per Python process, but it resolves the
-active tenant from Streamlit ``session_state`` on every query. This distinction
-is critical because module globals are shared by concurrent Streamlit sessions.
+active tenant from Streamlit ``session_state`` on every query. Module globals
+are shared by concurrent Streamlit sessions, so no user identity is stored in a
+global closure.
 """
 from __future__ import annotations
 
@@ -24,6 +25,7 @@ SCOPED_TABLES = {
     "watchlist",
     "investmentthesis",
 }
+TENANT_SYMBOL_TABLES = {"watchlist", "investmentthesis"}
 
 _ORIGINAL_FETCH_TABLE = _db.fetch_table
 _ORIGINAL_FETCH_DF = getattr(_db, "fetch_df", None)
@@ -94,7 +96,11 @@ def _table_exists(table: str) -> bool:
         return False
 
 
-def _add_column_if_missing(table: str, column: str, sql_type: str = "INTEGER") -> None:
+def _add_column_if_missing(
+    table: str,
+    column: str,
+    sql_type: str = "INTEGER",
+) -> None:
     if not _table_exists(table) or column.lower() in _table_columns(table):
         return
     if _connection_kind() == "postgres":
@@ -103,7 +109,10 @@ def _add_column_if_missing(table: str, column: str, sql_type: str = "INTEGER") -
             f"{_safe_ident(column)} {sql_type}"
         )
     else:
-        query = f"ALTER TABLE {_safe_ident(table)} ADD COLUMN {_safe_ident(column)} {sql_type}"
+        query = (
+            f"ALTER TABLE {_safe_ident(table)} ADD COLUMN "
+            f"{_safe_ident(column)} {sql_type}"
+        )
     if not _ORIGINAL_EXECUTE_QUERY(query):
         raise RuntimeError(f"تعذر إضافة العمود {column} إلى {table}")
 
@@ -154,6 +163,146 @@ def _ensure_scoped_columns() -> None:
             raise RuntimeError(f"تعذر إنشاء فهرس العزل لجدول {table}")
 
 
+def _sqlite_has_global_symbol_unique(cur, table: str) -> bool:
+    cur.execute(f"PRAGMA index_list({_safe_ident(table)})")
+    for row in cur.fetchall() or []:
+        index_name = str(row[1])
+        is_unique = bool(row[2])
+        if not is_unique:
+            continue
+        cur.execute(f"PRAGMA index_info({_safe_ident(index_name)})")
+        columns = [str(item[2]).lower() for item in (cur.fetchall() or [])]
+        if columns == ["symbol"]:
+            return True
+    return False
+
+
+def _migrate_sqlite_symbol_tables(conn) -> None:
+    cur = conn.cursor()
+    cur.execute("PRAGMA foreign_keys=OFF")
+    if _table_exists("watchlist") and _sqlite_has_global_symbol_unique(
+        cur, "watchlist"
+    ):
+        cur.execute(
+            """
+            CREATE TABLE watchlist_tenant_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                created_at TEXT,
+                user_id INTEGER,
+                portfolio_id INTEGER,
+                UNIQUE(user_id, portfolio_id, symbol)
+            )
+            """
+        )
+        cur.execute(
+            """
+            INSERT INTO watchlist_tenant_new
+                (id, symbol, created_at, user_id, portfolio_id)
+            SELECT id, symbol, created_at, user_id, portfolio_id
+            FROM watchlist
+            """
+        )
+        cur.execute("DROP TABLE watchlist")
+        cur.execute("ALTER TABLE watchlist_tenant_new RENAME TO watchlist")
+
+    if _table_exists("investmentthesis"):
+        columns = _table_columns("investmentthesis")
+        if "id" not in columns:
+            cur.execute(
+                """
+                CREATE TABLE investmentthesis_tenant_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
+                    thesis_text TEXT,
+                    target_price REAL,
+                    recommendation TEXT,
+                    last_updated TEXT,
+                    user_id INTEGER,
+                    portfolio_id INTEGER,
+                    UNIQUE(user_id, portfolio_id, symbol)
+                )
+                """
+            )
+            cur.execute(
+                """
+                INSERT INTO investmentthesis_tenant_new
+                    (symbol, thesis_text, target_price, recommendation,
+                     last_updated, user_id, portfolio_id)
+                SELECT symbol, thesis_text, target_price, recommendation,
+                       last_updated, user_id, portfolio_id
+                FROM investmentthesis
+                """
+            )
+            cur.execute("DROP TABLE investmentthesis")
+            cur.execute(
+                "ALTER TABLE investmentthesis_tenant_new "
+                "RENAME TO investmentthesis"
+            )
+    cur.execute("PRAGMA foreign_keys=ON")
+
+
+def _migrate_postgres_symbol_tables(conn) -> None:
+    cur = conn.cursor()
+    if _table_exists("watchlist"):
+        cur.execute(
+            "ALTER TABLE watchlist DROP CONSTRAINT IF EXISTS "
+            "watchlist_symbol_key"
+        )
+        cur.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS "
+            "idx_watchlist_tenant_symbol ON "
+            "watchlist(user_id, portfolio_id, symbol)"
+        )
+    if _table_exists("investmentthesis"):
+        cur.execute(
+            "ALTER TABLE investmentthesis ADD COLUMN IF NOT EXISTS "
+            "id BIGSERIAL"
+        )
+        cur.execute(
+            "ALTER TABLE investmentthesis DROP CONSTRAINT IF EXISTS "
+            "investmentthesis_pkey"
+        )
+        cur.execute(
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname='investmentthesis_pkey'
+                      AND conrelid='investmentthesis'::regclass
+                ) THEN
+                    ALTER TABLE investmentthesis
+                    ADD CONSTRAINT investmentthesis_pkey PRIMARY KEY (id);
+                END IF;
+            END $$;
+            """
+        )
+        cur.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS "
+            "idx_investmentthesis_tenant_symbol ON "
+            "investmentthesis(user_id, portfolio_id, symbol)"
+        )
+
+
+def _migrate_tenant_symbol_constraints() -> None:
+    conn, kind = _db.get_connection()
+    try:
+        if kind == "postgres":
+            _migrate_postgres_symbol_tables(conn)
+        else:
+            _migrate_sqlite_symbol_tables(conn)
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        _db.put_connection(conn, kind)
+
+
 def _ensure_schema_once() -> None:
     global _SCHEMA_READY
     if _SCHEMA_READY:
@@ -163,6 +312,7 @@ def _ensure_schema_once() -> None:
             return
         _ensure_portfolios_table()
         _ensure_scoped_columns()
+        _migrate_tenant_symbol_constraints()
         _SCHEMA_READY = True
 
 
@@ -170,7 +320,8 @@ def _resolve_user_id(username: str) -> int:
     if _ORIGINAL_FETCH_DF is None:
         raise RuntimeError("database.fetch_df غير متوفر")
     frame = _ORIGINAL_FETCH_DF(
-        "SELECT id FROM users WHERE username=%s LIMIT 1", (str(username),)
+        "SELECT id FROM users WHERE username=%s LIMIT 1",
+        (str(username),),
     )
     if frame is None or frame.empty:
         raise RuntimeError("تعذر تحديد المستخدم الحالي")
@@ -186,13 +337,15 @@ def _ensure_default_portfolio(user_id: int) -> int:
     if frame is not None and not frame.empty:
         return int(frame.iloc[0]["id"])
     if not _ORIGINAL_EXECUTE_QUERY(
-        "INSERT INTO portfolios (user_id, name, base_currency, is_default) "
+        "INSERT INTO portfolios "
+        "(user_id, name, base_currency, is_default) "
         "VALUES (%s,%s,%s,%s)",
         (int(user_id), "المحفظة الرئيسية", "SAR", 1),
     ):
         raise RuntimeError("تعذر إنشاء المحفظة الافتراضية")
     frame = _ORIGINAL_FETCH_DF(
-        "SELECT id FROM portfolios WHERE user_id=%s ORDER BY id DESC LIMIT 1",
+        "SELECT id FROM portfolios WHERE user_id=%s "
+        "ORDER BY id DESC LIMIT 1",
         (int(user_id),),
     )
     if frame is None or frame.empty:
@@ -202,7 +355,11 @@ def _ensure_default_portfolio(user_id: int) -> int:
 
 def _claim_legacy_rows(ctx: TenantContext) -> None:
     users = _ORIGINAL_FETCH_DF("SELECT COUNT(*) AS n FROM users")
-    user_count = int(users.iloc[0]["n"]) if users is not None and not users.empty else 0
+    user_count = (
+        int(users.iloc[0]["n"])
+        if users is not None and not users.empty
+        else 0
+    )
     force = os.getenv("OSOUL_CLAIM_LEGACY_DATA", "0").strip().lower() in {
         "1",
         "true",
@@ -223,7 +380,9 @@ def _claim_legacy_rows(ctx: TenantContext) -> None:
                 "WHERE user_id IS NULL OR portfolio_id IS NULL",
                 (ctx.user_id, ctx.portfolio_id),
             ):
-                raise RuntimeError(f"تعذر ترحيل البيانات القديمة في {table}")
+                raise RuntimeError(
+                    f"تعذر ترحيل البيانات القديمة في {table}"
+                )
 
 
 def _normalise_table(name: str) -> str:
@@ -232,18 +391,25 @@ def _normalise_table(name: str) -> str:
 
 def _extract_write_table(query: str) -> Optional[str]:
     for pattern in (
-        r"^\s*INSERT(?:\s+OR\s+REPLACE)?\s+INTO\s+([A-Za-z_][A-Za-z0-9_]*)",
+        r"^\s*INSERT(?:\s+OR\s+REPLACE)?\s+INTO\s+"
+        r"([A-Za-z_][A-Za-z0-9_]*)",
         r"^\s*UPDATE\s+([A-Za-z_][A-Za-z0-9_]*)",
         r"^\s*DELETE\s+FROM\s+([A-Za-z_][A-Za-z0-9_]*)",
     ):
-        match = re.search(pattern, str(query or ""), flags=re.IGNORECASE | re.DOTALL)
+        match = re.search(
+            pattern,
+            str(query or ""),
+            flags=re.IGNORECASE | re.DOTALL,
+        )
         if match:
             return _normalise_table(match.group(1))
     return None
 
 
 def _append_scope_predicate(
-    query: str, params: Tuple[Any, ...], ctx: TenantContext
+    query: str,
+    params: Tuple[Any, ...],
+    ctx: TenantContext,
 ) -> tuple[str, tuple[Any, ...]]:
     scoped_query = str(query or "").strip()
     semicolon = scoped_query.endswith(";")
@@ -251,51 +417,83 @@ def _append_scope_predicate(
         scoped_query = scoped_query[:-1].rstrip()
     suffix = ""
     match = re.search(
-        r"\s+(RETURNING|ORDER\s+BY|LIMIT)\s+", scoped_query, flags=re.IGNORECASE
+        r"\s+(RETURNING|ORDER\s+BY|LIMIT)\s+",
+        scoped_query,
+        flags=re.IGNORECASE,
     )
     if match:
         suffix = scoped_query[match.start() :]
         scoped_query = scoped_query[: match.start()].rstrip()
     predicate = "user_id=%s AND portfolio_id=%s"
-    conjunction = " AND " if re.search(r"\bWHERE\b", scoped_query, re.IGNORECASE) else " WHERE "
-    scoped_query = (
-        f"{scoped_query}{conjunction}{predicate}{suffix}{';' if semicolon else ''}"
+    conjunction = (
+        " AND "
+        if re.search(r"\bWHERE\b", scoped_query, re.IGNORECASE)
+        else " WHERE "
     )
-    return scoped_query, tuple(params or ()) + (ctx.user_id, ctx.portfolio_id)
+    scoped_query = (
+        f"{scoped_query}{conjunction}{predicate}"
+        f"{suffix}{';' if semicolon else ''}"
+    )
+    return (
+        scoped_query,
+        tuple(params or ()) + (ctx.user_id, ctx.portfolio_id),
+    )
 
 
 def _scope_insert(
-    query: str, params: Tuple[Any, ...], ctx: TenantContext
+    query: str,
+    params: Tuple[Any, ...],
+    ctx: TenantContext,
 ) -> tuple[str, tuple[Any, ...]]:
+    table = _extract_write_table(query)
     match = re.match(
         r"^(\s*INSERT(?:\s+OR\s+REPLACE)?\s+INTO\s+"
-        r"[A-Za-z_][A-Za-z0-9_]*\s*\()([^)]*)(\)\s*VALUES\s*\()([^)]*)(\).*)$",
+        r"[A-Za-z_][A-Za-z0-9_]*\s*\()([^)]*)"
+        r"(\)\s*VALUES\s*\()([^)]*)(\).*)$",
         str(query or ""),
         flags=re.IGNORECASE | re.DOTALL,
     )
     if not match:
         raise ValueError("صيغة INSERT غير مدعومة للجدول المعزول")
-    columns = [column.strip().strip('"').lower() for column in match.group(2).split(",")]
+    columns = [
+        column.strip().strip('"').lower()
+        for column in match.group(2).split(",")
+    ]
     has_user = "user_id" in columns
     has_portfolio = "portfolio_id" in columns
     if has_user != has_portfolio:
         raise ValueError("يجب تمرير user_id وportfolio_id معًا")
     if has_user and has_portfolio:
-        return str(query), tuple(params or ())
-    scoped_query = (
-        match.group(1)
-        + match.group(2)
-        + ", user_id, portfolio_id"
-        + match.group(3)
-        + match.group(4)
-        + ", %s, %s"
-        + match.group(5)
-    )
-    return scoped_query, tuple(params or ()) + (ctx.user_id, ctx.portfolio_id)
+        scoped_query = str(query)
+        scoped_params = tuple(params or ())
+    else:
+        scoped_query = (
+            match.group(1)
+            + match.group(2)
+            + ", user_id, portfolio_id"
+            + match.group(3)
+            + match.group(4)
+            + ", %s, %s"
+            + match.group(5)
+        )
+        scoped_params = tuple(params or ()) + (
+            ctx.user_id,
+            ctx.portfolio_id,
+        )
+    if table in TENANT_SYMBOL_TABLES:
+        scoped_query = re.sub(
+            r"ON\s+CONFLICT\s*\(\s*symbol\s*\)",
+            "ON CONFLICT (user_id, portfolio_id, symbol)",
+            scoped_query,
+            flags=re.IGNORECASE,
+        )
+    return scoped_query, scoped_params
 
 
 def _scope_select(
-    query: str, params: Tuple[Any, ...], ctx: TenantContext
+    query: str,
+    params: Tuple[Any, ...],
+    ctx: TenantContext,
 ) -> tuple[str, tuple[Any, ...]]:
     raw_query = str(query or "")
     tables = {
@@ -313,8 +511,22 @@ def _scope_select(
         lower = raw_query.lower()
         if "user_id" in lower and "portfolio_id" in lower:
             return raw_query, tuple(params or ())
-        raise ValueError("استعلام الربط المالي يجب أن يحدد عزل المستخدم صراحة")
+        raise ValueError(
+            "استعلام الربط المالي يجب أن يحدد عزل المستخدم صراحة"
+        )
     return _append_scope_predicate(raw_query, tuple(params or ()), ctx)
+
+
+def _query_uses_scoped_table(query: str) -> bool:
+    tables = {
+        _normalise_table(name)
+        for name in re.findall(
+            r"\b(?:FROM|JOIN)\s+([A-Za-z_][A-Za-z0-9_]*)",
+            str(query or ""),
+            flags=re.IGNORECASE,
+        )
+    }
+    return bool(tables & SCOPED_TABLES)
 
 
 def _install_generic_wrappers_once() -> None:
@@ -337,42 +549,44 @@ def _install_generic_wrappers_once() -> None:
             )
 
         def fetch_df_scoped(
-            query: str, params: Optional[Tuple[Any, ...]] = None
+            query: str,
+            params: Optional[Tuple[Any, ...]] = None,
         ):
-            ctx = _session_context(required=bool(
-                set(
-                    _normalise_table(name)
-                    for name in re.findall(
-                        r"\b(?:FROM|JOIN)\s+([A-Za-z_][A-Za-z0-9_]*)",
-                        str(query or ""),
-                        flags=re.IGNORECASE,
-                    )
-                )
-                & SCOPED_TABLES
-            ))
-            if ctx is None:
+            if not _query_uses_scoped_table(query):
                 return _ORIGINAL_FETCH_DF(query, tuple(params or ()))
+            ctx = _session_context(required=True)
             scoped_query, scoped_params = _scope_select(
-                query, tuple(params or ()), ctx
+                query,
+                tuple(params or ()),
+                ctx,
             )
             return _ORIGINAL_FETCH_DF(scoped_query, scoped_params)
 
         def execute_query_scoped(
-            query: str, params: Optional[Tuple[Any, ...]] = None
+            query: str,
+            params: Optional[Tuple[Any, ...]] = None,
         ) -> bool:
             table = _extract_write_table(query)
             if table not in SCOPED_TABLES:
-                return bool(_ORIGINAL_EXECUTE_QUERY(query, tuple(params or ())))
+                return bool(
+                    _ORIGINAL_EXECUTE_QUERY(query, tuple(params or ()))
+                )
             ctx = _session_context(required=True)
             if re.match(r"^\s*INSERT", str(query), flags=re.IGNORECASE):
                 scoped_query, scoped_params = _scope_insert(
-                    query, tuple(params or ()), ctx
+                    query,
+                    tuple(params or ()),
+                    ctx,
                 )
             else:
                 scoped_query, scoped_params = _append_scope_predicate(
-                    query, tuple(params or ()), ctx
+                    query,
+                    tuple(params or ()),
+                    ctx,
                 )
-            return bool(_ORIGINAL_EXECUTE_QUERY(scoped_query, scoped_params))
+            return bool(
+                _ORIGINAL_EXECUTE_QUERY(scoped_query, scoped_params)
+            )
 
         _db.fetch_table = fetch_table_scoped
         _db.fetch_df = fetch_df_scoped
@@ -407,7 +621,11 @@ def scoped_sql_preview(
     portfolio_id: int = 11,
 ):
     """Pure helper used by tests to inspect write scoping."""
-    ctx = TenantContext(user_id=user_id, username="test", portfolio_id=portfolio_id)
+    ctx = TenantContext(
+        user_id=user_id,
+        username="test",
+        portfolio_id=portfolio_id,
+    )
     table = _extract_write_table(query)
     if table not in SCOPED_TABLES:
         return query, params
