@@ -1,6 +1,9 @@
 name: Export performance audit source
 
 on:
+  pull_request:
+    branches:
+      - main
   push:
     branches:
       - agent/performance-hardening-v3
