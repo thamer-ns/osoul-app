@@ -84,10 +84,6 @@ def test_unified_portfolio_accounting(monkeypatch):
     assert result["data_quality"]["ok"] is True
 
 
-def test_cache_key_is_part_of_cached_function_signature():
-    assert "cache_key" in calculate_portfolio_metrics_v2.__wrapped__.__annotations__ or True
-
-
 def test_excel_formula_prefixes_are_neutralised():
     assert _safe_excel_value("=2+2") == "'=2+2"
     assert _safe_excel_value("@SUM(A1:A2)") == "'@SUM(A1:A2)"
