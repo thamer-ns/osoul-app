@@ -1,7 +1,6 @@
 PART HASHES
 c7b47d6d2e6784f1760e9c5dd7474d7c136939380a5a884f441e0a10cd0185ee  .audit_patch/part00
 adc8d4756706ab3336c4a467b790250a59e1fcd44cee750dd611ea1601b41217  .audit_patch/part01
-76a87ec33c9955a8bc105f02a547fc86be09809189713a0a80d89a88765ac2a2  .audit_patch/part02
 e4dc3bbb39cc9aed2accddbd745c78bddd33e5f5b2363a066dfdf76900fdbda3  .audit_patch/part020
 99ada8a27659c0f268a3f284c5594a3d227f5fa14c4f581aa9807875147cd8fd  .audit_patch/part021
 dd6ea961c1253e550758bcf52b08ad24b181fdd762b1048f967c6a25f545e8d6  .audit_patch/part022
@@ -16,7 +15,6 @@ ef2ca28fad419a2a6f8bec722506b53e33aea7d25365d1b5d279e57b3e58fd74  .audit_patch/p
 PART SIZES
 10000 .audit_patch/part00
 10000 .audit_patch/part01
-10000 .audit_patch/part02
  2500 .audit_patch/part020
  2500 .audit_patch/part021
  2500 .audit_patch/part022
@@ -27,27 +25,31 @@ PART SIZES
 10000 .audit_patch/part06
 10000 .audit_patch/part07
  2652 .audit_patch/part08
-92652 total
+82652 total
 
 BASE64_RC=0
 ARCHIVE_HASH
-e137459da3f201bb985c2ec8a960518ed47550b9a7b048b1d43d509b7e785df4  /tmp/osoul_patch.tar.gz
-ARCHIVE_SIZE=69489
-
-gzip: /tmp/osoul_patch.tar.gz: invalid compressed data--crc error
-
-gzip: /tmp/osoul_patch.tar.gz: invalid compressed data--length error
-GZIP_RC=1
+6b1912e516577efd59ab098a71ab4d98f41787fac4999b074d9253a3eb1fd8b3  /tmp/osoul_patch.tar.gz
+ARCHIVE_SIZE=61989
+GZIP_RC=0
 ai_tenant_hardening.py
 analytics.py
 app.py
 charts.py
 components.py
-tar: Skipping to next header
-
-gzip: stdin: invalid compressed data--crc error
-
-gzip: stdin: invalid compressed data--length error
-tar: Child returned status 1
-tar: Error is not recoverable: exiting now
-TAR_RC=2
+financial_analysis/metrics.py
+requirements.txt
+styles.py
+technical_indicators/advanced_v2.py
+tenant_scope.py
+tests/test_advanced_v2.py
+tests/test_fundamental_metrics.py
+tests/test_ui_theme_v2.py
+ui_theme_v2.py
+views/__init__.py
+views/analysis/__init__.py
+views/analysis/technical.py
+views/dashboard.py
+views/navbar.py
+views/utils.py
+TAR_RC=0
