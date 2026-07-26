@@ -95,6 +95,7 @@ def main() -> None:
 
     try:
         from ai_runtime_v2 import install_ai_runtime_guards
+        from lab_runtime_v2 import install_lab_runtime_guards
         from tenant_db import ensure_tenant_schema
         from tenant_runtime import install_runtime_guards
 
@@ -102,6 +103,7 @@ def main() -> None:
             not ensure_tenant_schema()
             or not install_runtime_guards()
             or not install_ai_runtime_guards()
+            or not install_lab_runtime_guards()
         ):
             st.warning("تعذر إكمال ترقية عزل البيانات والتحليل. أوقف إدخال البيانات حتى مراجعة السجل.")
             st.stop()
