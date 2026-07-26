@@ -1,8 +1,11 @@
-"""Register AI tables that contain user-specific rules or reports."""
+"""Tenant isolation for user rules, AI reports and learned weights."""
 from __future__ import annotations
+
+_LEARNING_SCOPE_INSTALLED = False
 
 
 def register_ai_tenant_tables() -> None:
+    """Create AI tables before the generic tenant wrapper is installed."""
     import database
     import tenant_scope
 
@@ -121,3 +124,40 @@ def register_ai_tenant_tables() -> None:
     for statement in statements:
         if not database.execute_query(statement):
             raise RuntimeError("تعذر تهيئة جداول المستشار المعزولة")
+
+
+def _tenant_weight_key(key: str) -> str:
+    from tenant_scope import current_tenant
+
+    tenant = current_tenant()
+    if tenant is None:
+        raise RuntimeError("لا يوجد سياق محفظة لتعلم المستشار")
+    return f"u{tenant.user_id}:p{tenant.portfolio_id}:{str(key)}"
+
+
+def install_ai_learning_scope() -> None:
+    """Prefix learned model weights so one user cannot alter another's model."""
+    global _LEARNING_SCOPE_INSTALLED
+    if _LEARNING_SCOPE_INSTALLED:
+        return
+
+    from ai_engine_core import logging_learning
+
+    original_get = logging_learning._get_weight
+    original_set = logging_learning._set_weight
+
+    def get_weight_scoped(key: str, default: float = 1.0) -> float:
+        try:
+            return float(original_get(_tenant_weight_key(key), default))
+        except Exception:
+            return float(default)
+
+    def set_weight_scoped(key: str, weight: float) -> bool:
+        try:
+            return bool(original_set(_tenant_weight_key(key), weight))
+        except Exception:
+            return False
+
+    logging_learning._get_weight = get_weight_scoped
+    logging_learning._set_weight = set_weight_scoped
+    _LEARNING_SCOPE_INSTALLED = True
