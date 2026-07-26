@@ -1,0 +1,52 @@
+name: Quality and security
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  python-quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      - name: Static syntax check
+        run: |
+          python tools/self_check.py
+          python -m compileall -q .
+
+      - name: Ruff
+        run: ruff check app.py analytics_v2.py tenant_db.py security_v2.py market_data_v2.py views/__init__.py views/dashboard_v2.py views/cash_v2.py views/portfolio_v2.py views/analysis/technical.py technical_indicators/advanced_v2.py technical_indicators/__init__.py ai_engine_core/packs.py tests
+
+      - name: Unit tests
+        env:
+          AUTH_SECRET: ci-only-secret-ci-only-secret-123456789
+          OSOUL_REQUIRE_DB: "0"
+          OSOUL_ALLOW_SQLITE_FALLBACK: "1"
+          SQLITE_PATH: /tmp/osoul_ci.db
+        run: pytest
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Scan current release tree for secrets
+        run: |
+          docker run --rm -v "$PWD:/repo" zricethezav/gitleaks:latest \
+            detect --source=/repo --no-git --redact --exit-code=1
