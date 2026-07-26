@@ -32,7 +32,7 @@ jobs:
           python -m compileall -q .
 
       - name: Ruff
-        run: ruff check app.py analytics_v2.py tenant_db.py tenant_runtime.py ai_runtime_v2.py security_v2.py market_data_v2.py financial_analysis/thesis.py views/__init__.py views/dashboard_v2.py views/cash_v2.py views/portfolio_v2.py views/analysis/technical.py technical_indicators/advanced_v2.py technical_indicators/__init__.py ai_engine_core/packs.py tests
+        run: ruff check app.py analytics_v2.py tenant_db.py tenant_runtime.py ai_runtime_v2.py lab_runtime_v2.py security_v2.py market_data_v2.py financial_analysis/thesis.py views/__init__.py views/dashboard_v2.py views/cash_v2.py views/portfolio_v2.py views/analysis/technical.py technical_indicators/advanced_v2.py technical_indicators/__init__.py ai_engine_core/packs.py tests
 
       - name: Unit tests
         env:
