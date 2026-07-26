@@ -5,7 +5,6 @@ on:
   push:
     branches:
       - main
-      - agent/osoul-production-hardening-v2
 
 concurrency:
   group: osoli-v3-${{ github.ref }}
@@ -15,62 +14,12 @@ permissions:
   contents: read
 
 jobs:
-  autofix:
-    if: ${{ github.actor != 'github-actions[bot]' && (github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/agent/osoul-production-hardening-v2')) }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    outputs:
-      changed: ${{ steps.commit.outputs.changed }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: agent/osoul-production-hardening-v2
-          fetch-depth: 0
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Apply deterministic repository fixes
-        run: python scripts/apply_repository_audit_fixes.py
-
-      - name: Commit audited fixes
-        id: commit
-        run: |
-          if git diff --quiet; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "No audited fixes were required"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add classical_analysis.py market_data.py osoli_logging.py requirements.txt \
-            views/analysis/financial.py views/lab.py views/shared.py \
-            tools/repository_audit.py .github/workflows/quality-v2.yml
-          git commit -m "Fix repository-wide audit findings"
-          git push origin HEAD:agent/osoul-production-hardening-v2
-          echo "changed=true" >> "$GITHUB_OUTPUT"
-
   quality:
-    needs: autofix
-    if: ${{ always() && (needs.autofix.result == 'skipped' || (needs.autofix.result == 'success' && needs.autofix.outputs.changed != 'true')) }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Create audited source snapshot
-        run: git archive --format=zip HEAD -o audited-source.zip
-
-      - name: Upload audited source snapshot
-        uses: actions/upload-artifact@v4
-        with:
-          name: audited-source
-          path: audited-source.zip
-          if-no-files-found: error
-          retention-days: 7
 
       - uses: actions/setup-python@v5
         with:
