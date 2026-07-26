@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - agent/full-ui-performance-audit
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: read
