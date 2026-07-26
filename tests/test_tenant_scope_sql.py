@@ -19,3 +19,19 @@ def test_update_is_restricted_to_active_portfolio():
     assert "user_id=%s" in query
     assert "portfolio_id=%s" in query
     assert params == (5, 99, 7, 11)
+
+
+def test_thesis_conflict_target_is_tenant_scoped():
+    query, params = scoped_sql_preview(
+        """
+        INSERT INTO investmentthesis
+            (symbol, thesis_text, target_price, recommendation, last_updated)
+        VALUES (%s,%s,%s,%s,%s)
+        ON CONFLICT (symbol)
+        DO UPDATE SET thesis_text=EXCLUDED.thesis_text
+        """,
+        ("1120.SR", "نص", 50.0, "Hold", "2026-07-26"),
+    )
+    compact = " ".join(query.split()).lower()
+    assert "on conflict (user_id, portfolio_id, symbol)" in compact
+    assert params[-2:] == (7, 11)
