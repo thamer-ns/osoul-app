@@ -118,16 +118,16 @@ def test_neutral_report_does_not_invent_a_plan():
 
 
 def test_internal_trace_is_never_returned_to_ui():
-    secret = "database-password-and-private-stack"
+    private_detail = "private-stack-detail-value"
     result = enrich_report(
-        {"status": "error", "__error__": secret, "__trace__": secret},
+        {"status": "error", "__error__": private_detail, "__trace__": private_detail},
         symbol="1120.SR",
         timeframe="1D",
     )
 
     serialized = repr(result)
     assert "__trace__" not in result
-    assert secret not in serialized
+    assert private_detail not in serialized
     assert result["status"] == "error"
     assert result["error_id"]
 
