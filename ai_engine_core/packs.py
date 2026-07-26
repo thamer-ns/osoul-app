@@ -1,222 +1,164 @@
-"""
-ai_engine_core/packs.py
+"""Stable pack builders for the Osoli AI engine."""
+from __future__ import annotations
 
-هذه الوحدة (packs) **اختيارية**.
+from typing import Any, Dict
 
-سبب إضافتها:
-بعض النسخ السابقة من ai_engine_core/reporting.py كانت تتوقع وجود pack builders:
-  - build_technical_pack
-  - build_vsa_pack
-  - build_fundamental_pack
-
-إذا كانت غير موجودة يظهر الخطأ:
-RuntimeError: Missing pack builders. Expected ai_engine_core/packs.py ...
-
-في مشروعك الحالي يوجد محركات التحليل داخل:
-- technicals.py
-- vsa.py
-- indicators.py
-- risk.py
-
-فهنا نوفّر wrappers “builders” بشكل آمن (safe) لتوافق أي نسخة قديمة من reporting.py.
-"""
-
-from typing import Dict, Any, Tuple
 import pandas as pd
 
-from .ohlcv import _ensure_ohlcv_columns
 from .indicators import _compute_indicators
-
+from .ohlcv import _ensure_ohlcv_columns
 from .technicals import (
-    _detect_advanced_patterns,
+    _analyze_financial_golden_rules,
+    _analyze_ichimoku,
     _analyze_market_structure,
+    _detect_advanced_patterns,
     _detect_liquidity_sweep,
     _detect_order_block,
-    _analyze_ichimoku,
-    _analyze_financial_golden_rules,
 )
-
 from .vsa import analyze_vsa
 
-# مؤشرات إضافية (Advanced) - اختيارية وآمنة (لا تكسر سلوك البرنامج)
 try:
     from technical_indicators import compute_advanced_technical_pack
 except Exception:  # pragma: no cover
     compute_advanced_technical_pack = None
 
 
-def _safe_merge_features(*dicts) -> Dict[str, Any]:
-    out: Dict[str, Any] = {}
-    for d in dicts:
-        if not isinstance(d, dict):
+def _merge_features(*items: Dict[str, Any]) -> Dict[str, Any]:
+    merged: Dict[str, Any] = {}
+    for item in items:
+        if not isinstance(item, dict):
             continue
-        for k, v in d.items():
-            if k is None:
-                continue
-            out[str(k)] = v
-    return out
+        for key, value in item.items():
+            if key is not None:
+                merged[str(key)] = value
+    return merged
 
 
 def build_technical_pack(
     df: pd.DataFrame,
     symbol: str = "",
     timeframe: str = "1d",
-    indicators: Dict[str, Any] = None,
+    indicators: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
-    """
-    يبني tech_pack بشكل بسيط وعملي:
-    - يحسب مؤشرات
-    - يشغّل الوحدات الأساسية الموجودة عندك (structure/candles/sr/liquidity/ob/ichimoku)
-    ويرجع:
-      {score, reasons, features, direction_hint}
-    """
-    df = _ensure_ohlcv_columns(df)
-    ind = indicators or _compute_indicators(df)
+    frame = _ensure_ohlcv_columns(df)
+    computed = indicators or _compute_indicators(frame)
 
-    score = 0.0
-    reasons = []
-    features = {}
+    candle_score, candle_reasons = _detect_advanced_patterns(frame)
+    structure_score, structure_reasons = _analyze_market_structure(frame)
+    liquidity_score, liquidity_reasons, liquidity_features = _detect_liquidity_sweep(frame)
+    block_score, block_reasons, block_features = _detect_order_block(frame)
+    ichimoku_score, ichimoku_reasons, ichimoku_features = _analyze_ichimoku(frame)
 
-    # Core tech modules
-    s_candle, o_candle = _detect_advanced_patterns(df)
-    s_struct, o_struct = _analyze_market_structure(df)
-    s_liq, o_liq, f_liq = _detect_liquidity_sweep(df)
-    s_ob, o_ob, f_ob = _detect_order_block(df)
-    s_ichi, o_ichi, f_ichi = _analyze_ichimoku(df)
+    score = sum(
+        float(value or 0)
+        for value in (
+            candle_score,
+            structure_score,
+            liquidity_score,
+            block_score,
+            ichimoku_score,
+        )
+    )
+    reasons = (
+        (structure_reasons or [])
+        + (candle_reasons or [])
+        + (liquidity_reasons or [])
+        + (block_reasons or [])
+        + (ichimoku_reasons or [])
+    )
+    features = _merge_features(
+        liquidity_features or {},
+        block_features or {},
+        ichimoku_features or {},
+    )
 
-    score += float(s_candle or 0) + float(s_struct or 0) + float(s_liq or 0) + float(s_ob or 0) + float(s_ichi or 0)
-    reasons += (o_struct or []) + (o_candle or []) + (o_liq or []) + (o_ob or []) + (o_ichi or [])
-    features = _safe_merge_features(features, f_liq or {}, f_ob or {}, f_ichi or {})
-
-    # Add a few numeric features (safe)
     try:
-        features["close"] = float(df["Close"].iloc[-1])
-        if isinstance(ind.get("rsi14"), pd.Series) and not pd.isna(ind["rsi14"].iloc[-1]):
-            features["rsi14"] = float(ind["rsi14"].iloc[-1])
-        if isinstance(ind.get("macd"), pd.Series) and not pd.isna(ind["macd"].iloc[-1]):
-            features["macd"] = float(ind["macd"].iloc[-1])
-        if isinstance(ind.get("adx14"), pd.Series) and not pd.isna(ind["adx14"].iloc[-1]):
-            features["adx14"] = float(ind["adx14"].iloc[-1])
-        if isinstance(ind.get("sma50"), pd.Series) and not pd.isna(ind["sma50"].iloc[-1]):
-            features["sma50"] = float(ind["sma50"].iloc[-1])
-        if isinstance(ind.get("sma200"), pd.Series) and not pd.isna(ind["sma200"].iloc[-1]):
-            features["sma200"] = float(ind["sma200"].iloc[-1])
-        if isinstance(ind.get("atr14"), pd.Series) and not pd.isna(ind["atr14"].iloc[-1]):
-            features["atr14"] = float(ind["atr14"].iloc[-1])
+        features["close"] = float(frame["Close"].iloc[-1])
+        for key in ("rsi14", "macd", "adx14", "sma50", "sma200", "atr14"):
+            series = computed.get(key)
+            if isinstance(series, pd.Series) and not series.empty and pd.notna(series.iloc[-1]):
+                features[key] = float(series.iloc[-1])
     except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/packs.py:106')
+        pass
 
-
-    # -------------------------------
-    # Advanced Technical Indicators (اختياري)
-    # -------------------------------
-    if compute_advanced_technical_pack is not None:
+    advanced = None
+    if callable(compute_advanced_technical_pack):
         try:
-            # schema موحّد: {name, features, signals, evidence, confidence, errors, meta}
-            adv = compute_advanced_technical_pack(df, symbol=symbol, timeframe=timeframe)
-            if isinstance(adv, dict):
-                adv_features = adv.get("features") or {}
-                if isinstance(adv_features, dict):
-                    for k, v in adv_features.items():
-                        if v is None:
-                            continue
-                        # نُسجّلها تحت بادئة adv_ لتفادي التعارض
-                        try:
-                            if isinstance(v, (int, float, bool)):
-                                features[f"adv_{k}"] = float(v)
-                        except Exception:
-                            import logging
-                            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/packs.py:127')
+            advanced = compute_advanced_technical_pack(
+                frame,
+                symbol=symbol,
+                timeframe=timeframe,
+            )
+        except Exception:
+            advanced = None
 
-                # Evidence عربية
-                adv_evidence = adv.get("evidence") or []
-                if isinstance(adv_evidence, list):
-                    reasons.extend([str(x) for x in adv_evidence if str(x).strip()])
+    if isinstance(advanced, dict):
+        advanced_direction = float(advanced.get("direction_score") or 0.0)
+        advanced_confidence = float(advanced.get("confidence") or 0.0)
+        # The core score has a small range. Advanced indicators may confirm it,
+        # but cannot overpower the original engine.
+        score += max(-3.0, min(3.0, advanced_direction / 30.0))
+        features["advanced_direction_score"] = advanced_direction
+        features["advanced_confidence"] = advanced_confidence
+        features["advanced_bias"] = advanced.get("bias", "neutral")
+        for key, value in (advanced.get("features") or {}).items():
+            if isinstance(value, (int, float, bool, str)) or value is None:
+                features[f"advanced.{key}"] = value
+        reasons.extend(str(x) for x in (advanced.get("evidence") or [])[:12])
+        for signal in (advanced.get("signals") or [])[:8]:
+            if isinstance(signal, dict):
+                reasons.append(
+                    f"إشارة متقدمة {signal.get('type', 'INFO')}: "
+                    f"{signal.get('reason', signal.get('kind', ''))}"
+                )
+        try:
+            from .db import save_advanced_indicators
 
-                # Signals (نضيف ملخصاً بسيطاً كسطر في الأسباب)
-                adv_signals = adv.get("signals") or []
-                if isinstance(adv_signals, list) and adv_signals:
-                    try:
-                        sig_text = ", ".join([str(s.get("name", "")) for s in adv_signals if isinstance(s, dict) and s.get("name")])
-                        if sig_text.strip():
-                            reasons.append(f"إشارات متقدمة: {sig_text}")
-                    except Exception:
-                        import logging
-                        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/packs.py:142')
+            save_advanced_indicators(
+                symbol=str(symbol),
+                timeframe=str(timeframe),
+                indicators=advanced,
+            )
+        except Exception:
+            pass
 
-                # Confidence boost محدود
-                adv_conf = adv.get("confidence")
-                if isinstance(adv_conf, (int, float)):
-                    features["adv_confidence"] = float(adv_conf)
-                    score += max(-2.0, min(2.0, (float(adv_conf) - 50.0) / 25.0))
-
-                # Cache في DB (اختياري)
-                try:
-                    from .db import save_advanced_indicators
-
-                    save_advanced_indicators(symbol=str(symbol), interval=str(timeframe), pack=adv)
-                except Exception:
-                    import logging
-                    logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at ai_engine_core/packs.py:156')
-        except Exception:  # pragma: no cover
-            reasons.append("⚠️ تعذر حساب بعض المؤشرات المتقدمة (تم تجاهلها بأمان).")
-
-    # Direction hint
-    direction_hint = "neutral"
-    try:
-        if score >= 2:
-            direction_hint = "buy"
-        elif score <= -2:
-            direction_hint = "sell"
-    except Exception:
-        direction_hint = "neutral"
-
+    direction_hint = "buy" if score >= 2 else "sell" if score <= -2 else "neutral"
     return {
         "score": round(float(score), 2),
-        "reasons": reasons[:20],
+        "reasons": reasons[:30],
         "features": features,
         "direction_hint": direction_hint,
         "symbol": str(symbol),
         "timeframe": str(timeframe),
+        "advanced": advanced,
     }
 
 
 def build_vsa_pack(
     df: pd.DataFrame,
-    indicators: Dict[str, Any] = None,
+    indicators: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
-    """
-    يبني vsa_pack باستخدام analyze_vsa الموجود عندك.
-    """
-    df = _ensure_ohlcv_columns(df)
-    score, reasons, features = analyze_vsa(df)
+    del indicators
+    frame = _ensure_ohlcv_columns(df)
+    score, reasons, features = analyze_vsa(frame)
     return {
-        "score": round(float(score), 2),
-        "reasons": (reasons or [])[:20],
+        "score": round(float(score or 0.0), 2),
+        "reasons": (reasons or [])[:30],
         "features": features or {},
     }
 
 
 def build_fundamental_pack(symbol: str) -> Dict[str, Any]:
-    """
-    يبني fund_pack من _analyze_financial_golden_rules الموجودة في technicals.py
-    """
     try:
-        s_fund, o_fund, meta = _analyze_financial_golden_rules(symbol)
+        score, reasons, meta = _analyze_financial_golden_rules(symbol)
     except Exception:
-        s_fund, o_fund, meta = 0, [], {}
-
-    feats = {}
-    try:
-        if isinstance(meta, dict):
-            feats = meta.get("_fund_features", {}) or {}
-    except Exception:
-        feats = {}
-
+        score, reasons, meta = 0.0, [], {}
+    features = {}
+    if isinstance(meta, dict):
+        features = meta.get("_fund_features", {}) or {}
     return {
-        "score": round(float(s_fund), 2),
-        "reasons": (o_fund or [])[:20],
-        "features": feats,
+        "score": round(float(score or 0.0), 2),
+        "reasons": (reasons or [])[:30],
+        "features": features,
         "meta": meta if isinstance(meta, dict) else {},
     }
