@@ -82,6 +82,15 @@ def _render_levels_table(rows: list):
         st.dataframe(df, width="stretch", hide_index=True)
 
 
+def _os_card(title: str, rows: list, icon: str = "") -> None:
+    """Render a compact native Streamlit card without unsafe dynamic HTML."""
+    with st.container(border=True):
+        heading = f"{icon} {title}".strip()
+        st.markdown(f"**{heading}**")
+        for label, value in rows:
+            st.write(f"**{label}:** {value}")
+
+
 def _atr(df: pd.DataFrame, n: int = 14) -> pd.Series:
     high = df["High"].astype(float)
     low = df["Low"].astype(float)

@@ -198,9 +198,11 @@ def view_backtester_ui(fin):
             st.session_state["__last_bt_result__"] = res
             st.success(f"✅ اكتمل الاختبار ({res.get('strategy_name_ar', strat)})")
 
-        except Exception as e:
-            st.error(f"Backtest Error: {e}")
-            st.code(traceback.format_exc())
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).exception("Backtest execution failed")
+            st.error("تعذر تنفيذ الاختبار الخلفي. راجع البيانات والإعدادات ثم أعد المحاولة.")
 
     res = st.session_state.get("__last_bt_result__")
     if res:

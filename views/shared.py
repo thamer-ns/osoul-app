@@ -1130,9 +1130,11 @@ def render_osoli_report(rep: dict, title: str = "🤖 تقرير أصولي", *a
     # نسخة محسّنة تعتمد على نفس parse (_extract_ai) — لا تغيير في البيانات
     try:
         _render_ai_report_readable(rep, show_debug=False, compact=False)
-    except Exception as e:
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).exception("Enhanced Osoli report rendering failed")
         st.warning("⚠️ تعذر عرض البطاقات المحسّنة، سيتم استخدام العرض الأصلي.")
-        st.code(str(e))
 
     # النسخة الأصلية (كما هي) لضمان عدم فقد أي تفاصيل/مزايا
     with st.expander("🧩 عرض أصولي (النسخة الأصلية)"):

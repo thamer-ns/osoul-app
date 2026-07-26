@@ -260,8 +260,13 @@ def render_financial_dashboard_ui(symbol):
                     st.markdown("---")
                     _render_q("ربع سنوي (Quarterly)", q_q)
 
-                except Exception as e:
-                    st.error(str(e))
+                except Exception:
+                    import logging
+
+                    logging.getLogger(__name__).exception(
+                        "Fundamental data-quality assessment failed"
+                    )
+                    st.error("تعذر فحص جودة البيانات المالية حاليًا.")
 
         if not dashboard_has_data:
             st.warning("⚠️ لا توجد بيانات مالية محفوظة لهذا السهم.")

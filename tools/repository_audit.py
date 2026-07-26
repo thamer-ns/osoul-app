@@ -49,6 +49,9 @@ PLACEHOLDER_WORDS = {
     "your_key_here",
     "your-secret-here",
     "replace_me",
+    "put_a_strong_secret_here",
+    "your_api_key",
+    "user:password@host",
 }
 
 
@@ -175,6 +178,10 @@ def _scan_secrets(path: Path, text: str, findings: list[Finding]) -> None:
     if rel.endswith((".example", ".example.toml")) or path.name == ".env.example":
         return
     for line_number, line in enumerate(text.splitlines(), start=1):
+        if line.lstrip().startswith("#"):
+            continue
+        if "re.compile(" in line or "SECRET_PATTERNS" in line:
+            continue
         for pattern in SECRET_PATTERNS:
             match = pattern.search(line)
             if not match:

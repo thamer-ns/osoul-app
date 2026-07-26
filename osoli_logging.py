@@ -85,7 +85,6 @@ def redact_text(text: object) -> str:
         try:
             s = rgx.sub(repl, s)
         except Exception:
-            import logging
             logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at osoli_logging.py:87')
     return s
 
@@ -95,7 +94,6 @@ class RedactionFilter(logging.Filter):
             record.msg = redact_text(record.getMessage())
             record.args = ()
         except Exception:
-            import logging
             logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at osoli_logging.py:96')
         return True
 
@@ -109,5 +107,4 @@ def install_redaction_filter(logger: logging.Logger | None = None):
                 return
         lg.addFilter(RedactionFilter())
     except Exception:
-        import logging
         logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at osoli_logging.py:109')
