@@ -6,11 +6,13 @@ import datetime as dt
 import hashlib
 import hmac
 import html
+import logging
 import os
 import re
 import secrets
 import textwrap
 import time
+from pathlib import Path
 from typing import Optional
 
 import streamlit as st
@@ -84,26 +86,110 @@ def _validate_password(password: str, mode: str = "login"):
     return True, ""
 
 
-def _auth_secret() -> str:
+_RUNTIME_AUTH_SECRET: Optional[str] = None
+
+
+def _configured_auth_secret() -> str:
+    """Read a persistent secret from Streamlit Secrets or the environment."""
     value = ""
     try:
-        value = str(st.secrets.get("AUTH_SECRET", "") or "")
+        value = str(st.secrets.get("AUTH_SECRET", "") or "").strip()
     except Exception:
         value = ""
-    value = value or os.getenv("AUTH_SECRET", "")
+    return value or str(os.getenv("AUTH_SECRET", "") or "").strip()
+
+
+def _runtime_auth_secret_path() -> Path:
+    configured = str(os.getenv("OSOUL_AUTH_SECRET_FILE", "") or "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    state_home = str(os.getenv("XDG_STATE_HOME", "") or "").strip()
+    base = Path(state_home).expanduser() if state_home else Path.home() / ".local" / "state"
+    return base / "osoul" / "auth_secret"
+
+
+def _read_runtime_auth_secret(path: Path) -> str:
+    try:
+        value = path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return ""
+    except OSError:
+        logging.getLogger(__name__).warning(
+            "Could not read the runtime auth secret file",
+            exc_info=True,
+        )
+        return ""
+    if len(value) < 32:
+        logging.getLogger(__name__).warning(
+            "Ignoring an invalid runtime auth secret file at %s",
+            path,
+        )
+        return ""
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        logging.getLogger(__name__).debug(
+            "Could not tighten runtime auth secret permissions",
+            exc_info=True,
+        )
+    return value
+
+
+def _load_or_create_runtime_auth_secret() -> str:
+    """Return one server-wide random secret without committing it to Git."""
+    global _RUNTIME_AUTH_SECRET
+    if _RUNTIME_AUTH_SECRET and len(_RUNTIME_AUTH_SECRET) >= 32:
+        return _RUNTIME_AUTH_SECRET
+
+    path = _runtime_auth_secret_path()
+    existing = _read_runtime_auth_secret(path)
+    if existing:
+        _RUNTIME_AUTH_SECRET = existing
+        return existing
+
+    generated = secrets.token_urlsafe(64)
+    try:
+        path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+        try:
+            os.chmod(path.parent, 0o700)
+        except OSError:
+            logging.getLogger(__name__).debug(
+                "Could not tighten runtime auth state directory permissions",
+                exc_info=True,
+            )
+        fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(generated)
+        _RUNTIME_AUTH_SECRET = generated
+        logging.getLogger(__name__).warning(
+            "AUTH_SECRET is not configured; generated a private runtime secret. "
+            "Persistent login cookies will reset if the hosting filesystem is replaced."
+        )
+        return generated
+    except FileExistsError:
+        existing = _read_runtime_auth_secret(path)
+        if existing:
+            _RUNTIME_AUTH_SECRET = existing
+            return existing
+    except OSError:
+        logging.getLogger(__name__).warning(
+            "Could not persist the generated runtime auth secret; using a process-wide secret",
+            exc_info=True,
+        )
+
+    _RUNTIME_AUTH_SECRET = generated
+    return generated
+
+
+def _auth_secret() -> str:
+    value = _configured_auth_secret()
     if len(value) >= 32:
         return value
-    allow_dev = os.getenv("OSOUL_ALLOW_EPHEMERAL_AUTH_SECRET", "0").lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-    if allow_dev:
-        if "_ephemeral_auth_secret" not in st.session_state:
-            st.session_state["_ephemeral_auth_secret"] = secrets.token_urlsafe(48)
-        return str(st.session_state["_ephemeral_auth_secret"])
-    raise RuntimeError("AUTH_SECRET غير مضبوط أو أقصر من 32 حرفًا")
+    if value:
+        logging.getLogger(__name__).warning(
+            "Configured AUTH_SECRET is shorter than 32 characters and was ignored"
+        )
+    return _load_or_create_runtime_auth_secret()
 
 
 def _b64_encode(data: bytes) -> str:
