@@ -1,182 +1,210 @@
-# views/signals.py
-import streamlit as st
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from typing import Any, Dict
+
 import pandas as pd
+import streamlit as st
 
-from database import fetch_table
-from views.shared import _generate_ai_report_flex, _extract_ai, _fmt_price
-from quality_engine import quality_score, quality_label
-from market_data import get_chart_history, get_ticker_symbol
 from data_normalizer import normalize_ohlcv
+from database import fetch_table
+from market_data import get_chart_history, get_ticker_symbol
+from quality_engine import quality_label, quality_score
+from views.shared import _extract_ai, _fmt_price, _generate_ai_report_flex
 
 
-def _floating_notification(message: str, tone: str = "success"):
-    color = {"success": "#16c784", "warning": "#f59e0b", "danger": "#ea3943"}.get(tone, "#16c784")
-    st.markdown(
-        f"""
-        <div style="
-          position:fixed;
-          bottom:20px;
-          left:20px;
-          background: rgba(21,26,35,0.95);
-          border-left:5px solid {color};
-          padding:12px 14px;
-          border-radius:12px;
-          box-shadow:0 10px 30px rgba(0,0,0,0.45);
-          z-index:9999;
-          animation: slideUp 0.45s ease-out;
-          max-width: 360px;
-          color: #e6edf3;
-          ">
-          {message}
-        </div>
-        <style>
-        @keyframes slideUp {{
-          from {{ transform: translateY(16px); opacity:0; }}
-          to   {{ transform: translateY(0); opacity:1; }}
-        }}
-        </style>
-        """,
-        unsafe_allow_html=True,
+def _safe_number(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return float(default)
+
+
+def _recommendation_kind(value: object) -> str:
+    text = str(value or "").strip().lower()
+    if "buy" in text or "شراء" in text:
+        return "buy"
+    if "sell" in text or "بيع" in text or "تقليل" in text:
+        return "sell"
+    return "hold"
+
+
+def _symbol_universe(finance: dict) -> list[str]:
+    symbols: set[str] = set()
+    trades = finance.get("all_trades", pd.DataFrame()) if isinstance(finance, dict) else pd.DataFrame()
+    if isinstance(trades, pd.DataFrame) and not trades.empty and "symbol" in trades.columns:
+        for raw in trades["symbol"].dropna().astype(str):
+            symbol = get_ticker_symbol(raw)
+            if symbol:
+                symbols.add(symbol)
+
+    watchlist = fetch_table("watchlist")
+    if isinstance(watchlist, pd.DataFrame) and not watchlist.empty and "symbol" in watchlist.columns:
+        for raw in watchlist["symbol"].dropna().astype(str):
+            symbol = get_ticker_symbol(raw)
+            if symbol:
+                symbols.add(symbol)
+    return sorted(symbols)
+
+
+def _history_quality(symbol: str, timeframe: str) -> tuple[float, str, int]:
+    years = 1 if timeframe in {"15m", "1h", "4h"} else 3
+    try:
+        history = get_chart_history(symbol, years=years, interval=timeframe)
+        history = normalize_ohlcv(history)
+        if history is None or history.empty:
+            return 0.0, "غير متاح", 0
+        score = float(quality_score(history))
+        source = str(
+            (getattr(history, "attrs", {}) or {}).get("source")
+            or ((getattr(history, "attrs", {}) or {}).get("data_lineage") or {}).get("source")
+            or "غير معروف"
+        )
+        return score, source, int(len(history))
+    except Exception:
+        return 0.0, "غير متاح", 0
+
+
+def _target_one(extracted: Dict[str, Any]):
+    targets = extracted.get("targets") or []
+    if not isinstance(targets, list) or not targets:
+        return None
+    first = targets[0]
+    return first.get("price") if isinstance(first, dict) else first
+
+
+def _render_signal_card(item: Dict[str, Any], show_details: bool) -> None:
+    symbol = str(item.get("symbol") or "—")
+    timeframe = str(item.get("timeframe") or "—")
+    extracted = item.get("extracted") or {}
+    recommendation = str(extracted.get("recommendation") or "انتظار")
+    kind = _recommendation_kind(recommendation)
+    confidence = _safe_number(extracted.get("confidence"))
+    direction_score = _safe_number(
+        extracted.get("direction_score"),
+        0.0,
     )
+    entry = (extracted.get("entry") or {}).get("entry_zone")
+    risk = extracted.get("risk") or {}
+    stop = risk.get("stop")
+    reward_risk = risk.get("rr")
+    target = _target_one(extracted)
+    quality = _safe_number(item.get("quality"))
+
+    with st.container(border=True):
+        title_col, state_col = st.columns([3, 1])
+        with title_col:
+            st.subheader(f"{symbol} — {timeframe}")
+            st.caption(
+                f"المصدر: {item.get('source', 'غير معروف')} — "
+                f"{int(item.get('rows', 0))} شمعة — "
+                f"تم التوليد: {item.get('generated_at', '—')}"
+            )
+        with state_col:
+            if kind == "buy":
+                st.success(f"شراء — {recommendation}")
+            elif kind == "sell":
+                st.warning(f"بيع/تقليل — {recommendation}")
+            else:
+                st.info(f"انتظار — {recommendation}")
+
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.metric("ثقة الأدلة", f"{confidence:.0f}%")
+        with c2:
+            st.metric("درجة الاتجاه", f"{direction_score:+.1f}")
+        with c3:
+            st.metric("جودة البيانات", f"{quality:.1f}/100")
+        with c4:
+            st.metric("تصنيف الجودة", quality_label(quality))
+
+        p1, p2, p3, p4 = st.columns(4)
+        with p1:
+            st.metric("منطقة الدخول", _fmt_price(entry))
+        with p2:
+            st.metric("وقف الخسارة", _fmt_price(stop))
+        with p3:
+            st.metric("الهدف الأول", _fmt_price(target))
+        with p4:
+            st.metric("العائد إلى المخاطرة", f"{_safe_number(reward_risk):.2f}")
+
+        if quality < 60:
+            st.warning("جودة البيانات منخفضة؛ لا تعتمد الإشارة قبل مراجعة الشارت والمصدر.")
+        st.caption(
+            "لا يُعتمد الاختراق أو الكسر إلا بعد إغلاق شمعة الفاصل المحدد، "
+            "وتظل الإشارة فعالة حتى تحقق الأهداف أو يُكسر وقفها وفق خطة المخاطر."
+        )
+        if show_details:
+            with st.expander("تفاصيل التقرير الخام"):
+                st.json(extracted.get("raw") or {})
 
 
-def _play_sound():
-    # Lightweight: browser will play if allowed
-    st.markdown(
-        """
-        <audio autoplay>
-          <source src="https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg" type="audio/ogg">
-        </audio>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-def _signal_card(symbol: str, timeframe: str, ex: dict, q_score: float = 0.0):
-    rec = str(ex.get("recommendation") or "—")
-    rec_l = rec.lower()
-    pill = "hold"
-    if "buy" in rec_l or "شراء" in rec_l:
-        pill = "buy"
-    elif "sell" in rec_l or "بيع" in rec_l:
-        pill = "sell"
-
-    conf = int(ex.get("confidence") or 0)
-    entry_zone = (ex.get("entry") or {}).get("entry_zone")
-    stop = (ex.get("risk") or {}).get("stop")
-    rr = (ex.get("risk") or {}).get("rr")
-    targets = ex.get("targets") or []
-    t1 = None
-    if isinstance(targets, list) and targets:
-        t1 = targets[0].get("price") if isinstance(targets[0], dict) else targets[0]
-
-    st.markdown(
-        f"""
-        <div class="os-signal-card">
-          <div class="os-signal-head">
-            <div class="os-signal-title">{symbol} — {timeframe}</div>
-            <span class="os-pill {pill}">{rec}</span>
-          </div>
-          <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:10px;">
-            <div class="os-card" style="padding:12px; margin:0;">
-              <div class="kpi-title">الثقة</div>
-              <div class="kpi-value" style="font-size:1.25rem;">{conf}%</div>
-            </div>
-            <div class="os-card" style="padding:12px; margin:0;">
-              <div class="kpi-title">الدخول</div>
-              <div class="kpi-value" style="font-size:1.25rem;">{_fmt_price(entry_zone)}</div>
-            </div>
-            <div class="os-card" style="padding:12px; margin:0;">
-              <div class="kpi-title">وقف الخسارة</div>
-              <div class="kpi-value" style="font-size:1.25rem;">{_fmt_price(stop)}</div>
-            </div>
-          </div>
-          <div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap;">
-            <span class="os-pill hold">🎯 هدف 1: {_fmt_price(t1)}</span>
-            <span class="os-pill hold">⚖️ R:R: {float(rr or 0):.2f}</span>
-            <span class="os-pill hold">⭐ جودة: {q_score:.1f} ({quality_label(q_score)})</span>
-          </div>
-          <div style="margin-top:10px; color: var(--muted); font-weight:700;">
-            {st.session_state.get("signal_hint","")}
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+def _generate_signal(symbol: str, timeframe: str) -> Dict[str, Any]:
+    report = _generate_ai_report_flex(symbol, timeframe)
+    extracted = _extract_ai(report)
+    quality, source, rows = _history_quality(symbol, timeframe)
+    return {
+        "symbol": symbol,
+        "timeframe": timeframe,
+        "extracted": extracted,
+        "quality": quality,
+        "source": source,
+        "rows": rows,
+        "generated_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+    }
 
 
 def view_signals(fin: dict):
-    st.markdown("## ⚡ الإشارات (v2)")
-    st.caption("بطاقات إشارات احترافية مع خطة دخول/مخاطر + جودة البيانات.")
-
-    # Build symbol universe
-    symbols = set()
-    try:
-        if isinstance(fin, dict) and "all_trades" in fin and isinstance(fin["all_trades"], pd.DataFrame):
-            df = fin["all_trades"]
-            if not df.empty and "symbol" in df.columns:
-                symbols.update([get_ticker_symbol(s) for s in df["symbol"].astype(str).tolist() if str(s).strip()])
-    except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at views/signals.py:119')
-
-    try:
-        wl = fetch_table("watchlist")
-        if wl is not None and not wl.empty and "symbol" in wl.columns:
-            symbols.update([get_ticker_symbol(s) for s in wl["symbol"].astype(str).tolist() if str(s).strip()])
-    except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at views/signals.py:126')
-
-    symbols = sorted(symbols)
+    st.header("🚦 الإشارات الفنية")
+    st.caption(
+        "إشارات صعود وهبوط بخطة دخول ومخاطر، مع فصل اتجاه الإشارة عن ثقة الأدلة."
+    )
+    symbols = _symbol_universe(fin or {})
     if not symbols:
-        st.info("لا توجد رموز في المحفظة/قائمة المراقبة. أضف صفقة أو أضف رمز لقائمة المراقبة.")
+        st.info("لا توجد رموز في المحفظة أو قائمة المراقبة.")
         return
 
-    c1, c2, c3 = st.columns([2, 1, 1])
-    with c1:
-        selected = st.multiselect("اختر الأسهم", symbols, default=symbols[: min(5, len(symbols))])
-    with c2:
-        timeframe = st.selectbox("الفاصل", ["15m", "1h", "4h", "1d"], index=3)
-    with c3:
-        sound = st.toggle("🔊 صوت", value=False)
+    left, middle, right = st.columns([2, 1, 1])
+    with left:
+        selected = st.multiselect(
+            "الأسهم",
+            symbols,
+            default=symbols[: min(5, len(symbols))],
+        )
+    with middle:
+        timeframe = st.selectbox(
+            "الفاصل",
+            ["15m", "1h", "4h", "1d", "1wk"],
+            index=3,
+        )
+    with right:
+        show_details = st.toggle("إظهار التفاصيل", value=False)
 
-    colA, colB = st.columns([1, 1])
-    with colA:
-        show_notify = st.toggle("تنبيه عائم", value=True)
-    with colB:
-        show_details = st.toggle("تفاصيل إضافية", value=False)
-
-    if st.button("🚀 توليد الإشارات", use_container_width=True):
-        for sym in selected:
-            with st.spinner(f"جارٍ تحليل {sym}..."):
-                rep = _generate_ai_report_flex(sym, timeframe)
-                ex = _extract_ai(rep)
-
-            # quality score from history (light)
-            q_score = 0.0
-            try:
-                hist = get_chart_history(sym, years=2, interval="1d")
-                hist = normalize_ohlcv(hist)
-                q_score = quality_score(hist)
-            except Exception:
-                q_score = 0.0
-
-            if not ex.get("ok"):
-                st.error(f"{sym}: تعذر توليد التقرير")
+    if st.button(
+        "توليد الإشارات",
+        type="primary",
+        use_container_width=True,
+        disabled=not selected,
+    ):
+        results = []
+        for symbol in selected:
+            with st.spinner(f"تحليل {symbol} على {timeframe}..."):
+                item = _generate_signal(symbol, timeframe)
+            extracted = item.get("extracted") or {}
+            if not extracted.get("ok"):
+                st.error(f"{symbol}: تعذر توليد تقرير صالح")
                 continue
+            results.append(item)
+            kind = _recommendation_kind(extracted.get("recommendation"))
+            if kind == "buy":
+                st.toast(f"إشارة شراء جديدة لـ {symbol}", icon="📈")
+            elif kind == "sell":
+                st.toast(f"إشارة بيع أو تقليل لـ {symbol}", icon="📉")
+        st.session_state["generated_signals"] = results
 
-            _signal_card(sym, timeframe, ex, q_score=q_score)
-
-            rec = str(ex.get("recommendation") or "").lower()
-            if show_notify:
-                if "buy" in rec or "شراء" in rec:
-                    _floating_notification(f"تم توليد إشارة شراء لـ {sym} 🚀", "success")
-                elif "sell" in rec or "بيع" in rec:
-                    _floating_notification(f"تنبيه بيع/تقليل لـ {sym}", "warning")
-            if sound and (("buy" in rec) or ("sell" in rec) or ("شراء" in rec) or ("بيع" in rec)):
-                _play_sound()
-
-            if show_details:
-                st.expander("تفاصيل التقرير").json(ex.get("raw") or {})
-
+    results = st.session_state.get("generated_signals") or []
+    if not results:
+        st.info("اختر الأسهم والفاصل ثم ولّد الإشارات.")
+        return
+    for item in results:
+        _render_signal_card(item, show_details=show_details)
