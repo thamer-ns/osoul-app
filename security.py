@@ -1,18 +1,11 @@
-"""Authentication and input validation for Osoli.
-
-Security properties:
-- bcrypt is mandatory; no unsalted SHA fallback.
-- persistent login accepts only an HMAC-signed, expiring token.
-- new registrations use the strong password policy.
-- session-local rate limiting slows brute-force attempts.
-- AUTH_SECRET is mandatory unless an explicit development override is enabled.
-"""
+"""Authentication and input validation for Osoli."""
 from __future__ import annotations
 
 import base64
 import datetime as dt
 import hashlib
 import hmac
+import html
 import os
 import re
 import secrets
@@ -22,7 +15,6 @@ from typing import Optional
 
 import streamlit as st
 
-import config
 from config import APP_ICON, APP_NAME, LOGO_FULL_PATH
 from database import db_create_user, db_user_exists, db_verify_user
 
@@ -31,20 +23,20 @@ try:
 except Exception:  # pragma: no cover
     stx = None
 
-TOKEN_COOKIE = "osoul_auth_v3"
+TOKEN_COOKIE = "osoul_auth_v4"
 MAX_LOGIN_ATTEMPTS = int(os.getenv("OSOUL_MAX_LOGIN_ATTEMPTS", "5"))
 LOCK_SECONDS = int(os.getenv("OSOUL_LOGIN_LOCK_SECONDS", "900"))
 
 
 def validate_trade_inputs(quantity, price):
     try:
-        q = float(quantity)
-        p = float(price)
+        quantity_value = float(quantity)
+        price_value = float(price)
     except Exception:
         return False, "الرجاء إدخال أرقام صحيحة"
-    if not (0 < q <= 1_000_000_000):
+    if not 0 < quantity_value <= 1_000_000_000:
         return False, "الكمية يجب أن تكون أكبر من صفر وضمن حد منطقي"
-    if not (0 < p <= 1_000_000_000):
+    if not 0 < price_value <= 1_000_000_000:
         return False, "السعر يجب أن يكون أكبر من صفر وضمن حد منطقي"
     return True, ""
 
@@ -70,18 +62,24 @@ def _validate_password(password: str, mode: str = "login"):
         return False, "كلمة المرور طويلة جدًا"
     if mode == "login":
         return True, ""
-
     minimum = int(os.getenv("OSOUL_MIN_PASSWORD_LEN", "10"))
     if len(password) < minimum:
         return False, f"كلمة المرور يجب ألا تقل عن {minimum} أحرف"
-    checks = [
-        bool(re.search(r"[A-Za-z]", password)),
-        bool(re.search(r"\d", password)),
-        bool(re.search(r"[^A-Za-z0-9]", password)),
-    ]
-    if sum(checks) < 2:
+    categories = sum(
+        [
+            bool(re.search(r"[A-Za-z]", password)),
+            bool(re.search(r"\d", password)),
+            bool(re.search(r"[^A-Za-z0-9]", password)),
+        ]
+    )
+    if categories < 2:
         return False, "استخدم مزيجًا من الحروف والأرقام والرموز"
-    if password.lower() in {"password", "password123", "1234567890", "qwerty123"}:
+    if password.lower() in {
+        "password",
+        "password123",
+        "1234567890",
+        "qwerty123",
+    }:
         return False, "اختر كلمة مرور غير شائعة"
     return True, ""
 
@@ -93,9 +91,14 @@ def _auth_secret() -> str:
     except Exception:
         value = ""
     value = value or os.getenv("AUTH_SECRET", "")
-    if value and len(value) >= 32:
+    if len(value) >= 32:
         return value
-    allow_dev = os.getenv("OSOUL_ALLOW_EPHEMERAL_AUTH_SECRET", "0").lower() in {"1", "true", "yes", "on"}
+    allow_dev = os.getenv("OSOUL_ALLOW_EPHEMERAL_AUTH_SECRET", "0").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
     if allow_dev:
         if "_ephemeral_auth_secret" not in st.session_state:
             st.session_state["_ephemeral_auth_secret"] = secrets.token_urlsafe(48)
@@ -107,16 +110,26 @@ def _b64_encode(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
 
 
+def _b64_decode(value: str) -> bytes:
+    padding = "=" * ((4 - len(value) % 4) % 4)
+    return base64.urlsafe_b64decode((value + padding).encode("ascii"))
+
+
 def _sign(payload: str) -> str:
-    digest = hmac.new(_auth_secret().encode(), payload.encode(), hashlib.sha256).digest()
+    digest = hmac.new(
+        _auth_secret().encode("utf-8"),
+        payload.encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
     return _b64_encode(digest)
 
 
 def _make_token(username: str, days: int) -> str:
     issued = int(time.time())
     expires = issued + max(1, int(days)) * 86400
+    encoded_username = _b64_encode(_norm(username).encode("utf-8"))
     nonce = secrets.token_urlsafe(12)
-    payload = f"v4.{issued}.{expires}.{_norm(username)}.{nonce}"
+    payload = f"v4.{issued}.{expires}.{encoded_username}.{nonce}"
     return f"{payload}.{_sign(payload)}"
 
 
@@ -125,15 +138,20 @@ def _verify_token(token: str):
         parts = _norm(token).split(".")
         if len(parts) != 6 or parts[0] != "v4":
             return None
-        version, issued_s, expires_s, username, nonce, signature = parts
-        payload = ".".join([version, issued_s, expires_s, username, nonce])
+        version, issued_text, expires_text, encoded_username, nonce, signature = parts
+        payload = ".".join(
+            [version, issued_text, expires_text, encoded_username, nonce]
+        )
         if not hmac.compare_digest(_sign(payload), signature):
             return None
-        issued, expires = int(issued_s), int(expires_s)
+        issued = int(issued_text)
+        expires = int(expires_text)
         now = int(time.time())
         if issued > now + 300 or expires <= now or expires - issued > 31 * 86400:
             return None
-        if not db_user_exists(username):
+        username = _b64_decode(encoded_username).decode("utf-8")
+        valid_username, _ = _validate_username(username)
+        if not valid_username or not db_user_exists(username):
             return None
         return username, expires
     except Exception:
@@ -145,7 +163,9 @@ def _cookie_manager():
         return None
     try:
         if "_osoul_cookie_manager" not in st.session_state:
-            st.session_state["_osoul_cookie_manager"] = stx.CookieManager(key="osoul_cookie_manager_v4")
+            st.session_state["_osoul_cookie_manager"] = stx.CookieManager(
+                key="osoul_cookie_manager_v4"
+            )
         return st.session_state["_osoul_cookie_manager"]
     except Exception:
         return None
@@ -170,7 +190,12 @@ def _cookie_set(manager, key: str, value: str, days: int) -> bool:
     widget_key = f"cookie_set_{key}_{int(time.time() * 1000)}"
     try:
         try:
-            manager.set(cookie=key, val=value, expires_at=expires, key=widget_key)
+            manager.set(
+                cookie=key,
+                val=value,
+                expires_at=expires,
+                key=widget_key,
+            )
         except TypeError:
             manager.set(key, value, expires, key=widget_key)
         return True
@@ -182,11 +207,17 @@ def _cookie_delete(manager, key: str) -> None:
     if manager is None:
         return
     expires = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)
+    widget_key = f"cookie_delete_{key}_{int(time.time() * 1000)}"
     try:
         try:
-            manager.set(cookie=key, val="", expires_at=expires, key=f"cookie_del_{int(time.time()*1000)}")
+            manager.set(
+                cookie=key,
+                val="",
+                expires_at=expires,
+                key=widget_key,
+            )
         except TypeError:
-            manager.set(key, "", expires, key=f"cookie_del_{int(time.time()*1000)}")
+            manager.set(key, "", expires, key=widget_key)
     except Exception:
         pass
 
@@ -203,7 +234,12 @@ def _bootstrap_cookie_session() -> None:
             _cookie_delete(manager, TOKEN_COOKIE)
         return
     username, expires = verified
-    st.session_state.update(logged_in=True, username=username, auth_exp=expires, last_seen=time.time())
+    st.session_state.update(
+        logged_in=True,
+        username=username,
+        auth_exp=expires,
+        last_seen=time.time(),
+    )
 
 
 def _login_lock_remaining() -> int:
@@ -219,21 +255,24 @@ def _record_failed_login() -> None:
         st.session_state["_login_attempts"] = 0
 
 
-def login_user(username: str, password: str, remember_me: bool = False, **kwargs):
+def login_user(
+    username: str,
+    password: str,
+    remember_me: bool = False,
+    **kwargs,
+):
     if kwargs.get("remember") is not None:
         remember_me = bool(kwargs["remember"])
     remaining = _login_lock_remaining()
     if remaining:
         return False, f"محاولات كثيرة. أعد المحاولة بعد {remaining // 60 + 1} دقيقة"
-
     username = _norm(username)
-    ok, message = _validate_username(username)
-    if not ok:
+    valid, message = _validate_username(username)
+    if not valid:
         return False, message
-    ok, message = _validate_password(password, "login")
-    if not ok:
+    valid, message = _validate_password(password, "login")
+    if not valid:
         return False, message
-
     try:
         verified = bool(db_verify_user(username, str(password)))
     except Exception:
@@ -241,26 +280,36 @@ def login_user(username: str, password: str, remember_me: bool = False, **kwargs
     if not verified:
         _record_failed_login()
         return False, "بيانات الدخول غير صحيحة"
-
     st.session_state["_login_attempts"] = 0
+    st.session_state.pop("_login_locked_until", None)
     days = 30 if remember_me else 1
     expires = int(time.time()) + days * 86400
-    st.session_state.update(logged_in=True, username=username, auth_exp=expires, last_seen=time.time())
-    _cookie_set(_cookie_manager(), TOKEN_COOKIE, _make_token(username, days), days)
+    st.session_state.update(
+        logged_in=True,
+        username=username,
+        auth_exp=expires,
+        last_seen=time.time(),
+    )
+    _cookie_set(
+        _cookie_manager(),
+        TOKEN_COOKIE,
+        _make_token(username, days),
+        days,
+    )
     return True, "تم تسجيل الدخول بنجاح"
 
 
 def register_user(username: str, password: str):
     username = _norm(username)
-    ok, message = _validate_username(username)
-    if not ok:
+    valid, message = _validate_username(username)
+    if not valid:
         return False, message
-    ok, message = _validate_password(password, "register")
-    if not ok:
+    valid, message = _validate_password(password, "register")
+    if not valid:
         return False, message
-    if db_user_exists(username):
-        return False, "اسم المستخدم موجود مسبقًا"
     try:
+        if db_user_exists(username):
+            return False, "اسم المستخدم موجود مسبقًا"
         if not db_create_user(username, str(password)):
             return False, "تعذر إنشاء الحساب"
         return True, "تم إنشاء الحساب بنجاح"
@@ -270,25 +319,35 @@ def register_user(username: str, password: str):
 
 def logout_user():
     _cookie_delete(_cookie_manager(), TOKEN_COOKIE)
-    for key in ("logged_in", "username", "auth_exp", "last_seen", "user_id", "portfolio_id"):
+    for key in (
+        "logged_in",
+        "username",
+        "auth_exp",
+        "last_seen",
+        "user_id",
+        "portfolio_id",
+    ):
         st.session_state.pop(key, None)
 
 
 def _render_brand() -> None:
-    logo = str(APP_ICON)
+    logo = html.escape(str(APP_ICON))
     try:
-        path = LOGO_FULL_PATH
-        if path and os.path.exists(path):
-            with open(path, "rb") as handle:
-                encoded = base64.b64encode(handle.read()).decode()
-            logo = f"<img src='data:image/png;base64,{encoded}' style='width:44px;height:44px;border-radius:12px'/>"
+        if LOGO_FULL_PATH and os.path.exists(LOGO_FULL_PATH):
+            with open(LOGO_FULL_PATH, "rb") as handle:
+                encoded = base64.b64encode(handle.read()).decode("ascii")
+            logo = (
+                "<img src='data:image/png;base64,"
+                + encoded
+                + "' style='width:44px;height:44px;border-radius:12px'/>"
+            )
     except Exception:
         pass
     st.markdown(
         textwrap.dedent(
             f"""
             <div class="landing-hero">
-              <div class="landing-title">{logo} {APP_NAME}</div>
+              <div class="landing-title">{logo} {html.escape(str(APP_NAME))}</div>
               <div class="landing-sub">منصة عربية لإدارة المحافظ والتحليل الفني والمالي وإدارة المخاطر.</div>
             </div>
             """
@@ -304,7 +363,6 @@ def require_login():
         st.error("إعداد الأمان غير مكتمل. أضف AUTH_SECRET جديدًا في Secrets.")
         st.caption(str(exc))
         return False
-
     _bootstrap_cookie_session()
     if st.session_state.get("logged_in"):
         now = int(time.time())
@@ -327,8 +385,12 @@ def require_login():
             remember = st.checkbox("تذكرني لمدة 30 يومًا", value=False)
             submitted = st.form_submit_button("دخول", use_container_width=True)
         if submitted:
-            ok, message = login_user(username, password, remember_me=remember)
-            if ok:
+            valid, message = login_user(
+                username,
+                password,
+                remember_me=remember,
+            )
+            if valid:
                 st.success(message)
                 st.rerun()
             else:
@@ -336,16 +398,33 @@ def require_login():
 
     with register_tab:
         with st.form("register_form", clear_on_submit=False):
-            username = st.text_input("اسم المستخدم", key="register_username")
-            password = st.text_input("كلمة المرور القوية", type="password", key="register_password")
-            confirm = st.text_input("تأكيد كلمة المرور", type="password", key="register_confirm")
-            submitted = st.form_submit_button("إنشاء الحساب", use_container_width=True)
+            username = st.text_input(
+                "اسم المستخدم",
+                key="register_username",
+            )
+            password = st.text_input(
+                "كلمة المرور القوية",
+                type="password",
+                key="register_password",
+            )
+            confirmation = st.text_input(
+                "تأكيد كلمة المرور",
+                type="password",
+                key="register_confirmation",
+            )
+            submitted = st.form_submit_button(
+                "إنشاء الحساب",
+                use_container_width=True,
+            )
         if submitted:
-            if password != confirm:
+            if password != confirmation:
                 st.error("كلمتا المرور غير متطابقتين")
             else:
-                ok, message = register_user(username, password)
-                st.success(message) if ok else st.error(message)
+                valid, message = register_user(username, password)
+                if valid:
+                    st.success(message)
+                else:
+                    st.error(message)
     return False
 
 
