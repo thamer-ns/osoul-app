@@ -35,7 +35,7 @@ jobs:
           retention-days: 7
 
       - name: Stop on warning fixer failure
-        if: steps.apply.outcome == 'failure'
+        if: ${{ steps.apply.outcome == 'failure' }}
         run: |
           cat warning-fix.log
           exit 1
