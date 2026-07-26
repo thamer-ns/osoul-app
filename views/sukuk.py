@@ -1,179 +1,298 @@
-#views/sukuk.py
-import streamlit as st
-import pandas as pd
+from __future__ import annotations
+
 from datetime import date
 
-from components import render_kpi, render_custom_table, safe_fmt
+import pandas as pd
+import streamlit as st
+
+from components import render_custom_table, render_kpi, safe_fmt
 from database import execute_query
 from security import validate_trade_inputs
 from views.shared import _safe_status_series
 
-def view_sukuk_portfolio(fin):
-    st.header("📜 محفظة الصكوك")
-    df = fin.get("all_trades", pd.DataFrame())
 
-    if df.empty or "asset_type" not in df.columns:
+def _save(query: str, params: tuple, message: str) -> bool:
+    if execute_query(query, params):
+        st.success(message)
+        st.cache_data.clear()
+        return True
+    st.error("تعذر حفظ العملية في قاعدة البيانات. لم تتغير البيانات.")
+    return False
+
+
+def _safe_date(value):
+    parsed = pd.to_datetime(value, errors="coerce")
+    return parsed.date() if pd.notna(parsed) else date.today()
+
+
+def view_sukuk_portfolio(fin):
+    fin = fin or {}
+    st.header("📜 محفظة الصكوك")
+    trades = fin.get("all_trades", pd.DataFrame())
+    if trades.empty or "asset_type" not in trades.columns:
         sukuk = pd.DataFrame()
     else:
-        sukuk = df[df["asset_type"].astype(str).str.lower() == "sukuk"].copy()
+        sukuk = trades[
+            trades["asset_type"].astype(str).str.lower().eq("sukuk")
+        ].copy()
 
-    status = _safe_status_series(sukuk) if not sukuk.empty else pd.Series([], dtype=str)
-    if len(status):
-        op = sukuk[status == "open"].copy()
-        cl = sukuk[status.isin(["close", "closed"])].copy()
-    else:
-        op = sukuk.copy()
-        cl = pd.DataFrame()
+    status = (
+        _safe_status_series(sukuk)
+        if not sukuk.empty
+        else pd.Series(dtype=str)
+    )
+    open_sukuk = (
+        sukuk[status == "open"].copy()
+        if len(status)
+        else pd.DataFrame()
+    )
+    closed_sukuk = (
+        sukuk[status.isin(["close", "closed"])].copy()
+        if len(status)
+        else pd.DataFrame()
+    )
 
-    t1, t2 = st.tabs(["الصكوك القائمة (Open)", "الأرشيف (Closed)"])
+    open_tab, archive_tab = st.tabs(["الصكوك القائمة", "الأرشيف"])
+    with open_tab:
+        total_cost = (
+            float(open_sukuk["total_cost"].sum())
+            if not open_sukuk.empty and "total_cost" in open_sukuk.columns
+            else 0.0
+        )
+        total_value = (
+            float(open_sukuk["market_value"].sum())
+            if not open_sukuk.empty and "market_value" in open_sukuk.columns
+            else total_cost
+        )
+        total_gain = total_value - total_cost
+        total_return = total_gain / total_cost * 100 if total_cost else 0.0
 
-    with t1:
-        total_cost = float(op["total_cost"].sum()) if (not op.empty and "total_cost" in op.columns) else 0
-        total_market = float(op["market_value"].sum()) if (not op.empty and "market_value" in op.columns) else 0
-        total_gain = float(op["gain"].sum()) if (not op.empty and "gain" in op.columns) else 0
-        total_pct = (total_gain / total_cost * 100) if total_cost else 0.0
-
-        k1, k2, k3, k4 = st.columns(4)
-        with k1: render_kpi("إجمالي الاستثمار", safe_fmt(total_cost), "neutral", "🕌")
-        with k2: render_kpi("القيمة الحالية", safe_fmt(total_market), "blue", "📊")
-        with k3: render_kpi("الربح/الخسارة", safe_fmt(total_gain), "success" if total_gain >= 0 else "danger", "📈")
-        with k4: render_kpi("النسبة %", f"{total_pct:.2f}%", "success" if total_pct >= 0 else "danger", "٪")
-
-        st.markdown("---")
-
-        if not op.empty:
-            if "company_name" not in op.columns:
-                op["company_name"] = op.get("symbol", "")
-            op["company_name"] = op["company_name"].fillna(op.get("symbol", ""))
-
-            if "date" in op.columns:
-                op["months_held"] = ((pd.to_datetime(date.today()) - pd.to_datetime(op["date"])).dt.days / 30).astype(int)
-            else:
-                op["months_held"] = 0
-
-            if "entry_price" in op.columns:
-                op["current_price"] = op["entry_price"]
-            else:
-                op["current_price"] = 0
-
-            sb = st.selectbox("فرز الصكوك حسب:", ["التاريخ (الأحدث)", "القيمة (الأعلى)", "الاسم"], key="sort_sk")
-            if "القيمة" in sb and "total_cost" in op.columns:
-                op = op.sort_values("total_cost", ascending=False)
-            elif "الاسم" in sb and "company_name" in op.columns:
-                op = op.sort_values("company_name")
-            else:
-                if "date" in op.columns:
-                    op = op.sort_values("date", ascending=False)
-
-            render_custom_table(
-                op,
-                [
-                    ("company_name", "اسم الصك", "text"),
-                    ("quantity", "العدد", "text"),
-                    ("entry_price", "التكلفة (للوحدة)", "money"),
-                    ("current_price", "السعر الحالي", "money"),
-                    ("total_cost", "الاجمالي", "money"),
-                    ("months_held", "المده (شهر)", "text"),
-                ]
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            render_kpi("إجمالي الاستثمار", safe_fmt(total_cost), "neutral", "🕌")
+        with c2:
+            render_kpi("القيمة المسجلة", safe_fmt(total_value), "blue", "📊")
+        with c3:
+            render_kpi(
+                "الربح والخسارة",
+                safe_fmt(total_gain),
+                "success" if total_gain >= 0 else "danger",
+                "📈",
+            )
+        with c4:
+            render_kpi(
+                "العائد",
+                f"{total_return:.2f}%",
+                "success" if total_return >= 0 else "danger",
+                "٪",
             )
 
-            c1, c2 = st.columns(2)
+        st.caption(
+            "القيمة الحالية للصك تساوي التكلفة المسجلة ما لم تُدخل قيمة تصفية فعلية؛ "
+            "التوزيعات الدورية تُسجل من صفحة السيولة."
+        )
 
-            with c1:
-                with st.expander("💰 بيع / تصفية صك"):
-                    if "id" in op.columns and len(op["id"].tolist()) > 0:
-                        sid = st.selectbox(
-                            "اختر الصك للبيع:",
-                            op["id"].tolist(),
-                            format_func=lambda x: f"{op[op['id']==x]['company_name'].iloc[0]}",
-                            key="sell_sukuk_sel"
-                        )
-                        if sid:
-                            curr_sell = op[op["id"] == sid].iloc[0]
-                            with st.form(f"sk_sell_{sid}"):
-                                st.write(f"تصفية: **{curr_sell.get('company_name','-')}**")
-                                val = st.number_input("المبلغ المستلم كاملاً", min_value=0.0, step=100.0, key=f"sk_val_{sid}")
-                                dt = st.date_input("تاريخ البيع", date.today(), key=f"sk_dt_{sid}")
-                                if st.form_submit_button("تأكيد البيع"):
-                                    qty = float(curr_sell.get("quantity", 0) or 0)
-                                    if qty > 0:
-                                        ep = val / qty
-                                        execute_query(
-                                            "UPDATE trades SET status='Close', exit_price=%s, exit_date=%s WHERE id=%s",
-                                            (ep, str(dt), sid)
-                                        )
-                                        st.success("تم الحفظ")
-                                        st.cache_data.clear()
-                                        st.rerun()
-                                    else:
-                                        st.error("خطأ: الكمية صفر")
-                    else:
-                        st.info("لا توجد صكوك لاختيارها")
-
-            with c2:
-                with st.expander("✏️ تعديل بيانات صك"):
-                    if "id" in op.columns and len(op["id"].tolist()) > 0:
-                        eid = st.selectbox("اختر الصك للتعديل:", op["id"].tolist(), key="sk_e")
-                        if eid:
-                            rw = op[op["id"] == eid].iloc[0]
-                            with st.form(f"sk_edit_{eid}"):
-                                nm = st.text_input("اسم الصك", value=str(rw.get("company_name", "")), key=f"sk_nm_{eid}")
-                                qt = st.number_input("عدد الصكوك", value=float(rw.get("quantity", 1)), min_value=1.0, key=f"sk_qt_{eid}")
-                                pr = st.number_input("قيمة الصك", value=float(rw.get("entry_price", 0)), min_value=0.0, key=f"sk_pr_{eid}")
-                                try:
-                                    nd_val = pd.to_datetime(rw.get("date", date.today())).date()
-                                except Exception:
-                                    nd_val = date.today()
-                                nd = st.date_input("تاريخ الشراء", nd_val, key=f"sk_nd_{eid}")
-                                if st.form_submit_button("حفظ التصحيح"):
-                                    valid, msg = validate_trade_inputs(qt, pr)
-                                    if valid:
-                                        execute_query(
-                                            "UPDATE trades SET symbol=%s, company_name=%s, quantity=%s, entry_price=%s, date=%s WHERE id=%s",
-                                            (nm, nm, qt, pr, str(nd), eid)
-                                        )
-                                        st.success("تم التعديل")
-                                        st.cache_data.clear()
-                                        st.rerun()
-                                    else:
-                                        st.error(msg)
-                    else:
-                        st.info("لا توجد صكوك لاختيارها")
+        if open_sukuk.empty:
+            st.info("لا توجد صكوك قائمة حاليًا")
         else:
-            st.info("لا توجد صكوك قائمة حالياً")
+            frame = open_sukuk.copy()
+            if "company_name" not in frame.columns:
+                frame["company_name"] = frame.get("symbol", "")
+            frame["company_name"] = frame["company_name"].fillna(
+                frame.get("symbol", "")
+            )
+            frame["current_price"] = pd.to_numeric(
+                frame.get("entry_price", 0.0),
+                errors="coerce",
+            ).fillna(0.0)
+            if "date" in frame.columns:
+                bought = pd.to_datetime(frame["date"], errors="coerce")
+                frame["months_held"] = (
+                    (pd.Timestamp(date.today()) - bought).dt.days.div(30)
+                ).fillna(0).clip(lower=0).astype(int)
+            else:
+                frame["months_held"] = 0
 
-        st.markdown("---")
-        if st.button("➕ إضافة صك", key="add_sukuk_btn", type="primary"):
+            sort_by = st.selectbox(
+                "فرز الصكوك حسب",
+                ["التاريخ الأحدث", "القيمة الأعلى", "الاسم"],
+            )
+            if sort_by == "القيمة الأعلى" and "total_cost" in frame.columns:
+                frame = frame.sort_values("total_cost", ascending=False)
+            elif sort_by == "الاسم":
+                frame = frame.sort_values("company_name")
+            elif "date" in frame.columns:
+                frame = frame.sort_values("date", ascending=False)
+
+            render_custom_table(
+                frame,
+                [
+                    ("company_name", "اسم الصك", "text"),
+                    ("quantity", "العدد", "number"),
+                    ("entry_price", "تكلفة الوحدة", "money"),
+                    ("total_cost", "الإجمالي", "money"),
+                    ("months_held", "مدة الاحتفاظ بالشهور", "number"),
+                ],
+            )
+
+            left, right = st.columns(2)
+            with left:
+                with st.expander("💰 تصفية صك"):
+                    options = {
+                        f"{row.get('company_name') or row.get('symbol')} — {safe_fmt(row.get('total_cost', 0))}": row["id"]
+                        for _, row in frame.iterrows()
+                        if pd.notna(row.get("id"))
+                    }
+                    selected = st.selectbox(
+                        "اختر الصك",
+                        list(options),
+                        key="sell_sukuk_selection",
+                    )
+                    row = frame[frame["id"] == options[selected]].iloc[0]
+                    with st.form(f"sell_sukuk_{int(row['id'])}"):
+                        received = st.number_input(
+                            "إجمالي المبلغ المستلم",
+                            min_value=0.01,
+                            value=max(
+                                0.01,
+                                float(row.get("total_cost", 0) or 0),
+                            ),
+                            step=100.0,
+                        )
+                        sold_at = st.date_input(
+                            "تاريخ التصفية",
+                            date.today(),
+                        )
+                        submitted = st.form_submit_button("تأكيد التصفية")
+                    if submitted:
+                        quantity = float(row.get("quantity", 0) or 0)
+                        if quantity <= 0:
+                            st.error("عدد الوحدات غير صالح")
+                        else:
+                            exit_price = received / quantity
+                            valid, message = validate_trade_inputs(
+                                quantity,
+                                exit_price,
+                            )
+                            if not valid:
+                                st.error(message)
+                            elif _save(
+                                "UPDATE trades SET status='Close', "
+                                "exit_price=%s, exit_date=%s, "
+                                "updated_at=CURRENT_TIMESTAMP WHERE id=%s",
+                                (
+                                    exit_price,
+                                    str(sold_at),
+                                    int(row["id"]),
+                                ),
+                                "تم تسجيل تصفية الصك",
+                            ):
+                                st.rerun()
+
+            with right:
+                with st.expander("✏️ تعديل بيانات صك"):
+                    edit_options = {
+                        f"{row.get('company_name') or row.get('symbol')} — ID:{int(row['id'])}": row["id"]
+                        for _, row in frame.iterrows()
+                        if pd.notna(row.get("id"))
+                    }
+                    selected = st.selectbox(
+                        "اختر الصك",
+                        list(edit_options),
+                        key="edit_sukuk_selection",
+                    )
+                    row = frame[
+                        frame["id"] == edit_options[selected]
+                    ].iloc[0]
+                    with st.form(f"edit_sukuk_{int(row['id'])}"):
+                        name = st.text_input(
+                            "اسم الصك",
+                            value=str(row.get("company_name", "") or ""),
+                        )
+                        quantity = st.number_input(
+                            "عدد الصكوك",
+                            min_value=0.001,
+                            value=max(
+                                0.001,
+                                float(row.get("quantity", 1) or 1),
+                            ),
+                            step=1.0,
+                        )
+                        unit_cost = st.number_input(
+                            "قيمة الوحدة",
+                            min_value=0.01,
+                            value=max(
+                                0.01,
+                                float(row.get("entry_price", 0) or 0),
+                            ),
+                            step=10.0,
+                        )
+                        bought_at = st.date_input(
+                            "تاريخ الشراء",
+                            _safe_date(row.get("date")),
+                        )
+                        submitted = st.form_submit_button("حفظ التصحيح")
+                    if submitted:
+                        valid, message = validate_trade_inputs(
+                            quantity,
+                            unit_cost,
+                        )
+                        if not valid:
+                            st.error(message)
+                        elif not name.strip():
+                            st.error("أدخل اسم الصك")
+                        elif _save(
+                            "UPDATE trades SET company_name=%s, "
+                            "quantity=%s, entry_price=%s, date=%s, "
+                            "updated_at=CURRENT_TIMESTAMP WHERE id=%s",
+                            (
+                                name.strip(),
+                                quantity,
+                                unit_cost,
+                                str(bought_at),
+                                int(row["id"]),
+                            ),
+                            "تم تعديل بيانات الصك",
+                        ):
+                            st.rerun()
+
+        if st.button("➕ إضافة صك", type="primary"):
             st.session_state.page = "add"
             st.rerun()
 
-    with t2:
-        if not cl.empty:
-            if "company_name" not in cl.columns:
-                cl["company_name"] = cl.get("symbol", "")
-            cl["company_name"] = cl["company_name"].fillna(cl.get("symbol", ""))
-
-            if "market_value" in cl.columns and "total_cost" in cl.columns:
-                cl["realized_return"] = cl["market_value"] - cl["total_cost"]
-            else:
-                cl["realized_return"] = 0
-
-            sort_by_cl = st.selectbox("فرز الأرشيف حسب:", ["تاريخ البيع (الأحدث)", "الربح (الأعلى)"], key="sort_sukuk_cl")
-            if "الربح" in sort_by_cl and "realized_return" in cl.columns:
-                cl = cl.sort_values("realized_return", ascending=False)
-            else:
-                if "exit_date" in cl.columns:
-                    cl = cl.sort_values("exit_date", ascending=False)
-
+    with archive_tab:
+        if closed_sukuk.empty:
+            st.info("أرشيف الصكوك فارغ")
+        else:
+            frame = closed_sukuk.copy()
+            for column in ("quantity", "entry_price", "exit_price"):
+                if column not in frame.columns:
+                    frame[column] = 0.0
+                frame[column] = pd.to_numeric(
+                    frame[column],
+                    errors="coerce",
+                ).fillna(0.0)
+            frame["total_cost"] = frame["quantity"] * frame["entry_price"]
+            frame["sale_value"] = frame["quantity"] * frame["exit_price"]
+            frame["realized_return"] = (
+                frame["sale_value"] - frame["total_cost"]
+            )
+            frame["realized_return_pct"] = (
+                frame["realized_return"]
+                .div(frame["total_cost"].replace(0, pd.NA))
+                .mul(100)
+                .fillna(0.0)
+            )
+            if "exit_date" in frame.columns:
+                frame = frame.sort_values("exit_date", ascending=False)
             render_custom_table(
-                cl,
+                frame,
                 [
                     ("company_name", "اسم الصك", "text"),
                     ("total_cost", "التكلفة", "money"),
-                    ("market_value", "قيمة البيع", "money"),
+                    ("sale_value", "قيمة التصفية", "money"),
                     ("realized_return", "الربح المحقق", "colorful"),
-                    ("exit_date", "تاريخ البيع", "date"),
-                ]
+                    ("realized_return_pct", "العائد", "percent"),
+                    ("exit_date", "تاريخ التصفية", "date"),
+                ],
             )
-        else:
-            st.info("أرشيف الصكوك فارغ")
