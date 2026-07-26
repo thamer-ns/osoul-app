@@ -5,7 +5,7 @@ import logging
 import os
 import sys
 import uuid
-from typing import Optional, Tuple
+from typing import Tuple
 
 import streamlit as st
 
@@ -95,8 +95,9 @@ def main() -> None:
 
     try:
         from tenant_db import ensure_tenant_schema
+        from tenant_runtime import install_runtime_guards
 
-        if not ensure_tenant_schema():
+        if not ensure_tenant_schema() or not install_runtime_guards():
             st.warning("تعذر إكمال ترقية عزل بيانات المستخدمين. أوقف إدخال البيانات حتى مراجعة السجل.")
             st.stop()
     except Exception as exc:
