@@ -1,0 +1,55 @@
+PART HASHES
+c7b47d6d2e6784f1760e9c5dd7474d7c136939380a5a884f441e0a10cd0185ee  .audit_patch/part00
+adc8d4756706ab3336c4a467b790250a59e1fcd44cee750dd611ea1601b41217  .audit_patch/part01
+76a87ec33c9955a8bc105f02a547fc86be09809189713a0a80d89a88765ac2a2  .audit_patch/part02
+9dc9ad479972750f0827498ec2adf64f75ae21f56cf3b11148be00e31823a39f  .audit_patch/part03
+2a610437232b452ea9ad5b39fee83c02152342d5865535595929a408e9d253ed  .audit_patch/part04
+ef2ca28fad419a2a6f8bec722506b53e33aea7d25365d1b5d279e57b3e58fd74  .audit_patch/part05
+3dd514d27cdc71b228d4d0d4ecebd3809f645908bb0440a4de240474bf639c77  .audit_patch/part06
+5945806c3b0dd41a98faf7b12df8829cf297fc7bd35d7c8ac242f98e48d3af29  .audit_patch/part07
+83c4dc1237ddc7cc083cac45dd3e889b02261ba645bcb9d552453c39214d4fe5  .audit_patch/part08
+
+PART SIZES
+10000 .audit_patch/part00
+10000 .audit_patch/part01
+10000 .audit_patch/part02
+10000 .audit_patch/part03
+10000 .audit_patch/part04
+10000 .audit_patch/part05
+10000 .audit_patch/part06
+10000 .audit_patch/part07
+ 2652 .audit_patch/part08
+82652 total
+
+BASE64_RC=0
+ARCHIVE_HASH
+85ae457aaa746247e75cd4c2bef693d3ecf9411827acfb4612458effc8307971  /tmp/osoul_patch.tar.gz
+ARCHIVE_SIZE=61989
+
+gzip: /tmp/osoul_patch.tar.gz: invalid compressed data--crc error
+GZIP_RC=1
+ai_tenant_hardening.py
+analytics.py
+app.py
+charts.py
+components.py
+financial_analysis/metrics.py
+requirements.txt
+styles.py
+technical_indicators/advanced_v2.py
+tenant_scope.py
+tests/test_advanced_v2.py
+tests/test_fundamental_metrics.py
+tests/test_ui_theme_v2.py
+ui_theme_v2.py
+views/__init__.py
+views/analysis/__init__.py
+views/analysis/technical.py
+views/dashboard.py
+views/navbar.py
+views/utils.py
+
+gzip: stdin: invalid compressed data--crc error
+tar: Child returned status 1
+tar: Error is not recoverable: exiting now
+TAR_RC=2
