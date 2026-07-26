@@ -230,7 +230,8 @@ class FinancialParser:
             try:
                 dates.add(f"{int(y):04d}-{int(m):02d}-{int(d):02d}")
             except Exception:
-                pass
+                import logging
+                logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
         out = []
         for ds in dates:
             try:
@@ -310,7 +311,8 @@ class FinancialParser:
         try:
             df = df.fillna("")
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
         for _, row in df.iterrows():
             vals = []
             for x in row.tolist():
@@ -328,7 +330,8 @@ class FinancialParser:
         try:
             uploaded_file.seek(0)
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
         raw = uploaded_file.read()
         if isinstance(raw, str):
             raw = raw.encode("utf-8", errors="ignore")
@@ -364,7 +367,8 @@ class FinancialParser:
         try:
             uploaded_file.seek(0)
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
         for enc in ("utf-8", "utf-8-sig", "cp1256", "latin1"):
             try:
                 bio = self._to_bytes_io(uploaded_file)
@@ -374,7 +378,8 @@ class FinancialParser:
                 try:
                     uploaded_file.seek(0)
                 except Exception:
-                    pass
+                    import logging
+                    logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
                 continue
         return "", "تعذر قراءة CSV."
 
@@ -448,7 +453,8 @@ class FinancialParser:
                     try:
                         uploaded_file.seek(0)
                     except Exception:
-                        pass
+                        import logging
+                        logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
                     raw = uploaded_file.read()
                     if isinstance(raw, bytes):
                         text = raw.decode("utf-8", errors="ignore")

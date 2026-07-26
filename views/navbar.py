@@ -61,11 +61,13 @@ def _safe_set_query_page(page: str) -> None:
         st.query_params["page"] = page
         return
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
     try:
         st.experimental_set_query_params(page=page)
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
 
 
 def sync_page_from_query_params_once() -> None:

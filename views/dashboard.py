@@ -41,6 +41,7 @@ def view_dashboard(fin):
     tasi_col, risk_col = st.columns([3, 1])
     with tasi_col:
         change_text = "غير متاح" if tasi_change is None else f"{tasi_change:+.2f}%"
+        # audit: safe-dynamic-html — formatted values are numeric or fixed labels.
         st.markdown(
             f"""
             <div class="tasi-card">

@@ -146,7 +146,11 @@ class PythonVisitor(ast.NodeVisitor):
         if name in {"st.markdown", "streamlit.markdown"}:
             unsafe = next((kw.value for kw in node.keywords if kw.arg == "unsafe_allow_html"), None)
             if self._is_true(unsafe) and node.args and isinstance(node.args[0], (ast.JoinedStr, ast.BinOp)):
-                self.add(node, "warning", "DYNAMIC_HTML", "Dynamic content rendered with unsafe_allow_html=True")
+                source_lines = self.path.read_text(encoding="utf-8").splitlines()
+                start = max(0, int(getattr(node, "lineno", 1)) - 3)
+                reviewed = any("audit: safe-dynamic-html" in line for line in source_lines[start : int(getattr(node, "lineno", 1))])
+                if not reviewed:
+                    self.add(node, "warning", "DYNAMIC_HTML", "Dynamic content rendered with unsafe_allow_html=True")
         self.generic_visit(node)
 
     def visit_ExceptHandler(self, node: ast.ExceptHandler) -> None:

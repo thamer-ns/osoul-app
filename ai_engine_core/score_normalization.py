@@ -61,7 +61,8 @@ def _fetch_history(timeframe: Optional[str], sector: Optional[str], max_rows: in
             else:
                 df = df.tail(max_rows)
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
     return _extract_scores_from_df(df)
 
 

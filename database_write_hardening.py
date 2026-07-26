@@ -48,11 +48,13 @@ def install_database_write_hardening() -> None:
             try:
                 database._set_last_db_error(redact_text(exc))
             except Exception:
-                pass
+                import logging
+                logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
             try:
                 connection.rollback()
             except Exception:
-                pass
+                import logging
+                logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
             return False
         finally:
             database.put_connection(connection, kind)

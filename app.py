@@ -13,7 +13,8 @@ try:
 
     load_dotenv()
 except Exception:
-    pass
+    import logging
+    logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
@@ -50,7 +51,8 @@ def _apply_global_ui() -> None:
 
         helpers.extend([apply_custom_css, apply_ui_css])
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
     try:
         from components import inject_component_styles, inject_streamlit_ar_i18n
 
@@ -58,7 +60,8 @@ def _apply_global_ui() -> None:
             [lambda: inject_streamlit_ar_i18n(True), inject_component_styles]
         )
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
     for helper in helpers:
         try:
             helper()

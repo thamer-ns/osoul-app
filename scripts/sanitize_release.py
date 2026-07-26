@@ -69,7 +69,8 @@ def build_sanitized_zip(src: Path, out_zip: Path) -> None:
                     try:
                         path.unlink()
                     except FileNotFoundError:
-                        pass
+                        import logging
+                        logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
 
         # Ensure secrets template exists
         tmpl = stage / ".streamlit" / "secrets.example.toml"

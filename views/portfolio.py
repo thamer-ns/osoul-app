@@ -257,7 +257,8 @@ def _close_trade_transaction(
         try:
             conn.rollback()
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
         return False
     finally:
         put_connection(conn, kind)
@@ -329,7 +330,8 @@ def _render_risk_panel(
             try:
                 gates = portfolio_risk_gates(positions, cash_pct) or gates
             except Exception:
-                pass
+                import logging
+                logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
         if gates.get("pass", True):
             st.success("بوابات المخاطر: الوضع مقبول")
         else:
@@ -345,7 +347,8 @@ def _render_risk_panel(
                     st.markdown("**سيناريوهات اختبار الضغط**")
                     render_custom_table(scenarios)
             except Exception:
-                pass
+                import logging
+                logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
 
         suggestions = []
         if callable(generate_rebalancing_suggestions):

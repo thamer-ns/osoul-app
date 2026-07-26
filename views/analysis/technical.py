@@ -121,7 +121,8 @@ def _render_advanced(df: pd.DataFrame, symbol: str, interval: str) -> None:
 
         save_advanced_indicators(symbol=symbol, timeframe=interval, indicators=pack)
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
 
 
 def view_technical(symbol: str, interval: str = "1d"):

@@ -644,17 +644,20 @@ def generate_ai_report(symbol, timeframe="1D"):
                         try:
                             confidence = max(0.0, min(100.0, float(confidence) + float(score_calibration_res.get("confidence_delta") or 0.0)))
                         except Exception:
-                            pass
+                            import logging
+                            logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
                         if score_calibration_res.get("percentile") is not None:
                             try:
                                 features["score_percentile"] = float(score_calibration_res.get("percentile"))
                             except Exception:
-                                pass
+                                import logging
+                                logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
                         if score_calibration_res.get("zscore") is not None:
                             try:
                                 features["score_z"] = float(score_calibration_res.get("zscore"))
                             except Exception:
-                                pass
+                                import logging
+                                logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
                         if (not bool(score_calibration_res.get("strong_ok", True))) and (("Strong" in str(rec)) or ("💎" in str(rec))):
                             rec = "⚠️ شراء بحذر / مراقبة"
                             clr = "#ffc107"
@@ -665,7 +668,8 @@ def generate_ai_report(symbol, timeframe="1D"):
                 import logging
                 logging.getLogger(__name__).exception("score normalization gate failed")
             except Exception:
-                pass
+                import logging
+                logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
 
         # 2) liquidity gate (execution realism)
         try:
@@ -690,7 +694,8 @@ def generate_ai_report(symbol, timeframe="1D"):
                 import logging
                 logging.getLogger(__name__).exception("liquidity gate failed")
             except Exception:
-                pass
+                import logging
+                logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
 
         # 3) daily/weekly alignment gate (top-down confirmation)
         try:
@@ -703,7 +708,8 @@ def generate_ai_report(symbol, timeframe="1D"):
                     try:
                         confidence = max(0.0, min(100.0, float(confidence) + float(mtf_alignment_res.get("confidence_delta") or 0.0)))
                     except Exception:
-                        pass
+                        import logging
+                        logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
                     features["mtf_applied"] = 1 if bool(mtf_alignment_res.get("applied")) else 0
                     features["mtf_aligned"] = 1 if bool(mtf_alignment_res.get("aligned")) else 0
                     if str(mtf_alignment_res.get("reason") or "").strip():
@@ -717,7 +723,8 @@ def generate_ai_report(symbol, timeframe="1D"):
                 import logging
                 logging.getLogger(__name__).exception("multi-timeframe gate failed")
             except Exception:
-                pass
+                import logging
+                logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
 
         # =========================
         # ✅ Data Quality Gate -> calibrate confidence + refuse strong recommendations
@@ -860,7 +867,8 @@ def generate_ai_report(symbol, timeframe="1D"):
                 import logging
                 logging.getLogger(__name__).warning("log_ai_signal failed: %s", e)
             except Exception:
-                pass
+                import logging
+                logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
             signal_id = None
 
         if signal_id:

@@ -39,7 +39,8 @@ def _secret_get(name: str, default=None):
         if hasattr(st, "secrets") and name in st.secrets:
             return st.secrets.get(name, default)  # type: ignore[attr-defined]
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
     try:
         return os.getenv(name, default)
     except Exception:
@@ -1071,7 +1072,8 @@ def fetch_financial_statements_multi_source(symbol: str, period_type: str = 'Ann
             if d2:
                 return [{'date': d2.get('date') or datetime.now().strftime('%Y-12-31'), 'data': d2, '_source': 'GoogleFinance'}]
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
 
     return []
 

@@ -38,6 +38,7 @@ def apply_global_ui(rtl: bool = True) -> None:
     dir_css = "rtl" if rtl else "ltr"
     align_css = "right" if rtl else "left"
 
+    # audit: safe-dynamic-html — values are fixed CSS enums derived from a boolean.
     st.markdown(
         f"""
 <style>

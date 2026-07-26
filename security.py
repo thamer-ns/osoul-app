@@ -219,7 +219,8 @@ def _cookie_delete(manager, key: str) -> None:
         except TypeError:
             manager.set(key, "", expires, key=widget_key)
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
 
 
 def _bootstrap_cookie_session() -> None:
@@ -342,7 +343,8 @@ def _render_brand() -> None:
                 + "' style='width:44px;height:44px;border-radius:12px'/>"
             )
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
     st.markdown(
         textwrap.dedent(
             f"""

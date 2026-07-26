@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import html
+
 #views/analysis/financial.py
 import streamlit as st
 import pandas as pd
@@ -52,12 +54,19 @@ def _to_num(x, default=0.0):
 
 
 def _kv_card(title: str, rows: list):
-    """Card helper (عرض فقط). rows: list[(k,v)]"""
-    html = [f"<div class='os-card'><div class='os-card-title'>{title}</div>"]
-    for k, v in rows:
-        html.append(f"<div class='os-kv'><div class='os-k'>{k}</div><div class='os-v'>{v}</div></div>")
-    html.append("</div>")
-    st.markdown("\n".join(html), unsafe_allow_html=True)
+    """Card helper with escaped dynamic values."""
+    parts = [f"<div class='os-card'><div class='os-card-title'>{html.escape(str(title))}</div>"]
+    for key, value in rows:
+        parts.append(
+            "<div class='os-kv'><div class='os-k'>"
+            + html.escape(str(key))
+            + "</div><div class='os-v'>"
+            + html.escape(str(value))
+            + "</div></div>"
+        )
+    parts.append("</div>")
+    # audit: safe-dynamic-html — every dynamic card value is escaped.
+    st.markdown("\n".join(parts), unsafe_allow_html=True)
 
 
 def _render_freshness_badge(title: str, updated_at: str | None, sources: list | None, completeness: str | None):
@@ -73,13 +82,18 @@ def _render_freshness_badge(title: str, updated_at: str | None, sources: list | 
     }
     comp = comp_map.get(completeness, str(completeness or "—"))
 
+    safe_title = html.escape(str(title))
+    safe_upd = html.escape(upd)
+    safe_src = html.escape(src)
+    safe_comp = html.escape(comp)
+    # audit: safe-dynamic-html — freshness metadata is HTML-escaped.
     st.markdown(
         f"""
         <div class="os-card" style="margin-top:10px;">
-          <div class="os-card-title">{title}</div>
-          <div class="os-kv"><div class="os-k">آخر تحديث</div><div class="os-v">{upd}</div></div>
-          <div class="os-kv"><div class="os-k">المصدر</div><div class="os-v">{src}</div></div>
-          <div class="os-kv"><div class="os-k">الاكتمال</div><div class="os-v">{comp}</div></div>
+          <div class="os-card-title">{safe_title}</div>
+          <div class="os-kv"><div class="os-k">آخر تحديث</div><div class="os-v">{safe_upd}</div></div>
+          <div class="os-kv"><div class="os-k">المصدر</div><div class="os-v">{safe_src}</div></div>
+          <div class="os-kv"><div class="os-k">الاكتمال</div><div class="os-v">{safe_comp}</div></div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -191,7 +205,8 @@ def render_financial_dashboard_ui(symbol):
                     + _badge_line("ربع سنوي", meta_q)
                 )
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
         df_annual = get_financial_statements(canon_sym or symbol, "Annual")
         df_quarter = get_financial_statements(canon_sym or symbol, "Quarterly")
 
@@ -318,11 +333,13 @@ def render_financial_dashboard_ui(symbol):
                 else:
                     st.metric("ثقة البيانات", f"{int(dconf)}/100", f"نواقص: {len(issues)}")
 
+            safe_opinions = html.escape(str(opinions))
+            # audit: safe-dynamic-html — provider opinion text is HTML-escaped.
             st.markdown(
                 f"""
                 <div class="os-card" style="margin-top:10px;">
                   <div class="os-card-title">📝 ملاحظات مالية</div>
-                  <div class="os-muted">{opinions}</div>
+                  <div class="os-muted">{safe_opinions}</div>
                 </div>
                 """,
                 unsafe_allow_html=True,

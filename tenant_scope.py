@@ -297,7 +297,8 @@ def _migrate_tenant_symbol_constraints() -> None:
         try:
             conn.rollback()
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
         raise
     finally:
         _db.put_connection(conn, kind)

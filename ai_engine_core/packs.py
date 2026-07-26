@@ -93,7 +93,8 @@ def build_technical_pack(
             if isinstance(series, pd.Series) and not pd.isna(series.iloc[-1]):
                 features[name] = float(series.iloc[-1])
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
 
     advanced = None
     if compute_advanced_technical_pack is not None:
@@ -120,7 +121,8 @@ def build_technical_pack(
                         indicators=advanced,
                     )
                 except Exception:
-                    pass
+                    import logging
+                    logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
         except Exception as exc:
             reasons.append(f"تعذر حساب المؤشرات المتقدمة: {exc}")
 
