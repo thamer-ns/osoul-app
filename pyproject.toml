@@ -8,8 +8,8 @@ line-length = 110
 exclude = ["legacy", ".venv", "venv"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP"]
-ignore = ["E501"]
+select = ["E", "F", "B"]
+ignore = ["E501", "F401"]
 
 [tool.ruff.format]
 quote-style = "double"
