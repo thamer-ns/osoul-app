@@ -23,7 +23,7 @@ jobs:
       - name: Apply reviewed warning fixes
         id: apply
         continue-on-error: true
-        run: python scripts/apply_warning_fixes.py > warning-fix.log 2>&1
+        run: python scripts/apply_warning_patch.py > warning-fix.log 2>&1
 
       - name: Upload warning fixer diagnostics
         if: always()
