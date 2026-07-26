@@ -1,4 +1,4 @@
-name: Osoli quality v2
+name: Osoli quality v3
 
 on:
   pull_request:
@@ -8,7 +8,7 @@ on:
       - agent/osoul-production-hardening-v2
 
 concurrency:
-  group: osoli-v2-${{ github.ref }}
+  group: osoli-v3-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -19,52 +19,62 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+      - name: Install application and audit dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install bandit pip-audit
 
-      - name: Syntax and project self-check
+      - name: Compile every Python file
+        run: python -m compileall -q .
+
+      - name: Project self-check
         run: python tools/self_check.py
 
-      - name: Critical Ruff checks
+      - name: Critical Ruff checks for the complete repository
         run: >-
-          ruff check
+          ruff check .
           --select E9,F63,F7,F82
-          app.py security.py database_security_hardening.py
-          database_write_hardening.py tenant_scope.py ai_tenant_hardening.py
-          analytics_hardening.py portfolio_metrics_v2.py market_data_hardening.py
-          backup_system.py technical_indicators ai_engine_core/packs.py
-          financial_analysis/thesis.py views/__init__.py views/navbar.py
-          views/dashboard.py views/portfolio.py views/cash.py views/sukuk.py
-          views/settings.py views/signals.py views/analysis/__init__.py
-          views/analysis/technical.py views/analysis/thesis.py tests
+          --exclude .git,.venv,venv,__pycache__,build,dist
 
-      - name: XIRR tests
-        id: xirr
+      - name: Repository line-by-line audit
+        id: repository_audit
         continue-on-error: true
-        run: >-
-          pytest -q --tb=long --junitxml=xirr-results.xml
-          tests/test_analytics_hardening.py
+        run: python tools/repository_audit.py
 
-      - name: Upload XIRR diagnostics
+      - name: Upload repository audit manifest
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: xirr-diagnostics
-          path: xirr-results.xml
+          name: repository-audit
+          path: repository-audit.json
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 14
 
-      - name: Stop on XIRR failure
-        if: steps.xirr.outcome == 'failure'
+      - name: Stop on critical repository audit finding
+        if: steps.repository_audit.outcome == 'failure'
         run: |
-          cat xirr-results.xml
+          cat repository-audit.json
           exit 1
+
+      - name: Bandit high-severity security scan
+        run: >-
+          bandit -r . -q -lll -iii
+          -x ./tests,./.git,./.venv,./venv,./build,./dist
+
+      - name: Python dependency vulnerability audit
+        run: pip-audit -r requirements.txt --progress-spinner off
+
+      - name: XIRR tests
+        run: pytest -q --tb=short tests/test_analytics_hardening.py
 
       - name: Advanced technical tests
         run: pytest -q --tb=short tests/test_advanced_v2.py
