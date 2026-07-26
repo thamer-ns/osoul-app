@@ -72,9 +72,9 @@ def _apply_global_ui() -> None:
 
 def _install_runtime_hardening(username: str) -> None:
     """Install compatibility fixes before any page modules are imported."""
-    from tenant_scope import install_tenant_scope
-    from market_data_hardening import install_market_data_hardening
     from analytics_hardening import install_analytics_hardening
+    from market_data_hardening import install_market_data_hardening
+    from tenant_scope import install_tenant_scope
 
     install_tenant_scope(username)
     install_market_data_hardening()
@@ -94,6 +94,15 @@ def main() -> None:
     ok, _ = _init_db_once()
     if not ok:
         st.error("تعذر الاتصال بقاعدة البيانات. راجع DATABASE_URL في Secrets.")
+        st.stop()
+
+    try:
+        from database_security_hardening import install_database_security_hardening
+
+        install_database_security_hardening()
+    except Exception:
+        logger.exception("password hashing hardening failed")
+        st.error("تعذر تهيئة حماية كلمات المرور.")
         st.stop()
 
     try:
