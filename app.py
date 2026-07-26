@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import time
 from typing import Tuple
 
 import streamlit as st
@@ -13,7 +14,6 @@ try:
 
     load_dotenv()
 except Exception:
-    import logging
     logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -51,7 +51,6 @@ def _apply_global_ui() -> None:
 
         helpers.extend([apply_custom_css, apply_ui_css])
     except Exception:
-        import logging
         logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
     try:
         from components import inject_component_styles, inject_streamlit_ar_i18n
@@ -60,8 +59,15 @@ def _apply_global_ui() -> None:
             [lambda: inject_streamlit_ar_i18n(True), inject_component_styles]
         )
     except Exception:
-        import logging
         logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
+    try:
+        from ui_theme_v2 import apply_final_ui_css
+
+        # Must be last: it resolves old CSS conflicts and current Streamlit DOM changes.
+        helpers.append(apply_final_ui_css)
+    except Exception:
+        logging.getLogger(__name__).debug("Final UI theme could not be loaded", exc_info=True)
+
     for helper in helpers:
         try:
             helper()
@@ -92,6 +98,24 @@ def _install_runtime_hardening(username: str) -> None:
     install_market_data_hardening()
     install_analytics_hardening()
     install_portfolio_metrics_v2()
+
+
+def _initialize_user_space(username: str) -> bool:
+    """Initialize a tenant with short retries for transient DB locks/pool resets."""
+    for attempt in range(3):
+        try:
+            _install_runtime_hardening(username)
+            st.session_state.pop("_tenant_init_failed", None)
+            return True
+        except Exception:
+            logger.exception(
+                "runtime hardening failed for authenticated user (attempt %s)",
+                attempt + 1,
+            )
+            if attempt < 2:
+                time.sleep(0.18 * (attempt + 1))
+    st.session_state["_tenant_init_failed"] = True
+    return False
 
 
 def main() -> None:
@@ -136,12 +160,13 @@ def main() -> None:
     if not authenticated:
         st.stop()
 
-    username = str(st.session_state.get("username") or "")
-    try:
-        _install_runtime_hardening(username)
-    except Exception:
-        logger.exception("runtime hardening failed")
+    username = str(st.session_state.get("username") or "").strip()
+    if not username or not _initialize_user_space(username):
         st.error("تعذر تهيئة مساحة بيانات المستخدم بأمان.")
+        st.caption("تم منع فتح البيانات احترازيًا. أعد المحاولة بعد تحديث التطبيق.")
+        if st.button("إعادة المحاولة", type="primary", use_container_width=True):
+            st.session_state.pop("_tenant_init_failed", None)
+            st.rerun()
         st.stop()
 
     if st.session_state.get("_tenant_unclaimed_legacy"):

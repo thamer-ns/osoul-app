@@ -117,6 +117,34 @@ def _add_column_if_missing(
         raise RuntimeError(f"تعذر إضافة العمود {column} إلى {table}")
 
 
+def _ensure_tenant_users_table() -> None:
+    """Create a stable tenant identity registry for legacy auth schemas.
+
+    Some early Osoli databases used ``username`` as the only user identity and
+    therefore have no ``users.id`` column. Authentication still works on those
+    databases, but tenant isolation needs a stable integer key. This registry
+    supplies that key without rewriting passwords or changing the auth table.
+    """
+    if _connection_kind() == "postgres":
+        query = """
+        CREATE TABLE IF NOT EXISTS tenant_users (
+            id BIGSERIAL PRIMARY KEY,
+            username TEXT NOT NULL UNIQUE,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    else:
+        query = """
+        CREATE TABLE IF NOT EXISTS tenant_users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    if not _ORIGINAL_EXECUTE_QUERY(query):
+        raise RuntimeError("تعذر إنشاء سجل هوية المستخدمين")
+
+
 def _ensure_portfolios_table() -> None:
     if _connection_kind() == "postgres":
         query = """
@@ -311,6 +339,7 @@ def _ensure_schema_once() -> None:
     with _INSTALL_LOCK:
         if _SCHEMA_READY:
             return
+        _ensure_tenant_users_table()
         _ensure_portfolios_table()
         _ensure_scoped_columns()
         _migrate_tenant_symbol_constraints()
@@ -318,40 +347,118 @@ def _ensure_schema_once() -> None:
 
 
 def _resolve_user_id(username: str) -> int:
-    if _ORIGINAL_FETCH_DF is None:
-        raise RuntimeError("database.fetch_df غير متوفر")
-    frame = _ORIGINAL_FETCH_DF(
-        "SELECT id FROM users WHERE username=%s LIMIT 1",
-        (str(username),),
-    )
-    if frame is None or frame.empty:
-        raise RuntimeError("تعذر تحديد المستخدم الحالي")
-    return int(frame.iloc[0]["id"])
+    """Resolve a stable integer identity across new and legacy user tables."""
+    normalized = str(username or "").strip()
+    if not normalized:
+        raise RuntimeError("اسم المستخدم غير متوفر لتهيئة مساحة البيانات")
+
+    columns = _table_columns("users") if _table_exists("users") else set()
+    conn, kind = _db.get_connection()
+    try:
+        cur = conn.cursor()
+        placeholder = "%s" if kind == "postgres" else "?"
+
+        # Preserve the original numeric identity whenever the modern schema has it.
+        if "id" in columns:
+            cur.execute(
+                f"SELECT id FROM users WHERE username={placeholder} LIMIT 1",
+                (normalized,),
+            )
+            row = cur.fetchone()
+            if row is not None and row[0] is not None:
+                resolved = int(row[0])
+                if resolved > 0:
+                    return resolved
+
+        # Legacy schema fallback: allocate one stable ID per authenticated username.
+        if kind == "postgres":
+            cur.execute(
+                "INSERT INTO tenant_users (username) VALUES (%s) "
+                "ON CONFLICT (username) DO NOTHING",
+                (normalized,),
+            )
+            cur.execute(
+                "SELECT id FROM tenant_users WHERE username=%s LIMIT 1",
+                (normalized,),
+            )
+        else:
+            cur.execute(
+                "INSERT OR IGNORE INTO tenant_users (username) VALUES (?)",
+                (normalized,),
+            )
+            cur.execute(
+                "SELECT id FROM tenant_users WHERE username=? LIMIT 1",
+                (normalized,),
+            )
+        row = cur.fetchone()
+        if row is None or row[0] is None:
+            raise RuntimeError("تعذر تخصيص هوية ثابتة للمستخدم")
+        conn.commit()
+        return int(row[0])
+    except Exception as exc:
+        try:
+            conn.rollback()
+        except Exception:
+            import logging
+            logging.getLogger(__name__).debug("Tenant identity rollback failed", exc_info=True)
+        raise RuntimeError("تعذر تحديد هوية مساحة المستخدم") from exc
+    finally:
+        _db.put_connection(conn, kind)
 
 
 def _ensure_default_portfolio(user_id: int) -> int:
-    frame = _ORIGINAL_FETCH_DF(
-        "SELECT id FROM portfolios WHERE user_id=%s "
-        "ORDER BY is_default DESC, id ASC LIMIT 1",
-        (int(user_id),),
-    )
-    if frame is not None and not frame.empty:
-        return int(frame.iloc[0]["id"])
-    if not _ORIGINAL_EXECUTE_QUERY(
-        "INSERT INTO portfolios "
-        "(user_id, name, base_currency, is_default) "
-        "VALUES (%s,%s,%s,%s)",
-        (int(user_id), "المحفظة الرئيسية", "SAR", 1),
-    ):
-        raise RuntimeError("تعذر إنشاء المحفظة الافتراضية")
-    frame = _ORIGINAL_FETCH_DF(
-        "SELECT id FROM portfolios WHERE user_id=%s "
-        "ORDER BY id DESC LIMIT 1",
-        (int(user_id),),
-    )
-    if frame is None or frame.empty:
-        raise RuntimeError("تعذر قراءة المحفظة الافتراضية")
-    return int(frame.iloc[0]["id"])
+    """Return or atomically create the user's default portfolio."""
+    conn, kind = _db.get_connection()
+    try:
+        cur = conn.cursor()
+        placeholder = "%s" if kind == "postgres" else "?"
+        cur.execute(
+            "SELECT id FROM portfolios WHERE user_id="
+            f"{placeholder} ORDER BY is_default DESC, id ASC LIMIT 1",
+            (int(user_id),),
+        )
+        row = cur.fetchone()
+        if row is not None and row[0] is not None:
+            return int(row[0])
+
+        if kind == "postgres":
+            cur.execute(
+                "INSERT INTO portfolios "
+                "(user_id, name, base_currency, is_default) "
+                "VALUES (%s,%s,%s,%s) "
+                "ON CONFLICT (user_id, name) DO NOTHING",
+                (int(user_id), "المحفظة الرئيسية", "SAR", 1),
+            )
+            cur.execute(
+                "SELECT id FROM portfolios WHERE user_id=%s "
+                "ORDER BY is_default DESC, id ASC LIMIT 1",
+                (int(user_id),),
+            )
+        else:
+            cur.execute(
+                "INSERT OR IGNORE INTO portfolios "
+                "(user_id, name, base_currency, is_default) VALUES (?,?,?,?)",
+                (int(user_id), "المحفظة الرئيسية", "SAR", 1),
+            )
+            cur.execute(
+                "SELECT id FROM portfolios WHERE user_id=? "
+                "ORDER BY is_default DESC, id ASC LIMIT 1",
+                (int(user_id),),
+            )
+        row = cur.fetchone()
+        if row is None or row[0] is None:
+            raise RuntimeError("تعذر قراءة المحفظة الافتراضية")
+        conn.commit()
+        return int(row[0])
+    except Exception as exc:
+        try:
+            conn.rollback()
+        except Exception:
+            import logging
+            logging.getLogger(__name__).debug("Default portfolio rollback failed", exc_info=True)
+        raise RuntimeError("تعذر إنشاء المحفظة الافتراضية") from exc
+    finally:
+        _db.put_connection(conn, kind)
 
 
 def _claim_legacy_rows(ctx: TenantContext) -> None:
