@@ -191,7 +191,6 @@ def view_cash_log(fin):
                     step=10.0,
                 )
                 occurred_at = st.date_input("التاريخ", date.today())
-                note = st.text_input("ملاحظة")
                 submitted = st.form_submit_button("حفظ")
             if submitted:
                 symbol = _normalize_symbol(raw_symbol)
@@ -199,8 +198,8 @@ def view_cash_log(fin):
                     st.error("أدخل رمز سهم صحيحًا")
                 elif _save(
                     "INSERT INTO returnsgrants "
-                    "(date, symbol, amount, note) VALUES (%s,%s,%s,%s)",
-                    (str(occurred_at), symbol, amount, note.strip()),
+                    "(date, symbol, amount) VALUES (%s,%s,%s)",
+                    (str(occurred_at), symbol, amount),
                     "تم تسجيل العائد",
                 ):
                     st.rerun()
@@ -216,6 +215,5 @@ def view_cash_log(fin):
                     ("date", "التاريخ", "date"),
                     ("symbol", "السهم", "text"),
                     ("amount", "المبلغ", "money"),
-                    ("note", "ملاحظات", "text"),
                 ],
             )
