@@ -1,10 +1,14 @@
+"""Lazy page router for Osoli v2."""
+from __future__ import annotations
+
 import importlib
+
 import streamlit as st
 
-from analytics import calculate_portfolio_metrics, update_prices, get_portfolio_cache_key
+from analytics_v2 import calculate_portfolio_metrics, get_portfolio_cache_key, update_prices
+from tenant_db import current_username
 from views.shared import _ensure_ui_once
 
-# صفحات تحتاج تحميل بيانات المحفظة/التدفقات قبل العرض
 _PAGES_REQUIRING_FIN = {
     "home",
     "spec",
@@ -18,70 +22,69 @@ _PAGES_REQUIRING_FIN = {
 
 
 @st.cache_data(ttl=5, show_spinner=False)
-def _get_portfolio_cache_key_fast() -> str:
-    """تقليل ضغط قاعدة البيانات عند التنقل السريع بين الصفحات.
-
-    يبقى التحديث شبه فوري (5 ثوانٍ) ويُكسر أيضًا عند استدعاء st.cache_data.clear().
-    """
-    return get_portfolio_cache_key()
+def _portfolio_revision(username: str) -> str:
+    return get_portfolio_cache_key(username)
 
 
-def _load_attr(module_name: str, attr_name: str):
-    mod = importlib.import_module(module_name)
-    return getattr(mod, attr_name)
+def _load(module_name: str, attribute: str):
+    module = importlib.import_module(module_name)
+    return getattr(module, attribute)
 
 
-def _render_page(pg: str, fin):
-    """استيراد كسول للصفحات الثقيلة لتسريع التبديل وتقليل تحميل البداية."""
-    if pg == "home":
-        _load_attr("views.dashboard", "view_dashboard")(fin)
-    elif pg == "spec":
-        _load_attr("views.portfolio", "view_portfolio")(fin, "spec")
-    elif pg == "invest":
-        _load_attr("views.portfolio", "view_portfolio")(fin, "invest")
-    elif pg == "sukuk":
-        _load_attr("views.sukuk", "view_sukuk_portfolio")(fin)
-    elif pg == "signals":
-        _load_attr("views.signals", "view_signals")(fin)
-    elif pg == "analysis":
-        _load_attr("views.analysis", "view_analysis")(fin)
-    elif pg == "cash":
-        _load_attr("views.cash", "view_cash_log")(fin)
-    elif pg == "backtest":
-        _load_attr("views.lab", "view_backtester_ui")(fin)
-    elif pg == "pulse":
-        _load_attr("views.portfolio", "render_pulse_dashboard")()
-    elif pg == "add":
-        _load_attr("views.portfolio", "view_add_trade")()
-    elif pg == "tools":
-        _load_attr("views.settings", "view_tools")()
-    elif pg == "settings":
-        _load_attr("views.settings", "view_settings")()
+def _render_page(page: str, fin) -> None:
+    if page == "home":
+        _load("views.dashboard_v2", "view_dashboard")(fin)
+    elif page == "spec":
+        _load("views.portfolio_v2", "view_portfolio")(fin, "spec")
+    elif page == "invest":
+        _load("views.portfolio_v2", "view_portfolio")(fin, "invest")
+    elif page == "sukuk":
+        _load("views.portfolio_v2", "view_portfolio")(fin, "sukuk")
+    elif page == "signals":
+        _load("views.signals", "view_signals")(fin)
+    elif page == "analysis":
+        _load("views.analysis", "view_analysis")(fin)
+    elif page == "cash":
+        _load("views.cash_v2", "view_cash_log")(fin)
+    elif page == "backtest":
+        _load("views.lab", "view_backtester_ui")(fin)
+    elif page == "pulse":
+        _load("views.portfolio_v2", "render_pulse_dashboard")()
+    elif page == "add":
+        _load("views.portfolio_v2", "view_add_trade")()
+    elif page == "tools":
+        _load("views.settings", "view_tools")()
+    elif page == "settings":
+        _load("views.settings", "view_settings")()
     else:
         st.session_state.page = "home"
         st.rerun()
 
 
-def router():
+def router() -> None:
     _ensure_ui_once()
+    username = current_username()
 
     if "page" not in st.session_state:
         st.session_state.page = "home"
 
-    # استيراد navbar بشكل كسول أيضًا (يحمل أسرع في بعض البيئات)
-    _load_attr("views.navbar", "render_navbar")()
-    pg = st.session_state.page
+    _load("views.navbar", "render_navbar")()
+    page = st.session_state.page
 
-    if pg == "update":
-        with st.spinner("جاري التحديث..."):
-            update_prices()
+    if page == "update":
+        with st.spinner("جاري تحديث أسعار المستخدم الحالي..."):
+            ok = update_prices(username)
+        if ok:
+            st.success("تم تحديث الأسعار.")
+        else:
+            st.warning("لم تكتمل بعض تحديثات الأسعار.")
         st.cache_data.clear()
         st.rerun()
-        return
 
     fin = None
-    if pg in _PAGES_REQUIRING_FIN:
+    if page in _PAGES_REQUIRING_FIN:
+        revision = _portfolio_revision(username)
         with st.spinner("جارٍ تحميل بيانات المحفظة..."):
-            fin = calculate_portfolio_metrics(cache_key=_get_portfolio_cache_key_fast())
+            fin = calculate_portfolio_metrics(cache_key=revision, username=username)
 
-    _render_page(pg, fin)
+    _render_page(page, fin)
