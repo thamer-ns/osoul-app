@@ -1,0 +1,11 @@
+..........................F.                                             [100%]
+=================================== FAILURES ===================================
+_____________ test_streamlit_material_icons_keep_their_native_font _____________
+tests/test_ui_theme_v2.py:27: in test_streamlit_material_icons_keep_their_native_font
+    assert "font-family:'Material Symbols Rounded' !important" in css
+E   assert "font-family:'Material Symbols Rounded' !important" in '<style>\n    @import url(\'https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800;900&display=swap\'...d="stMetric"] { min-height:92px !important; }\n      .kpi-value { font-size:1.25rem !important; }\n    }\n    </style>'
+=========================== short test summary info ============================
+FAILED tests/test_ui_theme_v2.py::test_streamlit_material_icons_keep_their_native_font - assert "font-family:'Material Symbols Rounded' !important" in '<style>\n    @import url(\'https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800;900&display=swap\'...d="stMetric"] { min-height:92px !important; }\n      .kpi-value { font-size:1.25rem !important; }\n    }\n    </style>'
+1 failed, 27 passed in 1.40s
+
+PYTEST_EXIT_CODE=1
