@@ -80,6 +80,7 @@ def _install_runtime_hardening(username: str) -> None:
     )
     from analytics_hardening import install_analytics_hardening
     from market_data_hardening import install_market_data_hardening
+    from portfolio_metrics_v2 import install_portfolio_metrics_v2
     from tenant_scope import install_tenant_scope
 
     register_ai_tenant_tables()
@@ -87,6 +88,7 @@ def _install_runtime_hardening(username: str) -> None:
     install_ai_learning_scope()
     install_market_data_hardening()
     install_analytics_hardening()
+    install_portfolio_metrics_v2()
 
 
 def main() -> None:
