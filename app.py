@@ -106,11 +106,13 @@ def main() -> None:
 
     try:
         from database_security_hardening import install_database_security_hardening
+        from database_write_hardening import install_database_write_hardening
 
         install_database_security_hardening()
+        install_database_write_hardening()
     except Exception:
-        logger.exception("password hashing hardening failed")
-        st.error("تعذر تهيئة حماية كلمات المرور.")
+        logger.exception("database hardening failed")
+        st.error("تعذر تهيئة حماية قاعدة البيانات.")
         st.stop()
 
     try:
