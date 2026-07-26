@@ -24,7 +24,10 @@ def test_canonical_theme_avoids_previous_destructive_overrides():
 def test_streamlit_material_icons_keep_their_native_font():
     css = build_app_css("light")
     assert '[data-testid="stIconMaterial"]' in css
-    assert "font-family:'Material Symbols Rounded' !important" in css
+    assert (
+        "font-family:'Material Symbols Rounded','Material Symbols Outlined',"
+        "'Material Icons' !important"
+    ) in css
     assert "keyboard_double_arrow" not in css
 
 
