@@ -1,203 +1,138 @@
-# app.py
+"""Osoli Streamlit entry point."""
 from __future__ import annotations
 
+import logging
 import os
 import sys
-from typing import Optional, Tuple
+from typing import Tuple
 
 import streamlit as st
 
-# Load local environment variables for development (safe no-op on Streamlit Cloud)
 try:
-    from dotenv import load_dotenv  # type: ignore
+    from dotenv import load_dotenv
+
     load_dotenv()
 except Exception:
-    import logging
-    logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at app.py:14')
+    pass
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
 
-# -----------------------------------------------------------------------------
-# 🔧 Import bootstrap (supports running from root or nested folder in deployments)
-# -----------------------------------------------------------------------------
-_BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-_PARENT_DIR = os.path.dirname(_BASE_DIR)
-
-_candidates = [
-    _BASE_DIR,
-    _PARENT_DIR,
-    os.path.join(_BASE_DIR, "osoul-app-main"),
-    os.path.join(_BASE_DIR, "osoul-app"),
-]
-for _p in _candidates:
-    try:
-        if _p and os.path.isdir(_p) and _p not in sys.path:
-            sys.path.insert(0, _p)
-    except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at app.py:34')
-
-
-def _safe_image(path: str, width: Optional[int] = None) -> None:
-    try:
-        if path and os.path.exists(path):
-            st.image(path, width=width)
-    except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at app.py:42')
+logger = logging.getLogger("osoli.app")
 
 
 def _load_app_config() -> Tuple[str, str]:
-    """Load app title/icon without hard-failing if config is temporarily broken."""
     try:
-        from config import APP_NAME, APP_ICON  # type: ignore
-        name = str(APP_NAME or "أُصول")
-        icon = str(APP_ICON or "📈")
-        return name, icon
+        from config import APP_ICON, APP_NAME
+
+        return str(APP_NAME or "أصولي"), str(APP_ICON or "📈")
     except Exception:
-        return "أُصول", "📈"
+        return "أصولي", "📈"
 
 
 @st.cache_resource(show_spinner=False)
 def _init_db_once() -> tuple[bool, str]:
-    """تهيئة DB مرة واحدة (خاصة في Streamlit Cloud)."""
     try:
-        from database import init_db  # import here to avoid early import side-effects
+        from database import init_db
+
         init_db()
         return True, ""
-    except Exception as e:
-        return False, str(e)
+    except Exception as exc:
+        logger.exception("database initialization failed")
+        return False, str(exc)
 
 
-def _apply_global_ui_once() -> None:
-    """Apply CSS/i18n/component styles after set_page_config on EVERY rerun.
-
-    مهم: CSS المحقون عبر st.markdown لا يستمر بين reruns، لذلك لا نستخدم
-    session_state flag لمنع إعادة الحقن، وإلا ترجع الواجهة افتراضيًا (LTR).
-    """
-
-    # Optional imports: keep app working even if a cosmetic helper is missing.
+def _apply_global_ui() -> None:
+    helpers = []
     try:
-        from styles import apply_custom_css  # type: ignore
-    except Exception:
-        apply_custom_css = None
+        from styles import apply_custom_css, apply_ui_css
 
-    try:
-        from styles import apply_ui_css  # type: ignore
+        helpers.extend([apply_custom_css, apply_ui_css])
     except Exception:
-        apply_ui_css = None
+        pass
+    try:
+        from components import inject_component_styles, inject_streamlit_ar_i18n
 
-    try:
-        from components import inject_streamlit_ar_i18n  # type: ignore
+        helpers.extend([lambda: inject_streamlit_ar_i18n(True), inject_component_styles])
     except Exception:
-        inject_streamlit_ar_i18n = None
+        pass
+    for helper in helpers:
+        try:
+            helper()
+        except Exception:
+            logger.exception("optional UI helper failed")
+    try:
+        from components import render_app_header
 
-    try:
-        from components import inject_component_styles  # type: ignore
+        render_app_header("أصولي", "منصة الذكاء الكمي وإدارة المحافظ")
     except Exception:
-        inject_component_styles = None
+        logger.exception("header rendering failed")
 
-    try:
-        from components import render_app_header  # type: ignore
-    except Exception:
-        render_app_header = None
 
-    # i18n should come after set_page_config so DOM is initialized.
-    try:
-        if inject_streamlit_ar_i18n:
-            inject_streamlit_ar_i18n(True)
-    except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at app.py:105')
+def _install_runtime_hardening(username: str) -> None:
+    """Install compatibility fixes before any page modules are imported."""
+    from tenant_scope import install_tenant_scope
+    from market_data_hardening import install_market_data_hardening
+    from analytics_hardening import install_analytics_hardening
 
-    try:
-        if apply_custom_css:
-            apply_custom_css()
-    except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at app.py:111')
-
-    try:
-        if apply_ui_css:
-            apply_ui_css()
-    except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at app.py:117')
-
-    try:
-        if inject_component_styles:
-            inject_component_styles()
-    except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at app.py:123')
-
-    try:
-        if render_app_header:
-            render_app_header("أصولي", "منصة الذكاء الكمي للأسواق")
-    except Exception:
-        import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at app.py:129')
+    install_tenant_scope(username)
+    install_market_data_hardening()
+    install_analytics_hardening()
 
 
 def main() -> None:
     app_name, app_icon = _load_app_config()
-
-    # MUST be the first Streamlit command.
     st.set_page_config(
         page_title=app_name,
-        page_icon=app_icon if isinstance(app_icon, str) and len(app_icon) <= 4 else "📈",
+        page_icon=app_icon if len(app_icon) <= 4 else "📈",
         layout="wide",
         initial_sidebar_state="expanded",
     )
+    _apply_global_ui()
 
-    _apply_global_ui_once()  # apply CSS every rerun (Streamlit rebuilds DOM)
-
-    # -------------------------
-    # DB Init
-    # -------------------------
-    ok, err = _init_db_once()
+    ok, _ = _init_db_once()
     if not ok:
-        st.error("❌ فشل تهيئة قاعدة البيانات. تأكد من DATABASE_URL في Secrets/Env.")
-        if err:
-            st.caption(err)
-
-    # -------------------------
-    # Auth Gate (supports multiple security.py variants)
-    # -------------------------
-    try:
-        try:
-            from security import login_system  # type: ignore
-        except Exception:
-            from security import require_login as login_system  # type: ignore
-    except Exception as e:
-        st.error("فشل تحميل نظام تسجيل الدخول (security.py).")
-        st.code(str(e))
+        st.error("تعذر الاتصال بقاعدة البيانات. راجع DATABASE_URL في Secrets.")
         st.stop()
 
     try:
-        auth_ok = bool(login_system())
-    except Exception as e:
-        st.error("حدث خطأ أثناء نظام تسجيل الدخول.")
-        st.code(str(e))
-        st.stop()
-
-    if not auth_ok:
-        st.stop()
-
-    # -------------------------
-    # Router / Views (import after set_page_config + auth to reduce side effects)
-    # -------------------------
-    try:
-        from views import router  # type: ignore
-    except Exception as e:
-        st.error("فشل تحميل واجهات التطبيق (views).")
-        st.code(str(e))
+        from security import login_system
+    except Exception:
+        logger.exception("security module import failed")
+        st.error("تعذر تحميل نظام الدخول.")
         st.stop()
 
     try:
+        authenticated = bool(login_system())
+    except Exception:
+        logger.exception("authentication failed")
+        st.error("حدث خطأ في نظام الدخول.")
+        st.stop()
+    if not authenticated:
+        st.stop()
+
+    username = str(st.session_state.get("username") or "")
+    try:
+        _install_runtime_hardening(username)
+    except Exception:
+        logger.exception("runtime hardening failed")
+        st.error("تعذر تهيئة مساحة بيانات المستخدم بأمان.")
+        st.stop()
+
+    if st.session_state.get("_tenant_unclaimed_legacy"):
+        st.warning(
+            "توجد بيانات قديمة غير مرتبطة بمستخدم، ولم تُنسب تلقائيًا لأن قاعدة البيانات تحتوي أكثر من حساب. "
+            "راجع ترحيل البيانات قبل الاعتماد عليها."
+        )
+
+    try:
+        from views import router
+
         router()
-    except Exception as e:
-        st.error("حدث خطأ غير متوقع في التطبيق.")
-        st.code(str(e))
+    except Exception:
+        logger.exception("unhandled application error")
+        st.error("حدث خطأ غير متوقع. تم تسجيل التفاصيل لدى الخادم.")
         st.stop()
 
 
