@@ -21,10 +21,30 @@ jobs:
           python-version: "3.11"
 
       - name: Apply reviewed warning fixes
-        run: python scripts/apply_warning_patch.py
+        run: |
+          set +e
+          python scripts/apply_warning_patch.py > warning-fix.log 2>&1
+          status=$?
+          echo "$status" > warning-fix.status
+          exit 0
+
+      - name: Upload warning fixer diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: warning-fix-diagnostics
+          path: |
+            warning-fix.log
+            warning-fix.status
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Commit warning fixes
         run: |
+          status="$(cat warning-fix.status)"
+          if [ "$status" != "0" ]; then
+            cat warning-fix.log
+            exit "$status"
+          fi
           if git diff --quiet; then
             echo "No warning fixes required"
             exit 0
