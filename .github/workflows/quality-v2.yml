@@ -22,6 +22,17 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Create audited source snapshot
+        run: git archive --format=zip HEAD -o audited-source.zip
+
+      - name: Upload audited source snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: audited-source
+          path: audited-source.zip
+          if-no-files-found: error
+          retention-days: 7
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -83,11 +94,7 @@ jobs:
           retention-days: 14
 
       - name: Stop on static audit failure
-        if: >-
-          steps.ruff.outcome == 'failure' ||
-          steps.repository_audit.outcome == 'failure' ||
-          steps.bandit.outcome == 'failure' ||
-          steps.dependency_audit.outcome == 'failure'
+        if: ${{ steps.ruff.outcome == 'failure' || steps.repository_audit.outcome == 'failure' || steps.bandit.outcome == 'failure' || steps.dependency_audit.outcome == 'failure' }}
         run: |
           echo "Static audit failed. Review complete-static-audit artifact."
           exit 1
