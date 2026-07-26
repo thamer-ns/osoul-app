@@ -1,7 +1,10 @@
 import numpy as np
 import pandas as pd
 
-from technical_indicators.advanced_v2 import compute_advanced_technical_pack
+from technical_indicators.advanced_v2 import (
+    compute_advanced_technical_pack,
+    is_live_bar,
+)
 
 
 def _sample_frame(rows=320):
@@ -44,3 +47,14 @@ def test_confidence_is_separate_from_direction():
     pack = compute_advanced_technical_pack(_sample_frame(), timeframe="1d")
     assert pack["confidence"] >= 0
     assert pack["direction_score"] != pack["confidence"]
+
+
+def test_saudi_weekly_bar_calendar():
+    sunday = pd.Timestamp("2026-07-26 16:00", tz="Asia/Riyadh")
+    assert not is_live_bar(pd.Timestamp("2026-07-23"), "1wk", sunday)
+    assert is_live_bar(pd.Timestamp("2026-07-30"), "1wk", sunday)
+
+
+def test_monthly_bar_is_live_before_final_trading_close():
+    current = pd.Timestamp("2026-07-26 16:00", tz="Asia/Riyadh")
+    assert is_live_bar(pd.Timestamp("2026-07-31"), "1mo", current)
