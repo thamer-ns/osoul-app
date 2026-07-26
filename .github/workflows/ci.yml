@@ -29,12 +29,20 @@ jobs:
         run: >-
           ruff check
           --select E9,F63,F7,F82
-          app.py security.py tenant_scope.py analytics_hardening.py
-          market_data_hardening.py technical_indicators ai_engine_core/packs.py
-          views/portfolio.py views/dashboard.py views/analysis/technical.py tests
+          app.py security.py database_security_hardening.py tenant_scope.py
+          analytics_hardening.py market_data_hardening.py technical_indicators
+          ai_engine_core/packs.py views/portfolio.py views/dashboard.py
+          views/analysis/technical.py tests
 
-      - name: Test corrected XIRR
-        run: pytest -q --tb=short tests/test_analytics_hardening.py
+      - name: Test XIRR internal-return handling
+        run: >-
+          pytest -q --tb=short
+          tests/test_analytics_hardening.py::test_xirr_does_not_double_count_internal_returns
+
+      - name: Test XIRR edge conditions
+        run: >-
+          pytest -q --tb=short
+          tests/test_analytics_hardening.py::test_xirr_requires_positive_and_negative_external_flows
 
       - name: Test advanced technical contract
         run: pytest -q --tb=short tests/test_advanced_v2.py
