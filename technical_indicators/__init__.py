@@ -1,12 +1,4 @@
-# technical_indicators/__init__.py
-# -*- coding: utf-8 -*-
+"""Advanced technical indicators used by the UI and AI engine."""
+from .advanced_v2 import compute_advanced_technical_pack
 
-"""
-Technical Indicators package.
-
-This module hosts optional, advanced indicators that can be used by:
-- views/analysis/technical.py (UI display)
-- ai_engine_core/packs.py (AI Engine packs)
-"""
-
-from .advanced import compute_advanced_technical_pack  # noqa: F401
+__all__ = ["compute_advanced_technical_pack"]
