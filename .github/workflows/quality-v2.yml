@@ -40,38 +40,57 @@ jobs:
         run: python tools/self_check.py
 
       - name: Critical Ruff checks for the complete repository
+        id: ruff
+        continue-on-error: true
         run: >-
           ruff check .
           --select E9,F63,F7,F82
           --exclude .git,.venv,venv,__pycache__,build,dist
+          --output-format json
+          --output-file ruff-results.json
 
       - name: Repository line-by-line audit
         id: repository_audit
         continue-on-error: true
         run: python tools/repository_audit.py
 
-      - name: Upload repository audit manifest
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: repository-audit
-          path: repository-audit.json
-          if-no-files-found: error
-          retention-days: 14
-
-      - name: Stop on critical repository audit finding
-        if: steps.repository_audit.outcome == 'failure'
-        run: |
-          cat repository-audit.json
-          exit 1
-
       - name: Bandit high-severity security scan
+        id: bandit
+        continue-on-error: true
         run: >-
           bandit -r . -q -lll -iii
           -x ./tests,./.git,./.venv,./venv,./build,./dist
+          -f json -o bandit-results.json
 
       - name: Python dependency vulnerability audit
-        run: pip-audit -r requirements.txt --progress-spinner off
+        id: dependency_audit
+        continue-on-error: true
+        run: >-
+          pip-audit -r requirements.txt --progress-spinner off
+          -f json -o pip-audit-results.json
+
+      - name: Upload static audit diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: complete-static-audit
+          path: |
+            ruff-results.json
+            repository-audit.json
+            bandit-results.json
+            pip-audit-results.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Stop on static audit failure
+        if: >-
+          steps.ruff.outcome == 'failure' ||
+          steps.repository_audit.outcome == 'failure' ||
+          steps.bandit.outcome == 'failure' ||
+          steps.dependency_audit.outcome == 'failure'
+        run: |
+          echo "Static audit failed. Review complete-static-audit artifact."
+          exit 1
 
       - name: XIRR tests
         run: pytest -q --tb=short tests/test_analytics_hardening.py
