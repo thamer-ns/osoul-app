@@ -107,7 +107,12 @@ def fix_audit_false_positives() -> None:
     )
     content = content.replace(
         '''    for line_number, line in enumerate(text.splitlines(), start=1):\n        for pattern in SECRET_PATTERNS:\n''',
-        '''    for line_number, line in enumerate(text.splitlines(), start=1):\n        if "re.compile(" in line or "SECRET_PATTERNS" in line:\n            continue\n        for pattern in SECRET_PATTERNS:\n''',
+        '''    for line_number, line in enumerate(text.splitlines(), start=1):\n        if line.lstrip().startswith("#"):\n            continue\n        if "re.compile(" in line or "SECRET_PATTERNS" in line:\n            continue\n        for pattern in SECRET_PATTERNS:\n''',
+        1,
+    )
+    content = content.replace(
+        '''    for line_number, line in enumerate(text.splitlines(), start=1):\n        if "re.compile(" in line or "SECRET_PATTERNS" in line:\n''',
+        '''    for line_number, line in enumerate(text.splitlines(), start=1):\n        if line.lstrip().startswith("#"):\n            continue\n        if "re.compile(" in line or "SECRET_PATTERNS" in line:\n''',
         1,
     )
     write(path, content)
