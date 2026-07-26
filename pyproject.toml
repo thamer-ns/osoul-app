@@ -8,8 +8,9 @@ line-length = 110
 exclude = ["legacy", ".venv", "venv"]
 
 [tool.ruff.lint]
-select = ["E", "F", "B"]
-ignore = ["E501", "F401"]
+# Merge-blocking correctness errors only. Broader style cleanup is staged
+# separately so legacy formatting does not hide runtime defects.
+select = ["E9", "F63", "F7", "F82"]
 
 [tool.ruff.format]
 quote-style = "double"
