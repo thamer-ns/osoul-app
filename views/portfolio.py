@@ -1,603 +1,420 @@
-# views/portfolio.py
-import streamlit as st
-from feature_flags import get_flag
-import pandas as pd
+"""Portfolio views with safe editing, partial exits and tenant-aware writes."""
+from __future__ import annotations
+
 from datetime import date
+from typing import Any, Dict, Tuple
 
-from components import render_kpi, render_custom_table, render_ticker_card, safe_fmt
-from database import execute_query, fetch_table
-from market_data import fetch_batch_data
-from analytics import compute_portfolio_xirr
+import pandas as pd
+import streamlit as st
+
+from components import render_custom_table, render_kpi, render_ticker_card, safe_fmt
 from data_source import get_company_details
+from database import execute_query, fetch_table, get_connection, put_connection
+from market_data import fetch_batch_data
 from security import validate_trade_inputs
-from views.shared import _safe_status_series, _clean_symbols_list, _normalize_symbol
+from tenant_scope import current_tenant
+from views.shared import _clean_symbols_list, _normalize_symbol, _safe_status_series
 
-# ✅ Portfolio risk engine (safe import)
 try:
     from ai_engine_core.portfolio import (
         calculate_portfolio_risk_score,
-        run_stress_test,
         generate_rebalancing_suggestions,
         portfolio_risk_gates,
+        run_stress_test,
     )
 except Exception:
     calculate_portfolio_risk_score = None
-    run_stress_test = None
     generate_rebalancing_suggestions = None
     portfolio_risk_gates = None
+    run_stress_test = None
 
 
-def _sf(x, default=0.0) -> float:
+def _sf(value: Any, default: Any = 0.0):
     try:
-        if x is None:
-            return float(default)
-        return float(x)
+        value = float(value)
+        return value if pd.notna(value) else default
     except Exception:
-        return float(default)
+        return default
 
 
-def _safe_cash_pct(fin: dict, open_market_val: float) -> float:
-    """
-    يأخذ cash_pct من analytics إن توفر،
-    وإلا يحسبه: cash / (cash + open_market_val)
-    """
-    try:
-        if isinstance(fin, dict) and "cash_pct" in fin:
-            return float(_sf(fin.get("cash_pct", 0.0), 0.0))
-    except Exception:
-        pass
-
-    cash = _sf((fin or {}).get("cash", 0.0), 0.0) if isinstance(fin, dict) else 0.0
-    pv = float(max(0.0, cash + _sf(open_market_val, 0.0)))
-    return float((cash / pv) * 100.0) if pv > 0 else 0.0
+def _status_text(value: object) -> str:
+    return "مغلقة" if str(value or "").strip().lower() in {"close", "closed", "sold", "مغلقة", "مغلق"} else "مفتوحة"
 
 
-def _risk_score_badge(score: float) -> str:
-    score = float(_sf(score, 0.0))
-    if score >= 75:
-        return "danger"
-    if score >= 55:
-        return "warn"
-    if score >= 35:
-        return "neutral"
-    return "success"
-
-
-def _refresh_open_positions_with_live_prices(op: pd.DataFrame):
-    """تحديث أسعار الصفقات المفتوحة وإعادة حساب market_value/gain/gain_pct بشكل آمن."""
+def _refresh_open_positions(op: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, Dict[str, Any]]]:
     if op is None or op.empty:
-        return op, {}
+        return pd.DataFrame() if op is None else op, {}
+    frame = op.copy()
+    for column in ("quantity", "entry_price", "current_price", "total_cost"):
+        if column not in frame.columns:
+            frame[column] = 0.0
+        frame[column] = pd.to_numeric(frame[column], errors="coerce").fillna(0.0)
+    frame["symbol"] = frame.get("symbol", "").astype(str).apply(_normalize_symbol)
+    symbols = _clean_symbols_list(frame["symbol"].tolist())
+    live = fetch_batch_data(symbols) if symbols else {}
 
-    df = op.copy()
-    live_data = {}
+    sources, stale, prices, previous = [], [], [], []
+    for _, row in frame.iterrows():
+        symbol = str(row.get("symbol") or "").upper()
+        payload = live.get(symbol) or live.get(_normalize_symbol(symbol)) or {}
+        price = _sf(payload.get("price"), 0.0)
+        fallback = _sf(row.get("current_price"), _sf(row.get("entry_price"), 0.0))
+        price = price if price > 0 else fallback
+        prev = _sf(payload.get("prev_close"), 0.0)
+        prices.append(price)
+        previous.append(prev)
+        sources.append(str(payload.get("source") or "غير متاح"))
+        stale.append(bool(payload.get("is_stale", price <= 0)))
 
+    frame["current_price"] = prices
+    frame["prev_close"] = previous
+    frame["price_source"] = sources
+    frame["price_stale"] = stale
+    frame["total_cost"] = frame["quantity"] * frame["entry_price"]
+    frame["market_value"] = frame["quantity"] * frame["current_price"]
+    frame["gain"] = frame["market_value"] - frame["total_cost"]
+    frame["gain_pct"] = frame["gain"].div(frame["total_cost"].replace(0, pd.NA)).mul(100).fillna(0.0)
+    frame["day_change"] = (
+        (frame["current_price"] - frame["prev_close"])
+        .div(frame["prev_close"].replace(0, pd.NA))
+        .mul(100)
+    )
+    frame["status_ar"] = "مفتوحة"
+    return frame, live
+
+
+def _execute_or_error(query: str, params: tuple, success_message: str) -> bool:
+    if execute_query(query, params):
+        st.success(success_message)
+        st.cache_data.clear()
+        return True
+    st.error("لم تُحفظ العملية في قاعدة البيانات. لم تتغير البيانات.")
+    return False
+
+
+def _close_trade_transaction(row: pd.Series, sell_quantity: float, exit_price: float, exit_date: date) -> bool:
+    tenant = current_tenant()
+    if tenant is None:
+        return False
+    trade_id = int(row["id"])
+    original_qty = _sf(row.get("quantity"))
+    if not (0 < sell_quantity <= original_qty):
+        return False
+
+    conn, kind = get_connection()
     try:
-        if "symbol" in df.columns:
-            df["symbol"] = df["symbol"].astype(str).apply(_normalize_symbol)
-            symbols = _clean_symbols_list(df["symbol"].astype(str).tolist())
-            live_data = fetch_batch_data(symbols) if symbols else {}
+        cur = conn.cursor()
+        placeholder = "%s" if kind == "postgres" else "?"
+        if abs(sell_quantity - original_qty) < 1e-9:
+            sql = (
+                f"UPDATE trades SET status='Close', exit_price={placeholder}, exit_date={placeholder}, "
+                f"updated_at=CURRENT_TIMESTAMP WHERE id={placeholder} AND user_id={placeholder} AND portfolio_id={placeholder}"
+            )
+            cur.execute(sql, (exit_price, str(exit_date), trade_id, tenant.user_id, tenant.portfolio_id))
+        else:
+            remaining = original_qty - sell_quantity
+            update_sql = (
+                f"UPDATE trades SET quantity={placeholder}, updated_at=CURRENT_TIMESTAMP "
+                f"WHERE id={placeholder} AND user_id={placeholder} AND portfolio_id={placeholder}"
+            )
+            cur.execute(update_sql, (remaining, trade_id, tenant.user_id, tenant.portfolio_id))
+            insert_sql = (
+                "INSERT INTO trades (symbol, company_name, sector, asset_type, quantity, entry_price, exit_price, "
+                "current_price, strategy, status, date, exit_date, created_at, updated_at, user_id, portfolio_id) "
+                f"VALUES ({','.join([placeholder] * 16)})"
+            )
+            parsed_buy = pd.to_datetime(row.get("date"), errors="coerce")
+            cur.execute(
+                insert_sql,
+                (
+                    row.get("symbol"), row.get("company_name"), row.get("sector"), row.get("asset_type"),
+                    sell_quantity, row.get("entry_price"), exit_price, exit_price, row.get("strategy"), "Close",
+                    str(parsed_buy.date()) if pd.notna(parsed_buy) else str(date.today()), str(exit_date),
+                    str(pd.Timestamp.utcnow()), str(pd.Timestamp.utcnow()), tenant.user_id, tenant.portfolio_id,
+                ),
+            )
+        conn.commit()
+        return True
     except Exception:
-        live_data = {}
-
-    # تأكد من الأعمدة الرقمية الأساسية
-    for c in ["quantity", "entry_price", "total_cost", "current_price", "market_value", "gain", "gain_pct"]:
-        if c not in df.columns:
-            df[c] = 0.0
-        df[c] = pd.to_numeric(df[c], errors="coerce")
-
-    # لو total_cost مفقود/صفري نحسبه من الكمية * سعر الدخول
-    missing_cost = df["total_cost"].isna() | (df["total_cost"] <= 0)
-    df.loc[missing_cost, "total_cost"] = (df.loc[missing_cost, "quantity"].fillna(0.0) * df.loc[missing_cost, "entry_price"].fillna(0.0))
-
-    # التحديث من البيانات المباشرة — لا نستبدل السعر بصفر عند فشل المزود
-    def _live_price(sym, fallback):
         try:
-            v = _sf((live_data.get(sym) or {}).get("price"), None)
-            return float(v) if (v is not None and float(v) > 0) else float(_sf(fallback, 0.0))
+            conn.rollback()
         except Exception:
-            return float(_sf(fallback, 0.0))
+            pass
+        return False
+    finally:
+        put_connection(conn, kind)
 
-    def _live_prev(sym, fallback):
-        try:
-            d = live_data.get(sym) or {}
-            v = d.get("prev_close", d.get("previous_close"))
-            v = _sf(v, None)
-            return float(v) if (v is not None and float(v) > 0) else float(_sf(fallback, 0.0))
-        except Exception:
-            return float(_sf(fallback, 0.0))
 
-    if "symbol" in df.columns:
-        old_cp = df["current_price"].copy()
-        old_pc = pd.to_numeric(df["prev_close"], errors="coerce") if "prev_close" in df.columns else pd.Series([0.0] * len(df), index=df.index)
-        df["current_price"] = [
-            _live_price(sym, fallback if pd.notna(fallback) and float(fallback) > 0 else ep)
-            for sym, fallback, ep in zip(df["symbol"], old_cp, df["entry_price"])
-        ]
-        df["prev_close"] = [
-            _live_prev(sym, fallback)
-            for sym, fallback in zip(df["symbol"], old_pc)
-        ]
+def _render_risk_panel(fin: dict, op: pd.DataFrame, total_market: float) -> None:
+    with st.expander("🛡️ مخاطر المحفظة واختبار الضغط", expanded=True):
+        cash = _sf((fin or {}).get("cash"))
+        portfolio_value = _sf((fin or {}).get("portfolio_value"), cash + total_market)
+        cash_pct = cash / portfolio_value * 100 if portfolio_value > 0 else 0.0
+        score = None
+        if callable(calculate_portfolio_risk_score) and not op.empty:
+            try:
+                score = _sf(calculate_portfolio_risk_score(op, cash_pct), None)
+            except Exception:
+                score = None
 
-    # إعادة الحساب بعد تحديث السعر الحالي (هذا هو سبب الخطأ الظاهر للمستخدم)
-    q = df["quantity"].fillna(0.0)
-    cp = df["current_price"].fillna(0.0)
-    tc = df["total_cost"].fillna(0.0)
-    df["market_value"] = q * cp
-    df["gain"] = df["market_value"] - tc
-    df["gain_pct"] = 0.0
-    mask = tc != 0
-    df.loc[mask, "gain_pct"] = (df.loc[mask, "gain"] / tc[mask]) * 100.0
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            render_kpi("قيمة المحفظة", safe_fmt(portfolio_value), "blue")
+        with c2:
+            render_kpi("الكاش", safe_fmt(cash), "neutral")
+        with c3:
+            render_kpi("نسبة الكاش", f"{cash_pct:.1f}%", "success" if cash_pct >= 15 else "danger", "٪")
+        with c4:
+            render_kpi("درجة المخاطر", "غير متاح" if score is None else f"{score:.0f}/100", "neutral" if score is None else "danger" if score >= 70 else "success")
 
-    return df, live_data
+        gates = {"pass": True, "reasons": []}
+        if callable(portfolio_risk_gates) and not op.empty:
+            try:
+                gates = portfolio_risk_gates(op, cash_pct) or gates
+            except Exception:
+                pass
+        if gates.get("pass", True):
+            st.success("بوابات المخاطر: الوضع مقبول")
+        else:
+            st.warning("بوابات المخاطر: يلزم تخفيف المخاطر")
+            for reason in (gates.get("reasons") or [])[:8]:
+                st.write(f"- {reason}")
+
+        if callable(run_stress_test):
+            try:
+                stress = run_stress_test(portfolio_value, op) or {}
+                scenarios = pd.DataFrame(stress.get("scenarios") or [])
+                if not scenarios.empty:
+                    render_custom_table(scenarios)
+            except Exception:
+                pass
+
+        suggestions = []
+        if callable(generate_rebalancing_suggestions):
+            try:
+                suggestions = generate_rebalancing_suggestions(op, cash_pct) or []
+            except Exception:
+                suggestions = []
+        if suggestions:
+            st.markdown("**اقتراحات إعادة التوازن**")
+            for level, text in suggestions[:8]:
+                if "danger" in str(level).lower() or "priority" in str(level).lower():
+                    st.warning(str(text))
+                else:
+                    st.info(str(text))
+
+
+def _render_open_table(op: pd.DataFrame) -> None:
+    columns = [
+        ("company_name", "الشركة", "text"), ("sector", "القطاع", "text"),
+        ("symbol", "الرمز", "text"), ("date", "تاريخ الشراء", "date"),
+        ("quantity", "الكمية", "number"), ("entry_price", "سعر الشراء", "money"),
+        ("current_price", "السعر الحالي", "money"), ("market_value", "القيمة السوقية", "money"),
+        ("gain", "الربح والخسارة", "colorful"), ("gain_pct", "العائد", "percent"),
+        ("day_change", "التغير اليومي", "percent"), ("price_source", "مصدر السعر", "text"),
+    ]
+    render_custom_table(op, columns)
+    stale_count = int(op.get("price_stale", pd.Series(dtype=bool)).fillna(False).sum())
+    if stale_count:
+        st.warning(f"يوجد {stale_count} مركز بسعر احتياطي أو قديم؛ راجع مصدر السعر قبل اتخاذ قرار.")
+
+
+def _render_close_form(op: pd.DataFrame, key: str) -> None:
+    with st.expander("🔴 بيع كلي أو جزئي"):
+        options = {
+            f"{row.get('company_name') or row.get('symbol')} ({row.get('symbol')}) — {row.get('quantity')} سهم": int(row["id"])
+            for _, row in op.iterrows() if pd.notna(row.get("id"))
+        }
+        if not options:
+            st.info("لا توجد صفقات مفتوحة")
+            return
+        label = st.selectbox("اختر الصفقة", list(options), key=f"sell_select_{key}")
+        row = op[op["id"] == options[label]].iloc[0]
+        with st.form(f"sell_form_{key}_{int(row['id'])}"):
+            quantity = st.number_input("كمية البيع", min_value=0.001, max_value=float(row["quantity"]), value=float(row["quantity"]), step=0.001)
+            price = st.number_input("سعر البيع", min_value=0.01, value=max(0.01, _sf(row.get("current_price"), _sf(row.get("entry_price")))), step=0.01)
+            sold_at = st.date_input("تاريخ البيع", date.today())
+            submitted = st.form_submit_button("تأكيد البيع", type="primary")
+        if submitted:
+            valid, message = validate_trade_inputs(quantity, price)
+            if not valid:
+                st.error(message)
+            elif _close_trade_transaction(row, quantity, price, sold_at):
+                st.success("تم تسجيل البيع" if quantity == float(row["quantity"]) else "تم تسجيل البيع الجزئي وإنشاء سجل مغلق مستقل")
+                st.cache_data.clear()
+                st.rerun()
+            else:
+                st.error("تعذر تسجيل البيع؛ لم تُحفظ عملية جزئية.")
+
+
+def _render_edit_form(op: pd.DataFrame, cl: pd.DataFrame, key: str) -> None:
+    with st.expander("✏️ تعديل صفقة مفتوحة أو مغلقة"):
+        edit_df = pd.concat([op, cl], ignore_index=True).drop_duplicates(subset=["id"]) if not cl.empty else op.copy()
+        if edit_df.empty or "id" not in edit_df.columns:
+            st.info("لا توجد صفقات للتعديل")
+            return
+        options = {}
+        for _, row in edit_df.iterrows():
+            trade_id = row.get("id")
+            if pd.isna(trade_id):
+                continue
+            company = row.get("company_name") or row.get("symbol") or "بدون اسم"
+            options[f"[{_status_text(row.get('status'))}] {company} ({row.get('symbol')}) — ID:{int(trade_id)}"] = int(trade_id)
+        selected = st.selectbox("اختر الصفقة", list(options), key=f"edit_select_{key}")
+        row = edit_df[edit_df["id"] == options[selected]].iloc[0]
+        closed = _status_text(row.get("status")) == "مغلقة"
+        with st.form(f"edit_form_{key}_{int(row['id'])}"):
+            quantity = st.number_input("الكمية", min_value=0.001, value=max(0.001, _sf(row.get("quantity"), 1.0)), step=0.001)
+            entry = st.number_input("سعر الشراء", min_value=0.01, value=max(0.01, _sf(row.get("entry_price"), 0.01)), step=0.01)
+            parsed_buy = pd.to_datetime(row.get("date"), errors="coerce")
+            buy_date = st.date_input("تاريخ الشراء", parsed_buy.date() if pd.notna(parsed_buy) else date.today())
+            exit_price = None
+            exit_date = None
+            if closed:
+                exit_price = st.number_input("سعر البيع", min_value=0.01, value=max(0.01, _sf(row.get("exit_price"), 0.01)), step=0.01)
+                parsed_exit = pd.to_datetime(row.get("exit_date"), errors="coerce")
+                exit_date = st.date_input("تاريخ البيع", parsed_exit.date() if pd.notna(parsed_exit) else date.today())
+            submitted = st.form_submit_button("حفظ التعديل")
+        if submitted:
+            valid, message = validate_trade_inputs(quantity, entry)
+            if not valid:
+                st.error(message)
+                return
+            if closed:
+                ok = _execute_or_error(
+                    "UPDATE trades SET quantity=%s, entry_price=%s, date=%s, exit_price=%s, exit_date=%s, updated_at=CURRENT_TIMESTAMP WHERE id=%s",
+                    (quantity, entry, str(buy_date), exit_price, str(exit_date), int(row["id"])),
+                    "تم تعديل الصفقة المغلقة",
+                )
+            else:
+                ok = _execute_or_error(
+                    "UPDATE trades SET quantity=%s, entry_price=%s, date=%s, updated_at=CURRENT_TIMESTAMP WHERE id=%s",
+                    (quantity, entry, str(buy_date), int(row["id"])),
+                    "تم تعديل الصفقة المفتوحة",
+                )
+            if ok:
+                st.rerun()
 
 
 def view_portfolio(fin, key):
-    ts = "مضاربة" if key == "spec" else "استثمار"
-    st.header(f"💼 محفظة {ts}")
-
-    st.markdown(
-        """<style>
-        .finance-table td, .finance-table th {
-            white-space: nowrap !important;
-            font-size: 0.85rem !important;
-            vertical-align: middle !important;
-        }
-        </style>""",
-        unsafe_allow_html=True
-    )
-
-    df = fin.get("all_trades", pd.DataFrame()) if isinstance(fin, dict) else pd.DataFrame()
-    if df.empty:
-        sub = pd.DataFrame(columns=["status", "total_cost", "market_value", "gain", "symbol", "date", "id"])
+    title = "مضاربة" if key == "spec" else "استثمار"
+    st.header(f"💼 محفظة {title}")
+    trades = fin.get("all_trades", pd.DataFrame()) if isinstance(fin, dict) else pd.DataFrame()
+    if trades.empty:
+        subset = pd.DataFrame()
+    elif "strategy" in trades.columns:
+        subset = trades[trades["strategy"].astype(str).str.contains(title, na=False)].copy()
     else:
-        if "strategy" in df.columns:
-            sub = df[df["strategy"].astype(str).str.contains(ts, na=False)].copy()
+        subset = trades.copy()
+
+    status = _safe_status_series(subset) if not subset.empty else pd.Series(dtype=str)
+    op = subset[status == "open"].copy() if len(status) else pd.DataFrame()
+    cl = subset[status.isin(["close", "closed"])].copy() if len(status) else pd.DataFrame()
+    op, _ = _refresh_open_positions(op)
+
+    open_tab, archive_tab = st.tabs(["الصفقات القائمة", "الأرشيف"])
+    with open_tab:
+        total_cost = _sf(op.get("total_cost", pd.Series(dtype=float)).sum())
+        total_market = _sf(op.get("market_value", pd.Series(dtype=float)).sum())
+        total_gain = total_market - total_cost
+        total_pct = total_gain / total_cost * 100 if total_cost else 0.0
+        c1, c2, c3, c4 = st.columns(4)
+        with c1: render_kpi("إجمالي التكلفة", safe_fmt(total_cost), "neutral")
+        with c2: render_kpi("القيمة السوقية", safe_fmt(total_market), "blue")
+        with c3: render_kpi("الربح والخسارة", safe_fmt(total_gain), "success" if total_gain >= 0 else "danger")
+        with c4: render_kpi("العائد", f"{total_pct:.2f}%", "success" if total_pct >= 0 else "danger", "٪")
+        _render_risk_panel(fin or {}, op, total_market)
+        if op.empty:
+            st.info("لا توجد صفقات قائمة")
         else:
-            sub = df.copy()
-
-    status = _safe_status_series(sub) if not sub.empty else pd.Series([], dtype=str)
-    if len(status):
-        op = sub[status == "open"].copy()
-        cl = sub[status.isin(["close", "closed"])].copy()
-    else:
-        op = sub.copy()
-        cl = pd.DataFrame()
-
-    # تحديث الأسعار الحية للصفقات المفتوحة وإعادة حساب القيم قبل الـ KPI/الجدول
-    op, _live_data_cache = _refresh_open_positions_with_live_prices(op)
-
-    t1, t2 = st.tabs(["الصفقات القائمة", "الأرشيف"])
-
-    with t1:
-        k1, k2, k3, k4 = st.columns(4)
-        total_cost = float(op["total_cost"].sum()) if (not op.empty and "total_cost" in op.columns) else 0
-        total_market = float(op["market_value"].sum()) if (not op.empty and "market_value" in op.columns) else 0
-        total_gain = float(op["gain"].sum()) if (not op.empty and "gain" in op.columns) else 0
-        total_pct = (total_gain / total_cost * 100) if total_cost else 0.0
-
-        with k1: render_kpi("إجمالي التكلفة", safe_fmt(total_cost), "neutral")
-        with k2: render_kpi("القيمة السوقية", safe_fmt(total_market), "blue")
-        with k3: render_kpi("الربح/الخسارة", safe_fmt(total_gain), "success" if total_gain >= 0 else "danger")
-        with k4: render_kpi("النسبة %", f"{total_pct:.2f}%", "success" if total_pct >= 0 else "danger", "٪")
-
-        st.markdown("---")
-
-        # =========================================================
-        # 🛡️ لوحة مخاطر المحفظة (NEW)
-        # =========================================================
-        with st.expander("🛡️ لوحة مخاطر المحفظة (بوابات + Stress Test + اقتراحات)", expanded=True):
-            cash = _sf((fin or {}).get("cash", 0.0), 0.0) if isinstance(fin, dict) else 0.0
-            cash_pct = _safe_cash_pct(fin or {}, total_market)
-            portfolio_value = _sf((fin or {}).get("portfolio_value", cash + total_market), cash + total_market)
-
-
-            # -----------------------------------------------------
-            # 📈 XIRR (اختياري) — لا يظهر إلا بتفعيل Feature Flag
-            # -----------------------------------------------------
-            if get_flag("enable_xirr", False):
-                try:
-                    dep = (fin or {}).get("deposits", pd.DataFrame())
-                    wit = (fin or {}).get("withdrawals", pd.DataFrame())
-                    ret = (fin or {}).get("returns", pd.DataFrame())
-
-                    with st.expander("📈 عائد المحفظة الحقيقي XIRR (تجريبي)", expanded=False):
-                        st.caption("يعتمد على سجل الإيداعات/السحوبات/العوائد + القيمة الحالية للمحفظة.")
-                        xirr, method = compute_portfolio_xirr(dep, wit, ret, ending_value=portfolio_value)
-                        if xirr is None:
-                            st.warning(f"⚠️ لم يمكن حساب XIRR: {method}. تأكد من وجود تدفقات نقدية كافية وقيمة محفظة > 0.")
-                        else:
-                            st.metric("XIRR السنوي", f"{xirr*100:,.2f}%")
-                            st.caption(f"طريقة الحساب: {method}")
-                except Exception as e:
-                    st.error(f"تعذر حساب XIRR: {e}")
-
-            c_r1, c_r2, c_r3, c_r4 = st.columns(4)
-            with c_r1:
-                render_kpi("قيمة المحفظة", safe_fmt(portfolio_value), "blue")
-            with c_r2:
-                render_kpi("الكاش", safe_fmt(cash), "neutral")
-            with c_r3:
-                render_kpi("نسبة الكاش", f"{cash_pct:.1f}%", "success" if cash_pct >= 15 else ("warn" if cash_pct >= 8 else "danger"), "٪")
-
-            risk_score = None
-            if callable(calculate_portfolio_risk_score) and isinstance(op, pd.DataFrame) and not op.empty:
-                try:
-                    risk_score = float(calculate_portfolio_risk_score(op, cash_pct))
-                except Exception:
-                    risk_score = None
-
-            with c_r4:
-                if risk_score is None:
-                    render_kpi("Risk Score", "N/A", "neutral")
-                else:
-                    render_kpi("Risk Score", f"{risk_score:.0f}/100", _risk_score_badge(risk_score))
-
-            # Gates
-            if callable(portfolio_risk_gates) and isinstance(op, pd.DataFrame) and not op.empty:
-                try:
-                    gates = portfolio_risk_gates(op, cash_pct)
-                except Exception:
-                    gates = {"pass": True, "reasons": [], "risk_score": risk_score or 0.0}
-            else:
-                gates = {"pass": True, "reasons": [], "risk_score": risk_score or 0.0}
-
-            if gates.get("pass", True):
-                st.success("✅ بوابات المخاطر: PASS — الوضع مقبول")
-            else:
-                st.warning("⚠️ بوابات المخاطر: FAIL — يفضل تخفيف المخاطر/رفع الكاش")
-                for r in (gates.get("reasons") or [])[:8]:
-                    if str(r).strip():
-                        st.write(f"- {r}")
-
-            # Stress test
-            if callable(run_stress_test):
-                try:
-                    stress = run_stress_test(portfolio_value, op)
-                except Exception:
-                    stress = {"scenarios": [], "insight": "غير متاح"}
-
-                st.markdown("**📉 Stress Test (تأثير تقديري على المحفظة)**")
-                if stress.get("insight"):
-                    st.caption(stress["insight"])
-
-                sc = stress.get("scenarios") or []
-                if sc:
-                    df_sc = pd.DataFrame(sc)
-                    # عرض مرتب
-                    if "impact_pct" in df_sc.columns:
-                        df_sc["impact_pct"] = pd.to_numeric(df_sc["impact_pct"], errors="coerce").fillna(0.0).astype(float)
-                        df_sc["impact_pct"] = df_sc["impact_pct"].round(2)
-
-                    # ✅ توحيد شكل الجدول (نفس جدول الصفقات) + إصلاح TypeError
-                    # render_custom_table في components.py لا يدعم key/use_container_width
-                    cols = []
-                    if "scenario" in df_sc.columns:
-                        cols.append(("scenario", "السيناريو", "text"))
-                    if "name" in df_sc.columns and ("scenario" not in df_sc.columns):
-                        cols.append(("name", "السيناريو", "text"))
-                    if "impact_pct" in df_sc.columns:
-                        cols.append(("impact_pct", "الأثر %", "percent"))
-                    if "impact_value" in df_sc.columns:
-                        cols.append(("impact_value", "الأثر (قيمة)", "money"))
-                    if "impact" in df_sc.columns and ("impact_value" not in df_sc.columns):
-                        cols.append(("impact", "الأثر", "money"))
-                    if "note" in df_sc.columns:
-                        cols.append(("note", "ملاحظة", "text"))
-
-                    # fallback: لو ما عرفنا الأعمدة، اعرض أول 6 أعمدة
-                    if not cols:
-                        for c in list(df_sc.columns)[:6]:
-                            cols.append((c, str(c), "text"))
-
-                    render_custom_table(df_sc, cols)
-                else:
-                    st.info("لا توجد سيناريوهات متاحة حالياً.")
-
-            # Rebalancing suggestions
-            if callable(generate_rebalancing_suggestions):
-                try:
-                    sugg = generate_rebalancing_suggestions(op, cash_pct)
-                except Exception:
-                    sugg = []
-            else:
-                sugg = []
-
-            st.markdown("**🧭 اقتراحات إعادة توازن**")
-            if sugg:
-                for level, text in sugg[:10]:
-                    level = str(level or "").lower()
-                    txt = str(text or "").strip()
-                    if not txt:
-                        continue
-                    if "danger" in level:
-                        st.error(txt)
-                    elif "priority" in level:
-                        st.warning(txt)
-                    elif "warn" in level:
-                        st.warning(txt)
-                    else:
-                        st.info(txt)
-            else:
-                st.info("لا توجد اقتراحات حالياً — الوضع مستقر.")
-
-        # =========================================================
-        # ✅ جدول الصفقات القائمة (كما هو)
-        # =========================================================
-        if not op.empty:
-            for col in ["company_name", "sector", "gain_pct", "weight"]:
-                if col not in op.columns:
-                    op[col] = ""
-
-            sort_opts = [
-                "الربح (الأعلى)", "القيمة (الأعلى)", "التاريخ (الأحدث)", "الرمز", "الشركة", "القطاع",
-                "الكمية", "التكلفة", "السعر الحالي", "نسبة الربح", "التغير اليومي"
-            ]
-            c_sort, _ = st.columns([1, 3])
-            sort_by = c_sort.selectbox(f"فرز {ts} حسب:", sort_opts, key=f"s_op_{key}")
-
-            # الأسعار تم تحديثها مسبقًا قبل الـ KPI؛ هنا فقط نعيد حساب التغير اليومي ونستخدم كاش الأسعار إن وجد
-            live_data = _live_data_cache if isinstance(_live_data_cache, dict) else {}
-
-            if "symbol" in op.columns:
-                op["symbol"] = op["symbol"].astype(str).apply(_normalize_symbol)
-
-            if "prev_close" not in op.columns:
-                op["prev_close"] = 0.0
-            op["prev_close"] = pd.to_numeric(op["prev_close"], errors="coerce").fillna(0.0)
-            op["current_price"] = pd.to_numeric(op.get("current_price", 0.0), errors="coerce").fillna(0.0)
-
-            op["day_change"] = op.apply(
-                lambda r: ((r.get("current_price", 0) - r.get("prev_close", 0)) / r.get("prev_close", 1) * 100)
-                if (r.get("prev_close", 0) and r.get("prev_close", 0) > 0) else 0,
-                axis=1
-            )
-            op["status_ar"] = "مفتوحة"
-
-            if "الربح" in sort_by and "gain" in op.columns:
-                op = op.sort_values("gain", ascending=False)
-            elif "القيمة" in sort_by and "market_value" in op.columns:
-                op = op.sort_values("market_value", ascending=False)
-            elif "الرمز" in sort_by and "symbol" in op.columns:
-                op = op.sort_values("symbol")
-            elif "التغير اليومي" in sort_by and "day_change" in op.columns:
-                op = op.sort_values("day_change", ascending=False)
-            elif "نسبة الربح" in sort_by and "gain_pct" in op.columns:
-                op = op.sort_values("gain_pct", ascending=False)
-            elif "الشركة" in sort_by and "company_name" in op.columns:
-                op = op.sort_values("company_name")
-            elif "القطاع" in sort_by and "sector" in op.columns:
-                op = op.sort_values("sector")
-            elif "التكلفة" in sort_by and "total_cost" in op.columns:
-                op = op.sort_values("total_cost", ascending=False)
-            else:
-                if "date" in op.columns:
-                    op = op.sort_values("date", ascending=False)
-
-            render_custom_table(
-                op,
-                [
-                    ("company_name", "اسم الشركة", "text"),
-                    ("sector", "القطاع", "text"),
-                    ("status_ar", "الحالة", "badge"),
-                    ("symbol", "رمز الشركة", "text"),
-                    ("date", "تاريخ الشراء", "date"),
-                    ("quantity", "الكمية", "money"),
-                    ("entry_price", "سعر الشراء", "money"),
-                    ("total_cost", "التكلفة", "money"),
-                    ("current_price", "السعر الحالي", "money"),
-                    ("market_value", "القيمة السوقية", "money"),
-                    ("gain", "الربح والخسارة", "colorful"),
-                    ("gain_pct", "نسبة الربح والخسارة", "percent"),
-                    ("weight", "وزن السهم", "percent"),
-                    ("day_change", "نسبة التغير اليومي", "percent"),
-                ]
-            )
-
-            c_a1, c_a2 = st.columns(2)
-
-            with c_a1:
-                with st.expander("🔴 تسجيل بيع / إغلاق"):
-                    if "id" in op.columns and len(op["id"].tolist()) > 0:
-                        s_id = st.selectbox(
-                            "اختر الصفقة",
-                            op["id"].tolist(),
-                            format_func=lambda x: f"{op[op['id']==x]['company_name'].iloc[0]} ({op[op['id']==x]['symbol'].iloc[0]})",
-                            key=f"sell_{key}"
-                        )
-                        if s_id:
-                            with st.form(f"frm_sell_{key}_{s_id}"):
-                                pr = st.number_input("سعر البيع", min_value=0.0, step=0.01, key=f"sell_price_{key}_{s_id}")
-                                dt = st.date_input("تاريخ البيع", date.today(), key=f"sell_date_{key}_{s_id}")
-                                if st.form_submit_button("تأكيد"):
-                                    valid, msg = validate_trade_inputs(1, pr)
-                                    if valid:
-                                        execute_query(
-                                            "UPDATE trades SET status='Close', exit_price=%s, exit_date=%s WHERE id=%s",
-                                            (pr, str(dt), s_id)
-                                        )
-                                        st.success("تم البيع")
-                                        st.cache_data.clear()
-                                        st.cache_resource.clear()
-                                        st.rerun()
-                                    else:
-                                        st.error(msg)
-                    else:
-                        st.info("لا توجد صفقات لاختيارها")
-
-            with c_a2:
-               with st.expander("✏️ تعديل صفقة (مفتوحة أو مغلقة)"):
-
-    edit_df = pd.concat(
-        [op, cl],
-        ignore_index=True
-    ).drop_duplicates(subset=["id"])
-
-    if "id" in edit_df.columns and len(edit_df["id"].tolist()) > 0:
-                        trade_options = {}
-                        for _, row_opt in edit_df.iterrows():
-                            trade_id = row_opt.get("id")
-                            company = (
-                                row_opt.get("company_name")
-                                or row_opt.get("name")
-                                or row_opt.get("stock_name")
-                                or row_opt.get("company")
-                                or "بدون اسم"
-                            )
-                            symbol = str(row_opt.get("symbol", "")).strip()
-                            status_txt = str(row_opt.get("status", "")).lower()
-
-if status_txt in ["close", "closed"]:
-    state = "مغلقة"
-else:
-    state = "مفتوحة"
-
-trade_options[
-    f"[{state}] {company} ({symbol}) - ID:{trade_id}"
-] = trade_id
-
-                        if not trade_options:
-                            st.warning("لا توجد صفقات متاحة للتعديل")
-                            return
-
-                        selected_trade = st.selectbox(
-                            "اختر الصفقة المراد تعديلها",
-                            list(trade_options.keys()),
-                            key=f"edit_{key}"
-                        )
-                        e_id = trade_options[selected_trade]
-                        if e_id:
-                            rw = edit_df[edit_df["id"] == e_id].iloc[0]
-                            st.markdown(
-    f"""
-**الشركة:** {rw.get('company_name', '-')}
-
-**الرمز:** {rw.get('symbol', '-')}
-
-**الكمية:** {rw.get('quantity', 0)}
-
-**سعر الشراء:** {rw.get('entry_price', 0)}
-"""
-)
-                            with st.form(f"frm_edit_{key}_{e_id}"):
-                                nq = st.number_input("الكمية", value=float(rw.get("quantity", 1)), min_value=0.001, step=0.001, key=f"edit_q_{key}_{e_id}")
-                                np_ = st.number_input("سعر الشراء", value=float(rw.get("entry_price", 0)), min_value=0.0, key=f"edit_p_{key}_{e_id}")
-                                try:
-                                    nd_val = pd.to_datetime(rw.get("date", date.today())).date()
-                                except Exception:
-                                    nd_val = date.today()
-                                nd = st.date_input("تاريخ الشراء", nd_val, key=f"edit_d_{key}_{e_id}")
-                                if st.form_submit_button("حفظ"):
-                                    valid, msg = validate_trade_inputs(nq, np_)
-                                    if valid:
-                                        execute_query(
-                                            "UPDATE trades SET quantity=%s, entry_price=%s, date=%s WHERE id=%s",
-                                            (nq, np_, str(nd), e_id)
-                                        )
-                                        st.success("تم التعديل")
-                                        st.cache_data.clear()
-                                        st.cache_resource.clear()
-                                        st.rerun()
-                                    else:
-                                        st.error(msg)
-                    else:
-                        st.info("لا توجد صفقات لاختيارها")
-        else:
-            st.info("لا توجد صفقات قائمة حالياً")
-
-        st.markdown("---")
+            _render_open_table(op)
+            left, right = st.columns(2)
+            with left: _render_close_form(op, key)
+            with right: _render_edit_form(op, cl, key)
         if st.button("➕ إضافة سهم", key=f"add_{key}", type="primary"):
             st.session_state.page = "add"
             st.rerun()
 
-    with t2:
-        if not cl.empty:
-            sort_cl = st.selectbox(
-                "فرز الأرشيف:",
-                ["التاريخ (الأحدث)", "الربح (الأعلى)", "قيمة البيع (الأعلى)"],
-                key=f"s_cl_{key}"
-            )
-            if "الربح" in sort_cl and "gain" in cl.columns:
-                cl = cl.sort_values("gain", ascending=False)
-            elif "قيمة البيع" in sort_cl and "market_value" in cl.columns:
-                cl = cl.sort_values("market_value", ascending=False)
-            else:
-                if "exit_date" in cl.columns:
-                    cl = cl.sort_values("exit_date", ascending=False)
-
-            render_custom_table(
-                cl,
-                [
-                    ("company_name", "الشركة", "text"),
-                    ("symbol", "الرمز", "text"),
-                    ("gain", "الربح", "colorful"),
-                    ("gain_pct", "%", "percent"),
-                    ("exit_date", "تاريخ البيع", "date"),
-                ]
-            )
-        else:
+    with archive_tab:
+        if cl.empty:
             st.info("الأرشيف فارغ")
+        else:
+            closed = cl.copy()
+            for column in ("quantity", "entry_price", "exit_price"):
+                closed[column] = pd.to_numeric(closed.get(column, 0.0), errors="coerce").fillna(0.0)
+            closed["total_cost"] = closed["quantity"] * closed["entry_price"]
+            closed["sale_value"] = closed["quantity"] * closed["exit_price"]
+            closed["gain"] = closed["sale_value"] - closed["total_cost"]
+            closed["gain_pct"] = closed["gain"].div(closed["total_cost"].replace(0, pd.NA)).mul(100).fillna(0.0)
+            render_custom_table(closed, [
+                ("company_name", "الشركة", "text"), ("symbol", "الرمز", "text"),
+                ("quantity", "الكمية", "number"), ("entry_price", "سعر الشراء", "money"),
+                ("exit_price", "سعر البيع", "money"), ("gain", "الربح", "colorful"),
+                ("gain_pct", "العائد", "percent"), ("exit_date", "تاريخ البيع", "date"),
+            ])
 
 
 def render_pulse_dashboard():
-    st.header("نبض السوق")
-    try:
-        trades = fetch_table("trades")
-    except Exception:
-        trades = pd.DataFrame()
-
-    syms = list(trades["symbol"].astype(str).unique()) if (not trades.empty and "symbol" in trades.columns) else []
-    syms = _clean_symbols_list(syms)
-    if syms:
-        d = fetch_batch_data(syms)
-        cols = st.columns(4)
-        for i, (s, v) in enumerate(d.items()):
-            prev = v.get("prev_close") or 0
-            chg = ((v.get("price", 0) - prev) / prev) * 100 if prev else 0
-            with cols[i % 4]:
-                render_ticker_card(s, "سهم", v.get("price", 0), chg)
-    else:
-        st.info("لا توجد رموز لعرض نبض السوق.")
+    st.header("نبض المحفظة")
+    trades = fetch_table("trades")
+    symbols = _clean_symbols_list(trades["symbol"].dropna().astype(str).unique().tolist()) if isinstance(trades, pd.DataFrame) and not trades.empty and "symbol" in trades.columns else []
+    data = fetch_batch_data(symbols) if symbols else {}
+    if not data:
+        st.info("لا توجد رموز للعرض")
+        return
+    columns = st.columns(4)
+    shown = set()
+    index = 0
+    for symbol in symbols:
+        payload = data.get(symbol) or data.get(_normalize_symbol(symbol)) or {}
+        norm = str(payload.get("symbol") or symbol)
+        if norm in shown:
+            continue
+        shown.add(norm)
+        change = payload.get("change_pct")
+        with columns[index % 4]:
+            render_ticker_card(norm, str(payload.get("source") or "سهم"), payload.get("price"), 0.0 if change is None else change)
+            if change is None:
+                st.caption("التغير اليومي غير متاح")
+        index += 1
 
 
 def view_add_trade():
     st.header("➕ إضافة صفقة")
-    with st.form("add_t"):
+    with st.form("add_trade_form"):
         c1, c2 = st.columns(2)
-        s_raw = c1.text_input("رمز السهم (مثال: 1120)", key="add_sym")
-        typ = c2.selectbox("نوع الصفقة", ["استثمار", "مضاربة", "صكوك"], key="add_typ")
+        raw_symbol = c1.text_input("رمز السهم، مثال 1120")
+        strategy = c2.selectbox("نوع الصفقة", ["استثمار", "مضاربة", "صكوك"])
         c3, c4, c5 = st.columns(3)
-        q = c3.number_input("الكمية", min_value=0.001, step=0.001, key="add_q")
-        p = c4.number_input("السعر", min_value=0.0, key="add_p")
-        d = c5.date_input("التاريخ", date.today(), key="add_d")
-
-        if st.form_submit_button("حفظ"):
-            valid, msg = validate_trade_inputs(q, p)
-            if valid:
-                s = _normalize_symbol(s_raw)
-
-                try:
-                    info = get_company_details(s)
-                    if isinstance(info, (list, tuple)) and len(info) >= 2:
-                        nm, sec = info[0], info[1]
-                    elif isinstance(info, dict):
-                        nm = info.get("name") or info.get("Name") or s
-                        sec = info.get("sector") or info.get("Sector") or ""
-                    else:
-                        nm, sec = s, ""
-                except Exception:
-                    nm, sec = s, ""
-
-                at = "Sukuk" if typ == "صكوك" else "Stock"
-                execute_query(
-                    "INSERT INTO trades (symbol, company_name, sector, asset_type, quantity, entry_price, strategy, status, date) "
-                    "VALUES (%s,%s,%s,%s,%s,%s,%s,'Open',%s)",
-                    (s, nm, sec, at, q, p, typ, str(d))
-                )
-                st.success("تم")
-                st.cache_data.clear()
-                st.cache_resource.clear()
-                st.rerun()
-            else:
-                st.error(msg)
-
-# PATCH NOTE: handled empty trade list and improved labels
+        quantity = c3.number_input("الكمية", min_value=0.001, step=0.001)
+        price = c4.number_input("سعر الشراء", min_value=0.01, step=0.01)
+        bought_at = c5.date_input("تاريخ الشراء", date.today())
+        submitted = st.form_submit_button("حفظ", type="primary")
+    if not submitted:
+        return
+    valid, message = validate_trade_inputs(quantity, price)
+    if not valid:
+        st.error(message)
+        return
+    symbol = _normalize_symbol(raw_symbol)
+    if not symbol:
+        st.error("أدخل رمزًا صحيحًا")
+        return
+    try:
+        info = get_company_details(symbol)
+        if isinstance(info, dict):
+            name = info.get("name") or info.get("Name") or symbol
+            sector = info.get("sector") or info.get("Sector") or ""
+        elif isinstance(info, (tuple, list)) and len(info) >= 2:
+            name, sector = info[0] or symbol, info[1] or ""
+        else:
+            name, sector = symbol, ""
+    except Exception:
+        name, sector = symbol, ""
+    asset_type = "Sukuk" if strategy == "صكوك" else "Stock"
+    if _execute_or_error(
+        "INSERT INTO trades (symbol, company_name, sector, asset_type, quantity, entry_price, current_price, strategy, status, date, created_at, updated_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'Open',%s,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)",
+        (symbol, name, sector, asset_type, quantity, price, price, strategy, str(bought_at)),
+        "تمت إضافة الصفقة",
+    ):
+        st.rerun()
