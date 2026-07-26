@@ -1,8 +1,10 @@
+"""Lazy comprehensive-analysis workspace."""
 from __future__ import annotations
 
+import importlib
 import logging
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any
 
 import pandas as pd
 import streamlit as st
@@ -11,20 +13,17 @@ from components import render_custom_table, render_kpi
 from data_source import get_company_details
 from database import execute_query, fetch_table
 from market_data import fetch_batch_data, get_chart_history, get_ticker_symbol
-from views.shared import (
-    _clean_symbols_list,
-    _normalize_symbol,
-    _safe_status_series,
-    run_stress_test,
-)
-
-from .advisor import render_advisor_tab
-from .classical import render_classical_tab
-from .financial import render_financial_dashboard_ui
-from .technical import render_technical_tab
-from .thesis import render_thesis_tab
+from views.utils import clean_symbols, normalize_symbol, safe_status_series
 
 logger = logging.getLogger("osoli.analysis")
+
+SECTION_ROUTES = {
+    "🤖 المستشار": ("views.analysis.advisor", "render_advisor_tab", "المستشار"),
+    "💰 التحليل المالي": ("views.analysis.financial", "render_financial_dashboard_ui", "التحليل المالي"),
+    "📈 التحليل الفني": ("views.analysis.technical", "render_technical_tab", "التحليل الفني"),
+    "🏛️ التحليل الكلاسيكي": ("views.analysis.classical", "render_classical_tab", "التحليل الكلاسيكي"),
+    "📝 الأطروحة والخطة": ("views.analysis.thesis", "render_thesis_tab", "الأطروحة"),
+}
 
 
 def _number(value: Any, default: float | None = 0.0):
@@ -34,22 +33,19 @@ def _number(value: Any, default: float | None = 0.0):
         return default
 
 
-@st.cache_data(ttl=120, show_spinner=False)
+@st.cache_data(ttl=300, max_entries=256, show_spinner=False)
 def _company_details(symbol: str):
     return get_company_details(symbol)
 
 
-@st.cache_data(ttl=90, show_spinner=False)
+@st.cache_data(ttl=90, max_entries=256, show_spinner=False)
 def _price_snapshot(symbol: str) -> dict:
-    normalized = get_ticker_symbol(symbol) or str(symbol or "").strip().upper()
+    normalized = get_ticker_symbol(symbol) or normalize_symbol(symbol)
     try:
         batch = fetch_batch_data([normalized]) or {}
         payload = batch.get(normalized) or batch.get(normalized.upper()) or {}
         price = _number(payload.get("price"), None)
-        previous = _number(
-            payload.get("prev_close", payload.get("previous_close")),
-            None,
-        )
+        previous = _number(payload.get("prev_close", payload.get("previous_close")), None)
         change = None
         if price is not None and previous is not None and previous > 0:
             change = (price / previous - 1.0) * 100.0
@@ -72,11 +68,7 @@ def _price_snapshot(symbol: str) -> dict:
             if not close.empty:
                 price = float(close.iloc[-1])
                 previous = float(close.iloc[-2]) if len(close) > 1 else None
-                change = (
-                    (price / previous - 1.0) * 100.0
-                    if previous and previous > 0
-                    else None
-                )
+                change = (price / previous - 1.0) * 100.0 if previous and previous > 0 else None
                 attrs = getattr(history, "attrs", {}) or {}
                 lineage = attrs.get("data_lineage") or {}
                 return {
@@ -94,10 +86,7 @@ def _company_meta(symbol: str) -> tuple[str, str]:
     try:
         info = _company_details(symbol)
         if isinstance(info, dict):
-            return (
-                str(info.get("name") or info.get("Name") or symbol),
-                str(info.get("sector") or info.get("Sector") or ""),
-            )
+            return str(info.get("name") or info.get("Name") or symbol), str(info.get("sector") or info.get("Sector") or "")
         if isinstance(info, (list, tuple)):
             name = str(info[0] or symbol) if len(info) else symbol
             sector = str(info[1] or "") if len(info) > 1 else ""
@@ -109,8 +98,9 @@ def _company_meta(symbol: str) -> tuple[str, str]:
     return symbol, ""
 
 
-def _safe_render(title: str, renderer: Callable, *args) -> None:
+def _safe_render(title: str, module_name: str, attr_name: str, *args) -> None:
     try:
+        renderer = getattr(importlib.import_module(module_name), attr_name)
         renderer(*args)
     except Exception:
         logger.exception("analysis section failed: %s", title)
@@ -127,66 +117,49 @@ def _watchlist() -> pd.DataFrame:
 
 
 def _symbol_universe(trades: pd.DataFrame, watchlist: pd.DataFrame) -> list[str]:
-    values = []
+    values: list[str] = []
     if isinstance(trades, pd.DataFrame) and not trades.empty and "symbol" in trades.columns:
         values.extend(trades["symbol"].dropna().astype(str).tolist())
     if isinstance(watchlist, pd.DataFrame) and not watchlist.empty and "symbol" in watchlist.columns:
         values.extend(watchlist["symbol"].dropna().astype(str).tolist())
-    return _clean_symbols_list(values)
+    return clean_symbols(values)
 
 
 def _render_watchlist_action(symbol: str, watchlist: pd.DataFrame) -> None:
     existing = set()
     if not watchlist.empty and "symbol" in watchlist.columns:
-        existing = {
-            _normalize_symbol(value)
-            for value in watchlist["symbol"].dropna().astype(str)
-        }
+        existing = {normalize_symbol(value) for value in watchlist["symbol"].dropna().astype(str)}
     if symbol in existing:
         if st.button("إزالة من قائمة المراقبة", use_container_width=True):
             if execute_query("DELETE FROM watchlist WHERE symbol=%s", (symbol,)):
                 st.success("تمت الإزالة من قائمة المراقبة")
                 st.cache_data.clear()
                 st.rerun()
-            else:
-                st.error("تعذر إزالة الرمز")
-    else:
-        if st.button("إضافة إلى قائمة المراقبة", use_container_width=True):
-            if execute_query(
-                "INSERT INTO watchlist (symbol, created_at) "
-                "VALUES (%s,CURRENT_TIMESTAMP) "
-                "ON CONFLICT (symbol) DO NOTHING",
-                (symbol,),
-            ):
-                st.success("تمت الإضافة إلى قائمة المراقبة")
-                st.cache_data.clear()
-                st.rerun()
-            else:
-                st.info("الرمز موجود مسبقًا أو تعذر حفظه")
+            st.error("تعذر إزالة الرمز")
+    elif st.button("إضافة إلى قائمة المراقبة", use_container_width=True):
+        if execute_query(
+            "INSERT INTO watchlist (symbol, created_at) VALUES (%s,CURRENT_TIMESTAMP) "
+            "ON CONFLICT (symbol) DO NOTHING",
+            (symbol,),
+        ):
+            st.success("تمت الإضافة إلى قائمة المراقبة")
+            st.cache_data.clear()
+            st.rerun()
+        st.info("الرمز موجود مسبقًا أو تعذر حفظه")
 
 
-def _render_header(
-    symbol: str,
-    name: str,
-    sector: str,
-    trades: pd.DataFrame,
-    watchlist: pd.DataFrame,
-) -> None:
+def _render_header(symbol: str, name: str, sector: str, trades: pd.DataFrame, watchlist: pd.DataFrame) -> None:
     snapshot = _price_snapshot(symbol)
-    price = snapshot.get("price")
-    change = snapshot.get("change")
-
+    price, change = snapshot.get("price"), snapshot.get("change")
     st.subheader(name or symbol)
     st.caption(
-        f"{symbol} — {sector or 'قطاع غير متاح'} — "
-        f"المصدر: {snapshot.get('source')} — "
+        f"{symbol} — {sector or 'قطاع غير متاح'} — المصدر: {snapshot.get('source')} — "
         f"وقت الجلب: {snapshot.get('fetched_at')}"
     )
-
     positions = pd.DataFrame()
     if isinstance(trades, pd.DataFrame) and not trades.empty:
-        normalized = trades.get("symbol", pd.Series("", index=trades.index)).astype(str).map(_normalize_symbol)
-        status = _safe_status_series(trades)
+        normalized = trades.get("symbol", pd.Series("", index=trades.index)).astype(str).map(normalize_symbol)
+        status = safe_status_series(trades)
         positions = trades[(normalized == symbol) & (status == "open")]
 
     c1, c2, c3, c4 = st.columns(4)
@@ -202,38 +175,33 @@ def _render_header(
     with c3:
         render_kpi("المراكز المفتوحة", int(len(positions)), "blue", "📌")
     with c4:
-        render_kpi(
-            "آخر تحديث",
-            datetime.now(timezone.utc).strftime("%H:%M UTC"),
-            "neutral",
-            "🕒",
-        )
+        render_kpi("آخر تحديث", datetime.now(timezone.utc).strftime("%H:%M UTC"), "neutral", "🕒")
     _render_watchlist_action(symbol, watchlist)
 
 
-def _render_stress(finance: dict, trades: pd.DataFrame) -> None:
-    if not isinstance(trades, pd.DataFrame) or trades.empty:
-        return
-    status = _safe_status_series(trades)
-    open_positions = trades[status == "open"].copy()
+def _render_stress_on_demand(finance: dict, trades: pd.DataFrame) -> None:
+    status = safe_status_series(trades)
+    open_positions = trades[status == "open"].copy() if isinstance(trades, pd.DataFrame) and not trades.empty else pd.DataFrame()
     if open_positions.empty:
         return
-    try:
-        result = run_stress_test(
-            _number(finance.get("portfolio_value"), 0.0) or 0.0,
-            open_positions,
-        ) or {}
-    except Exception:
-        logger.exception("stress test failed")
-        return
-    scenarios = pd.DataFrame(result.get("scenarios") or [])
-    if scenarios.empty:
-        return
     with st.expander("📊 اختبار ضغط المحفظة", expanded=False):
-        render_custom_table(scenarios)
-        if result.get("insight"):
-            st.info(str(result["insight"]))
-        st.caption("اختبار تقديري للحساسية وليس توقعًا أو ضمانًا.")
+        st.caption("لا يُنفذ الاختبار الحسابي إلا عند الطلب لتسريع فتح الصفحة.")
+        if st.button("تشغيل اختبار الضغط", key="run_analysis_stress"):
+            try:
+                from ai_engine import run_stress_test
+
+                result = run_stress_test(_number(finance.get("portfolio_value"), 0.0) or 0.0, open_positions) or {}
+                st.session_state["analysis_stress_result"] = result
+            except Exception:
+                logger.exception("stress test failed")
+                st.error("تعذر تشغيل اختبار الضغط الآن.")
+        result = st.session_state.get("analysis_stress_result") or {}
+        scenarios = pd.DataFrame(result.get("scenarios") or [])
+        if not scenarios.empty:
+            render_custom_table(scenarios)
+            if result.get("insight"):
+                st.info(str(result["insight"]))
+            st.caption("اختبار تقديري للحساسية وليس توقعًا أو ضمانًا.")
 
 
 def _render_diagnostics(symbol: str) -> None:
@@ -242,14 +210,10 @@ def _render_diagnostics(symbol: str) -> None:
     if snapshot.get("price") is None:
         st.warning("تعذر جلب سعر صالح من المصادر الحالية.")
     else:
-        st.success(
-            f"السعر متاح: {float(snapshot['price']):,.2f} — "
-            f"المصدر: {snapshot.get('source')}"
-        )
+        st.success(f"السعر متاح: {float(snapshot['price']):,.2f} — المصدر: {snapshot.get('source')}")
     try:
         history = get_chart_history(symbol, years=2, interval="1d")
-        rows = len(history) if isinstance(history, pd.DataFrame) else 0
-        st.metric("عدد الشموع اليومية", rows)
+        st.metric("عدد الشموع اليومية", len(history) if isinstance(history, pd.DataFrame) else 0)
     except Exception:
         st.warning("تعذر اختبار تاريخ الأسعار.")
 
@@ -260,16 +224,13 @@ def view_analysis(fin):
     watchlist = _watchlist()
 
     st.header("🔬 التحليل الشامل")
-    st.caption("تحليل السهم من زوايا فنية ومالية وكلاسيكية مع خطة وأطروحة محفوظة.")
-    _render_stress(finance, trades)
+    st.caption("تحميل كسول لكل قسم: لا يتم استيراد أو حساب الأقسام الأخرى قبل اختيارها.")
+    _render_stress_on_demand(finance, trades)
 
     universe = _symbol_universe(trades, watchlist)
     with st.form("analysis_symbol_form"):
         left, middle, right = st.columns([1.4, 2.2, 1])
-        raw_symbol = left.text_input(
-            "رمز جديد",
-            placeholder="1120 أو 1120.SR",
-        )
+        raw_symbol = left.text_input("رمز جديد", placeholder="1120 أو 1120.SR")
         selected = middle.selectbox(
             "من المحفظة وقائمة المراقبة",
             options=universe or ["—"],
@@ -279,14 +240,14 @@ def view_analysis(fin):
 
     if submitted:
         candidate = raw_symbol.strip() or (selected if selected != "—" else "")
-        normalized = _normalize_symbol(candidate)
+        normalized = normalize_symbol(candidate)
         if not normalized or normalized == ".SR":
             st.error("أدخل رمزًا صحيحًا مثل 1120 أو 1120.SR")
         else:
             st.session_state["analysis_active_symbol"] = normalized
             st.rerun()
 
-    symbol = _normalize_symbol(st.session_state.get("analysis_active_symbol"))
+    symbol = normalize_symbol(st.session_state.get("analysis_active_symbol"))
     if not symbol or symbol == ".SR":
         st.info("اختر رمزًا لبدء التحليل.")
         return
@@ -294,14 +255,7 @@ def view_analysis(fin):
     name, sector = _company_meta(symbol)
     _render_header(symbol, name, sector, trades, watchlist)
 
-    sections = [
-        "🤖 المستشار",
-        "💰 التحليل المالي",
-        "📈 التحليل الفني",
-        "🏛️ التحليل الكلاسيكي",
-        "📝 الأطروحة والخطة",
-        "🩺 تشخيص البيانات",
-    ]
+    sections = list(SECTION_ROUTES) + ["🩺 تشخيص البيانات"]
     section = st.radio(
         "قسم التحليل",
         sections,
@@ -309,16 +263,8 @@ def view_analysis(fin):
         label_visibility="collapsed",
         key=f"analysis_section_{symbol}",
     )
-
-    if section == "🤖 المستشار":
-        _safe_render("المستشار", render_advisor_tab, symbol)
-    elif section == "💰 التحليل المالي":
-        _safe_render("التحليل المالي", render_financial_dashboard_ui, symbol)
-    elif section == "📈 التحليل الفني":
-        _safe_render("التحليل الفني", render_technical_tab, symbol)
-    elif section == "🏛️ التحليل الكلاسيكي":
-        _safe_render("التحليل الكلاسيكي", render_classical_tab, symbol)
-    elif section == "📝 الأطروحة والخطة":
-        _safe_render("الأطروحة", render_thesis_tab, symbol)
-    else:
+    if section == "🩺 تشخيص البيانات":
         _render_diagnostics(symbol)
+        return
+    module_name, attr_name, title = SECTION_ROUTES[section]
+    _safe_render(title, module_name, attr_name, symbol)

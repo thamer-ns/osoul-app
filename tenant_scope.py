@@ -703,13 +703,19 @@ def _install_generic_wrappers_once() -> None:
 
 
 def install_tenant_scope(username: str) -> TenantContext:
-    """Resolve this session's tenant and install fail-closed DB wrappers."""
+    """Resolve the tenant once and reuse the verified session context on reruns."""
     if _ORIGINAL_FETCH_DF is None:
         raise RuntimeError("database.fetch_df غير متوفر")
+    normalized = str(username or "").strip()
+    existing = _session_context(required=False)
+    if existing is not None and _SCHEMA_READY and existing.username == normalized:
+        _install_generic_wrappers_once()
+        return existing
+
     _ensure_schema_once()
-    user_id = _resolve_user_id(username)
+    user_id = _resolve_user_id(normalized)
     portfolio_id = _ensure_default_portfolio(user_id)
-    ctx = TenantContext(user_id, str(username), portfolio_id)
+    ctx = TenantContext(user_id, normalized, portfolio_id)
     st.session_state["user_id"] = ctx.user_id
     st.session_state["portfolio_id"] = ctx.portfolio_id
     _claim_legacy_rows(ctx)

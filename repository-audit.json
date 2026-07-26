@@ -1,0 +1,792 @@
+{
+  "summary": {
+    "files": 130,
+    "python_files": 113,
+    "text_lines": 48465,
+    "critical": 0,
+    "warnings": 0
+  },
+  "findings": [],
+  "manifest": [
+    {
+      "path": ".editorconfig",
+      "bytes": 333,
+      "sha256": "f9c77b8d94622b36aaac575d45c634b71f0bd803dee641c7fe9e8a091fb0eaa3",
+      "lines": null
+    },
+    {
+      "path": ".env.example",
+      "bytes": 406,
+      "sha256": "26719a53df1b1d59d8cdffc5407664c455f67d98920af7de1d83933636c9e356",
+      "lines": 14
+    },
+    {
+      "path": ".github/workflows/quality-v2.yml",
+      "bytes": 4428,
+      "sha256": "e1a8de3132293e7fecc0ff8a4ad25ba16d7d00eec20cfa84b65bdcff5729eb2b",
+      "lines": 155
+    },
+    {
+      "path": ".gitignore",
+      "bytes": 85,
+      "sha256": "8ff3cb4ae595418350c27ae9a38cf452d5690f3d0379421f6422f7be6a446bcb",
+      "lines": 10
+    },
+    {
+      "path": ".streamlit/config.toml",
+      "bytes": 351,
+      "sha256": "e0c60f19f374fc60bd80661e768762eff7b7911eee7b754284919a9e3edfa51b",
+      "lines": 21
+    },
+    {
+      "path": ".streamlit/secrets.example.toml",
+      "bytes": 402,
+      "sha256": "4e4a23b046a732a60c9e098351d4457f6c79e9df91c8f684240787ab2dc01818",
+      "lines": 12
+    },
+    {
+      "path": ".streamlit/test_connection.py",
+      "bytes": 2723,
+      "sha256": "8a8d0654c5b193273088fc99ffb560ee2f5fe7efff4e2316fe607768c5671f91",
+      "lines": 72
+    },
+    {
+      "path": "APPLY_INSTRUCTIONS.md",
+      "bytes": 567,
+      "sha256": "c2386aaec730cf0d8651239e36dbf3b67dc74bd5cb57ec55a1773c7c837ece0f",
+      "lines": 18
+    },
+    {
+      "path": "PATCH_MANIFEST",
+      "bytes": 704,
+      "sha256": "836298adc5ae6af57e6909657747b205406b6ae83e54d6c517bfcf1fb5bd0852",
+      "lines": null
+    },
+    {
+      "path": "README.md",
+      "bytes": 38239,
+      "sha256": "43a276dbe886115706b12c0801b5fd26dacdd6b989167ff871efeed585f2b7b3",
+      "lines": 1040
+    },
+    {
+      "path": "SECURITY_INCIDENT_RESPONSE.md",
+      "bytes": 1367,
+      "sha256": "3b9b36a53292e185d07c7d55aba196d3af6d79e82f26eb4076fb76321e163b50",
+      "lines": 20
+    },
+    {
+      "path": "SECURITY_NOTE.md",
+      "bytes": 300,
+      "sha256": "416bdf74527ec0c18c4e3334154ab6dfab2f936c4a6276b9aebecdc2879bfb5c",
+      "lines": 7
+    },
+    {
+      "path": "ai_engine.py",
+      "bytes": 1149,
+      "sha256": "411b85e5011ce509f1800c5e02e6977cf3eef391465da961977768b2bee53a44",
+      "lines": 43
+    },
+    {
+      "path": "ai_engine_core/__init__.py",
+      "bytes": 4163,
+      "sha256": "67a8212e5c8915350b91c8da96d286ef8dcf5794ca9e38784d3cf59f3e9c02af",
+      "lines": 141
+    },
+    {
+      "path": "ai_engine_core/calibration.py",
+      "bytes": 7345,
+      "sha256": "16571b8fa90653efcfeae2e216a87b04ad8591a732fa08b8e74bcec7d1b242a1",
+      "lines": 208
+    },
+    {
+      "path": "ai_engine_core/config.py",
+      "bytes": 548,
+      "sha256": "0c2ff1382a5e23227b3f5bb7dc33d47531ac57a4ba6114dbb82be890ec583b7c",
+      "lines": 13
+    },
+    {
+      "path": "ai_engine_core/core.py",
+      "bytes": 1388,
+      "sha256": "02b3f8877c19cdbea1b24bd613da52b3553aaed1b10f0b38513c08a3d7202cf6",
+      "lines": 52
+    },
+    {
+      "path": "ai_engine_core/db.py",
+      "bytes": 17808,
+      "sha256": "a57044930c9112ff94cac282661cce2339831188a502eb0b89b8b2caa32f7be3",
+      "lines": 565
+    },
+    {
+      "path": "ai_engine_core/indicators.py",
+      "bytes": 7575,
+      "sha256": "dc02e90626c5d3018870622d9f2efcf4991061e5ab86e1530af75328db9b1602",
+      "lines": 198
+    },
+    {
+      "path": "ai_engine_core/liquidity_gate.py",
+      "bytes": 2910,
+      "sha256": "7630b09042a5de01bbd385573cbd3c2139a8050ffc03bcbdce53291d434a776d",
+      "lines": 74
+    },
+    {
+      "path": "ai_engine_core/logging_learning.py",
+      "bytes": 20310,
+      "sha256": "c09d7c5d7c9258e65bb28ad3bca09d851fddbeedc0effa197b155414180537e1",
+      "lines": 571
+    },
+    {
+      "path": "ai_engine_core/multi_timeframe.py",
+      "bytes": 3700,
+      "sha256": "84cbcd6dbc1b74bdf423bc458781c976e8321d2b69007ece41e94842e9b6a0c5",
+      "lines": 86
+    },
+    {
+      "path": "ai_engine_core/ohlcv.py",
+      "bytes": 2343,
+      "sha256": "5159263c989f8290bf89b405d3584483722ca649c5b3e6dd6937a2b0a4891994",
+      "lines": 72
+    },
+    {
+      "path": "ai_engine_core/packs.py",
+      "bytes": 6002,
+      "sha256": "e6a0ae94157048c6eca365fe33bc5ecb89d1ef6cace6660925c888c21384f65a",
+      "lines": 163
+    },
+    {
+      "path": "ai_engine_core/portfolio.py",
+      "bytes": 22003,
+      "sha256": "601a876285f0b80c346279c36118be1d13f97c109468e4e2186b73b32d242e40",
+      "lines": 545
+    },
+    {
+      "path": "ai_engine_core/portfolio_risk.py",
+      "bytes": 7414,
+      "sha256": "6a991e9827747cf5a5cfb3fb4ce94e3406133fafc8f5d9649949991aaf46941a",
+      "lines": 231
+    },
+    {
+      "path": "ai_engine_core/reporting.py",
+      "bytes": 38498,
+      "sha256": "c0605fb65fc9b6a999b35e1aa22448dd83afb6888e912213ba57b4e67e44c946",
+      "lines": 912
+    },
+    {
+      "path": "ai_engine_core/risk.py",
+      "bytes": 17831,
+      "sha256": "5a724301a688db9768db1e89de00059e0fffdbc11b84a3d0353d5ba64b21e45a",
+      "lines": 491
+    },
+    {
+      "path": "ai_engine_core/scenarios.py",
+      "bytes": 9028,
+      "sha256": "6c0a8c8cc6cd8316d3c41d3da56597deb462847bba1c83a2b64ce0d074e3f269",
+      "lines": 215
+    },
+    {
+      "path": "ai_engine_core/score_normalization.py",
+      "bytes": 3783,
+      "sha256": "fff1751fc80820f25ff15efd433f471b1da6a7594b679f2eb1ff69c38edbce10",
+      "lines": 112
+    },
+    {
+      "path": "ai_engine_core/scoring.py",
+      "bytes": 2832,
+      "sha256": "5c7ea6b62bda49b2cd9ac3e6f47c1bcbe4d0d8a0e44d34bb5e41bdb3aa4368ef",
+      "lines": 107
+    },
+    {
+      "path": "ai_engine_core/scoring_calibration.py",
+      "bytes": 482,
+      "sha256": "db98a56fbbc8361e9bf96ae8402358a13311faba176d5364529df65c045a9882",
+      "lines": 11
+    },
+    {
+      "path": "ai_engine_core/technicals.py",
+      "bytes": 34162,
+      "sha256": "635081860ecfb108bd08a49f312fc6d9d9c746cecb80e8501cc602b6bbc2628a",
+      "lines": 979
+    },
+    {
+      "path": "ai_engine_core/user_rules.py",
+      "bytes": 9205,
+      "sha256": "13f699f47653c381bf68af80b66102002e4254096015a2bc140a58268078f219",
+      "lines": 244
+    },
+    {
+      "path": "ai_engine_core/vsa.py",
+      "bytes": 7463,
+      "sha256": "0106faf2e237fc1c289964768d2bb66ee0b15dbf76e46b373db0dde325dd448d",
+      "lines": 195
+    },
+    {
+      "path": "ai_tenant_hardening.py",
+      "bytes": 4753,
+      "sha256": "2084eb6355396860fc446437b24418b31b4b55afc87acfa16fa0eca2a00d8364",
+      "lines": 116
+    },
+    {
+      "path": "analytics.py",
+      "bytes": 27850,
+      "sha256": "c7018199f3c86e659616e403db129ec91b567085f6b26ca782dcfc54986a3bf2",
+      "lines": 762
+    },
+    {
+      "path": "analytics_hardening.py",
+      "bytes": 13549,
+      "sha256": "6c5654ae7114bd084a7d886c8cf5a33fd9ce00e7b89c8462c6bc8edd26b64a57",
+      "lines": 352
+    },
+    {
+      "path": "app.py",
+      "bytes": 5418,
+      "sha256": "b045a66c72e20bed508af8c505cc5217a5a39aa96ffa472931eff88283126af5",
+      "lines": 170
+    },
+    {
+      "path": "assets/logo_app.png",
+      "bytes": 67614,
+      "sha256": "37aaa513ac6cc39765e36d087fbd78054029c0c68a12963dc314b84d8e5f5f21",
+      "lines": null
+    },
+    {
+      "path": "assets/logo_full.png",
+      "bytes": 94912,
+      "sha256": "13fa9045f37103d0cae2cfc127c2ccf813c57a3f40aa236f00250088331dee62",
+      "lines": null
+    },
+    {
+      "path": "assets/logo_mark.png",
+      "bytes": 74243,
+      "sha256": "cb6870246914690896235f167de0307010e209ffe672a352f995c1c2f78d09ed",
+      "lines": null
+    },
+    {
+      "path": "assets/logo_tile.png",
+      "bytes": 51450,
+      "sha256": "cb3db87d54e2b03159ddccfda7796dc4fb898c3b58bd4144933eb7fe6ee6a217",
+      "lines": null
+    },
+    {
+      "path": "backtester.py",
+      "bytes": 20633,
+      "sha256": "083a976bfcfb784add5690551e468be28942a5454a2917862617348054d4150c",
+      "lines": 654
+    },
+    {
+      "path": "backup_system.py",
+      "bytes": 4755,
+      "sha256": "93c523a7cb5e91d8ada34008c2e4e99b633579a9e00a5026773d208564209afc",
+      "lines": 121
+    },
+    {
+      "path": "charts.py",
+      "bytes": 19924,
+      "sha256": "7b6518026dece07de50a674a20efe231be8387a707256a99be237e88a3499df9",
+      "lines": 518
+    },
+    {
+      "path": "classical_analysis.py",
+      "bytes": 32279,
+      "sha256": "71127ae43425ba5c37a0b7e36d507f11c918e44c163f5274585057c6f8546bbb",
+      "lines": 796
+    },
+    {
+      "path": "components.py",
+      "bytes": 34027,
+      "sha256": "a683637540bbd3224429b4951d70b6af146d5b82e9ae35c306e73b4ac9f9e588",
+      "lines": 958
+    },
+    {
+      "path": "config.py",
+      "bytes": 4315,
+      "sha256": "cd635a60ee2acb63e48b9c6a892fea6b3969fb6cfdc48ec3877f10db1c7b6945",
+      "lines": 108
+    },
+    {
+      "path": "data_normalizer.py",
+      "bytes": 3198,
+      "sha256": "82b8f6856d35a066ef72b0647a443b0f513b3520afe08348d304d4d16ca3a62f",
+      "lines": 90
+    },
+    {
+      "path": "data_source.py",
+      "bytes": 33556,
+      "sha256": "dbac0b8cdc855166c28691f669d9f739b08f492a98b73856c7c6c0b66e656567",
+      "lines": 360
+    },
+    {
+      "path": "database.py",
+      "bytes": 30520,
+      "sha256": "24507a72b1fa61c49ef2abc1928f9895ecf68234fab11b122665ab02d65fa35a",
+      "lines": 964
+    },
+    {
+      "path": "database_security_hardening.py",
+      "bytes": 3531,
+      "sha256": "127531e87d5968c1f44317522527718296a2f62d8510bdff3c8259706dda0639",
+      "lines": 100
+    },
+    {
+      "path": "database_write_hardening.py",
+      "bytes": 2366,
+      "sha256": "13e2819b0c0629f78d0a3fa0784a0b37bcfc409d157761c703420e5e3e9077af",
+      "lines": 64
+    },
+    {
+      "path": "feature_flags.py",
+      "bytes": 1511,
+      "sha256": "97625f9ee67abb7f6691eede007dc1efd15c04fec200edbf4c84dd18a7a2a5d2",
+      "lines": 57
+    },
+    {
+      "path": "financial_analysis/__init__.py",
+      "bytes": 1402,
+      "sha256": "230d8e0acc0c83451ffeb25f739b93901995226bd1d77841fd2ae320f1636d49",
+      "lines": 43
+    },
+    {
+      "path": "financial_analysis/data_quality.py",
+      "bytes": 12311,
+      "sha256": "53cd50294304a5c94541a6d71ddce80bac387e4742c3d9b0f2db0ffeebc33fd2",
+      "lines": 306
+    },
+    {
+      "path": "financial_analysis/init.py",
+      "bytes": 215,
+      "sha256": "7c1be49fd674929e11ee07a191f74deefbe55570d69f4d3dc05485f3d395c345",
+      "lines": 8
+    },
+    {
+      "path": "financial_analysis/metrics.py",
+      "bytes": 36053,
+      "sha256": "1e438eeaf4288c778cedc8fd0c5286068dcebe8db490d91c217360a554e072ee",
+      "lines": 936
+    },
+    {
+      "path": "financial_analysis/parsers.py",
+      "bytes": 21836,
+      "sha256": "1d488d0930f5fc4f30c5fe26f0f963ae0b372d54a7bfcfa5b314b6f41bc127b9",
+      "lines": 542
+    },
+    {
+      "path": "financial_analysis/quality_gate.py",
+      "bytes": 8023,
+      "sha256": "ac33bc13ab99c0264683d0a731c28c181c37cac2f49fdaf66b26a928fbb7a437",
+      "lines": 226
+    },
+    {
+      "path": "financial_analysis/store.py",
+      "bytes": 22677,
+      "sha256": "120f5a587f5039a4b02e260469ee1ceac2faae9ee6aa0a01b30c3624e5bf5a1e",
+      "lines": 644
+    },
+    {
+      "path": "financial_analysis/store_full.py",
+      "bytes": 339,
+      "sha256": "8c01e16d6ed2fc6a868d8425f1d349eff74e87d6f31ce73f7fe74ae4624d6605",
+      "lines": 13
+    },
+    {
+      "path": "financial_analysis/sync.py",
+      "bytes": 17820,
+      "sha256": "6bd29d40896ddf54430b20c3542dd18399f9646acac9e875b9a97f40bfbf8093",
+      "lines": 428
+    },
+    {
+      "path": "financial_analysis/thesis.py",
+      "bytes": 2003,
+      "sha256": "413a8b301318762361bd27b1891aae8826f1eb83547cf7656e43f3ab88760a86",
+      "lines": 67
+    },
+    {
+      "path": "financial_analysis/ui.py",
+      "bytes": 5963,
+      "sha256": "9b8a418e2eb19b48e4968eaff3354f06685f6bc6508ac6e52f2db8bea62ab9f8",
+      "lines": 123
+    },
+    {
+      "path": "financial_analysis/utils.py",
+      "bytes": 4230,
+      "sha256": "5aa910244ac31681944b3e40857354b59e07e16d911bb4dcc39b693fb332b06c",
+      "lines": 156
+    },
+    {
+      "path": "financial_analysis/yahoo_data.py",
+      "bytes": 44094,
+      "sha256": "7cddc53da3eb0597f3a219793b0257abdc7426bf75d392822bc84c3492027f44",
+      "lines": 1085
+    },
+    {
+      "path": "market_data.py",
+      "bytes": 48107,
+      "sha256": "f4aabd8c6c75b3ea3e0fb196806f567e54a78e92a3acca3024ae58f64fe3a6e7",
+      "lines": 1289
+    },
+    {
+      "path": "market_data_hardening.py",
+      "bytes": 3763,
+      "sha256": "f7da98cd6b9548f6dd210ac48c9b40d31d4e687dee50e76321927424724d2dda",
+      "lines": 99
+    },
+    {
+      "path": "osoli_logging.py",
+      "bytes": 3871,
+      "sha256": "38e0f86e60f960ce17d9dba1c42fb33ffe90fd3e5ce9fb492c3c031ff95ae67d",
+      "lines": 111
+    },
+    {
+      "path": "packages.txt",
+      "bytes": 10,
+      "sha256": "ea571c45d6601dc7a7aca7ef210aba38a2b14c1879f0dd6168fadc723b3f7a31",
+      "lines": 2
+    },
+    {
+      "path": "portfolio_metrics_v2.py",
+      "bytes": 11249,
+      "sha256": "18d12be39d806cc54b2257dadefbdcbc036f069e928a70fc70ac5e0676aff029",
+      "lines": 344
+    },
+    {
+      "path": "quality_engine.py",
+      "bytes": 1776,
+      "sha256": "57357bddfc47557ea3e500916d5edf83d0d3e9b2c42a40d6d4040b61d7dfd3d6",
+      "lines": 65
+    },
+    {
+      "path": "requirements.txt",
+      "bytes": 522,
+      "sha256": "49791aaee2415ef790b2501d24cf5a0bf48df82758636562edea09782cf806e0",
+      "lines": 24
+    },
+    {
+      "path": "scripts/sanitize_release.py",
+      "bytes": 3099,
+      "sha256": "8e7c9f2fd0e18e642ab8c78d4a62624a58cb11b1f843439c114632ee21dbd2cf",
+      "lines": 106
+    },
+    {
+      "path": "security.py",
+      "bytes": 17050,
+      "sha256": "c9efbfdf6caef40e1726b46893831e949a0ccffc0a1682ba5a1171bb107a4561",
+      "lines": 521
+    },
+    {
+      "path": "styles.py",
+      "bytes": 26325,
+      "sha256": "680412a0316f0b9a0a97b81504ec10b8860944a84c4100d41948da6679a77088",
+      "lines": 606
+    },
+    {
+      "path": "technical_indicators/__init__.py",
+      "bytes": 170,
+      "sha256": "9adf437a152a448320803c9dd33a3199f59c48c0851bc72ab689c34b9ce6e192",
+      "lines": 5
+    },
+    {
+      "path": "technical_indicators/advanced.py",
+      "bytes": 116,
+      "sha256": "46a891c6b6ea4e1ad5c86ecd2a793d0d4fcc2d9c6ac8e4853eeaa8fdec5ad5ac",
+      "lines": 3
+    },
+    {
+      "path": "technical_indicators/advanced_v2.py",
+      "bytes": 19656,
+      "sha256": "f736cb80659126951de6b6d7081b735988147fb62f221765fc875db5c2fea308",
+      "lines": 432
+    },
+    {
+      "path": "tenant_scope.py",
+      "bytes": 25090,
+      "sha256": "e80bb1a0f457d138d884bf8361d506875976e11286a291c80bb526af4b833d06",
+      "lines": 749
+    },
+    {
+      "path": "test/test_critical.py",
+      "bytes": 2010,
+      "sha256": "0c0538498b2784685ddc6c15a972120370263e78cf30bcb29c142756bc5e80af",
+      "lines": 50
+    },
+    {
+      "path": "tests/conftest.py",
+      "bytes": 244,
+      "sha256": "c81f1c28a79bcbb320f08e249378fb4f7f929a4a3039d48b65434e2788e33230",
+      "lines": 10
+    },
+    {
+      "path": "tests/test_advanced_v2.py",
+      "bytes": 1847,
+      "sha256": "d9ae5d3a16c84fd51fd4b32892d3d1dbd7264a549234d0669418e553d904a028",
+      "lines": 53
+    },
+    {
+      "path": "tests/test_analytics_hardening.py",
+      "bytes": 1789,
+      "sha256": "b3013933a3eef95e249cc000265ebea6983bb6e993e7e20aeb1a5ea1f316ea1c",
+      "lines": 71
+    },
+    {
+      "path": "tests/test_auth_secret_runtime.py",
+      "bytes": 1211,
+      "sha256": "4be87455801a4cc4632d6efa85e18200f5d93f1b347a53be3e8130aacdb0e92e",
+      "lines": 35
+    },
+    {
+      "path": "tests/test_fundamental_metrics.py",
+      "bytes": 1869,
+      "sha256": "bb0eef0cd1438e62bc77a42e6229eba5a8b72eddfa252ed903e43cc04ebb9cc0",
+      "lines": 67
+    },
+    {
+      "path": "tests/test_portfolio_metrics_v2.py",
+      "bytes": 2685,
+      "sha256": "9d5a10fd3a1187fc4266b15917b3cd7ecc0ba3acd7f8301b51a5b3066ef2e426",
+      "lines": 91
+    },
+    {
+      "path": "tests/test_tenant_legacy_identity.py",
+      "bytes": 2818,
+      "sha256": "8ee42b356fe433e7bbe55c1bb896685bef2caa55ce7c4523a15089c72c584506",
+      "lines": 69
+    },
+    {
+      "path": "tests/test_tenant_scope_sql.py",
+      "bytes": 1162,
+      "sha256": "6e2aa7a483856751ba334b5a7fe1d7e9ead7a5ce8b1059a91b559f0250d7f383",
+      "lines": 38
+    },
+    {
+      "path": "tests/test_ui_theme_v2.py",
+      "bytes": 848,
+      "sha256": "60899b1f50786897f22355f60d0d96c1c998e7a14f544129fe739349eb0adc5e",
+      "lines": 27
+    },
+    {
+      "path": "theme/__init__.py",
+      "bytes": 45,
+      "sha256": "09a19940fa34dd79452b6039d1dd5a97bcd48f9740a78f13a7735914b27e4829",
+      "lines": 3
+    },
+    {
+      "path": "theme/global_ui.py",
+      "bytes": 2693,
+      "sha256": "886ae4a4be20c52ed3a32a3499cb51462dc178526115b527844bcc5bc6afd820",
+      "lines": 97
+    },
+    {
+      "path": "tools/cleanup.py",
+      "bytes": 2902,
+      "sha256": "0f73e12c37278c11bea71ad3a3e6f93fe696d24b69ea5867b95ee1807d15dbdf",
+      "lines": 92
+    },
+    {
+      "path": "tools/repository_audit.py",
+      "bytes": 9446,
+      "sha256": "f2183c5a4e8452db0271777e0595cdd14b3ecfecafd67756d2bc80c94311e951",
+      "lines": 268
+    },
+    {
+      "path": "tools/self_check.py",
+      "bytes": 5747,
+      "sha256": "2fa1cfd8feaf967a0f384db57178dce9e4d4aba97ef69437b44626d814a47b3c",
+      "lines": 168
+    },
+    {
+      "path": "twelvedata/__init__.py",
+      "bytes": 284,
+      "sha256": "c19ac0c808e5bf331aac9ecae96dd5baa06426f0b5e7b273858279c16099b722",
+      "lines": 12
+    },
+    {
+      "path": "twelvedata/_pytimeparse_fallback.py",
+      "bytes": 1100,
+      "sha256": "ac4930d57d8c67e61a609670645c8517ee116d29ffb9a15c6fb12caa851decb3",
+      "lines": 42
+    },
+    {
+      "path": "twelvedata/_version.py",
+      "bytes": 176,
+      "sha256": "0384bad2db555516313a37231bfb09f6e1edc29171666bed90cbb615a7f54cc1",
+      "lines": 6
+    },
+    {
+      "path": "twelvedata/client.py",
+      "bytes": 20620,
+      "sha256": "2599c20587bbcd6c066322a6cd2f71110609595c78f6ef418519e8cd8909f9d3",
+      "lines": 614
+    },
+    {
+      "path": "twelvedata/context.py",
+      "bytes": 892,
+      "sha256": "988bfc7270146e9f03abbd8445fef55556c5bb3a0a9c2d2f9164ed3f5f36a78c",
+      "lines": 33
+    },
+    {
+      "path": "twelvedata/endpoints.py",
+      "bytes": 301144,
+      "sha256": "e315680917033595d83458b5f90a56dfd82ad4bd109012f11881941613d22f9b",
+      "lines": 9708
+    },
+    {
+      "path": "twelvedata/exceptions.py",
+      "bytes": 716,
+      "sha256": "62e7fd066752310575d5dcb13afe0d5a866c7abf76d4d939f6fec3dfaa14050c",
+      "lines": 28
+    },
+    {
+      "path": "twelvedata/excptions.py",
+      "bytes": 328,
+      "sha256": "3bc256e5efeab1230da5b606ef559c7fdbf82175edea69a0ab7b39c6eae060a0",
+      "lines": 12
+    },
+    {
+      "path": "twelvedata/http_client.py",
+      "bytes": 1747,
+      "sha256": "663009018fa02caa6a9b597e106823947d78744d4e7fce62cdad5fbd9f53509e",
+      "lines": 66
+    },
+    {
+      "path": "twelvedata/mixins.py",
+      "bytes": 2848,
+      "sha256": "740cdee76f26590129454fb4a8315e824c67a94b2eb9525604f4af6a9df8e612",
+      "lines": 87
+    },
+    {
+      "path": "twelvedata/renders.py",
+      "bytes": 11059,
+      "sha256": "829e1e2b49de5bb3733861ef1d0cb7eb37ba54188f742779d52f279ce12d9d30",
+      "lines": 392
+    },
+    {
+      "path": "twelvedata/time_series.py",
+      "bytes": 289978,
+      "sha256": "ce96d6e5e2286785bec46dcbc966711b092c793d331bdf499cb4e6d1e240f5f2",
+      "lines": 7018
+    },
+    {
+      "path": "twelvedata/utils.py",
+      "bytes": 5976,
+      "sha256": "6a73cca5f9b95bb2225bfa4e4dba7ecd9bc443f2448bd068b47c77406e066d76",
+      "lines": 223
+    },
+    {
+      "path": "twelvedata/websocket.py",
+      "bytes": 8067,
+      "sha256": "de880efbb53aa84d2da48c3ddad1365dabf8c058eb7960c915fa688160fa1092",
+      "lines": 259
+    },
+    {
+      "path": "twelvedata_provider.py",
+      "bytes": 18293,
+      "sha256": "c48730955ecb989e869075a195b2e7f527f866abfd35601431906031cab4d304",
+      "lines": 494
+    },
+    {
+      "path": "ui_theme_v2.py",
+      "bytes": 440,
+      "sha256": "a1fda4c3498726fdcdd003b4b51fe75aaa1b94e8e330801f5a2bf45aa2d7d0ff",
+      "lines": 15
+    },
+    {
+      "path": "views/__init__.py",
+      "bytes": 2995,
+      "sha256": "a1088f2c0f61d7670ca9c4438d6e338704f8f4c6615537fdb55356e8f03fe0cd",
+      "lines": 91
+    },
+    {
+      "path": "views/analysis/__init__.py",
+      "bytes": 12236,
+      "sha256": "e696858aabcffabd08906c365a5295dc9065330210b61adfbc0641107c86816d",
+      "lines": 271
+    },
+    {
+      "path": "views/analysis/advisor.py",
+      "bytes": 17387,
+      "sha256": "a74145c19e18623df3c99b8946cf07e0d29209b5db7068bf13062b05d17f317e",
+      "lines": 431
+    },
+    {
+      "path": "views/analysis/classical.py",
+      "bytes": 152,
+      "sha256": "a889209a41492bccda8eab7b3709928d63fa5cdd2639f41c821dbb4a691099ff",
+      "lines": 6
+    },
+    {
+      "path": "views/analysis/financial.py",
+      "bytes": 25739,
+      "sha256": "2a4561b219250b80281c364d5743c5b226e0f241c6d5fba47c01a9e17108b625",
+      "lines": 538
+    },
+    {
+      "path": "views/analysis/technical.py",
+      "bytes": 9833,
+      "sha256": "1ff5e8b1fa0511d305286a7b7bdbf5a4bf3ef782e66b8279137900fb02dccf55",
+      "lines": 240
+    },
+    {
+      "path": "views/analysis/thesis.py",
+      "bytes": 2540,
+      "sha256": "d2965885589f1d26fc26c97d31deb506cc6d1071b96102c18dcb42bcfeb0207b",
+      "lines": 74
+    },
+    {
+      "path": "views/cash.py",
+      "bytes": 7764,
+      "sha256": "8051f32c0e041a391bcee3d149cd94020b36b7a3163837a68dbe1963b6216897",
+      "lines": 220
+    },
+    {
+      "path": "views/dashboard.py",
+      "bytes": 8211,
+      "sha256": "1bce552a42c70428af2119283004e2317af5ec783458f7933465c7d25772a449",
+      "lines": 186
+    },
+    {
+      "path": "views/lab.py",
+      "bytes": 13053,
+      "sha256": "e58d1e53e5f4cabb37a8ac560cf7ca2a59a595d2bf68b5594c42db4caae32b02",
+      "lines": 279
+    },
+    {
+      "path": "views/navbar.py",
+      "bytes": 4634,
+      "sha256": "021a457617f164b3825131a71ea5b2790ae37fef0e1fcbbd307451cc2515ba48",
+      "lines": 147
+    },
+    {
+      "path": "views/portfolio.py",
+      "bytes": 30299,
+      "sha256": "46da6d14745bce4e50414fefd20790bba79b6f5c557c76fcfb01d989be287099",
+      "lines": 867
+    },
+    {
+      "path": "views/settings.py",
+      "bytes": 10927,
+      "sha256": "a6038257a3407badb498f9fa3f7f4311041e19b60de67e5dc9ed719942b221cb",
+      "lines": 268
+    },
+    {
+      "path": "views/shared.py",
+      "bytes": 53312,
+      "sha256": "ef0bd202dcddb666c9a189fbaac83a20bdd6acf3e651b9c83702a15f207bc770",
+      "lines": 1439
+    },
+    {
+      "path": "views/signals.py",
+      "bytes": 8073,
+      "sha256": "5ce1cf6026b37dc1c50f6278d035594f2557b143dc83f44cc37628fc57409ec4",
+      "lines": 211
+    },
+    {
+      "path": "views/sukuk.py",
+      "bytes": 12373,
+      "sha256": "f82c9539d9d63ff9e254d51715895766e247d9f36b2e8939aebb23c4ac8ef9b2",
+      "lines": 299
+    },
+    {
+      "path": "views/utils.py",
+      "bytes": 1052,
+      "sha256": "7c9ebd10569387d43dc6d47afe7934f0fd4e6f3dff01317ad99acfc0164a73bf",
+      "lines": 30
+    }
+  ]
+}

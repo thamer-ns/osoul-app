@@ -284,7 +284,11 @@ def render_technical_chart(symbol, period=None, interval="1d"):
     gain = delta.where(delta > 0, 0).ewm(alpha=1 / 14, adjust=False).mean()
     loss = (-delta.where(delta < 0, 0)).ewm(alpha=1 / 14, adjust=False).mean()
     rs = gain / loss.replace(0, np.nan)
-    df["RSI"] = (100 - (100 / (1 + rs))).fillna(50)
+    rsi = 100 - (100 / (1 + rs))
+    rsi = rsi.mask((loss == 0) & (gain > 0), 100.0)
+    rsi = rsi.mask((gain == 0) & (loss > 0), 0.0)
+    rsi = rsi.mask((gain == 0) & (loss == 0), 50.0)
+    df["RSI"] = rsi.fillna(50.0).clip(0.0, 100.0)
 
     # MACD
     exp12 = df["Close"].ewm(span=12, adjust=False).mean()
