@@ -399,7 +399,8 @@ def _resolve_user_id(username: str) -> int:
         try:
             conn.rollback()
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).debug("Tenant identity rollback failed", exc_info=True)
         raise RuntimeError("تعذر تحديد هوية مساحة المستخدم") from exc
     finally:
         _db.put_connection(conn, kind)
@@ -453,7 +454,8 @@ def _ensure_default_portfolio(user_id: int) -> int:
         try:
             conn.rollback()
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).debug("Default portfolio rollback failed", exc_info=True)
         raise RuntimeError("تعذر إنشاء المحفظة الافتراضية") from exc
     finally:
         _db.put_connection(conn, kind)
