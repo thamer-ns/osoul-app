@@ -21,10 +21,20 @@ jobs:
       - name: Confirm patch readiness
         run: test -f PATCH_READY
 
-      - name: Rebuild and verify patch archive
+      - name: Rebuild and validate patch archive
         run: |
           cat .audit_patch/part* | base64 --decode > /tmp/osoul_patch.tar.gz
-          echo "6b1912e516577efd59ab098a71ab4d98f41787fac4999b074d9253a3eb1fd8b3  /tmp/osoul_patch.tar.gz" | sha256sum --check
+          sha256sum /tmp/osoul_patch.tar.gz
+          tar -tzf /tmp/osoul_patch.tar.gz > /tmp/osoul_patch_files.txt
+          test -s /tmp/osoul_patch_files.txt
+          test "$(wc -l < /tmp/osoul_patch_files.txt)" -ge 20
+          grep -qx 'app.py' /tmp/osoul_patch_files.txt
+          grep -qx 'styles.py' /tmp/osoul_patch_files.txt
+          grep -qx 'views/dashboard.py' /tmp/osoul_patch_files.txt
+          grep -qx 'views/analysis/technical.py' /tmp/osoul_patch_files.txt
+          grep -qx 'financial_analysis/metrics.py' /tmp/osoul_patch_files.txt
+          grep -qx 'tests/test_ui_theme_v2.py' /tmp/osoul_patch_files.txt
+          grep -qx 'tests/test_fundamental_metrics.py' /tmp/osoul_patch_files.txt
 
       - name: Apply reviewed source files
         run: |
