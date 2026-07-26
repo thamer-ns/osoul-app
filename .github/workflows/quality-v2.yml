@@ -1,0 +1,97 @@
+name: Osoli quality v2
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - agent/osoul-production-hardening-v2
+
+concurrency:
+  group: osoli-v2-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Syntax and project self-check
+        run: python tools/self_check.py
+
+      - name: Critical Ruff checks
+        run: >-
+          ruff check
+          --select E9,F63,F7,F82
+          app.py security.py database_security_hardening.py tenant_scope.py
+          ai_tenant_hardening.py analytics_hardening.py market_data_hardening.py
+          backup_system.py technical_indicators ai_engine_core/packs.py
+          views/portfolio.py views/dashboard.py views/cash.py views/sukuk.py
+          views/settings.py views/analysis/technical.py views/__init__.py tests
+
+      - name: XIRR tests
+        run: pytest -q --tb=short tests/test_analytics_hardening.py
+
+      - name: Advanced technical tests
+        run: pytest -q --tb=short tests/test_advanced_v2.py
+
+      - name: Tenant isolation tests
+        env:
+          OSOUL_REQUIRE_DB: "0"
+          OSOUL_ALLOW_SQLITE_FALLBACK: "1"
+          SQLITE_PATH: "/tmp/osoul_test.db"
+        run: pytest -q --tb=short tests/test_tenant_scope_sql.py
+
+      - name: Import smoke test
+        env:
+          OSOUL_ALLOW_EPHEMERAL_AUTH_SECRET: "1"
+          OSOUL_REQUIRE_DB: "0"
+          OSOUL_ALLOW_SQLITE_FALLBACK: "1"
+          SQLITE_PATH: "/tmp/osoul_test.db"
+        run: |
+          python - <<'PY'
+          import app
+          import security
+          import tenant_scope
+          import analytics_hardening
+          import market_data_hardening
+          import technical_indicators.advanced_v2
+          import views.portfolio
+          import views.dashboard
+          import views.cash
+          import views.sukuk
+          import views.settings
+          print("imports-ok")
+          PY
+
+      - name: Complete test suite
+        env:
+          OSOUL_ALLOW_EPHEMERAL_AUTH_SECRET: "1"
+          OSOUL_REQUIRE_DB: "0"
+          OSOUL_ALLOW_SQLITE_FALLBACK: "1"
+          SQLITE_PATH: "/tmp/osoul_test.db"
+        run: pytest -q --tb=short
+
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan Git history
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
