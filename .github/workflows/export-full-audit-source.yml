@@ -1,4 +1,4 @@
-name: Apply reviewed full audit patch
+name: Diagnose reviewed audit archive
 
 on:
   pull_request:
@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  apply-reviewed-patch:
+  diagnose-archive:
     if: ${{ github.actor != 'github-actions[bot]' }}
     runs-on: ubuntu-latest
     steps:
@@ -18,40 +18,33 @@ jobs:
           ref: agent/full-ui-performance-audit
           fetch-depth: 0
 
-      - name: Confirm patch readiness
-        run: test -f PATCH_READY
-
-      - name: Rebuild and validate patch archive
+      - name: Build archive diagnostics
+        shell: bash
         run: |
-          cat .audit_patch/part* | base64 --decode > /tmp/osoul_patch.tar.gz
-          sha256sum /tmp/osoul_patch.tar.gz
-          tar -tzf /tmp/osoul_patch.tar.gz > /tmp/osoul_patch_files.txt
-          test -s /tmp/osoul_patch_files.txt
-          test "$(wc -l < /tmp/osoul_patch_files.txt)" -ge 20
-          grep -qx 'app.py' /tmp/osoul_patch_files.txt
-          grep -qx 'styles.py' /tmp/osoul_patch_files.txt
-          grep -qx 'views/dashboard.py' /tmp/osoul_patch_files.txt
-          grep -qx 'views/analysis/technical.py' /tmp/osoul_patch_files.txt
-          grep -qx 'financial_analysis/metrics.py' /tmp/osoul_patch_files.txt
-          grep -qx 'tests/test_ui_theme_v2.py' /tmp/osoul_patch_files.txt
-          grep -qx 'tests/test_fundamental_metrics.py' /tmp/osoul_patch_files.txt
+          set +e
+          {
+            echo "PART HASHES"
+            sha256sum .audit_patch/part*
+            echo
+            echo "PART SIZES"
+            wc -c .audit_patch/part*
+            echo
+            cat .audit_patch/part* | base64 --decode > /tmp/osoul_patch.tar.gz
+            echo "BASE64_RC=$?"
+            echo "ARCHIVE_HASH"
+            sha256sum /tmp/osoul_patch.tar.gz
+            echo "ARCHIVE_SIZE=$(wc -c < /tmp/osoul_patch.tar.gz)"
+            gzip -t /tmp/osoul_patch.tar.gz
+            echo "GZIP_RC=$?"
+            tar -tzf /tmp/osoul_patch.tar.gz
+            echo "TAR_RC=$?"
+          } > PATCH_DIAGNOSTICS.txt 2>&1
+          exit 0
 
-      - name: Apply reviewed source files
-        run: |
-          tar -xzf /tmp/osoul_patch.tar.gz
-          rm -rf .audit_patch PATCH_READY AUDIT_IN_PROGRESS.md docs/audit_scope.md
-          rm -f .github/workflows/export-full-audit-source.yml
-          rm -f .github/workflows/apply-full-audit-patch.yml
-
-      - name: Validate syntax and repository audit
-        run: |
-          python -m compileall -q .
-          python tools/repository_audit.py --root .
-
-      - name: Commit reviewed patch
+      - name: Commit diagnostics
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "Complete UI, performance and analytics hardening"
+          git add PATCH_DIAGNOSTICS.txt
+          git commit -m "Record audit archive diagnostics"
           git push origin HEAD:agent/full-ui-performance-audit
