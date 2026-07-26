@@ -1,0 +1,26 @@
+name: Export performance audit source
+
+on:
+  push:
+    branches:
+      - agent/performance-hardening-v3
+
+permissions:
+  contents: read
+
+jobs:
+  export-source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/performance-hardening-v3
+          fetch-depth: 1
+      - name: Build source archive
+        run: |
+          tar --exclude=.git --exclude='**/__pycache__' --exclude='*.pyc' -czf /tmp/osoul-performance-source.tar.gz .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: osoul-performance-source
+          path: /tmp/osoul-performance-source.tar.gz
+          retention-days: 1
