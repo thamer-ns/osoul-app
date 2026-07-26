@@ -12,7 +12,7 @@ import streamlit as st
 
 from components import render_custom_table
 from market_data_v2 import get_chart_history, get_data_lineage
-from technical_indicators.advanced import compute_advanced_technical_pack
+from technical_indicators.advanced_v2 import compute_advanced_technical_pack
 from views.shared import _render_technical_chart_flex
 
 
@@ -113,7 +113,10 @@ def _render_indicator(title: str, result: Dict[str, Any]) -> None:
     ]
     if scalar_rows:
         with st.expander("التفاصيل الرقمية"):
-            render_custom_table(pd.DataFrame(scalar_rows), [("feature", "البند", "text"), ("value", "القيمة", "auto")])
+            render_custom_table(
+                pd.DataFrame(scalar_rows),
+                [("feature", "البند", "text"), ("value", "القيمة", "auto")],
+            )
 
 
 def view_technical(symbol: str, interval: str = "1d") -> None:
@@ -127,7 +130,11 @@ def view_technical(symbol: str, interval: str = "1d") -> None:
 
     lineage = get_data_lineage(frame)
     quality = _quality(frame)
-    source = lineage.get("source") or (frame.attrs.get("source") if isinstance(frame, pd.DataFrame) else "unknown")
+    source = (
+        lineage.get("source") or frame.attrs.get("source") or "unknown"
+        if isinstance(frame, pd.DataFrame)
+        else "unknown"
+    )
     last_bar = str(frame.index[-1]) if isinstance(frame, pd.DataFrame) and not frame.empty else "—"
 
     c1, c2, c3, c4 = st.columns(4)
@@ -178,7 +185,10 @@ def view_technical(symbol: str, interval: str = "1d") -> None:
             st.metric("استبعاد شمعة حية", "نعم" if meta.get("live_bar_excluded") else "لا")
 
         st.info(pack.get("summary") or "لا يوجد ملخص.")
-        st.caption("درجة الاتجاه من -100 إلى +100، أما الثقة فمن 0 إلى 100. ارتفاع الثقة لا يعني أن الاتجاه صاعد.")
+        st.caption(
+            "درجة الاتجاه من -100 إلى +100، أما الثقة فمن 0 إلى 100. "
+            "ارتفاع الثقة لا يعني أن الاتجاه صاعد."
+        )
 
         for key, title in (
             ("rls_forecast", "1) الاتجاه التكيفي RLS"),
@@ -192,7 +202,11 @@ def view_technical(symbol: str, interval: str = "1d") -> None:
         try:
             from ai_engine_core.db import save_advanced_indicators
 
-            save_advanced_indicators(symbol=str(symbol), timeframe=str(interval), indicators=pack)
+            save_advanced_indicators(
+                symbol=str(symbol),
+                timeframe=str(interval),
+                indicators=pack,
+            )
         except Exception:
             pass
 
