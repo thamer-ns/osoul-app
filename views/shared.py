@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import html
+import re
+
 # views/shared.py
 import streamlit as st
 import pandas as pd
@@ -341,6 +344,8 @@ def _badge(text, tone="neutral"):
         "neutral": "#344054",
     }.get(tone, "#344054")
 
+    safe_text = html.escape(str(text))
+    # audit: safe-dynamic-html — badge text is escaped and colors are allow-listed.
     st.markdown(
         f"""
         <span style="
@@ -352,7 +357,7 @@ def _badge(text, tone="neutral"):
             font-size:0.85rem;
             border:1px solid rgba(0,0,0,0.06);
             display:inline-block;
-        ">{text}</span>
+        ">{safe_text}</span>
         """,
         unsafe_allow_html=True
     )
@@ -626,8 +631,10 @@ def _chip(text: str, tone: str = "neutral"):
         "blue": "os-chip-blue",
         "neutral": "os-chip-gray",
     }.get(tone, "os-chip-gray")
+    safe_text = html.escape(str(text))
+    # audit: safe-dynamic-html — chip text is escaped and class is allow-listed.
     st.markdown(
-        f'<span class="os-chip {cls}"><span class="mi">insights</span>{text}</span>',
+        f'<span class="os-chip {cls}"><span class="mi">insights</span>{safe_text}</span>',
         unsafe_allow_html=True,
     )
 
@@ -819,7 +826,7 @@ def _group_evidence(items: list) -> dict:
     return groups
 
 def _render_list(title: str, items: list, prefix: str = "•", empty_text: str = "لا يوجد", limit: int = 9999):
-    st.markdown(f"<div class='os-card-title'>{title}</div>", unsafe_allow_html=True)
+    st.markdown(f"**{title}**")
     if not items:
         st.caption(empty_text)
         return
@@ -850,13 +857,15 @@ def _render_colored_rows_table(items: list, tone: str = "success", max_rows: int
     rows = items[:max_rows]
     html_rows = []
     for i, s in enumerate(rows, start=1):
+        safe_row = html.escape(s)
         html_rows.append(
             f"""<tr style="background:{bg}; border-bottom:1px solid {bd};">
                     <td style="width:52px; text-align:center; font-weight:900;">{i}</td>
-                    <td style="text-align:right; font-weight:800;">{s}</td>
+                    <td style="text-align:right; font-weight:800;">{safe_row}</td>
                 </tr>"""
         )
 
+    # audit: safe-dynamic-html — table rows are escaped; styles are allow-listed.
     st.markdown(
         f"""
         <table class="finance-table" style="margin-top:8px;">
@@ -901,10 +910,16 @@ def _render_ai_report_readable(rep: dict, show_debug: bool = False, compact: boo
     # ==========================
     # Hero Card (Recommendation)
     # ==========================
-    col = data.get("color") or "#667085"
-    rec = str(data.get("recommendation", "—"))
-    strat = str(data.get("strategy", "—"))
+    col = str(data.get("color") or "#667085")
+    if not re.fullmatch(r"#[0-9A-Fa-f]{6}", col):
+        col = "#667085"
+    rec = html.escape(str(data.get("recommendation", "—")))
+    strat = html.escape(str(data.get("strategy", "—")))
+    safe_tf = html.escape(str(tf))
+    safe_engine = html.escape(str(AI_ENGINE_NAME))
+    safe_version = html.escape(str(AI_ENGINE_VERSION))
 
+    # audit: safe-dynamic-html — all report text is escaped and color is validated.
     st.markdown(
         f"""
         <div class="os-card" style="border:2px solid {col}; background: linear-gradient(135deg, rgba(102,112,133,0.06), rgba(37,99,235,0.05));">
@@ -912,11 +927,11 @@ def _render_ai_report_readable(rep: dict, show_debug: bool = False, compact: boo
             <div>
               <div style="font-size:1.45rem;font-weight:950;line-height:1.2;">{rec}</div>
               <div class="os-muted" style="margin-top:6px;">{strat}</div>
-              <div class="os-muted" style="margin-top:6px;">🧩 {AI_ENGINE_NAME} v{AI_ENGINE_VERSION} • Base Interval: {tf}</div>
+              <div class="os-muted" style="margin-top:6px;">🧩 {safe_engine} v{safe_version} • Base Interval: {safe_tf}</div>
             </div>
             <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
               <span class="os-chip os-chip-blue"><span class="mi">token</span>AI</span>
-              <span class="os-chip os-chip-gray"><span class="mi">timeline</span>{tf}</span>
+              <span class="os-chip os-chip-gray"><span class="mi">timeline</span>{safe_tf}</span>
             </div>
           </div>
         </div>
@@ -950,13 +965,8 @@ def _render_ai_report_readable(rep: dict, show_debug: bool = False, compact: boo
     summary_text = str(data.get("summary_text") or "").strip()
     if summary_text:
         st.markdown("### 🧾 سبب التوصية")
-        st.markdown("<div class='os-card'>", unsafe_allow_html=True)
-        if _looks_like_html(summary_text):
-            st.markdown(summary_text, unsafe_allow_html=True)
-        else:
-            # عرض قابل للقراءة (بدون ما يظهر كود كبير)
-            st.markdown(f"<div style='white-space:pre-wrap;line-height:1.8;font-weight:800;color:var(--txt);'>{summary_text}</div>", unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
+        with st.container(border=True):
+            st.text(summary_text)
 
     # ==========================
     # Entry / Risk / Levels / Targets
@@ -1041,7 +1051,7 @@ def _render_ai_report_readable(rep: dict, show_debug: bool = False, compact: boo
                     if not items:
                         continue
                     shown_any = True
-                    st.markdown(f"**{cat}**  \n<span class='os-muted'>({len(items)})</span>", unsafe_allow_html=True)
+                    st.markdown(f"**{cat}** ({len(items)})")
                     for s in items[:lim]:
                         st.markdown(f"- ✅ {s}")
                     if len(items) > lim:
@@ -1130,9 +1140,11 @@ def render_osoli_report(rep: dict, title: str = "🤖 تقرير أصولي", *a
     # نسخة محسّنة تعتمد على نفس parse (_extract_ai) — لا تغيير في البيانات
     try:
         _render_ai_report_readable(rep, show_debug=False, compact=False)
-    except Exception as e:
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).exception("Enhanced Osoli report rendering failed")
         st.warning("⚠️ تعذر عرض البطاقات المحسّنة، سيتم استخدام العرض الأصلي.")
-        st.code(str(e))
 
     # النسخة الأصلية (كما هي) لضمان عدم فقد أي تفاصيل/مزايا
     with st.expander("🧩 عرض أصولي (النسخة الأصلية)"):

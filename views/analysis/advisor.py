@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import html
+
 #views/analysis/advisor.py
 import streamlit as st
 from datetime import datetime
@@ -106,8 +108,10 @@ def _chip(text: str, tone: str = "neutral"):
         "neutral": "os-chip-gray",
     }.get(tone, "os-chip-gray")
 
+    safe_text = html.escape(str(text))
+    # audit: safe-dynamic-html — dynamic label is HTML-escaped; class is allow-listed.
     st.markdown(
-        f'<span class="os-chip {cls}"><span class="mi">check_circle</span>{text}</span>',
+        f'<span class="os-chip {cls}"><span class="mi">check_circle</span>{safe_text}</span>',
         unsafe_allow_html=True,
     )
 
@@ -125,26 +129,34 @@ def _render_quick_summary(sym: str, ai_data: dict, tf_label: str):
     score = ai_data.get("score", 0)
     conf = ai_data.get("confidence", 0)
 
+    safe_rec = html.escape(rec)
+    safe_strat = html.escape(strat)
+    safe_tf = html.escape(str(tf_label))
+    safe_sym = html.escape(str(sym))
+    safe_update = html.escape(str(st.session_state.get("_ai_last_update", "—")))
+
     c1, c2 = st.columns([2.2, 1.8])
     with c1:
+        # audit: safe-dynamic-html — all model and symbol strings are escaped.
         st.markdown(
             f"""
             <div class="os-card">
               <div class="os-card-title">🤖 ملخص المستشار</div>
-              <div style="font-weight:950;font-size:1.15rem;margin:8px 0 2px 0;">{rec}</div>
-              <div class="os-muted">الاستراتيجية: {strat} • الفاصل: {tf_label} • الرمز: <span style="direction:ltr;display:inline-block">{sym}</span></div>
+              <div style="font-weight:950;font-size:1.15rem;margin:8px 0 2px 0;">{safe_rec}</div>
+              <div class="os-muted">الاستراتيجية: {safe_strat} • الفاصل: {safe_tf} • الرمز: <span style="direction:ltr;display:inline-block">{safe_sym}</span></div>
             </div>
             """,
             unsafe_allow_html=True,
         )
     with c2:
+        # audit: safe-dynamic-html — values are numeric and escaped timestamp text.
         st.markdown(
             f"""
             <div class="os-card">
               <div class="os-card-title">📌 أرقام سريعة</div>
               <div class="os-kv"><div class="os-k">الدرجة</div><div class="os-v">{score}/100</div></div>
               <div class="os-kv"><div class="os-k">الثقة</div><div class="os-v">{conf}%</div></div>
-              <div class="os-kv"><div class="os-k">تحديث</div><div class="os-v">{st.session_state.get("_ai_last_update", "—")}</div></div>
+              <div class="os-kv"><div class="os-k">تحديث</div><div class="os-v">{safe_update}</div></div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -224,21 +236,29 @@ def _render_scenarios(ai_data: dict):
         t1 = sc.get("target1") or sc.get("target") or sc.get("tp1") or "—"
         t2 = sc.get("target2") or sc.get("tp2") or "—"
         note = sc.get("note", "")
+        safe_name = html.escape(str(name))
+        safe_trigger = html.escape(str(trigger))
+        safe_entry = html.escape(str(entry))
+        safe_stop = html.escape(str(stop))
+        safe_t1 = html.escape(str(t1))
+        safe_t2 = html.escape(str(t2))
+        safe_note = html.escape(str(note))
 
+        # audit: safe-dynamic-html — all scenario values are HTML-escaped.
         st.markdown(
             f"""
             <div style="border:1px solid rgba(15,23,42,0.10);border-radius:14px;padding:12px;margin:10px 0;background:#fff;">
               <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
-                <div style="font-weight:950">{name}</div>
-                <div class="os-chip os-chip-gray"><span class="mi">flag</span>{trigger}</div>
+                <div style="font-weight:950">{safe_name}</div>
+                <div class="os-chip os-chip-gray"><span class="mi">flag</span>{safe_trigger}</div>
               </div>
               <div style="margin-top:8px;display:grid;grid-template-columns:repeat(4,1fr);gap:10px;">
-                <div class="os-card" style="padding:10px"><div class="os-muted">الدخول</div><div class="os-v">{entry}</div></div>
-                <div class="os-card" style="padding:10px"><div class="os-muted">وقف الخسارة</div><div class="os-v">{stop}</div></div>
-                <div class="os-card" style="padding:10px"><div class="os-muted">الهدف 1</div><div class="os-v">{t1}</div></div>
-                <div class="os-card" style="padding:10px"><div class="os-muted">الهدف 2</div><div class="os-v">{t2}</div></div>
+                <div class="os-card" style="padding:10px"><div class="os-muted">الدخول</div><div class="os-v">{safe_entry}</div></div>
+                <div class="os-card" style="padding:10px"><div class="os-muted">وقف الخسارة</div><div class="os-v">{safe_stop}</div></div>
+                <div class="os-card" style="padding:10px"><div class="os-muted">الهدف 1</div><div class="os-v">{safe_t1}</div></div>
+                <div class="os-card" style="padding:10px"><div class="os-muted">الهدف 2</div><div class="os-v">{safe_t2}</div></div>
               </div>
-              {f"<div class='os-muted' style='margin-top:8px'>📝 {note}</div>" if note else ""}
+              {f"<div class='os-muted' style='margin-top:8px'>📝 {safe_note}</div>" if note else ""}
             </div>
             """,
             unsafe_allow_html=True,

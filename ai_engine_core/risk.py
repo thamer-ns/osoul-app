@@ -238,7 +238,8 @@ def _risk_gates(report: dict) -> dict:
             gates["pass"] = False
             gates["reasons"].append("سيولة منخفضة — تم حظر التوصية الشرائية القوية")
     except Exception:
-        pass
+        import logging
+        logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
 
     return gates
 

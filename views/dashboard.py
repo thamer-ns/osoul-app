@@ -1,137 +1,121 @@
-#views/dashboard.py
-import streamlit as st
+"""Main portfolio dashboard with money-flow aware performance charts."""
+from __future__ import annotations
+
 import pandas as pd
 import plotly.express as px
+import streamlit as st
 
+from analytics import compute_portfolio_equity_curve
 from components import render_kpi, safe_fmt
 from market_data import get_tasi_data
 from views.shared import _safe_status_series, calculate_portfolio_risk_score
-from analytics import generate_equity_curve
+
+
+def _sf(value, default=0.0):
+    try:
+        return float(value)
+    except Exception:
+        return float(default)
+
 
 def view_dashboard(fin):
+    fin = fin or {}
     try:
-        tp, tc = get_tasi_data()
+        tasi, tasi_change = get_tasi_data()
     except Exception:
-        tp, tc = (None, None)
+        tasi, tasi_change = None, None
 
-    ar = "" if tc is None else ("🔼" if tc >= 0 else "🔽")
-    tc_str = "-" if tc is None else f"{tc:.2f}%"
-    df = fin.get("all_trades", pd.DataFrame())
+    trades = fin.get("all_trades", pd.DataFrame())
+    market_value = _sf(fin.get("market_val_open"))
+    cash = _sf(fin.get("cash"))
+    total_assets = market_value + cash
+    cash_pct = cash / total_assets * 100 if total_assets > 0 else 0.0
 
-    total_assets = float(fin.get("market_val_open", 0)) + float(fin.get("cash", 0))
-    cash_pct = (float(fin.get("cash", 0)) / total_assets * 100) if total_assets else 0
+    try:
+        risk_score = calculate_portfolio_risk_score(trades, cash_pct)
+    except Exception:
+        risk_score = None
+    risk_label = "غير متاح" if risk_score is None else "منخفضة" if risk_score < 40 else "عالية" if risk_score > 70 else "متوسطة"
+    risk_colour = "neutral" if risk_score is None else "success" if risk_score < 40 else "danger" if risk_score > 70 else "neutral"
 
-    # قد يرجع None إذا كان محرك المخاطر غير جاهز/حدث خطأ
-    risk_score = calculate_portfolio_risk_score(df, cash_pct)
-    if risk_score is None:
-        risk_score = 0
-        risk_color = "neutral"
-        risk_label = "غير متاح"
-    else:
-        risk_color = "success" if risk_score < 40 else "danger" if risk_score > 70 else "neutral"
-        risk_label = "منخفضة" if risk_score < 40 else "عالية" if risk_score > 70 else "متوسطة"
-
-    c_tasi, c_risk = st.columns([3, 1])
-    with c_tasi:
+    tasi_col, risk_col = st.columns([3, 1])
+    with tasi_col:
+        change_text = "غير متاح" if tasi_change is None else f"{tasi_change:+.2f}%"
+        # audit: safe-dynamic-html — formatted values are numeric or fixed labels.
         st.markdown(
             f"""
             <div class="tasi-card">
-                <div>
-                    <div style="opacity:0.9;">المؤشر العام (TASI)</div>
-                    <div style="font-size:2.5rem; font-weight:900;">{safe_fmt(tp)}</div>
-                </div>
-                <div style="background:rgba(255,255,255,0.2); padding:5px 15px; border-radius:10px; font-weight:bold; direction:ltr;">
-                    {ar} {tc_str}
-                </div>
+              <div><div style="opacity:.9">المؤشر العام تاسي</div><div style="font-size:2.5rem;font-weight:900">{safe_fmt(tasi)}</div></div>
+              <div style="background:rgba(255,255,255,.2);padding:5px 15px;border-radius:10px;font-weight:bold;direction:ltr">{change_text}</div>
             </div>
             """,
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
-    with c_risk:
-        render_kpi(f"المخاطرة ({risk_label})", f"{risk_score}/100", risk_color, "🛡️")
+    with risk_col:
+        render_kpi(f"المخاطرة ({risk_label})", "—" if risk_score is None else f"{float(risk_score):.0f}/100", risk_colour, "🛡️")
 
-    # -------------------------------
-    # نظرة عامة (أوضح وأقل ازدحام)
-    # -------------------------------
-    total_pl = float(fin.get("unrealized_pl", 0)) + float(fin.get("realized_pl", 0))
-    m1, m2, m3, m4 = st.columns(4)
-    with m1:
-        render_kpi("إجمالي الأصول", safe_fmt(total_assets), "neutral", "🏦")
-    with m2:
-        render_kpi("القيمة السوقية", safe_fmt(fin.get("market_val_open", 0)), "blue", "📊")
-    with m3:
-        render_kpi(f"الكاش ({cash_pct:.1f}%)", safe_fmt(fin.get("cash", 0)), "blue", "💵")
-    with m4:
-        render_kpi("صافي الربح الكلي", safe_fmt(total_pl), "success" if total_pl >= 0 else "danger", "📈")
+    total_pl = _sf(fin.get("unrealized_pl")) + _sf(fin.get("realized_pl"))
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: render_kpi("إجمالي الأصول", safe_fmt(total_assets), "neutral", "🏦")
+    with c2: render_kpi("القيمة السوقية", safe_fmt(market_value), "blue", "📊")
+    with c3: render_kpi(f"الكاش ({cash_pct:.1f}%)", safe_fmt(cash), "blue", "💵")
+    with c4: render_kpi("صافي الربح", safe_fmt(total_pl), "success" if total_pl >= 0 else "danger", "📈")
 
-    # تفاصيل إضافية داخل Expander بدل تشتيت الشاشة الرئيسية
-    with st.expander("تفاصيل المراكز المفتوحة", expanded=False):
-        open_pct = (float(fin.get("unrealized_pl", 0)) / float(fin.get("cost_open", 0)) * 100) if float(fin.get("cost_open", 0)) else 0
+    with st.expander("تفاصيل الأداء والمراكز", expanded=False):
+        cost = _sf(fin.get("cost_open"))
+        unrealised = _sf(fin.get("unrealized_pl"))
+        open_return = unrealised / cost * 100 if cost else 0.0
         d1, d2, d3, d4 = st.columns(4)
-        with d1: render_kpi("التكلفة", safe_fmt(fin.get("cost_open", 0)), "neutral")
-        with d2: render_kpi("الربح الورقي", safe_fmt(fin.get("unrealized_pl", 0)), "success" if float(fin.get("unrealized_pl", 0)) >= 0 else "danger")
-        with d3: render_kpi("النمو", f"{open_pct:.2f}%", "success" if open_pct >= 0 else "danger")
-        with d4: render_kpi("صافي الإيداعات", safe_fmt(fin.get("total_deposited", 0) - fin.get("total_withdrawn", 0)), "neutral", "🏗️")
+        with d1: render_kpi("تكلفة المراكز", safe_fmt(cost), "neutral")
+        with d2: render_kpi("الربح غير المحقق", safe_fmt(unrealised), "success" if unrealised >= 0 else "danger")
+        with d3: render_kpi("عائد المراكز", f"{open_return:.2f}%", "success" if open_return >= 0 else "danger")
+        with d4: render_kpi("صافي الإيداعات", safe_fmt(_sf(fin.get("total_deposited")) - _sf(fin.get("total_withdrawn"))), "neutral")
 
-    st.markdown("---")
+    if trades is None or trades.empty:
+        st.info("مرحبًا بك. ابدأ بإضافة الإيداعات والصفقات.")
+        return
 
-    if not df.empty:
-        status = _safe_status_series(df)
-        closed_df = df[status.isin(["close", "closed"])].copy() if len(status) else pd.DataFrame()
-        closed_cost = float(closed_df["total_cost"].sum()) if (not closed_df.empty and "total_cost" in closed_df.columns) else 0
-        closed_sales = float(closed_df["market_value"].sum()) if (not closed_df.empty and "market_value" in closed_df.columns) else 0
-        closed_pl = float(fin.get("realized_pl", 0))
-        closed_pct = (closed_pl / closed_cost * 100) if closed_cost else 0.0
-    else:
-        closed_cost = closed_sales = closed_pl = closed_pct = 0
+    status = _safe_status_series(trades)
+    open_trades = trades[status == "open"].copy() if len(status) else pd.DataFrame()
+    invest_value = spec_value = sukuk_value = 0.0
+    if not open_trades.empty and "market_value" in open_trades.columns:
+        market_series = pd.to_numeric(open_trades["market_value"], errors="coerce").fillna(0.0)
+        strategies = open_trades.get("strategy", pd.Series("", index=open_trades.index)).astype(str)
+        asset_types = open_trades.get("asset_type", pd.Series("", index=open_trades.index)).astype(str).str.lower()
+        invest_value = float(market_series[strategies.str.contains("استثمار", na=False)].sum())
+        spec_value = float(market_series[strategies.str.contains("مضاربة", na=False)].sum())
+        sukuk_value = float(market_series[asset_types.eq("sukuk")].sum())
 
-    with st.expander("📜 ملخص الصفقات المنفذة (Executed)", expanded=False):
-        x1, x2, x3, x4 = st.columns(4)
-        with x1: render_kpi("رأس المال المسترد", safe_fmt(closed_cost), "neutral", "↩️")
-        with x2: render_kpi("السيولة العائدة", safe_fmt(closed_sales), "blue", "📥")
-        with x3: render_kpi("الربح المحقق", safe_fmt(closed_pl), "success" if closed_pl >= 0 else "danger", "✅")
-        with x4: render_kpi("العائد المحقق", f"{closed_pct:.2f}%", "success" if closed_pct >= 0 else "danger", "٪")
+    allocation = pd.DataFrame(
+        {"الأصل": ["استثمار", "مضاربة", "صكوك", "كاش"], "القيمة": [invest_value, spec_value, sukuk_value, cash]}
+    )
+    allocation = allocation[allocation["القيمة"] > 0]
 
-    st.markdown("---")
+    left, right = st.columns(2)
+    with left:
+        st.subheader("توزيع الأصول")
+        if allocation.empty:
+            st.info("لا توجد أصول موزعة")
+        else:
+            st.plotly_chart(px.pie(allocation, values="القيمة", names="الأصل", hole=0.42), use_container_width=True)
 
-    if not df.empty and "status" in df.columns:
-        status = _safe_status_series(df)
-        open_trades = df[status == "open"].copy()
-        invest_val = 0
-        spec_val = 0
-        sukuk_val = 0
-
-        try:
-            if "strategy" in open_trades.columns and "market_value" in open_trades.columns:
-                invest_val = open_trades[open_trades["strategy"].astype(str).str.contains("استثمار", na=False)]["market_value"].sum()
-                spec_val = open_trades[open_trades["strategy"].astype(str).str.contains("مضاربة", na=False)]["market_value"].sum()
-        except Exception:
-            import logging
-            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at views/dashboard.py:108')
-
-        if "asset_type" in open_trades.columns and "market_value" in open_trades.columns:
-            sukuk_val = open_trades[open_trades["asset_type"].astype(str).str.lower() == "sukuk"]["market_value"].sum()
-
-        alloc_df = pd.DataFrame({
-            "Asset": ["استثمار", "مضاربة", "صكوك", "كاش"],
-            "Value": [invest_val, spec_val, sukuk_val, float(fin.get("cash", 0))]
-        })
-        alloc_df = alloc_df[alloc_df["Value"] > 0]
-
-        c_ch1, c_ch2 = st.columns(2)
-        with c_ch1:
-            st.subheader("توزيع الأصول")
-            if not alloc_df.empty:
-                st.plotly_chart(px.pie(alloc_df, values="Value", names="Asset", hole=0.4), use_container_width=True)
-            else:
-                st.info("لا توجد أصول")
-        with c_ch2:
-            st.subheader("نمو المحفظة")
-            crv = generate_equity_curve(df)
-            if isinstance(crv, pd.DataFrame) and not crv.empty and "date" in crv.columns:
-                ycol = "cumulative_invested" if "cumulative_invested" in crv.columns else crv.columns[-1]
-                st.plotly_chart(px.line(crv, x="date", y=ycol), use_container_width=True)
-            else:
-                st.info("لا توجد بيانات تاريخية")
-    else:
-        st.info("👋 مرحباً بك! ابدأ بإضافة صفقات.")
+    with right:
+        st.subheader("القيمة والعائد الحقيقي")
+        curve = compute_portfolio_equity_curve(
+            trades=trades,
+            deposits=fin.get("deposits", pd.DataFrame()),
+            withdrawals=fin.get("withdrawals", pd.DataFrame()),
+            returnsgrants=fin.get("returns", pd.DataFrame()),
+            days=365,
+        )
+        if curve is None or curve.empty:
+            st.info("لا توجد بيانات كافية لبناء منحنى القيمة")
+        else:
+            chart = curve[["date", "equity", "net_contributions"]].melt(
+                id_vars="date", var_name="السلسلة", value_name="القيمة"
+            )
+            chart["السلسلة"] = chart["السلسلة"].map({"equity": "قيمة المحفظة", "net_contributions": "صافي الإيداعات"})
+            st.plotly_chart(px.line(chart, x="date", y="القيمة", color="السلسلة"), use_container_width=True)
+            last_return = float(curve["cumulative_return"].iloc[-1]) * 100
+            stale = int(curve["stale_price_count"].iloc[-1])
+            st.caption(f"العائد المرجح زمنيًا خلال الفترة: {last_return:.2f}%" + (f" — أسعار احتياطية لعدد {stale} رموز" if stale else ""))

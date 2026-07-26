@@ -1,141 +1,144 @@
-# views/navbar.py
+from __future__ import annotations
+
 import base64
 from pathlib import Path
 from typing import Optional
 
 import streamlit as st
 
+from security import logout_user
 
-def _logo_data_uri(rel_path: str = 'assets/logo_mark.png') -> str:
-    """Inline logo as data URI (works on Streamlit Cloud)."""
-    p = Path(rel_path)
-    if not p.exists():
-        return ''
+NAV_ITEMS = [
+    ("🏠 الرئيسية", "home"),
+    ("🔎 التحليل", "analysis"),
+    ("⚡ محفظة المضاربة", "spec"),
+    ("💼 محفظة الاستثمار", "invest"),
+    ("📜 الصكوك", "sukuk"),
+    ("💰 السيولة", "cash"),
+    ("🧪 الاختبار الخلفي", "backtest"),
+    ("📡 نبض المحفظة", "pulse"),
+    ("🚦 الإشارات", "signals"),
+    ("➕ إضافة صفقة", "add"),
+    ("🛠️ الأدوات", "tools"),
+    ("⚙️ الإعدادات", "settings"),
+]
+_ALLOWED = {key for _, key in NAV_ITEMS} | {"update"}
+_LABEL_BY_KEY = {key: label for label, key in NAV_ITEMS}
+_KEY_BY_LABEL = {label: key for label, key in NAV_ITEMS}
+
+
+def _logo_data_uri(path: str = "assets/logo_mark.png") -> str:
+    logo_path = Path(path)
+    if not logo_path.exists():
+        return ""
     try:
-        b64 = base64.b64encode(p.read_bytes()).decode('utf-8')
-        return f'data:image/png;base64,{b64}'
+        encoded = base64.b64encode(logo_path.read_bytes()).decode("ascii")
+        return f"data:image/png;base64,{encoded}"
     except Exception:
-        return ''
-
-
-# =========================================================
-# ✅ هذه المفاتيح MUST تطابق الراوتر في views/__init__.py
-# =========================================================
-NAV_MAIN = [
-    ('الرئيسية', 'home'),
-    ('التحليل', 'analysis'),
-    ('محفظة المضاربة', 'spec'),
-    ('محفظة الاستثمار', 'invest'),
-    ('الإعدادات', 'settings'),
-]
-
-NAV_MORE = [
-    ('الصكوك', 'sukuk'),
-    ('سجل الكاش', 'cash'),
-    ('الاختبار الخلفي', 'backtest'),
-    ('نبض المحفظة', 'pulse'),
-    ('الإشارات', 'signals'),
-    ('إضافة صفقة', 'add'),
-    ('أدوات', 'tools'),
-    ('تحديث الأسعار', 'update'),
-]
-
-_ALLOWED = {k for _, k in (NAV_MAIN + NAV_MORE)}
+        return ""
 
 
 def _safe_get_query_page() -> Optional[str]:
-    """Read st.query_params['page'] safely across Streamlit versions."""
     try:
-        qp = st.query_params
-        val = qp.get('page', None)
-        if isinstance(val, list):
-            val = val[0] if val else None
-        if val is None:
-            return None
-        val = str(val).strip().lower()
-        return val if val in _ALLOWED else None
+        value = st.query_params.get("page")
+        if isinstance(value, list):
+            value = value[0] if value else None
     except Exception:
         try:
-            qp = st.experimental_get_query_params()
-            val = qp.get('page', [None])
-            val = val[0] if isinstance(val, list) else val
-            if val is None:
-                return None
-            val = str(val).strip().lower()
-            return val if val in _ALLOWED else None
+            params = st.experimental_get_query_params()
+            value = params.get("page", [None])
+            value = value[0] if isinstance(value, list) else value
         except Exception:
             return None
+    if value is None:
+        return None
+    normalized = str(value).strip().lower()
+    return normalized if normalized in _ALLOWED else None
 
 
-def _safe_set_query_page(page: str):
-    """Set query param if supported (new/old Streamlit)."""
+def _safe_set_query_page(page: str) -> None:
     try:
-        st.query_params['page'] = page
+        st.query_params["page"] = page
         return
     except Exception:
         import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at views/navbar.py:75')
+        logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
     try:
         st.experimental_set_query_params(page=page)
     except Exception:
         import logging
-        logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at views/navbar.py:79')
+        logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
 
 
-def sync_page_from_query_params_once():
-    """Sync deep-link ?page=... to session_state exactly once."""
-    if st.session_state.get('_synced_page_from_qp_once'):
+def sync_page_from_query_params_once() -> None:
+    if st.session_state.get("_synced_page_from_qp_once"):
         return
-
-    st.session_state['_synced_page_from_qp_once'] = True
-
-    qp_page = _safe_get_query_page()
-    if qp_page and ('page' not in st.session_state):
-        st.session_state['page'] = qp_page
-    elif qp_page and st.session_state.get('page') != qp_page:
-        st.session_state['page'] = qp_page
+    st.session_state["_synced_page_from_qp_once"] = True
+    requested = _safe_get_query_page()
+    if requested:
+        st.session_state["page"] = requested
 
 
-def _go(page_key: str):
-    """Navigate reliably: session_state + query params + rerun."""
-    if page_key not in _ALLOWED:
-        page_key = 'home'
-
-    st.session_state['page'] = page_key
-    _safe_set_query_page(page_key)
+def _go(page: str) -> None:
+    destination = page if page in _ALLOWED else "home"
+    st.session_state["page"] = destination
+    _safe_set_query_page(destination)
     st.rerun()
 
 
-def render_navbar():
-    """Navbar متوافق مع الراوتر الحالي ويحافظ على التصميم السابق."""
+def _render_sidebar_brand() -> None:
+    logo = _logo_data_uri()
+    if logo:
+        st.sidebar.markdown(
+            f"""
+            <div style="display:flex;align-items:center;gap:.65rem;margin:.25rem 0 1rem">
+              <img src="{logo}" style="width:42px;height:42px;border-radius:12px" />
+              <div><strong style="font-size:1.15rem">أصولي</strong><br><small>إدارة وتحليل المحفظة</small></div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        st.sidebar.title("📈 أصولي")
+
+
+def render_navbar() -> None:
+    """Render one compact navigation surface that works on desktop and mobile."""
     sync_page_from_query_params_once()
+    current = str(st.session_state.get("page") or "home")
+    if current not in _ALLOWED or current == "update":
+        current = "home"
+        st.session_state["page"] = current
 
-    if 'page' not in st.session_state:
-        st.session_state['page'] = 'home'
+    _render_sidebar_brand()
+    username = str(st.session_state.get("username") or "المستخدم")
+    st.sidebar.caption(f"مسجل الدخول: {username}")
 
-    current = st.session_state.get('page', 'home')
-    if current not in _ALLOWED:
-        current = 'home'
-        st.session_state['page'] = 'home'
+    current_label = _LABEL_BY_KEY.get(current, _LABEL_BY_KEY["home"])
+    selected_label = st.sidebar.radio(
+        "التنقل",
+        options=[label for label, _ in NAV_ITEMS],
+        index=[label for label, _ in NAV_ITEMS].index(current_label),
+        label_visibility="collapsed",
+        key="sidebar_navigation",
+    )
+    selected_key = _KEY_BY_LABEL[selected_label]
+    if selected_key != current:
+        _go(selected_key)
 
-    # -------------------------------
-    # Main nav row (التصميم السابق)
-    # -------------------------------
-    cols = st.columns(len(NAV_MAIN))
-    for i, (label, key) in enumerate(NAV_MAIN):
-        is_active = (key == current)
-        text = f'✅ {label}' if is_active else label
-        if cols[i].button(text, use_container_width=True, key=f'nav_main_{key}'):
-            _go(key)
+    st.sidebar.divider()
+    if st.sidebar.button(
+        "🔄 تحديث أسعار المراكز",
+        use_container_width=True,
+    ):
+        _go("update")
 
-    # -------------------------------
-    # More nav (اختياري)
-    # -------------------------------
-    with st.expander('المزيد', expanded=False):
-        cols2 = st.columns(4)
-        for idx, (label, key) in enumerate(NAV_MORE):
-            c = cols2[idx % 4]
-            is_active = (key == current)
-            text = f'✅ {label}' if is_active else label
-            if c.button(text, use_container_width=True, key=f'nav_more_{key}'):
-                _go(key)
+    if st.sidebar.button(
+        "🚪 تسجيل الخروج",
+        use_container_width=True,
+    ):
+        logout_user()
+        st.cache_data.clear()
+        st.rerun()
+
+    st.caption(f"أصولي / {current_label}")

@@ -194,7 +194,8 @@ def _fetch_history(symbol: str, period: str, interval: str):
     try:
         return get_chart_history(symbol, period=period, interval=interval)
     except TypeError:
-        pass
+        import logging
+        logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
     except Exception:
         import logging
         logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at charts.py:196')
@@ -203,7 +204,8 @@ def _fetch_history(symbol: str, period: str, interval: str):
     try:
         return get_chart_history(symbol, period, interval)
     except TypeError:
-        pass
+        import logging
+        logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
     except Exception:
         import logging
         logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at charts.py:204')
@@ -212,7 +214,8 @@ def _fetch_history(symbol: str, period: str, interval: str):
     try:
         return get_chart_history(symbol, period)
     except TypeError:
-        pass
+        import logging
+        logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
     except Exception:
         import logging
         logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at charts.py:212')

@@ -12,6 +12,12 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 
+_LAST_LINEAGE: Dict[str, Dict[str, Any]] = {}
+
+
+def _sym_key(symbol: object) -> str:
+    return str(symbol or "").strip().upper()
+
 # --- Unicode cleanup (RTL/LTR marks) ---------------------------------
 _BIDI_STRIP_RE = re.compile(r"[\u200e\u200f\u202a-\u202e\u2066-\u2069]")
 def _clean_symbol_text(s: str) -> str:
@@ -654,29 +660,11 @@ def _extract_argaam_price_from_html(html: str) -> float:
 
 
 def fetch_price_from_argaam(symbol: str) -> float:
-    s = _clean_symbol_text(str(symbol or "")).strip().upper()
-    if not s:
+    """Fetch a Saudi stock price from Argaam as a last-resort fallback."""
+    cleaned = _clean_symbol_text(str(symbol or "")).strip().upper()
+    if not cleaned:
         return 0.0
-
-
-
-def fetch_argaam_snapshot(symbol: str) -> Dict[str, object]:
-    """Snapshot بسيط من أرقـام (Fallback).
-
-    يُستخدم فقط عندما لا تتوفر بيانات أفضل من TwelveData/Yahoo.
-    يعيد dict ثابت لتفادي كسر الصفحات عند غياب الدالة.
-    """
-    try:
-        price = float(fetch_price_from_argaam(symbol))
-    except Exception:
-        price = 0.0
-
-    return {
-        "symbol": str(symbol or ""),
-        "price": price,
-        "source": "argaam",
-    }
-    code = s.replace(".SR", "").replace("^", "")
+    code = cleaned.replace(".SR", "").replace("^", "")
     if not code.isdigit():
         return 0.0
 
@@ -685,16 +673,29 @@ def fetch_argaam_snapshot(symbol: str) -> Dict[str, object]:
         f"https://www.argaam.com/en/company/stock/overview/{code}",
         f"https://www.argaam.com/ar/company/stock/quote/{code}",
     ]
-
     for url in url_candidates:
-        r = _http_get(url, timeout=7, retries=1)
-        if not r:
+        response = _http_get(url, timeout=7, retries=1)
+        if response is None:
             continue
-        p = _extract_argaam_price_from_html(r.text)
-        if _is_reasonable_price(p):
-            return float(p)
-
+        price = _extract_argaam_price_from_html(response.text)
+        if _is_reasonable_price(price):
+            return float(price)
     return 0.0
+
+
+def fetch_argaam_snapshot(symbol: str) -> Dict[str, object]:
+    """Return a stable fallback snapshot without fabricating daily change."""
+    try:
+        price = float(fetch_price_from_argaam(symbol))
+    except Exception:
+        price = 0.0
+    return {
+        "symbol": str(symbol or ""),
+        "price": price,
+        "prev_close": None,
+        "change_pct": None,
+        "source": "argaam",
+    }
 
 
 # ============================================================
