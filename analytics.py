@@ -107,12 +107,12 @@ def get_portfolio_cache_key() -> str:
             mx = v if mx is None else max(mx, v)
 
         if mx is None:
-            return str(int(datetime.now(timezone.utc).timestamp()))
+            return "empty"
 
         return mx.strftime("%Y%m%d%H%M%S")
 
     except Exception:
-        return str(int(datetime.now(timezone.utc).timestamp()))
+        return "unavailable"
 
 
 # ============================================================

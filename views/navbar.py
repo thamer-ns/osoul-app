@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
@@ -27,6 +28,7 @@ _LABEL_BY_KEY = {key: label for label, key in NAV_ITEMS}
 _KEY_BY_LABEL = {label: key for label, key in NAV_ITEMS}
 
 
+@lru_cache(maxsize=4)
 def _logo_data_uri(path: str = "assets/logo_mark.png") -> str:
     logo_path = Path(path)
     if not logo_path.exists():

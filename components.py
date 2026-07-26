@@ -9,6 +9,7 @@ import re
 import os
 import base64
 import textwrap
+from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple
 
 
@@ -71,25 +72,24 @@ def fmt_sar_compact(value: float | int | None, unit: str = "SAR") -> str:
 # ✅ App Header helpers (Fail-safe)
 # ============================================================
 
+@lru_cache(maxsize=8)
 def _img_to_base64(path: str) -> Optional[str]:
-    """Return base64 for image at `path` or None if not available."""
+    """Return a cached base64 image payload or ``None`` when unavailable."""
     try:
         if not path or not os.path.exists(path):
             return None
-        with open(path, "rb") as f:
-            return base64.b64encode(f.read()).decode("utf-8")
+        with open(path, "rb") as handle:
+            return base64.b64encode(handle.read()).decode("utf-8")
     except Exception:
         return None
 
+
 def _dedent_html(s: str) -> str:
-    """Remove common indentation so HTML doesn't render as a code block in Markdown."""
+    """Remove indentation so HTML is not rendered as a Markdown code block."""
     try:
         return textwrap.dedent(s).strip()
     except Exception:
         return (s or "").strip()
-
-
-
 
 
 def render_app_header(
@@ -97,51 +97,54 @@ def render_app_header(
     subtitle: str = "منصة تحليل الأسهم — مالي، فني، كلاسيكي، وإدارة مخاطر",
     logo_full_path: str = "assets/logo_full.png",
     logo_mark_path: str = "assets/logo_mark.png",
-    # ⚠️ تركنا الخيار للتوافق الخلفي
     show_in_sidebar: bool = False,
 ):
-    """Render a lightweight, professional header (fail-safe).
-
-    ملاحظة: كان يظهر الـHTML كنص بسبب تفسيره كـMarkdown code-block (Indentation).
-    نعالج ذلك عبر `textwrap.dedent(...).strip()` لضمان HTML نظيف.
-    """
+    """Render a compact RTL header with defensive inline image constraints."""
     try:
         _ = show_in_sidebar
-
-        # Resolve logo path relative to this file
         base_dir = os.path.dirname(__file__)
-        full_path = logo_full_path
-        if full_path and not os.path.isabs(full_path):
-            full_path = os.path.join(base_dir, full_path)
+        candidates = [logo_mark_path, logo_full_path]
+        resolved = ""
+        for candidate in candidates:
+            if not candidate:
+                continue
+            candidate_path = candidate if os.path.isabs(candidate) else os.path.join(base_dir, candidate)
+            if os.path.exists(candidate_path):
+                resolved = candidate_path
+                break
 
-        b64 = _img_to_base64(full_path) if full_path else None
-        logo_html = (
-            f"<div class='os-h-logo'><img src='data:image/png;base64,{b64}' alt='logo'/></div>" if b64 else ""
-        )
+        b64 = _img_to_base64(resolved) if resolved else None
+        logo_html = ""
+        if b64:
+            logo_html = (
+                "<div class='os-h-logo' style='width:56px;height:56px;min-width:56px;"
+                "max-width:56px;overflow:hidden;display:grid;place-items:center'>"
+                f"<img src='data:image/png;base64,{b64}' alt='شعار أصولي' "
+                "style='display:block;width:100%;height:100%;max-width:56px;max-height:56px;object-fit:contain'/>"
+                "</div>"
+            )
 
-        html_block = textwrap.dedent(f"""
-        <div class='os-app-header'>
-          <div class='os-h-left'>
-            {logo_html}
-            <div>
-              <div class='os-h-title'>{html.escape(title)}</div>
-              <div class='os-h-sub'>{html.escape(subtitle)}</div>
+        html_block = textwrap.dedent(
+            f"""
+            <div class="os-app-header" dir="rtl" style="direction:rtl;max-height:112px;overflow:hidden">
+              <div class="os-h-left" dir="rtl">
+                {logo_html}
+                <div style="min-width:0">
+                  <div class="os-h-title">{html.escape(str(title))}</div>
+                  <div class="os-h-sub">{html.escape(str(subtitle))}</div>
+                </div>
+              </div>
+              <div class="os-h-right">
+                <span class="os-chip os-chip-blue">📊 تحليل</span>
+                <span class="os-chip os-chip-gray">🛡️ مخاطر</span>
+              </div>
             </div>
-          </div>
-          <div class='os-h-right'>
-            <span class='os-chip os-chip-blue'>📊 تحليل</span>
-            <span class='os-chip os-chip-gray'>🛡️ مخاطر</span>
-          </div>
-        </div>
-        """).strip()
-
+            """
+        ).strip()
         st.markdown(html_block, unsafe_allow_html=True)
     except Exception:
-        try:
-            st.markdown(f"### {title}")
-        except Exception:
-            import logging
-            logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at components.py:142')
+        st.markdown(f"### {html.escape(str(title))}")
+
 # ============================================================
 # 🧼 Helpers: Safe parsing/formatting
 
@@ -261,60 +264,14 @@ def _short_date(val) -> str:
 # ============================================================
 
 def inject_streamlit_ar_i18n(enable: bool = True):
+    """Compatibility no-op.
+
+    A Streamlit component runs in an isolated iframe and cannot safely mutate
+    the parent application DOM. Arabic placeholders are provided by the native
+    wrapper functions instead, avoiding an extra iframe on every session.
     """
-    ✅ Best-effort DOM translation لبعض عبارات Streamlit الافتراضية:
-    Choose an option / Search / No options...
-    - لا يحذف شيء
-    - يشتغل مرة واحدة فقط
-    - قد يحتاج تحديث لو Streamlit غيّر DOM (نادر)
-    """
-    if not enable:
-        return
-
-    key = "_ar_i18n_injected"
-    if st.session_state.get(key):
-        return
-    st.session_state[key] = True
-
-    st.components.v1.html(
-        """
-        <script>
-        (function(){
-          const map = new Map([
-            ["Choose an option", "اختر خيارًا"],
-            ["Search", "بحث"],
-            ["No options to select.", "لا توجد خيارات"],
-            ["No options to select", "لا توجد خيارات"],
-            ["Type to search", "اكتب للبحث"],
-            ["Select an option", "اختر خيارًا"],
-            ["Clear value", "مسح"],
-          ]);
-
-          function replaceText(node){
-            if(!node) return;
-            const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT, null, false);
-            let n;
-            while(n = walker.nextNode()){
-              const t = (n.nodeValue || "").trim();
-              if(map.has(t)){
-                n.nodeValue = n.nodeValue.replace(t, map.get(t));
-              }
-            }
-          }
-
-          function run(){
-            replaceText(document.body);
-          }
-
-          run();
-          const obs = new MutationObserver(()=>run());
-          obs.observe(document.body, {subtree:true, childList:true, characterData:true});
-        })();
-        </script>
-        """,
-        height=0,
-    )
-
+    if enable:
+        st.session_state["_ar_i18n_injected"] = True
 
 def ar_selectbox(label, options, *, placeholder="اختر...", **kwargs):
     """
@@ -832,8 +789,19 @@ def render_smart_table(
 # ============================================================
 
 def _mi(symbol_name: str) -> str:
-    """Material Symbol (Rounded) span"""
-    return f'<span class="mi material-symbols-rounded">{html.escape(symbol_name)}</span>'
+    """Return a self-contained icon that never depends on a web-font ligature."""
+    icons = {
+        "donut_large": "◉",
+        "verified": "✓",
+        "tips_and_updates": "💡",
+        "shield": "🛡️",
+        "fact_check": "✓",
+        "analytics": "📊",
+        "insights": "📈",
+        "warning": "⚠️",
+    }
+    icon = icons.get(str(symbol_name or ""), "•")
+    return f'<span class="os-inline-icon" aria-hidden="true">{html.escape(icon)}</span>'
 
 def render_osoli_report(report: Dict[str, Any], *, title: str = "📌 تقرير التحليل"):
     """

@@ -101,13 +101,19 @@ def _atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
 
 
 def _rsi(close: pd.Series, period: int = 14) -> pd.Series:
-    delta = close.diff()
+    """Wilder-style RSI with correct one-sided and flat-market limits."""
+    values = pd.to_numeric(close, errors="coerce")
+    delta = values.diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
     avg_gain = gain.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
     avg_loss = loss.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
     rs = avg_gain / avg_loss.replace(0, np.nan)
-    return (100 - 100 / (1 + rs)).fillna(50.0)
+    result = 100 - 100 / (1 + rs)
+    result = result.mask((avg_loss == 0) & (avg_gain > 0), 100.0)
+    result = result.mask((avg_gain == 0) & (avg_loss > 0), 0.0)
+    result = result.mask((avg_gain == 0) & (avg_loss == 0), 50.0)
+    return result.fillna(50.0).clip(0.0, 100.0)
 
 
 def _confirmed_pivots(series: pd.Series, left: int = 3, right: int = 3, high: bool = True) -> List[int]:

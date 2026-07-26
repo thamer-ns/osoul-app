@@ -1,4 +1,4 @@
-"""Main portfolio dashboard with money-flow aware performance charts."""
+"""Fast, money-flow-aware portfolio dashboard."""
 from __future__ import annotations
 
 import pandas as pd
@@ -6,9 +6,16 @@ import plotly.express as px
 import streamlit as st
 
 from analytics import compute_portfolio_equity_curve
+from ai_engine_core.portfolio import calculate_portfolio_risk_score
 from components import render_kpi, safe_fmt
 from market_data import get_tasi_data
-from views.shared import _safe_status_series, calculate_portfolio_risk_score
+from views.utils import safe_status_series
+
+PLOTLY_CONFIG = {
+    "displayModeBar": False,
+    "responsive": True,
+    "scrollZoom": False,
+}
 
 
 def _sf(value, default=0.0):
@@ -16,6 +23,44 @@ def _sf(value, default=0.0):
         return float(value)
     except Exception:
         return float(default)
+
+
+def _style_figure(fig, *, legend_horizontal: bool = False):
+    legend = dict(
+        font=dict(family="Cairo, Tahoma, Arial", size=12),
+        traceorder="normal",
+    )
+    if legend_horizontal:
+        legend.update(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    fig.update_layout(
+        font=dict(family="Cairo, Tahoma, Arial", color="#334155"),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        margin=dict(l=24, r=24, t=54, b=34),
+        legend=legend,
+        hoverlabel=dict(font_family="Cairo, Tahoma, Arial"),
+    )
+    return fig
+
+
+@st.cache_data(ttl=300, max_entries=64, show_spinner=False)
+def _cached_equity_curve(
+    cache_key: str,
+    _trades: pd.DataFrame,
+    _deposits: pd.DataFrame,
+    _withdrawals: pd.DataFrame,
+    _returnsgrants: pd.DataFrame,
+    days: int = 365,
+) -> pd.DataFrame:
+    """Cache expensive multi-symbol history reconstruction by portfolio revision."""
+    _ = cache_key
+    return compute_portfolio_equity_curve(
+        trades=_trades,
+        deposits=_deposits,
+        withdrawals=_withdrawals,
+        returnsgrants=_returnsgrants,
+        days=days,
+    )
 
 
 def view_dashboard(fin):
@@ -41,11 +86,11 @@ def view_dashboard(fin):
     tasi_col, risk_col = st.columns([3, 1])
     with tasi_col:
         change_text = "غير متاح" if tasi_change is None else f"{tasi_change:+.2f}%"
-        # audit: safe-dynamic-html — formatted values are numeric or fixed labels.
+        # audit: safe-dynamic-html — values are numeric or fixed labels.
         st.markdown(
             f"""
-            <div class="tasi-card">
-              <div><div style="opacity:.9">المؤشر العام تاسي</div><div style="font-size:2.5rem;font-weight:900">{safe_fmt(tasi)}</div></div>
+            <div class="tasi-card" dir="rtl">
+              <div><div style="opacity:.9">المؤشر العام تاسي</div><div style="font-size:clamp(1.65rem,3vw,2.35rem);font-weight:900;direction:ltr;text-align:right">{safe_fmt(tasi)}</div></div>
               <div style="background:rgba(255,255,255,.2);padding:5px 15px;border-radius:10px;font-weight:bold;direction:ltr">{change_text}</div>
             </div>
             """,
@@ -56,26 +101,34 @@ def view_dashboard(fin):
 
     total_pl = _sf(fin.get("unrealized_pl")) + _sf(fin.get("realized_pl"))
     c1, c2, c3, c4 = st.columns(4)
-    with c1: render_kpi("إجمالي الأصول", safe_fmt(total_assets), "neutral", "🏦")
-    with c2: render_kpi("القيمة السوقية", safe_fmt(market_value), "blue", "📊")
-    with c3: render_kpi(f"الكاش ({cash_pct:.1f}%)", safe_fmt(cash), "blue", "💵")
-    with c4: render_kpi("صافي الربح", safe_fmt(total_pl), "success" if total_pl >= 0 else "danger", "📈")
+    with c1:
+        render_kpi("إجمالي الأصول", safe_fmt(total_assets), "neutral", "🏦")
+    with c2:
+        render_kpi("القيمة السوقية", safe_fmt(market_value), "blue", "📊")
+    with c3:
+        render_kpi(f"الكاش ({cash_pct:.1f}%)", safe_fmt(cash), "blue", "💵")
+    with c4:
+        render_kpi("صافي الربح", safe_fmt(total_pl), "success" if total_pl >= 0 else "danger", "📈")
 
     with st.expander("تفاصيل الأداء والمراكز", expanded=False):
         cost = _sf(fin.get("cost_open"))
         unrealised = _sf(fin.get("unrealized_pl"))
         open_return = unrealised / cost * 100 if cost else 0.0
         d1, d2, d3, d4 = st.columns(4)
-        with d1: render_kpi("تكلفة المراكز", safe_fmt(cost), "neutral")
-        with d2: render_kpi("الربح غير المحقق", safe_fmt(unrealised), "success" if unrealised >= 0 else "danger")
-        with d3: render_kpi("عائد المراكز", f"{open_return:.2f}%", "success" if open_return >= 0 else "danger")
-        with d4: render_kpi("صافي الإيداعات", safe_fmt(_sf(fin.get("total_deposited")) - _sf(fin.get("total_withdrawn"))), "neutral")
+        with d1:
+            render_kpi("تكلفة المراكز", safe_fmt(cost), "neutral")
+        with d2:
+            render_kpi("الربح غير المحقق", safe_fmt(unrealised), "success" if unrealised >= 0 else "danger")
+        with d3:
+            render_kpi("عائد المراكز", f"{open_return:.2f}%", "success" if open_return >= 0 else "danger")
+        with d4:
+            render_kpi("صافي الإيداعات", safe_fmt(_sf(fin.get("total_deposited")) - _sf(fin.get("total_withdrawn"))), "neutral")
 
     if trades is None or trades.empty:
         st.info("مرحبًا بك. ابدأ بإضافة الإيداعات والصفقات.")
         return
 
-    status = _safe_status_series(trades)
+    status = safe_status_series(trades)
     open_trades = trades[status == "open"].copy() if len(status) else pd.DataFrame()
     invest_value = spec_value = sukuk_value = 0.0
     if not open_trades.empty and "market_value" in open_trades.columns:
@@ -97,16 +150,20 @@ def view_dashboard(fin):
         if allocation.empty:
             st.info("لا توجد أصول موزعة")
         else:
-            st.plotly_chart(px.pie(allocation, values="القيمة", names="الأصل", hole=0.42), use_container_width=True)
+            figure = px.pie(allocation, values="القيمة", names="الأصل", hole=0.42)
+            figure.update_traces(textposition="inside", textinfo="percent", hovertemplate="%{label}<br>%{value:,.2f}<extra></extra>")
+            _style_figure(figure)
+            st.plotly_chart(figure, width="stretch", config=PLOTLY_CONFIG)
 
     with right:
         st.subheader("القيمة والعائد الحقيقي")
-        curve = compute_portfolio_equity_curve(
-            trades=trades,
-            deposits=fin.get("deposits", pd.DataFrame()),
-            withdrawals=fin.get("withdrawals", pd.DataFrame()),
-            returnsgrants=fin.get("returns", pd.DataFrame()),
-            days=365,
+        curve = _cached_equity_curve(
+            str(fin.get("_cache_key") or "session"),
+            trades,
+            fin.get("deposits", pd.DataFrame()),
+            fin.get("withdrawals", pd.DataFrame()),
+            fin.get("returns", pd.DataFrame()),
+            365,
         )
         if curve is None or curve.empty:
             st.info("لا توجد بيانات كافية لبناء منحنى القيمة")
@@ -115,7 +172,14 @@ def view_dashboard(fin):
                 id_vars="date", var_name="السلسلة", value_name="القيمة"
             )
             chart["السلسلة"] = chart["السلسلة"].map({"equity": "قيمة المحفظة", "net_contributions": "صافي الإيداعات"})
-            st.plotly_chart(px.line(chart, x="date", y="القيمة", color="السلسلة"), use_container_width=True)
+            figure = px.line(chart, x="date", y="القيمة", color="السلسلة")
+            figure.update_xaxes(title_text="")
+            figure.update_yaxes(title_text="القيمة (ر.س)", tickformat=",")
+            _style_figure(figure, legend_horizontal=True)
+            st.plotly_chart(figure, width="stretch", config=PLOTLY_CONFIG)
             last_return = float(curve["cumulative_return"].iloc[-1]) * 100
             stale = int(curve["stale_price_count"].iloc[-1])
-            st.caption(f"العائد المرجح زمنيًا خلال الفترة: {last_return:.2f}%" + (f" — أسعار احتياطية لعدد {stale} رموز" if stale else ""))
+            st.caption(
+                f"العائد المرجح زمنيًا خلال الفترة: {last_return:.2f}%"
+                + (f" — أسعار احتياطية لعدد {stale} رموز" if stale else "")
+            )

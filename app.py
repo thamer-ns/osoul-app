@@ -45,34 +45,17 @@ def _init_db_once() -> tuple[bool, str]:
 
 
 def _apply_global_ui() -> None:
-    helpers = []
+    """Inject one canonical stylesheet and no iframe-based DOM mutators."""
     try:
-        from styles import apply_custom_css, apply_ui_css
+        from styles import apply_custom_css
 
-        helpers.extend([apply_custom_css, apply_ui_css])
+        apply_custom_css()
     except Exception:
-        logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
-    try:
-        from components import inject_component_styles, inject_streamlit_ar_i18n
+        logger.exception("global stylesheet failed")
 
-        helpers.extend(
-            [lambda: inject_streamlit_ar_i18n(True), inject_component_styles]
-        )
-    except Exception:
-        logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
-    try:
-        from ui_theme_v2 import apply_final_ui_css
 
-        # Must be last: it resolves old CSS conflicts and current Streamlit DOM changes.
-        helpers.append(apply_final_ui_css)
-    except Exception:
-        logging.getLogger(__name__).debug("Final UI theme could not be loaded", exc_info=True)
-
-    for helper in helpers:
-        try:
-            helper()
-        except Exception:
-            logger.exception("optional UI helper failed")
+def _render_authenticated_header() -> None:
+    """Keep the application header out of the login screen and size it defensively."""
     try:
         from components import render_app_header
 
@@ -101,7 +84,7 @@ def _install_runtime_hardening(username: str) -> None:
 
 
 def _initialize_user_space(username: str) -> bool:
-    """Initialize a tenant with short retries for transient DB locks/pool resets."""
+    """Initialize a tenant, retrying only the short transient startup window."""
     for attempt in range(3):
         try:
             _install_runtime_hardening(username)
@@ -113,7 +96,7 @@ def _initialize_user_space(username: str) -> bool:
                 attempt + 1,
             )
             if attempt < 2:
-                time.sleep(0.18 * (attempt + 1))
+                time.sleep(0.12 * (attempt + 1))
     st.session_state["_tenant_init_failed"] = True
     return False
 
@@ -146,12 +129,7 @@ def main() -> None:
 
     try:
         from security import login_system
-    except Exception:
-        logger.exception("security module import failed")
-        st.error("تعذر تحميل نظام الدخول.")
-        st.stop()
 
-    try:
         authenticated = bool(login_system())
     except Exception:
         logger.exception("authentication failed")
@@ -168,6 +146,8 @@ def main() -> None:
             st.session_state.pop("_tenant_init_failed", None)
             st.rerun()
         st.stop()
+
+    _render_authenticated_header()
 
     if st.session_state.get("_tenant_unclaimed_legacy"):
         st.warning(

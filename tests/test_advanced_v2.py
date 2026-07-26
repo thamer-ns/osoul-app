@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from technical_indicators.advanced_v2 import compute_advanced_technical_pack
+from technical_indicators.advanced_v2 import _rsi, compute_advanced_technical_pack
 
 
 def _sample_frame(rows=280):
@@ -31,3 +31,22 @@ def test_pack_has_stable_direction_and_confidence_schema():
         assert "summary" in result
         assert "direction_score" in result
         assert "confidence" in result
+
+
+def test_rsi_handles_monotonic_and_flat_series():
+    rising = pd.Series(np.arange(1.0, 80.0))
+    falling = pd.Series(np.arange(80.0, 1.0, -1.0))
+    flat = pd.Series(np.repeat(50.0, 80))
+
+    assert _rsi(rising).iloc[-1] == 100.0
+    assert _rsi(falling).iloc[-1] == 0.0
+    assert _rsi(flat).iloc[-1] == 50.0
+
+
+def test_timeframe_history_periods_are_sufficient():
+    from views.analysis.technical import period_for_interval
+
+    assert period_for_interval("1d") == "3y"
+    assert period_for_interval("1wk") == "10y"
+    assert period_for_interval("1mo") == "max"
+    assert period_for_interval("5m") == "60d"

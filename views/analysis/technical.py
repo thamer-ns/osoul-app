@@ -1,6 +1,7 @@
-"""Technical-analysis UI backed by the v2 advanced indicator contract."""
+"""Technical-analysis UI with lazy execution and close-confirmed signals."""
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict
 
 import pandas as pd
@@ -9,7 +10,8 @@ import streamlit as st
 from components import render_custom_table
 from market_data import get_chart_history
 from technical_indicators import compute_advanced_technical_pack
-from views.shared import _render_technical_chart_flex
+
+logger = logging.getLogger("osoli.analysis.technical")
 
 
 def _sf(value: Any, default: float = 0.0) -> float:
@@ -21,6 +23,38 @@ def _sf(value: Any, default: float = 0.0) -> float:
 
 def _direction_ar(bias: str) -> str:
     return {"bullish": "إيجابي", "bearish": "سلبي", "neutral": "محايد"}.get(str(bias), "محايد")
+
+
+def period_for_interval(interval: str) -> str:
+    """Return enough history for the requested timeframe and provider fallback."""
+    value = str(interval or "1d").strip().lower()
+    return {
+        "1m": "7d",
+        "2m": "60d",
+        "5m": "60d",
+        "15m": "60d",
+        "30m": "60d",
+        "60m": "2y",
+        "1h": "2y",
+        "1d": "3y",
+        "1wk": "10y",
+        "1w": "10y",
+        "1mo": "max",
+    }.get(value, "3y")
+
+
+@st.cache_data(ttl=180, max_entries=128, show_spinner=False)
+def _history_cached(symbol: str, interval: str, period: str) -> pd.DataFrame:
+    frame = get_chart_history(symbol, period=period, interval=interval)
+    return frame if isinstance(frame, pd.DataFrame) else pd.DataFrame()
+
+
+@st.cache_data(ttl=300, max_entries=128, show_spinner=False)
+def _advanced_pack_cached(symbol: str, interval: str, period: str) -> dict:
+    frame = _history_cached(symbol, interval, period)
+    if frame.empty:
+        return {}
+    return compute_advanced_technical_pack(frame, symbol=symbol, timeframe=interval)
 
 
 def _quality(df: pd.DataFrame, interval: str) -> Dict[str, Any]:
@@ -35,15 +69,22 @@ def _quality(df: pd.DataFrame, interval: str) -> Dict[str, Any]:
         bad = int((pd.to_numeric(df["High"], errors="coerce") < pd.to_numeric(df["Low"], errors="coerce")).sum())
         if bad:
             issues.append(f"{bad} شموع فيها أعلى أقل من أدنى")
-    minimum = 220 if interval in {"1d", "1wk", "1w", "1mo"} else 150
+    normalized = str(interval or "1d").lower()
+    minimum = 60 if normalized == "1mo" else 156 if normalized in {"1wk", "1w"} else 200 if normalized == "1d" else 120
     if len(df) < minimum:
         issues.append(f"عدد الشموع أقل من الحد المفضل ({minimum})")
-    available = [c for c in required if c in df.columns]
+    available = [column for column in required if column in df.columns]
     null_ratio = float(df[available].isna().mean().mean()) if available else 1.0
     if null_ratio > 0.01:
         issues.append(f"نسبة قيم ناقصة {null_ratio * 100:.1f}%")
     score = max(0, 100 - len(issues) * 15 - int(null_ratio * 100))
-    return {"ok": not issues, "score": score, "issues": issues, "rows": int(len(df)), "last": str(df.index[-1])}
+    return {
+        "ok": not issues,
+        "score": score,
+        "issues": issues,
+        "rows": int(len(df)),
+        "last": str(df.index[-1]),
+    }
 
 
 def _source_info(df: pd.DataFrame) -> tuple[str, str]:
@@ -60,8 +101,12 @@ def _render_signal_table(signals: list[dict]) -> None:
         return
     frame = pd.DataFrame(signals)
     labels = {
-        "type": "النوع", "kind": "الإشارة", "price": "السعر", "level": "المستوى",
-        "reason": "السبب", "volume_confirmed": "تأكيد الحجم",
+        "type": "النوع",
+        "kind": "الإشارة",
+        "price": "السعر",
+        "level": "المستوى",
+        "reason": "السبب",
+        "volume_confirmed": "تأكيد الحجم",
     }
     config = []
     for column in frame.columns:
@@ -89,15 +134,34 @@ def _render_indicator(title: str, result: Dict[str, Any]) -> None:
             render_custom_table(rows, [("البند", "البند", "text"), ("القيمة", "القيمة", "auto")])
         errors = (result.get("errors") or []) + (result.get("warnings") or [])
         if errors:
-            st.warning(" — ".join(str(x) for x in errors))
+            st.warning(" — ".join(str(item) for item in errors))
 
 
-def _render_advanced(df: pd.DataFrame, symbol: str, interval: str) -> None:
-    if df is None or df.empty:
+def _save_pack_once(pack: dict, symbol: str, interval: str, df: pd.DataFrame) -> None:
+    if not pack or df.empty:
+        return
+    latest = str(df.index[-1])
+    key = f"advanced_saved:{symbol}:{interval}:{latest}"
+    if st.session_state.get(key):
+        return
+    try:
+        from ai_engine_core.db import save_advanced_indicators
+
+        if save_advanced_indicators(symbol=symbol, timeframe=interval, indicators=pack):
+            st.session_state[key] = True
+    except Exception:
+        logger.debug("advanced indicator persistence skipped", exc_info=True)
+
+
+def _render_advanced(df: pd.DataFrame, symbol: str, interval: str, period: str) -> None:
+    if df.empty:
         st.warning("لا توجد بيانات كافية لحساب المؤشرات المتقدمة")
         return
     with st.spinner("حساب المؤشرات المتقدمة..."):
-        pack = compute_advanced_technical_pack(df, symbol=symbol, timeframe=interval)
+        pack = _advanced_pack_cached(symbol, interval, period)
+    if not pack:
+        st.warning("تعذر حساب حزمة المؤشرات المتقدمة.")
+        return
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -115,21 +179,30 @@ def _render_advanced(df: pd.DataFrame, symbol: str, interval: str) -> None:
     _render_indicator("2) RSI الموزون بالتقلب", pack.get("chaos_wrsi") or {})
     _render_indicator("3) شرائح الحجم السعري", pack.get("volume_profile_clusters") or {})
     _render_indicator("4) اختراق وكسر خطوط الاتجاه", pack.get("trendline_breakout") or {})
+    _save_pack_once(pack, symbol, interval, df)
 
+
+def _render_chart(symbol: str, interval: str, period: str, df: pd.DataFrame) -> None:
     try:
-        from ai_engine_core.db import save_advanced_indicators
+        from charts import render_technical_chart
 
-        save_advanced_indicators(symbol=symbol, timeframe=interval, indicators=pack)
+        render_technical_chart(symbol, period=period, interval=interval)
     except Exception:
-        import logging
-        logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
+        logger.exception("technical chart failed")
+        if not df.empty:
+            st.dataframe(df.tail(30), use_container_width=True)
+        else:
+            st.warning("تعذر عرض الشارت")
+    st.caption("الاختراق أو الكسر لا يُعتمد إلا بعد إغلاق الشمعة على الفاصل المحدد.")
 
 
 def view_technical(symbol: str, interval: str = "1d"):
     st.subheader("📈 التحليل الفني")
+    period = period_for_interval(interval)
     try:
-        df = get_chart_history(symbol, period="1y", interval=interval)
+        df = _history_cached(symbol, interval, period)
     except Exception:
+        logger.exception("history loading failed")
         df = pd.DataFrame()
 
     quality = _quality(df, interval)
@@ -149,18 +222,17 @@ def view_technical(symbol: str, interval: str = "1d"):
             for issue in quality["issues"]:
                 st.write(f"- {issue}")
 
-    chart_tab, advanced_tab = st.tabs(["الرسم الفني", "المؤشرات المتقدمة"])
-    with chart_tab:
-        try:
-            _render_technical_chart_flex(symbol, period="1y", interval=interval)
-        except Exception:
-            if not df.empty:
-                st.dataframe(df.tail(30), use_container_width=True)
-            else:
-                st.warning("تعذر عرض الشارت")
-        st.caption("الاختراق أو الكسر لا يُعتمد إلا بعد إغلاق الشمعة على الفاصل المحدد.")
-    with advanced_tab:
-        _render_advanced(df, symbol, interval)
+    mode = st.radio(
+        "طريقة العرض",
+        ["الرسم الفني", "المؤشرات المتقدمة"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key=f"technical_mode:{symbol}:{interval}",
+    )
+    if mode == "الرسم الفني":
+        _render_chart(symbol, interval, period, df)
+    else:
+        _render_advanced(df, symbol, interval, period)
 
 
 def render_technical_tab(symbol: str, interval: str = "1d"):

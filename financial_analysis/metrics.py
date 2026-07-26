@@ -1,6 +1,8 @@
 # financial_analysis/metrics.py
 
 from typing import Tuple, List, Dict, Any
+from functools import lru_cache
+import time
 
 import pandas as pd
 import yfinance as yf
@@ -19,15 +21,20 @@ except Exception:
 # 📐 Fundamental Ratios (Piotroski + Graham + Advanced Pack)
 # ==============================================================
 
-def _fetch_yahoo_info(symbol: str) -> dict:
+@lru_cache(maxsize=256)
+def _fetch_yahoo_info_cached(symbol: str, half_hour_bucket: int) -> dict:
+    _ = half_hour_bucket
     try:
-        t = yf.Ticker(symbol)
-        info = getattr(t, "info", {}) or {}
-        if not isinstance(info, dict):
-            return {}
-        return info
+        info = getattr(yf.Ticker(symbol), "info", {}) or {}
+        return info if isinstance(info, dict) else {}
     except Exception:
         return {}
+
+
+def _fetch_yahoo_info(symbol: str) -> dict:
+    """Cache the expensive Yahoo profile request for 30 minutes."""
+    bucket = int(time.time() // 1800)
+    return dict(_fetch_yahoo_info_cached(str(symbol), bucket))
 
 
 def _best_key(row: pd.Series, keys: List[str], default=0.0):
@@ -37,6 +44,54 @@ def _best_key(row: pd.Series, keys: List[str], default=0.0):
             if v not in (None, 0):
                 return v
     return _safe_float_none(default) if default is None else _safe_float(default)
+
+
+def _piotroski_score(curr: pd.Series, prev: pd.Series) -> tuple[int, int, dict[str, bool | None]]:
+    """Compute only supported Piotroski F-score criteria; never award missing points."""
+    def val(row: pd.Series, *keys: str):
+        for key in keys:
+            if key in row.index:
+                number = _safe_float_none(row.get(key))
+                if number is not None:
+                    return number
+        return None
+
+    ni_c, ni_p = val(curr, "net_income"), val(prev, "net_income")
+    ocf_c = val(curr, "operating_cash_flow")
+    assets_c, assets_p = val(curr, "total_assets"), val(prev, "total_assets")
+    debt_c, debt_p = val(curr, "long_term_debt"), val(prev, "long_term_debt")
+    ca_c, ca_p = val(curr, "current_assets"), val(prev, "current_assets")
+    cl_c, cl_p = val(curr, "current_liabilities"), val(prev, "current_liabilities")
+    shares_c = val(curr, "shares_outstanding", "ordinary_shares", "share_count")
+    shares_p = val(prev, "shares_outstanding", "ordinary_shares", "share_count")
+    revenue_c, revenue_p = val(curr, "revenue"), val(prev, "revenue")
+    gross_c, gross_p = val(curr, "gross_profit"), val(prev, "gross_profit")
+
+    roa_c = _safe_div_none(ni_c, assets_c)
+    roa_p = _safe_div_none(ni_p, assets_p)
+    leverage_c = _safe_div_none(debt_c, assets_c)
+    leverage_p = _safe_div_none(debt_p, assets_p)
+    current_c = _safe_div_none(ca_c, cl_c)
+    current_p = _safe_div_none(ca_p, cl_p)
+    margin_c = _safe_div_none(gross_c, revenue_c)
+    margin_p = _safe_div_none(gross_p, revenue_p)
+    turnover_c = _safe_div_none(revenue_c, assets_c)
+    turnover_p = _safe_div_none(revenue_p, assets_p)
+
+    criteria: dict[str, bool | None] = {
+        "positive_net_income": None if ni_c is None else ni_c > 0,
+        "positive_roa": None if roa_c is None else roa_c > 0,
+        "positive_operating_cash_flow": None if ocf_c is None else ocf_c > 0,
+        "cash_flow_exceeds_income": None if ocf_c is None or ni_c is None else ocf_c > ni_c,
+        "lower_leverage": None if leverage_c is None or leverage_p is None else leverage_c < leverage_p,
+        "higher_current_ratio": None if current_c is None or current_p is None else current_c > current_p,
+        "no_share_dilution": None if shares_c is None or shares_p is None else shares_c <= shares_p,
+        "higher_gross_margin": None if margin_c is None or margin_p is None else margin_c > margin_p,
+        "higher_asset_turnover": None if turnover_c is None or turnover_p is None else turnover_c > turnover_p,
+    }
+    available = sum(value is not None for value in criteria.values())
+    score = sum(value is True for value in criteria.values())
+    return int(score), int(available), criteria
 
 
 def __compute_dupont__shadowed_1(curr_row: pd.Series) -> dict:
@@ -578,12 +633,12 @@ def get_advanced_fundamental_ratios(symbol):
         return metrics
 
     curr = df.iloc[0]
-    prev = df.iloc[1] if len(df) > 1 else curr
+    prev = df.iloc[1] if len(df) > 1 else pd.Series(dtype=object)
 
     # --------------------------
     # Data Quality / Completeness flags for UI + AI calibration
     # --------------------------
-    essential = ["revenue", "net_income", "equity", "operating_cash_flow"]
+    essential = ["revenue", "net_income", "total_equity", "operating_cash_flow"]
     missing = []
     for k in essential:
         try:
@@ -609,52 +664,12 @@ def get_advanced_fundamental_ratios(symbol):
 
     try:
         # --------------------------
-        # Piotroski (simple internal)
+        # Piotroski F-score (available evidence only)
         # --------------------------
-        score = 0
-
-        net_income_c = _safe_float(curr.get("net_income", 0))
-        ocf_c = _safe_float(curr.get("operating_cash_flow", 0))
-        assets_c = _safe_float(curr.get("total_assets", 1)) or 1.0
-
-        net_income_p = _safe_float(prev.get("net_income", 0))
-        assets_p = _safe_float(prev.get("total_assets", 1)) or 1.0
-
-        if net_income_c > 0:
-            score += 1
-        if ocf_c > 0:
-            score += 1
-
-        roa_c = net_income_c / assets_c
-        roa_p = net_income_p / assets_p
-        if roa_c > roa_p:
-            score += 1
-
-        if ocf_c > net_income_c:
-            score += 1
-
-        ltd_c = _safe_float(curr.get("long_term_debt", 0))
-        ltd_p = _safe_float(prev.get("long_term_debt", 0))
-        if ltd_c < ltd_p:
-            score += 1
-
-        ca_c = _safe_float(curr.get("current_assets", 0))
-        cl_c = _safe_float(curr.get("current_liabilities", 0))
-        ca_p = _safe_float(prev.get("current_assets", 0))
-        cl_p = _safe_float(prev.get("current_liabilities", 0))
-
-        cr_c = ca_c / (cl_c or 1.0)
-        cr_p = ca_p / (cl_p or 1.0)
-        if cr_c > cr_p:
-            score += 1
-
-        eq_c = _safe_float(curr.get("total_equity", 0))
-        eq_p = _safe_float(prev.get("total_equity", 0))
-        if eq_c > eq_p and eq_c > 0:
-            score += 1
-
-        piotroski = int(min(max(score + 2, 0), 9))
+        piotroski, coverage, criteria = _piotroski_score(curr, prev)
         metrics["Piotroski_Score"] = piotroski
+        metrics["Piotroski_Coverage"] = coverage
+        metrics["Piotroski_Criteria"] = criteria
         metrics["Score"] = piotroski
 
         # --------------------------
@@ -692,8 +707,11 @@ def get_advanced_fundamental_ratios(symbol):
 
         fscore10, rating, adv_ops = _score_fundamentals(metrics)
 
-        # Health label
-        if metrics["Piotroski_Score"] >= 7:
+        # Health label: do not overstate when too few F-score criteria are available.
+        if int(metrics.get("Piotroski_Coverage", 0)) < 6:
+            metrics["Financial_Health"] = "بيانات غير مكتملة"
+            adv_ops.append("ℹ️ تغطية Piotroski غير مكتملة؛ لم تُمنح نقاط للمعايير المفقودة")
+        elif metrics["Piotroski_Score"] >= 7:
             metrics["Financial_Health"] = "جيد"
         elif metrics["Piotroski_Score"] <= 3:
             metrics["Financial_Health"] = "هش"
