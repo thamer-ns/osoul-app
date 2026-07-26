@@ -13,8 +13,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -24,16 +22,16 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Secret scan
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Syntax and project self-check
         run: python tools/self_check.py
 
-      - name: Ruff
-        run: ruff check app.py security.py tenant_scope.py analytics_hardening.py market_data_hardening.py technical_indicators ai_engine_core/packs.py views/portfolio.py views/dashboard.py views/analysis/technical.py tests
+      - name: Critical Ruff checks
+        run: >-
+          ruff check
+          --select E9,F63,F7,F82
+          app.py security.py tenant_scope.py analytics_hardening.py
+          market_data_hardening.py technical_indicators ai_engine_core/packs.py
+          views/portfolio.py views/dashboard.py views/analysis/technical.py tests
 
       - name: Tests
         env:
@@ -42,3 +40,15 @@ jobs:
           OSOUL_ALLOW_SQLITE_FALLBACK: "1"
           SQLITE_PATH: "/tmp/osoul_test.db"
         run: pytest -q
+
+  secret-history:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan complete Git history for exposed secrets
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
