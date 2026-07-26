@@ -2,9 +2,9 @@
 
 """Lightweight package exports with lazy imports.
 
-The public report path always passes through ``decision_engine_v3``. This keeps
-all presentation layers on one sanitized decision while preserving lazy imports
-and the original reporting engine as the data/analysis producer.
+The public report path always passes through the final decision policy. This
+keeps every presentation layer on one sanitized, close-confirmed and
+risk-integrity-checked decision while preserving lazy imports.
 """
 
 from .config import AI_ENGINE_NAME, AI_ENGINE_OK, AI_ENGINE_VERSION
@@ -53,10 +53,10 @@ def _report_call_context(args, kwargs) -> tuple[str, str]:
 
 
 def generate_ai_report(*args, **kwargs):
-    """Generate once, then sanitize and decide once for every UI/consumer."""
+    """Generate once, then enforce one final decision for every consumer."""
     raw_report = _lazy_attr(".reporting", "generate_ai_report")(*args, **kwargs)
     symbol, timeframe = _report_call_context(args, kwargs)
-    return _lazy_attr(".decision_engine_v3", "enrich_report")(
+    return _lazy_attr(".decision_policy_v3", "enrich_report")(
         raw_report,
         symbol=symbol,
         timeframe=timeframe,
@@ -154,12 +154,12 @@ def self_test() -> dict:
 
     report["checks"]["has_generate_ai_report"] = callable(globals().get("generate_ai_report"))
     report["checks"]["has_decision_engine"] = callable(
-        _lazy_attr(".decision_engine_v3", "enrich_report")
+        _lazy_attr(".decision_policy_v3", "enrich_report")
     )
     return report
 
 
 DECISION_ENGINE_VERSION = _lazy_attr(
-    ".decision_engine_v3",
+    ".decision_policy_v3",
     "DECISION_ENGINE_VERSION",
 )
