@@ -20,8 +20,8 @@ def _fake_streamlit(initial=None):
 
 
 def test_refresh_waits_for_cookie_component_then_restores_session(monkeypatch):
-    token = "signed-token"
-    manager = FakeCookieManager({security.TOKEN_COOKIE: token})
+    cookie_value = f"{security.TOKEN_COOKIE}-fixture"
+    manager = FakeCookieManager({security.TOKEN_COOKIE: cookie_value})
     fake_st = _fake_streamlit({"_auth_cookie_manager_warmup": True})
 
     monkeypatch.setattr(security, "st", fake_st)
@@ -29,7 +29,7 @@ def test_refresh_waits_for_cookie_component_then_restores_session(monkeypatch):
     monkeypatch.setattr(
         security,
         "_verify_token",
-        lambda value: ("thamer", 9_999_999_999) if value == token else None,
+        lambda value: ("thamer", 9_999_999_999) if value == cookie_value else None,
     )
 
     # Constructor run: do not permanently record an empty/early cookie result.
