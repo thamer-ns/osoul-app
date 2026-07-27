@@ -1,4 +1,4 @@
-"""Lazy Streamlit page router with a fast tenant snapshot path."""
+"""Lazy Streamlit page router with fast, unified hubs."""
 from __future__ import annotations
 
 import importlib
@@ -7,22 +7,14 @@ import streamlit as st
 
 PAGES_REQUIRING_PORTFOLIO = {
     "home",
-    "spec",
-    "invest",
-    "sukuk",
+    "portfolios",
     "insights",
     "cash",
 }
 
 
 def _portfolio_cache_key(user_id: int, portfolio_id: int) -> str:
-    """Return a tenant-isolated key without issuing database polling queries.
-
-    All financial writes already clear Streamlit's data cache.  The previous
-    router queried four complete tables every 45 seconds merely to build a
-    revision string, then queried the same tables again for the actual metrics.
-    Removing that duplicate polling makes every normal navigation rerun cheap.
-    """
+    """Return a tenant-isolated key without issuing database polling queries."""
     return f"u{int(user_id)}:p{int(portfolio_id)}"
 
 
@@ -34,12 +26,10 @@ def _load_attr(module_name: str, attr_name: str):
 def _render_page(page: str, finance):
     routes = {
         "home": ("views.dashboard", "view_dashboard", (finance,)),
-        "spec": ("views.fast_portfolio", "view_portfolio", (finance, "spec")),
-        "invest": ("views.fast_portfolio", "view_portfolio", (finance, "invest")),
-        "sukuk": ("views.sukuk", "view_sukuk_portfolio", (finance,)),
+        "portfolios": ("views.portfolios", "view_portfolios", (finance,)),
         "insights": ("views.insights", "view_insights", (finance,)),
         "cash": ("views.cash", "view_cash_log", (finance,)),
-        "pulse": ("views.portfolio", "render_pulse_dashboard", ()),
+        "pulse": ("views.pulse", "view_pulse", ()),
         "add": ("views.portfolio", "view_add_trade", ()),
         "tools": ("views.settings", "view_tools", ()),
         "settings": ("views.settings", "view_settings", ()),
