@@ -11,7 +11,6 @@ NAV_ITEMS = [
     ("المحافظ", "portfolios"),
     ("إضافة صفقة", "add"),
     ("السيولة", "cash"),
-    ("نبض المحفظة", "pulse"),
     ("الأدوات", "tools"),
     ("الإعدادات", "settings"),
 ]
@@ -22,7 +21,6 @@ _ICON_BY_KEY = {
     "portfolios": "💼",
     "add": "➕",
     "cash": "💰",
-    "pulse": "📡",
     "tools": "🛠️",
     "settings": "⚙️",
     "update": "🔄",
@@ -34,19 +32,17 @@ _SHORT_LABEL_BY_KEY = {
     "portfolios": "المحافظ",
     "add": "إضافة",
     "cash": "السيولة",
-    "pulse": "النبض",
     "tools": "الأدوات",
     "settings": "الإعدادات",
 }
 
 _HELP_BY_KEY = {
-    "home": "العودة إلى لوحة أصولي الرئيسية",
+    "home": "لوحة أصولي وملخص أسهمي المملوكة",
     "insights": "التحليل والإشارات والاختبار الخلفي في مركز واحد",
     "portfolios": "المضاربة والاستثمار والصكوك داخل مركز محافظ واحد",
     "add": "تسجيل صفقة جديدة",
     "cash": "حركة السيولة والإيداعات والسحوبات",
-    "pulse": "متابعة أسعار المراكز المفتوحة وتغيرها اليومي",
-    "tools": "الأدوات المساعدة",
+    "tools": "التقييم والتعلم وأدوات المحفظة",
     "settings": "الإعدادات وتحديث الأسعار وتسجيل الخروج",
 }
 
@@ -63,11 +59,15 @@ _LEGACY_PORTFOLIO_ROUTES = {
     "invest": "invest",
     "sukuk": "sukuk",
 }
+_LEGACY_HOME_ROUTES = {
+    "pulse": "owned_stocks",
+}
 _ALLOWED = set(_NAV_KEYS) | {"update"}
 _ROUTABLE = (
     _ALLOWED
     | set(_LEGACY_ANALYSIS_ROUTES)
     | set(_LEGACY_PORTFOLIO_ROUTES)
+    | set(_LEGACY_HOME_ROUTES)
 )
 _LABEL_BY_KEY = {key: label for label, key in NAV_ITEMS}
 _LABEL_BY_KEY["update"] = "تحديث الأسعار"
@@ -122,6 +122,8 @@ def _canonical_page(value: object) -> str:
         return "insights"
     if page in _LEGACY_PORTFOLIO_ROUTES:
         return "portfolios"
+    if page in _LEGACY_HOME_ROUTES:
+        return "home"
     return page if page in _ALLOWED else "home"
 
 
@@ -135,16 +137,29 @@ def _legacy_portfolio_section(value: object) -> Optional[str]:
     return _LEGACY_PORTFOLIO_ROUTES.get(page)
 
 
+def _legacy_home_section(value: object) -> Optional[str]:
+    page = str(value or "").strip().lower()
+    return _LEGACY_HOME_ROUTES.get(page)
+
+
+def _apply_legacy_destination(value: object) -> None:
+    analysis_section = _legacy_section(value)
+    if analysis_section:
+        st.session_state["insights_section"] = analysis_section
+
+    portfolio_section = _legacy_portfolio_section(value)
+    if portfolio_section:
+        st.session_state["portfolios_section"] = portfolio_section
+
+    if _legacy_home_section(value) == "owned_stocks":
+        st.session_state["_owned_stocks_open_once"] = True
+
+
 def sync_page_from_query_params_once() -> None:
     requested = _safe_get_query_page()
     if not requested:
         return
-    analysis_section = _legacy_section(requested)
-    if analysis_section:
-        st.session_state["insights_section"] = analysis_section
-    portfolio_section = _legacy_portfolio_section(requested)
-    if portfolio_section:
-        st.session_state["portfolios_section"] = portfolio_section
+    _apply_legacy_destination(requested)
     destination = _canonical_page(requested)
     if destination != st.session_state.get("page"):
         st.session_state["page"] = destination
@@ -162,12 +177,7 @@ def _display_page(page: str) -> str:
 
 
 def navigate_to(page: str, *, rerun: bool = True) -> None:
-    analysis_section = _legacy_section(page)
-    if analysis_section:
-        st.session_state["insights_section"] = analysis_section
-    portfolio_section = _legacy_portfolio_section(page)
-    if portfolio_section:
-        st.session_state["portfolios_section"] = portfolio_section
+    _apply_legacy_destination(page)
     destination = _canonical_page(page)
     st.session_state["page"] = destination
     _safe_set_query_page(destination)
@@ -219,7 +229,7 @@ def _inject_compact_nav_css() -> None:
           border-radius:9px !important;
           justify-content:center !important;
           gap:.18rem !important;
-          font-size:.72rem !important;
+          font-size:.74rem !important;
           font-weight:850 !important;
           line-height:1.1 !important;
           white-space:nowrap !important;
@@ -232,23 +242,23 @@ def _inject_compact_nav_css() -> None:
           white-space:nowrap !important;
           overflow:hidden !important;
           text-overflow:ellipsis !important;
-          font-size:.72rem !important;
+          font-size:.74rem !important;
           line-height:1.08 !important;
         }
         .st-key-osoli_nav_row .stButton > button [data-testid="stIconMaterial"] {
-          font-size:.88rem !important;
-          min-width:.88rem !important;
+          font-size:.9rem !important;
+          min-width:.9rem !important;
         }
         @media (max-width:900px) {
           .st-key-osoli_nav_row [data-testid="stHorizontalBlock"] > [data-testid="column"] {
-            min-width:86px !important;
-            flex:0 0 86px !important;
+            min-width:92px !important;
+            flex:0 0 92px !important;
           }
         }
         @media (max-width:600px) {
           .st-key-osoli_nav_row [data-testid="stHorizontalBlock"] > [data-testid="column"] {
-            min-width:78px !important;
-            flex:0 0 78px !important;
+            min-width:82px !important;
+            flex:0 0 82px !important;
           }
         }
         </style>
@@ -281,16 +291,10 @@ def _render_compact_navigation(current: str) -> None:
 
 
 def render_navbar() -> None:
-    """Render one single-row navigation bar; account actions live in settings."""
+    """Render one single-row navigation bar; owned stocks live on Home."""
     sync_page_from_query_params_once()
     raw_page = st.session_state.get("page")
-
-    analysis_section = _legacy_section(raw_page)
-    if analysis_section:
-        st.session_state["insights_section"] = analysis_section
-    portfolio_section = _legacy_portfolio_section(raw_page)
-    if portfolio_section:
-        st.session_state["portfolios_section"] = portfolio_section
+    _apply_legacy_destination(raw_page)
 
     route_page = _validated_page(raw_page)
     if route_page != raw_page:

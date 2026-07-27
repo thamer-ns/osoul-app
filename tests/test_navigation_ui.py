@@ -12,7 +12,6 @@ def test_icon_navigation_uses_compact_hubs_and_no_sidebar():
         "portfolios",
         "add",
         "cash",
-        "pulse",
         "tools",
         "settings",
     }
@@ -22,7 +21,15 @@ def test_icon_navigation_uses_compact_hubs_and_no_sidebar():
     assert navbar._PRIMARY_KEYS == navbar._NAV_KEYS
     assert navbar._SECONDARY_KEYS == ()
     assert navbar._ALLOWED == expected | {"update"}
-    for removed in ("analysis", "signals", "backtest", "spec", "invest", "sukuk"):
+    for removed in (
+        "analysis",
+        "signals",
+        "backtest",
+        "spec",
+        "invest",
+        "sukuk",
+        "pulse",
+    ):
         assert removed not in navbar._NAV_KEYS
     source = inspect.getsource(navbar)
     assert "st.sidebar" not in source
@@ -43,6 +50,11 @@ def test_legacy_portfolio_links_resolve_into_the_portfolios_hub():
         assert navbar._legacy_portfolio_section(legacy) == legacy
         assert legacy in navbar._ROUTABLE
 
+
+def test_legacy_pulse_link_opens_owned_stocks_on_home():
+    assert navbar._canonical_page("pulse") == "home"
+    assert navbar._legacy_home_section("pulse") == "owned_stocks"
+    assert "pulse" in navbar._ROUTABLE
     assert navbar._canonical_page("not-a-page") == "home"
     assert navbar._display_page("update") == "home"
 
