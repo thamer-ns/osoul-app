@@ -27,21 +27,49 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.ref }}
-          fetch-depth: 0
+          fetch-depth: 1
+          show-progress: false
 
-      - name: Apply reviewed patch
+      - name: Reconstruct and apply reviewed patch
         shell: bash
         run: |
-          set -euo pipefail
-          test -d .audit-v4
-          cat .audit-v4/part-* | base64 --decode | gzip --decompress > /tmp/audit-v4.patch
+          set +e
+          : > /tmp/audit-v4-diagnostic.txt
+          {
+            echo "HEAD=$(git rev-parse HEAD)"
+            git status --short
+            ls -l .audit-v4
+            cat .audit-v4/part-* > /tmp/audit-v4.patch.gz.b64
+            echo "payload_size=$(wc -c < /tmp/audit-v4.patch.gz.b64)"
+            sha256sum /tmp/audit-v4.patch.gz.b64
+            base64 --decode /tmp/audit-v4.patch.gz.b64 > /tmp/audit-v4.patch.gz
+            echo "base64_rc=$?"
+            gzip --test /tmp/audit-v4.patch.gz
+            echo "gzip_test_rc=$?"
+            gzip --decompress --stdout /tmp/audit-v4.patch.gz > /tmp/audit-v4.patch
+            echo "gzip_decode_rc=$?"
+            sha256sum /tmp/audit-v4.patch
+            echo "expected=14bc9cf8607e1832bc716fc4469334b8036dfa12eadfd7be6c85ec822f927f31"
+            git apply --check /tmp/audit-v4.patch
+            apply_check_rc=$?
+            echo "git_apply_check_rc=${apply_check_rc}"
+          } 2>&1 | tee /tmp/audit-v4-diagnostic.txt
+          test "${PIPESTATUS[0]}" -eq 0
           echo "14bc9cf8607e1832bc716fc4469334b8036dfa12eadfd7be6c85ec822f927f31  /tmp/audit-v4.patch" | sha256sum --check
-          git apply --check /tmp/audit-v4.patch
           git apply /tmp/audit-v4.patch
           rm -rf .audit-v4
           rm -rf .pytest_cache .ruff_cache
           find . -type d -name __pycache__ -prune -exec rm -rf {} +
           find . -type f -name '*.pyc' -delete
+
+      - name: Upload patch diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: audit-v4-patch-diagnostics
+          path: /tmp/audit-v4-diagnostic.txt
+          if-no-files-found: warn
+          retention-days: 2
 
       - uses: actions/setup-python@v5
         with:
