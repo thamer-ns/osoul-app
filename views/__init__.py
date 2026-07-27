@@ -1,4 +1,4 @@
-"""Lazy Streamlit page router."""
+"""Lazy Streamlit page router with a fast tenant snapshot path."""
 from __future__ import annotations
 
 import importlib
@@ -15,13 +15,15 @@ PAGES_REQUIRING_PORTFOLIO = {
 }
 
 
-@st.cache_data(ttl=45, max_entries=256, show_spinner=False)
-def _get_portfolio_cache_key_fast(user_id: int, portfolio_id: int) -> str:
-    """Return a tenant-specific data revision without polling on every widget click."""
-    from analytics import get_portfolio_cache_key
+def _portfolio_cache_key(user_id: int, portfolio_id: int) -> str:
+    """Return a tenant-isolated key without issuing database polling queries.
 
-    revision = get_portfolio_cache_key()
-    return f"u{int(user_id)}:p{int(portfolio_id)}:{revision}"
+    All financial writes already clear Streamlit's data cache.  The previous
+    router queried four complete tables every 45 seconds merely to build a
+    revision string, then queried the same tables again for the actual metrics.
+    Removing that duplicate polling makes every normal navigation rerun cheap.
+    """
+    return f"u{int(user_id)}:p{int(portfolio_id)}"
 
 
 def _load_attr(module_name: str, attr_name: str):
@@ -32,8 +34,8 @@ def _load_attr(module_name: str, attr_name: str):
 def _render_page(page: str, finance):
     routes = {
         "home": ("views.dashboard", "view_dashboard", (finance,)),
-        "spec": ("views.portfolio", "view_portfolio", (finance, "spec")),
-        "invest": ("views.portfolio", "view_portfolio", (finance, "invest")),
+        "spec": ("views.fast_portfolio", "view_portfolio", (finance, "spec")),
+        "invest": ("views.fast_portfolio", "view_portfolio", (finance, "invest")),
         "sukuk": ("views.sukuk", "view_sukuk_portfolio", (finance,)),
         "insights": ("views.insights", "view_insights", (finance,)),
         "cash": ("views.cash", "view_cash_log", (finance,)),
@@ -44,7 +46,6 @@ def _render_page(page: str, finance):
     }
     target = routes.get(page)
     if target is None:
-        st.session_state.page = "home"
         _load_attr("views.navbar", "navigate_to")("home")
         return
     module_name, attr_name, args = target
@@ -63,7 +64,6 @@ def router():
 
         with st.spinner("جاري تحديث الأسعار..."):
             update_prices()
-        st.cache_data.clear()
         _load_attr("views.navbar", "navigate_to")("home")
         return
 
@@ -76,7 +76,7 @@ def router():
         if tenant is None:
             st.error("تعذر تحديد المحفظة النشطة بأمان.")
             st.stop()
-        cache_key = _get_portfolio_cache_key_fast(tenant.user_id, tenant.portfolio_id)
+        cache_key = _portfolio_cache_key(tenant.user_id, tenant.portfolio_id)
         with st.spinner("جارٍ تحميل بيانات المحفظة..."):
             finance = calculate_portfolio_metrics(cache_key=cache_key)
         if isinstance(finance, dict):
