@@ -10,10 +10,8 @@ PAGES_REQUIRING_PORTFOLIO = {
     "spec",
     "invest",
     "sukuk",
-    "signals",
-    "analysis",
+    "insights",
     "cash",
-    "backtest",
 }
 
 
@@ -37,10 +35,8 @@ def _render_page(page: str, finance):
         "spec": ("views.portfolio", "view_portfolio", (finance, "spec")),
         "invest": ("views.portfolio", "view_portfolio", (finance, "invest")),
         "sukuk": ("views.sukuk", "view_sukuk_portfolio", (finance,)),
-        "signals": ("views.signals", "view_signals", (finance,)),
-        "analysis": ("views.analysis", "view_analysis", (finance,)),
+        "insights": ("views.insights", "view_insights", (finance,)),
         "cash": ("views.cash", "view_cash_log", (finance,)),
-        "backtest": ("views.lab", "view_backtester_ui", (finance,)),
         "pulse": ("views.portfolio", "render_pulse_dashboard", ()),
         "add": ("views.portfolio", "view_add_trade", ()),
         "tools": ("views.settings", "view_tools", ()),
@@ -49,7 +45,7 @@ def _render_page(page: str, finance):
     target = routes.get(page)
     if target is None:
         st.session_state.page = "home"
-        st.rerun()
+        _load_attr("views.navbar", "navigate_to")("home")
         return
     module_name, attr_name, args = target
     _load_attr(module_name, attr_name)(*args)
@@ -68,8 +64,7 @@ def router():
         with st.spinner("جاري تحديث الأسعار..."):
             update_prices()
         st.cache_data.clear()
-        st.session_state.page = "home"
-        st.rerun()
+        _load_attr("views.navbar", "navigate_to")("home")
         return
 
     finance = None
