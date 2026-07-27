@@ -8,7 +8,7 @@ from backup_system import _safe_excel_value
 from portfolio_metrics_v2 import calculate_portfolio_metrics_v2
 
 
-def test_unified_portfolio_accounting(monkeypatch):
+def test_unified_portfolio_accounting_uses_stored_prices_only(monkeypatch):
     tables = {
         "trades": pd.DataFrame(
             [
@@ -51,37 +51,27 @@ def test_unified_portfolio_accounting(monkeypatch):
         "fetch_table",
         lambda table: tables[str(table).lower()].copy(),
     )
-    monkeypatch.setattr(
-        market_data,
-        "get_ticker_symbol",
-        lambda symbol: str(symbol).strip().upper(),
-    )
-    monkeypatch.setattr(
-        market_data,
-        "fetch_batch_data",
-        lambda symbols: {
-            "1120.SR": {
-                "price": 60.0,
-                "prev_close": 58.0,
-                "source": "test",
-                "is_stale": False,
-            }
-        },
-    )
+
+    def fail_on_network(_symbols):
+        raise AssertionError("normal portfolio metrics must not call market providers")
+
+    monkeypatch.setattr(market_data, "fetch_batch_data", fail_on_network)
 
     calculate_portfolio_metrics_v2.clear()
     result = calculate_portfolio_metrics_v2(
         include_xirr=False,
-        cache_key="u1:p1:revision1",
+        cache_key="u1:p1",
     )
 
     assert result["cost_open"] == 500.0
-    assert result["market_val_open"] == 600.0
-    assert result["unrealized_pl"] == 100.0
+    assert result["market_val_open"] == 550.0
+    assert result["unrealized_pl"] == 50.0
     assert result["realized_pl"] == 50.0
     assert result["cash"] == 570.0
-    assert result["portfolio_value"] == 1170.0
-    assert result["data_quality"]["ok"] is True
+    assert result["portfolio_value"] == 1120.0
+    assert result["price_mode"] == "stored"
+    assert result["data_quality"]["ok"] is False
+    assert "آخر سعر محفوظ" in result["data_quality"]["notes"][0]
 
 
 def test_excel_formula_prefixes_are_neutralised():
@@ -107,7 +97,9 @@ def test_stored_fallback_price_is_marked_stale(monkeypatch):
                 }
             ]
         ),
-        "deposits": pd.DataFrame([{"date": "2026-01-01", "amount": 1000.0}]),
+        "deposits": pd.DataFrame(
+            [{"date": "2026-01-01", "amount": 1000.0}]
+        ),
         "withdrawals": pd.DataFrame(columns=["date", "amount"]),
         "returnsgrants": pd.DataFrame(columns=["date", "amount"]),
     }
@@ -118,10 +110,11 @@ def test_stored_fallback_price_is_marked_stale(monkeypatch):
     )
     monkeypatch.setattr(
         market_data,
-        "get_ticker_symbol",
-        lambda symbol: str(symbol).strip().upper(),
+        "fetch_batch_data",
+        lambda symbols: (_ for _ in ()).throw(
+            AssertionError("network call is forbidden on normal page load")
+        ),
     )
-    monkeypatch.setattr(market_data, "fetch_batch_data", lambda symbols: {})
 
     calculate_portfolio_metrics_v2.clear()
     result = calculate_portfolio_metrics_v2(
