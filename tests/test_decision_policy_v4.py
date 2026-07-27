@@ -4,19 +4,14 @@ from ai_engine_core.decision_policy_v4 import audit_plan_geometry, build_school_
 
 
 def test_one_strong_actionable_school_qualifies_without_double_counting():
-    report = {
-        "features": {"liq_sweep_low": 1},
-        "tech_reasons": [
-            "Spring مؤكد بإغلاق الشمعة بعد سحب السيولة",
-            "Spring مؤكد بإغلاق الشمعة بعد سحب السيولة",
-        ],
-    }
+    report = {"features": {"liq_sweep_low": 1}}
 
     consensus = build_school_consensus(report)
 
     assert consensus["qualified"] is True
     assert consensus["strong_single_school"] is True
     assert consensus["direction"] == "buy"
+    assert consensus["school_count"] == 1
     assert len(set(consensus["independent_axes"])) == consensus["school_count"]
 
 
