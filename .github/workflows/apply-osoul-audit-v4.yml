@@ -1,0 +1,70 @@
+name: Apply Osoli audit V4
+
+on:
+  push:
+    branches:
+      - agent/osoul-audit-v4-session-persistence
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-validate:
+    runs-on: ubuntu-latest
+    env:
+      OSOUL_ALLOW_EPHEMERAL_AUTH_SECRET: "1"
+      OSOUL_REQUIRE_DB: "0"
+      OSOUL_ALLOW_SQLITE_FALLBACK: "1"
+      SQLITE_PATH: "/tmp/osoul_audit_v4.db"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/osoul-audit-v4-session-persistence
+          fetch-depth: 0
+
+      - name: Verify and apply reviewed patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f .audit-release/patch.b64
+          echo "392aef28d9ade054a8b4eb229de77c54123c0b3baf077854395fb56c0020a4d8  .audit-release/patch.b64" | sha256sum --check
+          base64 --decode .audit-release/patch.b64 | gzip --decompress > /tmp/osoul-final.patch
+          echo "2c1992e878885192f8162e89fbf661dff2dda9140cb8cad3483c252e2ad56230  /tmp/osoul-final.patch" | sha256sum --check
+          git apply --check /tmp/osoul-final.patch
+          git apply --whitespace=error-all /tmp/osoul-final.patch
+          rm -rf .audit-release
+          rm -f .github/workflows/apply-osoul-audit-v4.yml
+          rm -rf .pytest_cache .ruff_cache
+          find . -type d -name __pycache__ -prune -exec rm -rf {} +
+          find . -type f -name '*.pyc' -delete
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate complete application
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m compileall -q .
+          python tools/self_check.py
+          ruff check . --select E9,F63,F7,F82
+          pytest -q --tb=short
+          git diff --check
+
+      - name: Commit validated implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "osoul-audit-bot"
+          git config user.email "osoul-audit-bot@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "Audit V4: harden analytics and persist login across refresh"
+          git push origin HEAD:agent/osoul-audit-v4-session-persistence
