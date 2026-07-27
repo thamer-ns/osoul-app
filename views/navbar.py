@@ -36,13 +36,13 @@ _ICON_BY_KEY = {
 
 _SHORT_LABEL_BY_KEY = {
     "home": "الرئيسية",
-    "insights": "مركز التحليل",
+    "insights": "التحليل",
     "spec": "المضاربة",
     "invest": "الاستثمار",
-    "add": "إضافة صفقة",
+    "add": "إضافة",
     "sukuk": "الصكوك",
     "cash": "السيولة",
-    "pulse": "نبض المحفظة",
+    "pulse": "النبض",
     "tools": "الأدوات",
     "settings": "الإعدادات",
 }
@@ -60,9 +60,9 @@ _HELP_BY_KEY = {
     "settings": "إعدادات التطبيق والحساب",
 }
 
-_PRIMARY_KEYS = ("home", "insights", "spec", "invest", "add")
-_SECONDARY_KEYS = ("sukuk", "cash", "pulse", "tools", "settings")
-_NAV_KEYS = _PRIMARY_KEYS + _SECONDARY_KEYS
+_NAV_KEYS = tuple(key for _, key in NAV_ITEMS)
+_PRIMARY_KEYS = _NAV_KEYS
+_SECONDARY_KEYS: tuple[str, ...] = ()
 _LEGACY_ANALYSIS_ROUTES = {
     "analysis": "analysis",
     "signals": "signals",
@@ -131,19 +131,15 @@ def _legacy_section(value: object) -> Optional[str]:
 
 
 def sync_page_from_query_params_once() -> None:
-    """Synchronise deep links and browser back/forward navigation safely."""
     requested = _safe_get_query_page()
     if not requested:
         return
-
     legacy_section = _legacy_section(requested)
     if legacy_section:
         st.session_state["insights_section"] = legacy_section
-
     destination = _canonical_page(requested)
     if destination != st.session_state.get("page"):
         st.session_state["page"] = destination
-
     if requested != destination:
         _safe_set_query_page(destination)
 
@@ -153,7 +149,6 @@ def _validated_page(value: object) -> str:
 
 
 def _display_page(page: str) -> str:
-    """Return the page highlighted in the visible navigation."""
     canonical = _canonical_page(page)
     return "home" if canonical == "update" else canonical
 
@@ -162,7 +157,6 @@ def navigate_to(page: str, *, rerun: bool = True) -> None:
     legacy_section = _legacy_section(page)
     if legacy_section:
         st.session_state["insights_section"] = legacy_section
-
     destination = _canonical_page(page)
     st.session_state["page"] = destination
     _safe_set_query_page(destination)
@@ -170,125 +164,125 @@ def navigate_to(page: str, *, rerun: bool = True) -> None:
         st.rerun()
 
 
-def _go(page: str) -> None:
-    navigate_to(page)
-
-
-def _logout() -> None:
+def _logout_callback() -> None:
     logout_user()
     st.cache_data.clear()
-    st.rerun()
 
 
-def _inject_icon_nav_css() -> None:
+def _inject_compact_nav_css() -> None:
     st.markdown(
         """
         <style>
         .st-key-osoli_icon_navigation {
           direction:rtl !important;
-          text-align:right !important;
-          margin:.12rem 0 .82rem !important;
-          padding:.72rem .78rem .78rem !important;
+          margin:.08rem 0 .5rem !important;
+          padding:.34rem .4rem .38rem !important;
           border:1px solid var(--os-border-strong,rgba(15,23,42,.16)) !important;
-          border-radius:18px !important;
+          border-radius:14px !important;
           background:
-            linear-gradient(135deg,rgba(36,87,230,.075),rgba(14,143,202,.035)),
+            linear-gradient(135deg,rgba(36,87,230,.07),rgba(14,143,202,.025)),
             var(--os-surface,#fff) !important;
-          box-shadow:0 8px 26px rgba(15,23,42,.055) !important;
+          box-shadow:0 5px 18px rgba(15,23,42,.045) !important;
+          overflow:hidden !important;
         }
-        .st-key-osoli_icon_navigation .os-nav-heading {
-          display:flex !important;
+        .st-key-osoli_nav_row [data-testid="stHorizontalBlock"] {
           direction:rtl !important;
-          align-items:center !important;
-          justify-content:space-between !important;
-          gap:.75rem !important;
-          margin:0 .12rem .52rem !important;
-          color:var(--os-text,#10203a) !important;
+          display:flex !important;
+          flex-direction:row !important;
+          flex-wrap:nowrap !important;
+          align-items:stretch !important;
+          gap:.24rem !important;
+          margin:0 !important;
+          overflow-x:auto !important;
+          overflow-y:hidden !important;
+          scrollbar-width:thin !important;
+          padding:.04rem 0 .16rem !important;
         }
-        .st-key-osoli_icon_navigation .os-nav-heading strong {
-          font-size:.98rem !important;
-          font-weight:900 !important;
+        .st-key-osoli_nav_row [data-testid="stHorizontalBlock"] > [data-testid="column"] {
+          direction:rtl !important;
+          width:auto !important;
+          min-width:0 !important;
+          flex:1 1 0 !important;
         }
-        .st-key-osoli_icon_navigation .os-nav-heading span {
-          color:var(--os-muted,#64748b) !important;
-          font-size:.76rem !important;
-          font-weight:650 !important;
+        .st-key-osoli_nav_row .stButton > button {
+          width:100% !important;
+          min-width:0 !important;
+          min-height:42px !important;
+          height:42px !important;
+          padding:.22rem .12rem !important;
+          border-radius:10px !important;
+          justify-content:center !important;
+          gap:.18rem !important;
+          font-size:.66rem !important;
+          font-weight:850 !important;
+          line-height:1.15 !important;
+          white-space:nowrap !important;
+          box-shadow:none !important;
+          overflow:hidden !important;
         }
-        .st-key-osoli_icon_navigation [data-testid="stHorizontalBlock"] {
+        .st-key-osoli_nav_row .stButton > button p {
+          direction:rtl !important;
+          text-align:center !important;
+          white-space:nowrap !important;
+          overflow:hidden !important;
+          text-overflow:ellipsis !important;
+          font-size:.66rem !important;
+          line-height:1.1 !important;
+        }
+        .st-key-osoli_nav_row .stButton > button [data-testid="stIconMaterial"] {
+          font-size:.9rem !important;
+          min-width:.9rem !important;
+        }
+        .st-key-osoli_nav_actions {
+          margin-top:.22rem !important;
+          padding-top:.24rem !important;
+          border-top:1px solid var(--os-border,rgba(15,23,42,.1)) !important;
+        }
+        .st-key-osoli_nav_actions [data-testid="stHorizontalBlock"] {
           direction:rtl !important;
           flex-direction:row !important;
-          gap:.48rem !important;
-          margin-bottom:.38rem !important;
-        }
-        .st-key-osoli_icon_navigation .stButton > button {
-          width:100% !important;
-          min-height:64px !important;
-          padding:.52rem .34rem !important;
-          border-radius:14px !important;
-          justify-content:center !important;
-          font-size:.82rem !important;
-          font-weight:850 !important;
-          line-height:1.3 !important;
-          white-space:normal !important;
-          box-shadow:0 3px 12px rgba(15,23,42,.035) !important;
-          transition:
-            transform .15s ease,
-            border-color .15s ease,
-            box-shadow .15s ease,
-            filter .15s ease !important;
-        }
-        .st-key-osoli_icon_navigation .stButton > button:hover {
-          transform:translateY(-2px) !important;
-          border-color:rgba(36,87,230,.28) !important;
-          box-shadow:0 8px 18px rgba(36,87,230,.10) !important;
-        }
-        .st-key-osoli_icon_navigation .stButton > button p {
-          direction:rtl !important;
-          white-space:normal !important;
-          text-align:center !important;
-          line-height:1.35 !important;
-        }
-        .st-key-osoli_icon_navigation .stButton > button [data-testid="stIconMaterial"] {
-          font-size:1.12rem !important;
+          align-items:center !important;
+          gap:.32rem !important;
         }
         .st-key-osoli_nav_actions .stButton > button {
-          min-height:43px !important;
-          font-size:.8rem !important;
+          min-height:32px !important;
+          height:32px !important;
+          padding:.15rem .45rem !important;
+          border-radius:9px !important;
+          font-size:.68rem !important;
+          white-space:nowrap !important;
         }
-        @media (max-width:1000px) {
-          .st-key-osoli_icon_navigation {
-            padding:.6rem !important;
-            border-radius:15px !important;
+        .st-key-osoli_nav-current {
+          color:var(--os-muted,#64748b) !important;
+          font-size:.7rem !important;
+          font-weight:700 !important;
+          padding:.2rem .15rem !important;
+          white-space:nowrap !important;
+          overflow:hidden !important;
+          text-overflow:ellipsis !important;
+        }
+        @media (max-width:1100px) {
+          .st-key-osoli_nav_row [data-testid="stHorizontalBlock"] > [data-testid="column"] {
+            min-width:82px !important;
+            flex:0 0 82px !important;
           }
-          .st-key-osoli_icon_navigation .stButton > button {
-            min-height:57px !important;
-            padding:.4rem .22rem !important;
-            font-size:.74rem !important;
-          }
-          .st-key-osoli_icon_navigation .os-nav-heading span {
-            display:none !important;
-          }
-          .st-key-osoli_nav_primary [data-testid="stHorizontalBlock"],
-          .st-key-osoli_nav_secondary [data-testid="stHorizontalBlock"] {
-            flex-direction:row !important;
-            flex-wrap:wrap !important;
-            gap:.42rem !important;
-          }
-          .st-key-osoli_nav_primary [data-testid="stHorizontalBlock"] > [data-testid="column"],
-          .st-key-osoli_nav_secondary [data-testid="stHorizontalBlock"] > [data-testid="column"] {
-            width:calc(33.333% - .42rem) !important;
-            flex:1 1 calc(33.333% - .42rem) !important;
+          .st-key-osoli_nav_row .stButton > button,
+          .st-key-osoli_nav_row .stButton > button p {
+            font-size:.62rem !important;
           }
         }
         @media (max-width:600px) {
-          .st-key-osoli_icon_navigation .stButton > button {
-            min-height:54px !important;
-            font-size:.72rem !important;
+          .st-key-osoli_icon_navigation {
+            padding:.28rem !important;
+            border-radius:12px !important;
           }
-          .st-key-osoli_nav_primary [data-testid="stHorizontalBlock"] > [data-testid="column"],
-          .st-key-osoli_nav_secondary [data-testid="stHorizontalBlock"] > [data-testid="column"] {
-            width:calc(50% - .42rem) !important;
-            flex:1 1 calc(50% - .42rem) !important;
+          .st-key-osoli_nav_row [data-testid="stHorizontalBlock"] > [data-testid="column"] {
+            min-width:76px !important;
+            flex:0 0 76px !important;
+          }
+          .st-key-osoli_nav_row .stButton > button {
+            min-height:39px !important;
+            height:39px !important;
           }
         }
         </style>
@@ -297,76 +291,63 @@ def _inject_icon_nav_css() -> None:
     )
 
 
-def _render_navigation_row(keys: tuple[str, ...], current: str, row: str) -> None:
-    columns = st.columns(len(keys), gap="small")
-    for column, key in zip(columns, keys):
-        if column.button(
+def _render_navigation_row(current: str) -> None:
+    columns = st.columns(len(_NAV_KEYS), gap="small")
+    for column, key in zip(columns, _NAV_KEYS):
+        column.button(
             _SHORT_LABEL_BY_KEY[key],
             icon=_ICON_BY_KEY[key],
             type="primary" if key == current else "secondary",
             use_container_width=True,
-            key=f"nav_icon_{row}_{key}",
+            key=f"nav_icon_{key}",
             help=_HELP_BY_KEY[key],
-        ):
-            _go(key)
-
-
-def _render_icon_navigation(current: str) -> None:
-    _inject_icon_nav_css()
-    with st.container(key="osoli_icon_navigation"):
-        st.markdown(
-            """
-            <div class="os-nav-heading">
-              <strong>🧭 القائمة الرئيسية</strong>
-              <span>تنقل مباشر وواضح دون شريط جانبي</span>
-            </div>
-            """,
-            unsafe_allow_html=True,
+            on_click=navigate_to,
+            args=(key,),
+            kwargs={"rerun": False},
         )
-        with st.container(key="osoli_nav_primary"):
-            _render_navigation_row(_PRIMARY_KEYS, current, "primary")
-        with st.container(key="osoli_nav_secondary"):
-            _render_navigation_row(_SECONDARY_KEYS, current, "secondary")
 
+
+def _render_compact_navigation(current: str) -> None:
+    _inject_compact_nav_css()
+    with st.container(key="osoli_icon_navigation"):
+        with st.container(key="osoli_nav_row"):
+            _render_navigation_row(current)
         with st.container(key="osoli_nav_actions"):
-            refresh_col, logout_col = st.columns(2, gap="small")
-            if refresh_col.button(
-                "تحديث الأسعار",
-                icon=_ICON_BY_KEY["update"],
+            current_col, refresh_col, logout_col = st.columns([8, 1, 1], gap="small")
+            current_col.markdown(
+                f'<div class="st-key-osoli_nav-current">{_ICON_BY_KEY.get(current, "🏠")} '
+                f'{_LABEL_BY_KEY.get(current, "الرئيسية")}</div>',
+                unsafe_allow_html=True,
+            )
+            refresh_col.button(
+                "تحديث",
+                icon="🔄",
                 use_container_width=True,
-                key="nav_icon_refresh",
-                help="تحديث أسعار جميع المراكز",
-            ):
-                _go("update")
-            if logout_col.button(
-                "تسجيل الخروج",
+                key="nav_refresh",
+                help="تحديث أسعار جميع المراكز عند الطلب",
+                on_click=navigate_to,
+                args=("update",),
+                kwargs={"rerun": False},
+            )
+            logout_col.button(
+                "خروج",
                 icon="🚪",
                 use_container_width=True,
-                key="nav_icon_logout",
+                key="nav_logout",
                 help="الخروج الآمن من الحساب",
-            ):
-                _logout()
+                on_click=_logout_callback,
+            )
 
 
 def render_navbar() -> None:
-    """Render the only navigation surface; the Streamlit sidebar is disabled."""
+    """Render one compact horizontal navigation row without a sidebar."""
     sync_page_from_query_params_once()
-
     raw_page = st.session_state.get("page")
     legacy_section = _legacy_section(raw_page)
     if legacy_section:
         st.session_state["insights_section"] = legacy_section
-
     route_page = _validated_page(raw_page)
     if route_page != raw_page:
         st.session_state["page"] = route_page
         _safe_set_query_page(route_page)
-
-    current = _display_page(route_page)
-    _render_icon_navigation(current)
-
-    breadcrumb_page = route_page if route_page in _LABEL_BY_KEY else current
-    st.caption(
-        f"أصولي / {_ICON_BY_KEY.get(breadcrumb_page, '🏠')} "
-        f"{_LABEL_BY_KEY.get(breadcrumb_page, _LABEL_BY_KEY['home'])}"
-    )
+    _render_compact_navigation(_display_page(route_page))

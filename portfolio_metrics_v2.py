@@ -1,8 +1,10 @@
-"""Unified portfolio accounting for Osoli.
+"""Unified, fast portfolio accounting for Osoli.
 
-The legacy dashboard and portfolio pages calculated overlapping metrics through
-separate paths. This module provides one tenant-aware source of truth for cash,
-positions, realised/unrealised profit, price quality and XIRR.
+Normal page navigation must never block on market-data providers.  This module
+therefore calculates the portfolio from the prices already stored in the
+portfolio database.  Live prices are fetched only by the explicit
+``تحديث الأسعار`` action, which writes the successful prices back to ``trades``
+and clears Streamlit's data cache.
 """
 from __future__ import annotations
 
@@ -77,73 +79,56 @@ def _sum_amount(frame: pd.DataFrame) -> float:
     )
 
 
-def _live_prices(open_positions: pd.DataFrame) -> Dict[str, Dict[str, Any]]:
-    if open_positions.empty or "symbol" not in open_positions.columns:
-        return {}
-    try:
-        from market_data import fetch_batch_data, get_ticker_symbol
+def _stored_open_prices(open_positions: pd.DataFrame) -> pd.DataFrame:
+    """Prepare open positions without any network request.
 
-        symbols = []
-        for raw in open_positions["symbol"].dropna().astype(str):
-            symbol = get_ticker_symbol(raw)
-            if symbol and symbol not in symbols:
-                symbols.append(symbol)
-        return fetch_batch_data(symbols) if symbols else {}
-    except Exception:
-        logger.exception("live price batch failed")
-        return {}
-
-
-def _apply_market_prices(open_positions: pd.DataFrame) -> pd.DataFrame:
+    A stock uses its latest successfully stored ``current_price`` and falls back
+    to entry price only when no valid stored price exists.  Sukuk continue to use
+    book value.  Stored stock prices are deliberately marked stale because their
+    freshness is unknown until the user requests a market refresh.
+    """
     if open_positions.empty:
         return open_positions
+
     frame = open_positions.copy()
-    live = _live_prices(frame)
-    try:
-        from market_data import get_ticker_symbol
-    except Exception:
-        get_ticker_symbol = lambda value: str(value or "").strip().upper()
+    entry = pd.to_numeric(
+        frame.get("entry_price", pd.Series(0.0, index=frame.index)),
+        errors="coerce",
+    ).fillna(0.0)
+    stored = pd.to_numeric(
+        frame.get("current_price", pd.Series(0.0, index=frame.index)),
+        errors="coerce",
+    ).fillna(0.0)
+    asset_type = frame.get(
+        "asset_type",
+        pd.Series("Stock", index=frame.index),
+    ).astype(str).str.strip().str.lower()
+    is_sukuk = asset_type.eq("sukuk")
 
-    prices = []
-    previous = []
-    sources = []
-    stale = []
-    for _, row in frame.iterrows():
-        symbol = get_ticker_symbol(row.get("symbol"))
-        asset_type = str(row.get("asset_type") or "Stock").strip().lower()
-        stored = _number(
-            row.get("current_price"),
-            _number(row.get("entry_price")),
-        )
-        if asset_type == "sukuk":
-            price = _number(row.get("entry_price"), stored)
-            payload = {"source": "book_value", "prev_close": 0.0}
-            source = "book_value"
-            is_stale = False
-        else:
-            payload = (
-                live.get(symbol)
-                or live.get(str(symbol).upper())
-                or {}
-            )
-            source = str(payload.get("source") or "stored").strip().lower()
-            live_price = _number(payload.get("price"), 0.0)
-            has_live_price = bool(
-                live_price > 0
-                and source not in {"", "stored", "failed", "unknown", "غير معروف"}
-            )
-            price = live_price if has_live_price else stored
-            source = source if has_live_price else "stored"
-            is_stale = bool(payload.get("is_stale", False)) or not has_live_price
-        prices.append(price)
-        previous.append(_number(payload.get("prev_close"), 0.0))
-        sources.append(source)
-        stale.append(is_stale)
+    usable_stored = stored.where(stored.gt(0), entry)
+    frame["current_price"] = usable_stored.where(~is_sukuk, entry)
+    frame["prev_close"] = pd.to_numeric(
+        frame.get("prev_close", pd.Series(0.0, index=frame.index)),
+        errors="coerce",
+    ).fillna(0.0)
 
-    frame["current_price"] = prices
-    frame["prev_close"] = previous
-    frame["price_source"] = sources
-    frame["price_stale"] = stale
+    existing_source = frame.get(
+        "price_source",
+        pd.Series("", index=frame.index),
+    ).astype(str).str.strip()
+    frame["price_source"] = existing_source.where(
+        existing_source.ne(""),
+        "stored",
+    )
+    frame.loc[is_sukuk, "price_source"] = "book_value"
+
+    existing_stale = frame.get(
+        "price_stale",
+        pd.Series(True, index=frame.index),
+    ).fillna(True).astype(bool)
+    frame["price_stale"] = existing_stale | ~is_sukuk
+    frame.loc[is_sukuk, "price_stale"] = False
+
     frame["day_change"] = (
         (frame["current_price"] - frame["prev_close"])
         .div(frame["prev_close"].replace(0, pd.NA))
@@ -173,19 +158,16 @@ def _empty_result() -> Dict[str, Any]:
         "xirr": None,
         "xirr_note": "",
         "data_quality": {"ok": True, "notes": []},
+        "price_mode": "stored",
     }
 
 
-@st.cache_data(ttl=120, show_spinner=False)
+@st.cache_data(ttl=300, max_entries=256, show_spinner=False)
 def calculate_portfolio_metrics_v2(
     include_xirr: bool = True,
     cache_key: str = "",
 ) -> Dict[str, Any]:
-    """Return a consistent portfolio snapshot for the active tenant.
-
-    ``cache_key`` must include user and portfolio identity; the router supplies
-    that key so Streamlit's process-wide cache cannot cross user boundaries.
-    """
+    """Return a tenant-isolated portfolio snapshot using stored prices only."""
     del cache_key
     result = _empty_result()
     try:
@@ -249,7 +231,7 @@ def calculate_portfolio_metrics_v2(
         trades["total_cost"] = trades["quantity"] * trades["entry_price"]
         closed = trades[trades["status"].eq("Close")].copy()
         open_positions = trades[trades["status"].eq("Open")].copy()
-        open_positions = _apply_market_prices(open_positions)
+        open_positions = _stored_open_prices(open_positions)
 
         closed["current_price"] = closed["exit_price"]
         closed["proceeds"] = closed["quantity"] * closed["exit_price"]
@@ -308,7 +290,10 @@ def calculate_portfolio_metrics_v2(
             .sum()
         )
         if stale_count:
-            notes.append(f"يوجد {stale_count} مركز بسعر احتياطي أو قديم")
+            notes.append(
+                f"يوجد {stale_count} مركز يعتمد آخر سعر محفوظ؛ "
+                "استخدم تحديث الأسعار عند الحاجة"
+            )
 
         result.update(
             {

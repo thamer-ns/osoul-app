@@ -5,7 +5,7 @@ import inspect
 from views import navbar
 
 
-def test_icon_navigation_uses_one_analysis_hub_and_no_sidebar():
+def test_icon_navigation_uses_one_compact_row_and_no_sidebar():
     expected = {
         "home",
         "insights",
@@ -21,12 +21,16 @@ def test_icon_navigation_uses_one_analysis_hub_and_no_sidebar():
 
     assert set(navbar._NAV_KEYS) == expected
     assert len(navbar._NAV_KEYS) == len(set(navbar._NAV_KEYS))
-    assert navbar._PRIMARY_KEYS[0] == "home"
+    assert navbar._PRIMARY_KEYS == navbar._NAV_KEYS
+    assert navbar._SECONDARY_KEYS == ()
     assert navbar._ALLOWED == expected | {"update"}
     assert "analysis" not in navbar._NAV_KEYS
     assert "signals" not in navbar._NAV_KEYS
     assert "backtest" not in navbar._NAV_KEYS
-    assert "st.sidebar" not in inspect.getsource(navbar)
+    source = inspect.getsource(navbar)
+    assert "st.sidebar" not in source
+    assert "flex-wrap:nowrap" in source
+    assert "st.columns(len(_NAV_KEYS)" in source
 
 
 def test_legacy_analysis_links_resolve_into_the_hub():
