@@ -49,7 +49,28 @@ def _get_open_trades(trades_df: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame()
     if "status" not in trades_df.columns:
         return pd.DataFrame()
-    return trades_df[trades_df["status"].astype(str).str.lower().eq("open")].copy()
+    status = trades_df["status"].astype(str).str.strip().str.lower()
+    return trades_df[
+        status.isin({"open", "opened", "مفتوح", "مفتوحة", "قائمة"})
+    ].copy()
+
+
+def _speculation_market_value_ratio(open_trades: pd.DataFrame) -> float:
+    """Measure speculation exposure by market value, not position count."""
+    if not isinstance(open_trades, pd.DataFrame) or open_trades.empty:
+        return 0.0
+    if "strategy" not in open_trades.columns:
+        return 0.0
+    strategy = open_trades["strategy"].astype(str)
+    speculative = strategy.str.contains("مضاربة|speculat|day.?trade", case=False, na=False, regex=True)
+    if "market_value" in open_trades.columns:
+        market_value = pd.to_numeric(
+            open_trades["market_value"], errors="coerce"
+        ).fillna(0.0).clip(lower=0.0)
+        total = float(market_value.sum())
+        if total > 0:
+            return float(market_value[speculative].sum()) / total
+    return float(speculative.sum()) / max(int(len(open_trades)), 1)
 
 
 def _infer_sector(row: pd.Series) -> str:
@@ -147,9 +168,8 @@ def calculate_portfolio_risk_score(trades_df, cash_percent):
         strategy_score = 0.0
         try:
             if "strategy" in open_trades.columns:
-                strat = open_trades["strategy"].astype(str)
-                spec_ratio = float((strat.str.contains("مضاربة", na=False)).sum()) / max(len(open_trades), 1)
-                # 0..30
+                spec_ratio = _speculation_market_value_ratio(open_trades)
+                # 0..30, weighted by the capital actually exposed.
                 strategy_score = _clamp(spec_ratio * 30, 0, 30)
         except Exception:
             strategy_score = 0.0
@@ -411,13 +431,14 @@ def generate_rebalancing_suggestions(trades_df, cash_pct):
         # Strategy balance suggestions
         try:
             if "strategy" in open_trades.columns:
-                strat = open_trades["strategy"].astype(str)
-                spec_cnt = int(strat.str.contains("مضاربة", na=False).sum())
-                n = int(len(open_trades))
-                if n > 0:
-                    spec_ratio = spec_cnt / n
-                    if spec_ratio >= 0.70:
-                        suggestions.append(("warn", "⚡ نسبة المضاربة مرتفعة (>60%) — خفف تذبذب المحفظة أو ارفع كاش"))
+                spec_ratio = _speculation_market_value_ratio(open_trades)
+                if spec_ratio >= 0.70:
+                    suggestions.append(
+                        (
+                            "warn",
+                            f"⚡ التعرض للمضاربة مرتفع ({spec_ratio * 100:.0f}% من القيمة السوقية) — خفف التذبذب أو ارفع الكاش",
+                        )
+                    )
         except Exception:
             import logging
             logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)

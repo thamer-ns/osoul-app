@@ -21,5 +21,5 @@ def test_public_advanced_pack_has_cache_identity():
     pack = compute_advanced_technical_pack(frame, symbol="1120.SR", timeframe="1d")
 
     assert pack["name"] == "Advanced Technical Pack v2"
-    assert pack["meta"]["schema_version"] == "2.0"
+    assert pack["meta"]["schema_version"] == "2.1"
     assert pack["meta"]["confirmation"] == "close"

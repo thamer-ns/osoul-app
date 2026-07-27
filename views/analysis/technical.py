@@ -7,6 +7,7 @@ from typing import Any, Dict
 import pandas as pd
 import streamlit as st
 
+from candle_confirmation import completed_candles
 from components import render_custom_table
 from market_data import get_chart_history
 from technical_indicators import compute_advanced_technical_pack
@@ -51,7 +52,10 @@ def _history_cached(symbol: str, interval: str, period: str) -> pd.DataFrame:
 
 @st.cache_data(ttl=300, max_entries=128, show_spinner=False)
 def _advanced_pack_cached(symbol: str, interval: str, period: str) -> dict:
-    frame = _history_cached(symbol, interval, period)
+    frame = completed_candles(
+        _history_cached(symbol, interval, period),
+        interval=interval,
+    )
     if frame.empty:
         return {}
     return compute_advanced_technical_pack(frame, symbol=symbol, timeframe=interval)
@@ -157,6 +161,7 @@ def _render_advanced(df: pd.DataFrame, symbol: str, interval: str, period: str) 
     if df.empty:
         st.warning("لا توجد بيانات كافية لحساب المؤشرات المتقدمة")
         return
+    closed = completed_candles(df, interval=interval)
     with st.spinner("حساب المؤشرات المتقدمة..."):
         pack = _advanced_pack_cached(symbol, interval, period)
     if not pack:
@@ -179,7 +184,7 @@ def _render_advanced(df: pd.DataFrame, symbol: str, interval: str, period: str) 
     _render_indicator("2) RSI الموزون بالتقلب", pack.get("chaos_wrsi") or {})
     _render_indicator("3) شرائح الحجم السعري", pack.get("volume_profile_clusters") or {})
     _render_indicator("4) اختراق وكسر خطوط الاتجاه", pack.get("trendline_breakout") or {})
-    _save_pack_once(pack, symbol, interval, df)
+    _save_pack_once(pack, symbol, interval, closed)
 
 
 def _render_chart(symbol: str, interval: str, period: str, df: pd.DataFrame) -> None:
@@ -216,7 +221,20 @@ def view_technical(symbol: str, interval: str = "1d"):
         st.metric("المصدر", source)
     with q4:
         st.metric("الفاصل", interval)
-    st.caption(f"آخر شمعة: {quality.get('last', '—')} — وقت الجلب: {fetched_at}")
+    closed_for_analysis = completed_candles(df, interval=interval) if not df.empty else pd.DataFrame()
+    last_closed = str(closed_for_analysis.index[-1]) if not closed_for_analysis.empty else "—"
+    excluded = int(
+        (getattr(closed_for_analysis, "attrs", {}) or {})
+        .get("candle_confirmation", {})
+        .get("excluded_incomplete_bars", 0)
+        or 0
+    )
+    st.caption(
+        f"آخر شمعة معروضة: {quality.get('last', '—')} — "
+        f"آخر إغلاق معتمد: {last_closed} — وقت الجلب: {fetched_at}"
+    )
+    if excluded:
+        st.info("الشمعة الحية ظاهرة في الرسم فقط، ومستبعدة من المؤشرات والقرار حتى الإغلاق.")
     if quality.get("issues"):
         with st.expander("ملاحظات جودة البيانات"):
             for issue in quality["issues"]:

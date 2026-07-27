@@ -26,8 +26,25 @@ except Exception:  # pragma: no cover
     stx = None
 
 TOKEN_COOKIE = "osoul_auth_v4"
-MAX_LOGIN_ATTEMPTS = int(os.getenv("OSOUL_MAX_LOGIN_ATTEMPTS", "5"))
-LOCK_SECONDS = int(os.getenv("OSOUL_LOGIN_LOCK_SECONDS", "900"))
+
+
+def _int_setting(name: str, default: int, minimum: int, maximum: int) -> int:
+    value = None
+    try:
+        value = st.secrets.get(name)
+    except Exception:
+        value = None
+    if value in (None, ""):
+        value = os.getenv(name, str(default))
+    try:
+        parsed = int(value)
+    except Exception:
+        parsed = int(default)
+    return max(minimum, min(maximum, parsed))
+
+
+MAX_LOGIN_ATTEMPTS = _int_setting("OSOUL_MAX_LOGIN_ATTEMPTS", 5, 3, 20)
+LOCK_SECONDS = _int_setting("OSOUL_LOGIN_LOCK_SECONDS", 900, 60, 86_400)
 
 
 def validate_trade_inputs(quantity, price):
@@ -64,7 +81,7 @@ def _validate_password(password: str, mode: str = "login"):
         return False, "كلمة المرور طويلة جدًا"
     if mode == "login":
         return True, ""
-    minimum = int(os.getenv("OSOUL_MIN_PASSWORD_LEN", "10"))
+    minimum = _int_setting("OSOUL_MIN_PASSWORD_LEN", 10, 8, 128)
     if len(password) < minimum:
         return False, f"كلمة المرور يجب ألا تقل عن {minimum} أحرف"
     categories = sum(
@@ -252,9 +269,47 @@ def _cookie_manager():
             st.session_state["_osoul_cookie_manager"] = stx.CookieManager(
                 key="osoul_cookie_manager_v4"
             )
+            # The cookie component loads in the browser asynchronously and usually
+            # triggers one Streamlit rerun.  Do not conclude that there are no
+            # cookies during the constructor run, otherwise a normal page refresh
+            # can incorrectly show the login screen and clear the restored session.
+            st.session_state["_auth_cookie_manager_warmup"] = True
         return st.session_state["_osoul_cookie_manager"]
     except Exception:
+        logging.getLogger(__name__).warning(
+            "Cookie manager initialization failed",
+            exc_info=True,
+        )
         return None
+
+
+def _cookie_snapshot(manager) -> Optional[dict[str, str]]:
+    """Return browser cookies only after the component has produced a snapshot.
+
+    ``extra-streamlit-components`` is asynchronous.  Reading one named cookie on
+    the constructor run cannot distinguish "cookie absent" from "component not
+    ready".  A complete snapshot gives the bootstrap code an explicit readiness
+    signal and prevents refreshes from being treated as logouts.
+    """
+    if manager is None:
+        return None
+
+    cookies = getattr(manager, "cookies", None)
+    if isinstance(cookies, dict):
+        return {str(key): str(value) for key, value in cookies.items()}
+
+    getter = getattr(manager, "get_all", None)
+    if callable(getter):
+        try:
+            try:
+                cookies = getter(key="osoul_cookie_snapshot_v4")
+            except TypeError:
+                cookies = getter()
+        except Exception:
+            cookies = None
+        if isinstance(cookies, dict):
+            return {str(key): str(value) for key, value in cookies.items()}
+    return None
 
 
 def _cookie_get(manager, key: str) -> Optional[str]:
@@ -309,24 +364,44 @@ def _cookie_delete(manager, key: str) -> None:
         logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
 
 
-def _bootstrap_cookie_session() -> None:
+def _bootstrap_cookie_session() -> bool:
+    """Restore a signed browser session after a full page refresh.
+
+    Returns ``True`` when a valid session was restored.  The cookie check is only
+    marked complete after the browser component has warmed up and supplied its
+    cookie snapshot.
+    """
     if st.session_state.get("_auth_cookie_checked"):
-        return
-    st.session_state["_auth_cookie_checked"] = True
+        return bool(st.session_state.get("logged_in"))
+
     manager = _cookie_manager()
-    token = _cookie_get(manager, TOKEN_COOKIE)
-    verified = _verify_token(token or "") if token else None
+    snapshot = _cookie_snapshot(manager)
+
+    # CookieManager is a frontend component.  Its first Python-side value may be
+    # empty before the browser has returned the real cookies.  Let its automatic
+    # rerun happen once without permanently recording a false negative.
+    if st.session_state.pop("_auth_cookie_manager_warmup", False):
+        return False
+    if snapshot is None:
+        return False
+
+    st.session_state["_auth_cookie_checked"] = True
+    token = _norm(snapshot.get(TOKEN_COOKIE))
+    verified = _verify_token(token) if token else None
     if not verified:
         if token:
             _cookie_delete(manager, TOKEN_COOKIE)
-        return
+        return False
+
     username, expires = verified
     st.session_state.update(
         logged_in=True,
         username=username,
         auth_exp=expires,
         last_seen=time.time(),
+        auth_restored_from_cookie=True,
     )
+    return True
 
 
 def _login_lock_remaining() -> int:
@@ -411,6 +486,9 @@ def logout_user():
         "username",
         "auth_exp",
         "last_seen",
+        "auth_restored_from_cookie",
+        "_auth_cookie_checked",
+        "_auth_cookie_manager_warmup",
         "user_id",
         "portfolio_id",
     ):
@@ -455,7 +533,7 @@ def require_login():
     if st.session_state.get("logged_in"):
         now = int(time.time())
         expires = int(st.session_state.get("auth_exp", 0) or 0)
-        idle_minutes = int(os.getenv("OSOUL_SESSION_IDLE_MINUTES", "120"))
+        idle_minutes = _int_setting("OSOUL_SESSION_IDLE_MINUTES", 120, 5, 10_080)
         last_seen = float(st.session_state.get("last_seen", now) or now)
         if expires <= now or now - last_seen > idle_minutes * 60:
             logout_user()
@@ -470,7 +548,7 @@ def require_login():
         with st.form("login_form", clear_on_submit=False):
             username = st.text_input("اسم المستخدم")
             password = st.text_input("كلمة المرور", type="password")
-            remember = st.checkbox("تذكرني لمدة 30 يومًا", value=False)
+            remember = st.checkbox("ابقني مسجلًا لمدة 30 يومًا", value=True)
             submitted = st.form_submit_button("دخول", use_container_width=True)
         if submitted:
             valid, message = login_user(

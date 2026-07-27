@@ -13,17 +13,21 @@ from typing import Any, Dict, Iterable, List, Tuple
 import numpy as np
 import pandas as pd
 
-TIMEFRAME_BARS_PER_YEAR = {
-    "1m": 252 * 390,
-    "5m": 252 * 78,
-    "15m": 252 * 26,
-    "30m": 252 * 13,
-    "1h": 252 * 6.5,
-    "4h": 252 * 1.625,
-    "1d": 252,
-    "1wk": 52,
-    "1w": 52,
-    "1mo": 12,
+from candle_confirmation import completed_candles
+
+RLS_HORIZON_BARS = {
+    "1m": 30,
+    "2m": 30,
+    "5m": 18,
+    "15m": 12,
+    "30m": 8,
+    "60m": 5,
+    "1h": 5,
+    "4h": 3,
+    "1d": 20,
+    "1wk": 8,
+    "1w": 8,
+    "1mo": 6,
 }
 
 
@@ -33,6 +37,27 @@ def _sf(value: Any, default: float = 0.0) -> float:
         return value if np.isfinite(value) else float(default)
     except Exception:
         return float(default)
+
+
+def _finite_or_none(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except Exception:
+        return None
+    return number if np.isfinite(number) else None
+
+
+def _json_safe(value: Any) -> Any:
+    """Recursively convert numpy values and non-finite floats to strict JSON."""
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, float) and not np.isfinite(value):
+        return None
+    return value
 
 
 def _clean_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
@@ -77,20 +102,22 @@ def _result(
 ) -> Dict[str, Any]:
     score = float(np.clip(score, -100, 100))
     confidence = float(np.clip(confidence, 0, 100))
-    return {
-        "name": name,
-        "bias": _bias(score),
-        "direction_score": round(score, 2),
-        "confidence": round(confidence, 2),
-        "summary": summary,
-        "evidence": [str(x) for x in evidence if str(x).strip()],
-        "signals": list(signals),
-        "features": features or {},
-        "errors": [str(x) for x in errors if str(x).strip()],
-        "warnings": [],
-        "series": series or {},
-        "confirmation": "close",
-    }
+    return _json_safe(
+        {
+            "name": name,
+            "bias": _bias(score),
+            "direction_score": round(score, 2),
+            "confidence": round(confidence, 2),
+            "summary": summary,
+            "evidence": [str(x) for x in evidence if str(x).strip()],
+            "signals": list(signals),
+            "features": features or {},
+            "errors": [str(x) for x in errors if str(x).strip()],
+            "warnings": [],
+            "series": series or {},
+            "confirmation": "close",
+        }
+    )
 
 
 def _atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
@@ -149,7 +176,7 @@ def _linear_fit(points: List[Tuple[int, float]], x_now: int) -> Tuple[float, flo
 def rls_forecast(df: pd.DataFrame, timeframe: str = "1d", lam: float = 0.995) -> Dict[str, Any]:
     data = _clean_ohlcv(df)
     if len(data) < 40:
-        return _result(name="RLS Forecast v2", score=0, confidence=10, summary="البيانات غير كافية", errors=["يلزم 40 شمعة على الأقل"])
+        return _result(name="RLS Adaptive Trend v2", score=0, confidence=10, summary="البيانات غير كافية", errors=["يلزم 40 شمعة على الأقل"])
 
     close = data["Close"].astype(float)
     y = np.log(close.to_numpy())
@@ -175,11 +202,16 @@ def rls_forecast(df: pd.DataFrame, timeframe: str = "1d", lam: float = 0.995) ->
     upper = np.exp(fitted + 1.7 * residual_std)
     lower = np.exp(fitted - 1.7 * residual_std)
     last = float(close.iloc[-1])
-    annual_factor = float(TIMEFRAME_BARS_PER_YEAR.get(str(timeframe).lower(), 252))
-    annualised_slope = float(np.expm1(w[1] * annual_factor))
+    timeframe_key = str(timeframe or "1d").lower()
+    horizon_bars = int(RLS_HORIZON_BARS.get(timeframe_key, 20))
+    per_bar_log_slope = _sf(w[1], 0.0)
+    # A bounded, timeframe-local horizon is meaningful and numerically stable;
+    # annualising minute-bar drift can overflow and is not a validated forecast.
+    horizon_log_return = float(np.clip(per_bar_log_slope * horizon_bars, -0.50, 0.50))
+    horizon_return = float(np.expm1(horizon_log_return))
     position = (last - lower[-1]) / max(upper[-1] - lower[-1], 1e-12)
 
-    trend_component = np.clip(annualised_slope * 120.0, -60, 60)
+    trend_component = np.clip(horizon_return * 120.0, -60, 60)
     location_component = np.clip((position - 0.5) * 35.0, -20, 20)
     score = float(trend_component + location_component)
     signals: list[dict] = []
@@ -194,13 +226,25 @@ def rls_forecast(df: pd.DataFrame, timeframe: str = "1d", lam: float = 0.995) ->
     confidence = 45 + min(25, n / 10) + max(0, 20 - band_pct * 100)
     summary = "اتجاه RLS صاعد" if score > 15 else "اتجاه RLS هابط" if score < -15 else "RLS محايد أو متوازن"
     return _result(
-        name="RLS Forecast v2",
+        name="RLS Adaptive Trend v2",
         score=score,
         confidence=confidence,
         summary=summary,
-        evidence=[f"الميل السنوي التقريبي: {annualised_slope * 100:.2f}%", f"موضع السعر داخل النطاق: {position * 100:.1f}%"],
+        evidence=[
+            f"ميل كل شمعة: {per_bar_log_slope * 100:.4f}%",
+            f"العائد الاتجاهي المتوقع خلال {horizon_bars} شمعة: {horizon_return * 100:.2f}%",
+            f"موضع السعر داخل النطاق: {position * 100:.1f}%",
+        ],
         signals=signals,
-        features={"rls_slope_annualised": annualised_slope, "mean": mean_price[-1], "upper": upper[-1], "lower": lower[-1], "band_width_pct": band_pct * 100},
+        features={
+            "rls_log_slope_per_bar": per_bar_log_slope,
+            "projection_horizon_bars": horizon_bars,
+            "projected_horizon_return": horizon_return,
+            "mean": mean_price[-1],
+            "upper": upper[-1],
+            "lower": lower[-1],
+            "band_width_pct": band_pct * 100,
+        },
         series={"rls_mean": mean_price.tolist(), "upper_band": upper.tolist(), "lower_band": lower.tolist()},
     )
 
@@ -234,12 +278,34 @@ def chaos_weighted_rsi(df: pd.DataFrame, timeframe: str = "1d", period: int = 14
     if len(lows) >= 2:
         a, b = lows[-2], lows[-1]
         if close.iloc[b] < close.iloc[a] and wrsi.iloc[b] > wrsi.iloc[a]:
-            signals.append({"type": "BUY", "kind": "BULLISH_DIVERGENCE", "index": b, "reason": "دايفرجنس إيجابي مؤكد"})
+            confirmed_index = min(b + 3, len(data) - 1)
+            signals.append(
+                {
+                    "type": "BUY",
+                    "kind": "BULLISH_DIVERGENCE",
+                    "index": confirmed_index,
+                    "pivot_index": b,
+                    "confirmed_index": confirmed_index,
+                    "confirmed_at": str(data.index[confirmed_index]),
+                    "reason": "دايفرجنس إيجابي مؤكد بعد اكتمال محور الارتكاز",
+                }
+            )
             score += 25
     if len(highs) >= 2:
         a, b = highs[-2], highs[-1]
         if close.iloc[b] > close.iloc[a] and wrsi.iloc[b] < wrsi.iloc[a]:
-            signals.append({"type": "SELL", "kind": "BEARISH_DIVERGENCE", "index": b, "reason": "دايفرجنس سلبي مؤكد"})
+            confirmed_index = min(b + 3, len(data) - 1)
+            signals.append(
+                {
+                    "type": "SELL",
+                    "kind": "BEARISH_DIVERGENCE",
+                    "index": confirmed_index,
+                    "pivot_index": b,
+                    "confirmed_index": confirmed_index,
+                    "confirmed_at": str(data.index[confirmed_index]),
+                    "reason": "دايفرجنس سلبي مؤكد بعد اكتمال محور الارتكاز",
+                }
+            )
             score -= 25
 
     if last < 30:
@@ -298,16 +364,24 @@ def volume_profile_clusters(df: pd.DataFrame, timeframe: str = "1d", bins: int =
     poc = zones[poc_index].midpoint
     total = float(volumes.sum()) or 1.0
 
-    ranked = np.argsort(volumes)[::-1]
-    selected: list[int] = []
-    accumulated = 0.0
-    for index in ranked:
-        selected.append(int(index))
-        accumulated += float(volumes[index])
-        if accumulated / total >= 0.70:
-            break
-    value_low = min(zones[i].low for i in selected)
-    value_high = max(zones[i].high for i in selected)
+    # Build one contiguous 70% value area by expanding from the POC.  Picking
+    # globally ranked bins can create disjoint islands and include empty gaps.
+    selected: set[int] = {poc_index}
+    accumulated = float(volumes[poc_index])
+    left, right = poc_index - 1, poc_index + 1
+    while accumulated / total < 0.70 and (left >= 0 or right < bins):
+        left_volume = float(volumes[left]) if left >= 0 else -1.0
+        right_volume = float(volumes[right]) if right < bins else -1.0
+        if right_volume > left_volume:
+            selected.add(right)
+            accumulated += max(0.0, right_volume)
+            right += 1
+        else:
+            selected.add(left)
+            accumulated += max(0.0, left_volume)
+            left -= 1
+    value_low = zones[min(selected)].low
+    value_high = zones[max(selected)].high
     close = float(data["Close"].iloc[-1])
     atr_value = _sf(_atr(data).iloc[-1], close * 0.02)
     distance_atr = (close - poc) / max(atr_value, close * 0.005)
@@ -373,9 +447,8 @@ def trendline_breakout(df: pd.DataFrame, timeframe: str = "1d", lookback: int = 
         trend_score = np.clip(((support_slope + resistance_slope) / 2) / max(current, 1e-12) * 10000, -25, 25)
         score += trend_score
 
-    fit_quality = np.nanmean([x for x in (resistance_r2, support_r2) if np.isfinite(x)])
-    if not np.isfinite(fit_quality):
-        fit_quality = 0.0
+    finite_fits = [x for x in (resistance_r2, support_r2) if np.isfinite(x)]
+    fit_quality = float(np.mean(finite_fits)) if finite_fits else 0.0
     confidence = 35 + fit_quality * 35 + min(15, len(data) / 12) + min(10, max(0, volume_ratio - 1) * 10)
     summary = "اختراق أو اتجاه صاعد" if score > 15 else "كسر أو اتجاه هابط" if score < -15 else "لا يوجد كسر مؤكد"
     return _result(
@@ -385,12 +458,20 @@ def trendline_breakout(df: pd.DataFrame, timeframe: str = "1d", lookback: int = 
         summary=summary,
         evidence=[f"نسبة حجم آخر شمعة: {volume_ratio:.2f}x", f"جودة ملاءمة خطوط الاتجاه: {fit_quality * 100:.1f}%"],
         signals=signals,
-        features={"resistance": _sf(resistance, np.nan), "support": _sf(support, np.nan), "volume_ratio": volume_ratio, "atr": atr_last, "fit_quality": fit_quality, "trend_score": trend_score},
+        features={
+            "resistance": _finite_or_none(resistance),
+            "support": _finite_or_none(support),
+            "volume_ratio": volume_ratio,
+            "atr": atr_last,
+            "fit_quality": fit_quality,
+            "trend_score": trend_score,
+        },
     )
 
 
 def compute_advanced_technical_pack(df: pd.DataFrame, symbol: str = "", timeframe: str = "1d") -> Dict[str, Any]:
-    data = _clean_ohlcv(df)
+    data = completed_candles(_clean_ohlcv(df), interval=timeframe)
+    confirmation_meta = dict(getattr(data, "attrs", {}).get("candle_confirmation") or {})
     items = {
         "rls_forecast": rls_forecast(data, timeframe=timeframe),
         "chaos_wrsi": chaos_weighted_rsi(data, timeframe=timeframe),
@@ -417,15 +498,27 @@ def compute_advanced_technical_pack(df: pd.DataFrame, symbol: str = "", timefram
         "last_close": _sf(data["Close"].iloc[-1]) if not data.empty else None,
     }
     summary = "ميل فني إيجابي" if direction_score >= 15 else "ميل فني سلبي" if direction_score <= -15 else "ميل فني مختلط أو محايد"
-    return {
-        "meta": {"symbol": symbol, "timeframe": timeframe, "rows": int(len(data)), "schema_version": "2.0", "confirmation": "close"},
-        "bias": _bias(direction_score),
-        "direction_score": round(direction_score, 2),
-        "confidence": round(confidence, 2),
-        "summary": summary,
-        "evidence": evidence,
-        "signals": signals,
-        "features": features,
-        "errors": [error for value in items.values() for error in value.get("errors", [])],
-        **items,
-    }
+    return _json_safe(
+        {
+            "meta": {
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "rows": int(len(data)),
+                "schema_version": "2.1",
+                "confirmation": "close",
+                "excluded_incomplete_bars": int(
+                    confirmation_meta.get("excluded_incomplete_bars", 0) or 0
+                ),
+                "last_closed_bar": confirmation_meta.get("last_closed_bar"),
+            },
+            "bias": _bias(direction_score),
+            "direction_score": round(direction_score, 2),
+            "confidence": round(confidence, 2),
+            "summary": summary,
+            "evidence": evidence,
+            "signals": signals,
+            "features": features,
+            "errors": [error for value in items.values() for error in value.get("errors", [])],
+            **items,
+        }
+    )

@@ -10,6 +10,7 @@ from typing import Any, Dict
 
 import pandas as pd
 
+from candle_confirmation import completed_candles
 from .ohlcv import _ensure_ohlcv_columns
 from .indicators import _compute_indicators
 from .technicals import (
@@ -69,7 +70,17 @@ def build_technical_pack(
     timeframe: str = "1d",
     indicators: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
-    df = _ensure_ohlcv_columns(df)
+    df = completed_candles(_ensure_ohlcv_columns(df), interval=timeframe)
+    if df.empty:
+        return {
+            "score": 0.0,
+            "reasons": ["لا توجد شمعة مكتملة بعد على هذا الفاصل"],
+            "features": {},
+            "direction_hint": "neutral",
+            "symbol": str(symbol),
+            "timeframe": str(timeframe),
+            "advanced": None,
+        }
     ind = indicators or _compute_indicators(df)
 
     score = 0.0
