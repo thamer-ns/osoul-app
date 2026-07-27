@@ -1,15 +1,16 @@
 name: Apply Osoli audit V4
 
 on:
-  push:
-    branches:
-      - agent/osoul-audit-v4-session-persistence
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main]
 
 permissions:
   contents: write
 
 jobs:
   apply-and-validate:
+    if: github.head_ref == 'agent/osoul-audit-v4-session-persistence'
     runs-on: ubuntu-latest
     env:
       OSOUL_ALLOW_EPHEMERAL_AUTH_SECRET: "1"
