@@ -10,10 +10,8 @@ from security import logout_user
 NAV_ITEMS = [
     ("الرئيسية", "home"),
     ("مركز التحليل", "insights"),
-    ("محفظة المضاربة", "spec"),
-    ("محفظة الاستثمار", "invest"),
+    ("المحافظ", "portfolios"),
     ("إضافة صفقة", "add"),
-    ("الصكوك", "sukuk"),
     ("السيولة", "cash"),
     ("نبض المحفظة", "pulse"),
     ("الأدوات", "tools"),
@@ -23,10 +21,8 @@ NAV_ITEMS = [
 _ICON_BY_KEY = {
     "home": "🏠",
     "insights": "🧠",
-    "spec": "⚡",
-    "invest": "💼",
+    "portfolios": "💼",
     "add": "➕",
-    "sukuk": "📜",
     "cash": "💰",
     "pulse": "📡",
     "tools": "🛠️",
@@ -37,10 +33,8 @@ _ICON_BY_KEY = {
 _SHORT_LABEL_BY_KEY = {
     "home": "الرئيسية",
     "insights": "التحليل",
-    "spec": "المضاربة",
-    "invest": "الاستثمار",
+    "portfolios": "المحافظ",
     "add": "إضافة",
-    "sukuk": "الصكوك",
     "cash": "السيولة",
     "pulse": "النبض",
     "tools": "الأدوات",
@@ -50,12 +44,10 @@ _SHORT_LABEL_BY_KEY = {
 _HELP_BY_KEY = {
     "home": "العودة إلى لوحة أصولي الرئيسية",
     "insights": "التحليل والإشارات والاختبار الخلفي في مركز واحد",
-    "spec": "إدارة محفظة المضاربة",
-    "invest": "إدارة محفظة الاستثمار",
+    "portfolios": "المضاربة والاستثمار والصكوك داخل مركز محافظ واحد",
     "add": "تسجيل صفقة جديدة",
-    "sukuk": "إدارة الصكوك والدخل الثابت",
     "cash": "حركة السيولة والإيداعات والسحوبات",
-    "pulse": "متابعة نبض المحفظة والتنبيهات",
+    "pulse": "متابعة أسعار المراكز المفتوحة وتغيرها اليومي",
     "tools": "الأدوات المساعدة",
     "settings": "إعدادات التطبيق والحساب",
 }
@@ -68,8 +60,17 @@ _LEGACY_ANALYSIS_ROUTES = {
     "signals": "signals",
     "backtest": "backtest",
 }
+_LEGACY_PORTFOLIO_ROUTES = {
+    "spec": "spec",
+    "invest": "invest",
+    "sukuk": "sukuk",
+}
 _ALLOWED = set(_NAV_KEYS) | {"update"}
-_ROUTABLE = _ALLOWED | set(_LEGACY_ANALYSIS_ROUTES)
+_ROUTABLE = (
+    _ALLOWED
+    | set(_LEGACY_ANALYSIS_ROUTES)
+    | set(_LEGACY_PORTFOLIO_ROUTES)
+)
 _LABEL_BY_KEY = {key: label for label, key in NAV_ITEMS}
 _LABEL_BY_KEY["update"] = "تحديث الأسعار"
 
@@ -107,7 +108,7 @@ def _safe_set_query_page(page: str) -> None:
     destination = _canonical_page(page)
     try:
         st.query_params["page"] = destination
-        if destination != "insights":
+        if destination not in {"insights", "portfolios"}:
             _clear_section_query_param()
         return
     except Exception:
@@ -122,21 +123,32 @@ def _canonical_page(value: object) -> str:
     page = str(value or "home").strip().lower()
     if page in _LEGACY_ANALYSIS_ROUTES:
         return "insights"
+    if page in _LEGACY_PORTFOLIO_ROUTES:
+        return "portfolios"
     return page if page in _ALLOWED else "home"
 
 
 def _legacy_section(value: object) -> Optional[str]:
+    """Return a legacy analysis section while preserving the public test contract."""
     page = str(value or "").strip().lower()
     return _LEGACY_ANALYSIS_ROUTES.get(page)
+
+
+def _legacy_portfolio_section(value: object) -> Optional[str]:
+    page = str(value or "").strip().lower()
+    return _LEGACY_PORTFOLIO_ROUTES.get(page)
 
 
 def sync_page_from_query_params_once() -> None:
     requested = _safe_get_query_page()
     if not requested:
         return
-    legacy_section = _legacy_section(requested)
-    if legacy_section:
-        st.session_state["insights_section"] = legacy_section
+    analysis_section = _legacy_section(requested)
+    if analysis_section:
+        st.session_state["insights_section"] = analysis_section
+    portfolio_section = _legacy_portfolio_section(requested)
+    if portfolio_section:
+        st.session_state["portfolios_section"] = portfolio_section
     destination = _canonical_page(requested)
     if destination != st.session_state.get("page"):
         st.session_state["page"] = destination
@@ -154,9 +166,12 @@ def _display_page(page: str) -> str:
 
 
 def navigate_to(page: str, *, rerun: bool = True) -> None:
-    legacy_section = _legacy_section(page)
-    if legacy_section:
-        st.session_state["insights_section"] = legacy_section
+    analysis_section = _legacy_section(page)
+    if analysis_section:
+        st.session_state["insights_section"] = analysis_section
+    portfolio_section = _legacy_portfolio_section(page)
+    if portfolio_section:
+        st.session_state["portfolios_section"] = portfolio_section
     destination = _canonical_page(page)
     st.session_state["page"] = destination
     _safe_set_query_page(destination)
@@ -191,7 +206,7 @@ def _inject_compact_nav_css() -> None:
           flex-direction:row !important;
           flex-wrap:nowrap !important;
           align-items:stretch !important;
-          gap:.24rem !important;
+          gap:.28rem !important;
           margin:0 !important;
           overflow-x:auto !important;
           overflow-y:hidden !important;
@@ -209,11 +224,11 @@ def _inject_compact_nav_css() -> None:
           min-width:0 !important;
           min-height:42px !important;
           height:42px !important;
-          padding:.22rem .12rem !important;
+          padding:.22rem .15rem !important;
           border-radius:10px !important;
           justify-content:center !important;
-          gap:.18rem !important;
-          font-size:.66rem !important;
+          gap:.2rem !important;
+          font-size:.68rem !important;
           font-weight:850 !important;
           line-height:1.15 !important;
           white-space:nowrap !important;
@@ -226,12 +241,12 @@ def _inject_compact_nav_css() -> None:
           white-space:nowrap !important;
           overflow:hidden !important;
           text-overflow:ellipsis !important;
-          font-size:.66rem !important;
+          font-size:.68rem !important;
           line-height:1.1 !important;
         }
         .st-key-osoli_nav_row .stButton > button [data-testid="stIconMaterial"] {
-          font-size:.9rem !important;
-          min-width:.9rem !important;
+          font-size:.92rem !important;
+          min-width:.92rem !important;
         }
         .st-key-osoli_nav_actions {
           margin-top:.22rem !important;
@@ -261,14 +276,14 @@ def _inject_compact_nav_css() -> None:
           overflow:hidden !important;
           text-overflow:ellipsis !important;
         }
-        @media (max-width:1100px) {
+        @media (max-width:900px) {
           .st-key-osoli_nav_row [data-testid="stHorizontalBlock"] > [data-testid="column"] {
-            min-width:82px !important;
-            flex:0 0 82px !important;
+            min-width:86px !important;
+            flex:0 0 86px !important;
           }
           .st-key-osoli_nav_row .stButton > button,
           .st-key-osoli_nav_row .stButton > button p {
-            font-size:.62rem !important;
+            font-size:.64rem !important;
           }
         }
         @media (max-width:600px) {
@@ -277,8 +292,8 @@ def _inject_compact_nav_css() -> None:
             border-radius:12px !important;
           }
           .st-key-osoli_nav_row [data-testid="stHorizontalBlock"] > [data-testid="column"] {
-            min-width:76px !important;
-            flex:0 0 76px !important;
+            min-width:78px !important;
+            flex:0 0 78px !important;
           }
           .st-key-osoli_nav_row .stButton > button {
             min-height:39px !important;
@@ -343,9 +358,14 @@ def render_navbar() -> None:
     """Render one compact horizontal navigation row without a sidebar."""
     sync_page_from_query_params_once()
     raw_page = st.session_state.get("page")
-    legacy_section = _legacy_section(raw_page)
-    if legacy_section:
-        st.session_state["insights_section"] = legacy_section
+
+    analysis_section = _legacy_section(raw_page)
+    if analysis_section:
+        st.session_state["insights_section"] = analysis_section
+    portfolio_section = _legacy_portfolio_section(raw_page)
+    if portfolio_section:
+        st.session_state["portfolios_section"] = portfolio_section
+
     route_page = _validated_page(raw_page)
     if route_page != raw_page:
         st.session_state["page"] = route_page
