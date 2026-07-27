@@ -6,28 +6,35 @@ from typing import Any, Optional
 
 import streamlit as st
 
-_SECTION_KEYS = ("analysis", "signals", "backtest")
+_SECTION_KEYS = ("analysis", "signals", "backtest", "evaluation")
 _SECTION_META = {
     "analysis": {
         "label": "التحليل الشامل",
         "icon": "📊",
-        "description": "المالي والفني والكلاسيكي والمستشار والخطة",
+        "description": "قرار موحد ومدارس مستقلة ومالي وفني وكلاسيكي وخطة",
         "module": "views.analysis",
         "renderer": "view_analysis",
     },
     "signals": {
         "label": "الإشارات",
         "icon": "🚦",
-        "description": "الفرص الحالية والدخول والوقف والأهداف",
+        "description": "فرص المحفظة والمراقبة مع الدخول والوقف والأهداف",
         "module": "views.signals",
         "renderer": "view_signals",
     },
     "backtest": {
         "label": "الاختبار الخلفي",
         "icon": "🧪",
-        "description": "اختبار الاستراتيجيات على البيانات التاريخية",
+        "description": "اختبار الاستراتيجيات على بيانات تاريخية مكتملة",
         "module": "views.lab",
         "renderer": "view_backtester_ui",
+    },
+    "evaluation": {
+        "label": "التقييم والتدقيق",
+        "icon": "🎯",
+        "description": "المعايرة وBrier والأداء الزمني وسلامة سجل النتائج",
+        "module": "views.analysis.evaluation",
+        "renderer": "render_evaluation_center",
     },
 }
 
@@ -97,35 +104,36 @@ def _inject_hub_css() -> None:
           align-items:center !important;
           justify-content:space-between !important;
           gap:1rem !important;
-          padding:.82rem 1rem !important;
+          padding:.9rem 1.05rem !important;
           margin:0 0 .62rem !important;
           border:1px solid var(--os-border-strong,rgba(15,23,42,.16)) !important;
-          border-radius:17px !important;
+          border-radius:18px !important;
           background:
-            linear-gradient(135deg,rgba(36,87,230,.11),rgba(14,143,202,.055)),
+            radial-gradient(circle at 85% 20%,rgba(36,87,230,.15),transparent 42%),
+            linear-gradient(135deg,rgba(36,87,230,.10),rgba(14,143,202,.045)),
             var(--os-surface,#fff) !important;
-          box-shadow:0 7px 24px rgba(15,23,42,.05) !important;
+          box-shadow:0 8px 28px rgba(15,23,42,.055) !important;
         }
         .st-key-osoli_analysis_hub .os-analysis-hub-title {
           color:var(--os-text,#10203a) !important;
-          font-size:1.12rem !important;
-          font-weight:900 !important;
+          font-size:1.18rem !important;
+          font-weight:950 !important;
         }
         .st-key-osoli_analysis_hub .os-analysis-hub-sub {
           color:var(--os-muted,#64748b) !important;
-          font-size:.79rem !important;
+          font-size:.8rem !important;
           font-weight:650 !important;
         }
         .st-key-osoli_analysis_hub [data-testid="stHorizontalBlock"] {
           direction:rtl !important;
           flex-direction:row !important;
-          gap:.55rem !important;
+          gap:.48rem !important;
         }
         .st-key-osoli_analysis_hub .stButton > button {
-          min-height:66px !important;
+          min-height:64px !important;
           border-radius:14px !important;
-          padding:.55rem .45rem !important;
-          font-size:.84rem !important;
+          padding:.52rem .4rem !important;
+          font-size:.82rem !important;
           font-weight:850 !important;
           justify-content:center !important;
           white-space:normal !important;
@@ -135,21 +143,22 @@ def _inject_hub_css() -> None:
           text-align:center !important;
           white-space:normal !important;
         }
-        @media (max-width:700px) {
+        @media (max-width:780px) {
           .st-key-osoli_analysis_hub .os-analysis-hub-hero {
             align-items:flex-start !important;
             flex-direction:column !important;
             gap:.18rem !important;
           }
           .st-key-osoli_analysis_hub [data-testid="stHorizontalBlock"] {
-            flex-direction:column !important;
+            overflow-x:auto !important;
+            flex-wrap:nowrap !important;
           }
           .st-key-osoli_analysis_hub [data-testid="stHorizontalBlock"] > [data-testid="column"] {
-            width:100% !important;
-            flex:1 1 100% !important;
+            min-width:142px !important;
+            flex:0 0 142px !important;
           }
           .st-key-osoli_analysis_hub .stButton > button {
-            min-height:52px !important;
+            min-height:54px !important;
           }
         }
         </style>
@@ -159,7 +168,7 @@ def _inject_hub_css() -> None:
 
 
 def _render_section_selector(selected: str) -> None:
-    columns = st.columns(3, gap="small")
+    columns = st.columns(len(_SECTION_KEYS), gap="small")
     for column, section in zip(columns, _SECTION_KEYS):
         meta = _SECTION_META[section]
         if column.button(
@@ -186,7 +195,7 @@ def _render_active_section(section: str, finance: Any) -> None:
 
 
 def view_insights(finance: Any) -> None:
-    """Render one analysis section at a time to avoid eager heavy-tab execution."""
+    """Render one analysis section at a time to avoid eager heavy execution."""
     selected = _resolve_section()
     _inject_hub_css()
 
@@ -194,8 +203,11 @@ def view_insights(finance: Any) -> None:
         st.markdown(
             """
             <div class="os-analysis-hub-hero">
-              <div class="os-analysis-hub-title">🧠 مركز التحليل</div>
-              <div class="os-analysis-hub-sub">التحليل والإشارات والاختبار الخلفي تحت صفحة واحدة</div>
+              <div>
+                <div class="os-analysis-hub-title">🧠 مركز التحليل والقرار</div>
+                <div class="os-analysis-hub-sub">من البيانات إلى القرار والخطة، ثم قياس النتيجة والمعايرة — داخل مسار واحد واضح</div>
+              </div>
+              <div class="os-analysis-hub-sub">إغلاق مؤكد • مدارس مستقلة • مخاطرة مدققة • لا تنفيذ تداول</div>
             </div>
             """,
             unsafe_allow_html=True,
