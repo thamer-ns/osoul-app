@@ -45,19 +45,20 @@ def _init_db_once() -> tuple[bool, str]:
 
 
 def _apply_global_ui() -> None:
-    """Inject one canonical stylesheet and no iframe-based DOM mutators."""
+    """Inject the visual theme, RTL shell, and final responsive density layer."""
     try:
         from styles import apply_custom_css
+        from ui_polish import apply_ui_polish
         from ui_shell import apply_rtl_shell
 
         apply_custom_css()
         apply_rtl_shell()
+        apply_ui_polish()
     except Exception:
         logger.exception("global stylesheet failed")
 
 
 def _render_authenticated_header() -> None:
-    """Keep the application header out of the login screen and size it defensively."""
     try:
         from components import render_app_header
 
@@ -67,7 +68,6 @@ def _render_authenticated_header() -> None:
 
 
 def _install_runtime_hardening(username: str) -> None:
-    """Install compatibility fixes before any page modules are imported."""
     from ai_tenant_hardening import (
         install_ai_learning_scope,
         register_ai_tenant_tables,
@@ -86,7 +86,6 @@ def _install_runtime_hardening(username: str) -> None:
 
 
 def _initialize_user_space(username: str) -> bool:
-    """Initialize a tenant, retrying only the short transient startup window."""
     for attempt in range(3):
         try:
             _install_runtime_hardening(username)
@@ -130,7 +129,7 @@ def main() -> None:
         st.stop()
 
     try:
-        from persistent_auth_v3 import install_persistent_auth
+        from persistent_auth_v4 import install_persistent_auth
 
         install_persistent_auth()
         from security import login_system
