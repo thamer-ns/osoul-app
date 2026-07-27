@@ -6,6 +6,7 @@ import traceback
 from feature_flags import get_flag
 import pandas as pd
 
+from candle_confirmation import completed_candles
 from .config import AI_ENGINE_NAME, AI_ENGINE_VERSION
 from .core import _normalize_symbol, _map_period_from_timeframe
 from .ohlcv import _ensure_ohlcv_columns
@@ -233,7 +234,19 @@ def generate_ai_report(symbol, timeframe="1D"):
                 "message": "لم نستطع بناء بيانات OHLCV (شموع) بشكل صحيح.",
             }
 
-        # Minimum candles based on interval
+        raw_rows = int(len(df))
+        df = completed_candles(df, interval=interval)
+        confirmation_meta = dict(getattr(df, "attrs", {}).get("candle_confirmation") or {})
+        if df.empty:
+            return {
+                "ok": False,
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "error": "no_closed_candles",
+                "message": "لا توجد شمعة مكتملة بعد على هذا الفاصل. انتظر إغلاق الشمعة الحالية.",
+            }
+
+        # Minimum candles based on interval, after excluding the live candle.
         min_rows = 60 if interval in ("1d", "1wk", "1mo") else 120
         if len(df) < min_rows:
             return {
@@ -823,7 +836,12 @@ def generate_ai_report(symbol, timeframe="1D"):
                 "period_used": str(period),
                 "interval_used": str(interval),
                 "rows": int(len(df)),
+                "raw_rows": raw_rows,
                 "last_bar": last_bar,
+                "confirmation_mode": "closed_only",
+                "excluded_incomplete_bars": int(
+                    confirmation_meta.get("excluded_incomplete_bars", 0) or 0
+                ),
             },
         }
 

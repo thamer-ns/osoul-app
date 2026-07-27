@@ -4,6 +4,8 @@ from __future__ import annotations
 import streamlit as st
 from feature_flags import get_flag
 import pandas as pd
+
+from candle_confirmation import completed_candles
 import traceback
 
 from data_source import get_company_details
@@ -171,6 +173,10 @@ def view_backtester_ui(fin):
 
             if not isinstance(data, pd.DataFrame):
                 data = pd.DataFrame(data)
+            data = completed_candles(data, interval="1d")
+            if data.empty:
+                st.error("❌ لا توجد شمعة يومية مكتملة للاختبار بعد")
+                return
 
             if "Close" not in data.columns and "close" not in data.columns:
                 st.error("❌ لا يوجد عمود Close في البيانات")

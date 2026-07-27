@@ -50,3 +50,28 @@ def test_timeframe_history_periods_are_sufficient():
     assert period_for_interval("1wk") == "10y"
     assert period_for_interval("1mo") == "max"
     assert period_for_interval("5m") == "60d"
+
+
+def test_pack_is_strict_json_serialisable_and_contains_no_nan():
+    import json
+
+    pack = compute_advanced_technical_pack(
+        _sample_frame(),
+        symbol="1120.SR",
+        timeframe="1m",
+    )
+    encoded = json.dumps(pack, ensure_ascii=False, allow_nan=False)
+    assert "NaN" not in encoded
+    assert "Infinity" not in encoded
+
+
+def test_rls_intraday_projection_remains_finite_on_strong_trend():
+    frame = _sample_frame(rows=300)
+    frame["Close"] = np.geomspace(10.0, 100.0, len(frame))
+    frame["Open"] = frame["Close"] * 0.999
+    frame["High"] = frame["Close"] * 1.005
+    frame["Low"] = frame["Close"] * 0.995
+    pack = compute_advanced_technical_pack(frame, timeframe="1m")
+    features = pack["rls_forecast"]["features"]
+    assert np.isfinite(features["projected_horizon_return"])
+    assert -1.0 < features["projected_horizon_return"] < 1.0

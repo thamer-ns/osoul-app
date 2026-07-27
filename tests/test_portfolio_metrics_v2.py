@@ -88,3 +88,47 @@ def test_excel_formula_prefixes_are_neutralised():
     assert _safe_excel_value("=2+2") == "'=2+2"
     assert _safe_excel_value("@SUM(A1:A2)") == "'@SUM(A1:A2)"
     assert _safe_excel_value("normal text") == "normal text"
+
+
+def test_stored_fallback_price_is_marked_stale(monkeypatch):
+    tables = {
+        "trades": pd.DataFrame(
+            [
+                {
+                    "id": 1,
+                    "symbol": "1120.SR",
+                    "asset_type": "Stock",
+                    "quantity": 10.0,
+                    "entry_price": 50.0,
+                    "current_price": 55.0,
+                    "exit_price": 0.0,
+                    "status": "Open",
+                    "date": "2026-01-01",
+                }
+            ]
+        ),
+        "deposits": pd.DataFrame([{"date": "2026-01-01", "amount": 1000.0}]),
+        "withdrawals": pd.DataFrame(columns=["date", "amount"]),
+        "returnsgrants": pd.DataFrame(columns=["date", "amount"]),
+    }
+    monkeypatch.setattr(
+        database,
+        "fetch_table",
+        lambda table: tables[str(table).lower()].copy(),
+    )
+    monkeypatch.setattr(
+        market_data,
+        "get_ticker_symbol",
+        lambda symbol: str(symbol).strip().upper(),
+    )
+    monkeypatch.setattr(market_data, "fetch_batch_data", lambda symbols: {})
+
+    calculate_portfolio_metrics_v2.clear()
+    result = calculate_portfolio_metrics_v2(
+        include_xirr=False,
+        cache_key="u1:p1:stale-test",
+    )
+    open_positions = result["open_positions_df"]
+    assert bool(open_positions.iloc[0]["price_stale"]) is True
+    assert open_positions.iloc[0]["price_source"] == "stored"
+    assert result["data_quality"]["ok"] is False

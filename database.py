@@ -50,6 +50,7 @@ _POOL_LAST_CHECK: float = 0.0
 # Optional SQLAlchemy engine for pandas (avoid repeated imports). If SQLAlchemy
 # is not installed, we keep this as None and fall back to raw DB-API.
 _ENGINE: Any | None = None
+_ENGINE_INITIALIZED: bool = False
 
 # If Postgres is not configured, fallback to sqlite for basic local usage
 _SQLITE_PATH = os.getenv("SQLITE_PATH", "osoul_local.db")
@@ -74,17 +75,11 @@ def _get_db_kind() -> str:
 
 
 def _get_engine():
-    """Create a SQLAlchemy engine for pandas read_sql_* calls.
-    Removes pandas warnings that occur with raw DB-API connections.
-    """
-    global _ENGINE
-    # If we already attempted engine init, reuse the result (even if None).
-    if "_ENGINE" in globals():
-        try:
-            if _ENGINE is not None:
-                return _ENGINE
-        except Exception:
-            _ENGINE = None
+    """Create one SQLAlchemy engine for pandas reads, once per process."""
+    global _ENGINE, _ENGINE_INITIALIZED
+    if _ENGINE_INITIALIZED:
+        return _ENGINE
+    _ENGINE_INITIALIZED = True
 
     if _get_db_kind() != "postgres":
         _ENGINE = None
@@ -95,15 +90,19 @@ def _get_engine():
         _ENGINE = None
         return None
 
-    # SQLAlchemy is optional; if missing we simply use raw DB-API.
     try:
         from sqlalchemy import create_engine  # type: ignore
 
-        _ENGINE = create_engine(db_url, pool_pre_ping=True, future=True)
-    except Exception as e:
+        _ENGINE = create_engine(
+            db_url,
+            pool_pre_ping=True,
+            pool_size=5,
+            max_overflow=2,
+            future=True,
+        )
+    except Exception as exc:
         _ENGINE = None
-        _set_last_db_error(f"sqlalchemy_engine_failed: {redact_text(e)}")
-
+        _set_last_db_error(f"sqlalchemy_engine_failed: {redact_text(exc)}")
     return _ENGINE
 
 
@@ -331,95 +330,75 @@ def _safe_ident(name: str) -> str:
 
 
 def fetch_table(t: str) -> pd.DataFrame:
-    """Read an entire table from the configured DB.
-
-    ✅ Fixes the common 'data disappeared' issue by trying:
-      1) unquoted name (Postgres folds to lower-case)
-      2) quoted name (case-sensitive) if needed
-      3) public.<name> as a fallback in Postgres
-    """
+    """Read a complete table without occupying two independent DB pools."""
     t = _safe_ident(t)
-    conn, kind = get_connection()
+    kind = _get_db_kind()
+
+    if kind == "postgres":
+        engine = _get_engine()
+        if engine is not None:
+            queries = (
+                f"SELECT * FROM {t}",
+                f'SELECT * FROM "{t}"',
+                f"SELECT * FROM public.{t}",
+            )
+            for query in queries:
+                try:
+                    # A successful empty result is still authoritative.  The
+                    # old implementation retried two more queries and held a
+                    # raw pooled connection at the same time.
+                    return pd.read_sql(query, engine)
+                except Exception as exc:
+                    _set_last_db_error(redact_text(exc))
+
+    conn = None
+    actual_kind = kind
     try:
-        if kind == "postgres":
-            engine = _get_engine()
-            # Prefer SQLAlchemy engine for pandas
-            if engine is not None:
-                try:
-                    df = pd.read_sql(f"SELECT * FROM {t}", engine)
-                    if not df.empty:
-                        return df
-                except Exception as e:
-                    _set_last_db_error(redact_text(e))
-
-                # Try quoted identifier (handles tables created with quoted CamelCase)
-                try:
-                    df = pd.read_sql(f'SELECT * FROM "{t}"', engine)
-                    if not df.empty:
-                        return df
-                except Exception:
-                    import logging
-                    logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at database.py:355')
-
-                # Try explicit public schema
-                try:
-                    df = pd.read_sql(f"SELECT * FROM public.{t}", engine)
-                    if not df.empty:
-                        return df
-                except Exception:
-                    import logging
-                    logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at database.py:363')
-
-            # Fallback to raw connection (still works, but pandas warns)
+        conn, actual_kind = get_connection()
+        if actual_kind == "postgres":
             try:
-                df = pd.read_sql(f"SELECT * FROM {t}", conn)
-                if not df.empty:
-                    return df
+                return pd.read_sql(f"SELECT * FROM {t}", conn)
             except Exception:
-                import logging
-                logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at database.py:371')
-
-            # Quoted fallback on raw conn
-            try:
-                df = pd.read_sql(f'SELECT * FROM "{t}"', conn)
-                return df
-            except Exception as e:
-                _set_last_db_error(redact_text(e))
-                return pd.DataFrame()
-
-        # SQLite
+                return pd.read_sql(f'SELECT * FROM "{t}"', conn)
         return pd.read_sql(f"SELECT * FROM {t}", conn)
-
-    except Exception as e:
-        _set_last_db_error(redact_text(e))
+    except Exception as exc:
+        _set_last_db_error(redact_text(exc))
         return pd.DataFrame()
     finally:
-        put_connection(conn, kind)
+        if conn is not None:
+            put_connection(conn, actual_kind)
+
 
 def fetch_df(query: str, params: Optional[Tuple[Any, ...]] = None) -> pd.DataFrame:
-    """Fetch a dataframe using a parameterized query (portable + safe)."""
-    conn, kind = get_connection()
+    """Fetch a parameterized dataframe using exactly one connection path."""
+    kind = _get_db_kind()
+    if kind == "postgres":
+        engine = _get_engine()
+        if engine is not None:
+            try:
+                from sqlalchemy import text as _sql_text
+
+                adapted = _adapt_query_for_kind(query, "postgres")
+                sql, bound = _sqlalchemy_params(adapted, params)
+                if bound is None:
+                    return pd.read_sql(sql, engine)
+                return pd.read_sql(_sql_text(sql), engine, params=bound)
+            except Exception as exc:
+                _set_last_db_error(redact_text(exc))
+
+    conn = None
+    actual_kind = kind
     try:
-        q = _adapt_query_for_kind(query, kind)
-        if kind == "postgres":
-            engine = _get_engine()
-            if engine is not None:
-                try:
-                    from sqlalchemy import text as _sql_text
-                    q2, p2 = _sqlalchemy_params(q, params)
-                    if p2 is None:
-                        return pd.read_sql(q2, engine)
-                    return pd.read_sql(_sql_text(q2), engine, params=p2)
-                except Exception:
-                    import logging
-                    logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at database.py:405')
-        # fallback (sqlite or postgres without engine)
-        return pd.read_sql(q, conn, params=params or ())
-    except Exception as e:
-        _set_last_db_error(redact_text(e))
+        conn, actual_kind = get_connection()
+        adapted = _adapt_query_for_kind(query, actual_kind)
+        return pd.read_sql(adapted, conn, params=params or ())
+    except Exception as exc:
+        _set_last_db_error(redact_text(exc))
         return pd.DataFrame()
     finally:
-        put_connection(conn, kind)
+        if conn is not None:
+            put_connection(conn, actual_kind)
+
 
 def _db_user_exists__shadowed_1(username: str) -> Optional[bool]:
     """Return True/False if known, or None if DB error."""
@@ -589,24 +568,31 @@ def _migrate_users_table_schema():
 def _hash_password(password: str) -> str:
     try:
         import bcrypt
-
-        return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-    except Exception:
-        # fallback (weak) — should not happen if bcrypt installed
-        import hashlib
-
-        return hashlib.sha256(password.encode("utf-8")).hexdigest()
+    except Exception as exc:  # pragma: no cover - dependency is required
+        raise RuntimeError("bcrypt مطلوب لتخزين كلمات المرور بأمان") from exc
+    return bcrypt.hashpw(
+        str(password).encode("utf-8"),
+        bcrypt.gensalt(rounds=12),
+    ).decode("utf-8")
 
 
 def _check_password(password: str, password_hash: str) -> bool:
     try:
         import bcrypt
-
-        return bcrypt.checkpw(password.encode("utf-8"), password_hash.encode("utf-8"))
+    except Exception as exc:  # pragma: no cover - dependency is required
+        raise RuntimeError("bcrypt مطلوب للتحقق من كلمات المرور بأمان") from exc
+    stored = str(password_hash or "")
+    if not stored.startswith(("$2a$", "$2b$", "$2y$")):
+        return False
+    try:
+        return bool(
+            bcrypt.checkpw(
+                str(password).encode("utf-8"),
+                stored.encode("utf-8"),
+            )
+        )
     except Exception:
-        import hashlib
-
-        return hashlib.sha256(password.encode("utf-8")).hexdigest() == (password_hash or "")
+        return False
 
 
 def db_user_exists(username: str) -> bool:

@@ -87,12 +87,24 @@ LOGO_MARK_PATH = os.getenv("LOGO_MARK_PATH", "assets/logo_mark.png")
 LOGO_APP_PATH = os.getenv("LOGO_APP_PATH", "assets/logo_app.png")
 
 
+def _setting(key: str, default: str) -> str:
+    value = os.getenv(key)
+    if value not in (None, ""):
+        return str(value)
+    return _get_secret(key, default)
+
+
+def _bool_setting(key: str, default: bool) -> bool:
+    value = _setting(key, "1" if default else "0").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
 # ============================================================
 # 💼 إعدادات التداول/المختبر
 # ============================================================
 # نسبة العمولة الافتراضية (مثال: 0.0015 = 0.15%)
 try:
-    COMMISSION_RATE = float(os.getenv("COMMISSION_RATE", "0.0015"))
+    COMMISSION_RATE = float(_setting("COMMISSION_RATE", "0.0015"))
 except Exception:
     COMMISSION_RATE = 0.0015
 
@@ -101,7 +113,7 @@ except Exception:
 # ⚙️ خيارات التشغيل (Production / Dev)
 # ============================================================
 # افتراضياً: نمنع أي SQLite fallback لتفادي "فقدان البيانات" عند سقوط DB.
-ALLOW_SQLITE_FALLBACK = (os.getenv("OSOUL_ALLOW_SQLITE_FALLBACK", "0").strip().lower() in ("1","true","yes","on"))
+ALLOW_SQLITE_FALLBACK = _bool_setting("OSOUL_ALLOW_SQLITE_FALLBACK", False)
 
 # افتراضياً: التطبيق يتوقف ويعرض صفحة تنبيه إذا لم تتصل قاعدة البيانات.
-REQUIRE_DB = (os.getenv("OSOUL_REQUIRE_DB", "1").strip().lower() in ("1","true","yes","on"))
+REQUIRE_DB = _bool_setting("OSOUL_REQUIRE_DB", True)

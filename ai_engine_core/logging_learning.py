@@ -9,12 +9,15 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
+from candle_confirmation import completed_candles
 from .db import _safe_import_db, _try_exec, _ensure_ai_tables
 from .core import _now_str
+from .json_utils import strict_json_dumps
+
 
 def _json_dumps(obj) -> str:
     try:
-        return json.dumps(obj or {}, ensure_ascii=False)
+        return strict_json_dumps(obj or {})
     except Exception:
         return "{}"
 
@@ -335,6 +338,9 @@ def evaluate_pending_outcomes_pro(
             # Need entry; fallback to last known close at signal creation
             df_hist = get_chart_history(sym, period=None, interval=str(interval), years=5)
             if df_hist is None or df_hist.empty or "Close" not in df_hist.columns:
+                continue
+            df_hist = completed_candles(df_hist, interval=str(interval))
+            if df_hist.empty:
                 continue
 
             df_hist = df_hist.copy()

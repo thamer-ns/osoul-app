@@ -118,19 +118,27 @@ def _apply_market_prices(open_positions: pd.DataFrame) -> pd.DataFrame:
         if asset_type == "sukuk":
             price = _number(row.get("entry_price"), stored)
             payload = {"source": "book_value", "prev_close": 0.0}
+            source = "book_value"
+            is_stale = False
         else:
             payload = (
                 live.get(symbol)
                 or live.get(str(symbol).upper())
                 or {}
             )
-            price = _number(payload.get("price"), stored)
-            if price <= 0:
-                price = stored
+            source = str(payload.get("source") or "stored").strip().lower()
+            live_price = _number(payload.get("price"), 0.0)
+            has_live_price = bool(
+                live_price > 0
+                and source not in {"", "stored", "failed", "unknown", "غير معروف"}
+            )
+            price = live_price if has_live_price else stored
+            source = source if has_live_price else "stored"
+            is_stale = bool(payload.get("is_stale", False)) or not has_live_price
         prices.append(price)
         previous.append(_number(payload.get("prev_close"), 0.0))
-        sources.append(str(payload.get("source") or "stored"))
-        stale.append(bool(payload.get("is_stale", price <= 0)))
+        sources.append(source)
+        stale.append(is_stale)
 
     frame["current_price"] = prices
     frame["prev_close"] = previous

@@ -2,7 +2,7 @@
 
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import os
 from typing import List, Dict, Any, Optional
@@ -898,6 +898,7 @@ def get_chart_history(symbol: str, period: str = None, interval: str = "1d", yea
     try:
         if isinstance(df, pd.DataFrame) and not df.empty and (req_interval in ("1wk", "1w", "week", "1mo", "month", "4h", "240m", "4hr", "4hours")):
             d = _normalize_ohlcv_columns(df).copy()
+            source_attrs = dict(getattr(d, "attrs", {}) or {})
             if not isinstance(d.index, pd.DatetimeIndex):
                 if "Date" in d.columns:
                     d["Date"] = pd.to_datetime(d["Date"], errors="coerce")
@@ -918,6 +919,7 @@ def get_chart_history(symbol: str, period: str = None, interval: str = "1d", yea
                 if "Volume" in d.columns:
                     out["Volume"] = pd.to_numeric(d["Volume"], errors="coerce").fillna(0).resample(rule).sum()
                 out = out.dropna(subset=["Open", "High", "Low", "Close"])
+                out.attrs.update(source_attrs)
                 df = out
     except Exception:
         import logging
@@ -941,6 +943,7 @@ def get_chart_history(symbol: str, period: str = None, interval: str = "1d", yea
                     import logging
                     logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at market_data.py:928')
                 if req_interval in ("1wk", "1w", "week", "1mo", "month", "4h", "240m", "4hr", "4hours"):
+                    source_attrs = dict(getattr(d2, "attrs", {}) or {})
                     d2 = d2.sort_index()
                     rule = "W-THU" if req_interval in ("1wk", "1w", "week") else ("M" if req_interval in ("1mo", "month") else "4H")
                     out = pd.DataFrame({
@@ -951,6 +954,7 @@ def get_chart_history(symbol: str, period: str = None, interval: str = "1d", yea
                         "Volume": d2["Volume"].resample(rule).sum() if "Volume" in d2.columns else np.nan,
                     })
                     out = out.dropna(subset=["Open", "High", "Low", "Close"])
+                    out.attrs.update(source_attrs)
                     df = out
                 else:
                     df = d2
@@ -983,7 +987,7 @@ def get_chart_history(symbol: str, period: str = None, interval: str = "1d", yea
             "start": str(df.index.min()) if df is not None and not df.empty else None,
             "end": str(df.index.max()) if df is not None and not df.empty else None,
             "source": str(getattr(df, "attrs", {}).get("source") or "unknown"),
-            "fetched_at": datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+            "fetched_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         }
         try:
             df.attrs["data_lineage"] = lineage
@@ -1163,7 +1167,7 @@ def fetch_batch_data(symbols_list: list):
             p = _safe_float(g.get("price", 0.0))
             if _is_reasonable_price(p):
                 price = float(p)
-                prev_close = float(_safe_float(g.get("prev_close", p))) or 0.0
+                prev_close = float(_safe_float(g.get("prev_close", 0.0))) or 0.0
                 year_high = float(_safe_float(g.get("year_high", 0.0)))
                 year_low = float(_safe_float(g.get("year_low", 0.0)))
                 source = "google_finance"
@@ -1174,7 +1178,7 @@ def fetch_batch_data(symbols_list: list):
             p = _safe_float(tv.get("price", 0.0))
             if _is_reasonable_price(p):
                 price = float(p)
-                prev_close = float(_safe_float(tv.get("prev_close", p))) or 0.0
+                prev_close = float(_safe_float(tv.get("prev_close", 0.0))) or 0.0
                 source = "tradingview"
 
         # 4) Investing
@@ -1183,7 +1187,7 @@ def fetch_batch_data(symbols_list: list):
             p = _safe_float(inv.get("price", 0.0))
             if _is_reasonable_price(p):
                 price = float(p)
-                prev_close = float(_safe_float(inv.get("prev_close", p))) or 0.0
+                prev_close = float(_safe_float(inv.get("prev_close", 0.0))) or 0.0
                 source = "investing"
 
         # 5) Argaam
@@ -1192,7 +1196,7 @@ def fetch_batch_data(symbols_list: list):
             p = _safe_float(ar.get("price", 0.0))
             if _is_reasonable_price(p):
                 price = float(p)
-                prev_close = float(_safe_float(ar.get("prev_close", p))) or 0.0
+                prev_close = float(_safe_float(ar.get("prev_close", 0.0))) or 0.0
                 source = "argaam"
 
         # 6) Yahoo (آخر شيء) مع احترام المؤشرات/الرموز المؤهلة
@@ -1223,18 +1227,25 @@ def fetch_batch_data(symbols_list: list):
                 import logging
                 logging.getLogger(__name__).exception('Suppressed Exception exception replaced with logging at market_data.py:1202')
 
-        change_pct = ((price - prev_close) / prev_close) * 100.0 if (prev_close > 0 and price > 0) else 0.0
+        change_pct = (
+            ((price - prev_close) / prev_close) * 100.0
+            if prev_close > 0 and price > 0
+            else None
+        )
 
         payload = {
             "symbol": norm,
             "price": float(price) if price else 0.0,
             "prev_close": float(prev_close) if prev_close else 0.0,
             "previous_close": float(prev_close) if prev_close else 0.0,
-            "change_pct": float(round(_safe_float(change_pct), 2)) if price and prev_close else 0.0,
-            "change_percent": float(round(_safe_float(change_pct), 2)) if price and prev_close else 0.0,
+            "change_pct": round(float(change_pct), 2) if change_pct is not None else None,
+            "change_percent": round(float(change_pct), 2) if change_pct is not None else None,
+            "change_available": change_pct is not None,
             "year_high": float(year_high) if year_high else 0.0,
             "year_low": float(year_low) if year_low else 0.0,
             "source": source,
+            "fetched_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            "is_stale": price <= 0,
         }
         _store_keys(raw_sym, norm, payload)
 

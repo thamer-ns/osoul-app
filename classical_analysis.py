@@ -3,6 +3,8 @@ from __future__ import annotations
 # classical_analysis.py
 import streamlit as st
 import pandas as pd
+
+from candle_confirmation import completed_candles
 import numpy as np
 import plotly.graph_objects as go
 
@@ -263,25 +265,24 @@ def pivot_camarilla(H, L, C):
     return {"PP": C, "R1": R1, "S1": S1, "R2": R2, "S2": S2, "R3": R3, "S3": S3, "R4": R4, "S4": S4}
 
 
-def _last_completed_bar(df: pd.DataFrame):
-    """
-    يرجع OHLC للشمعة المكتملة السابقة لأي فاصل (ساعة/يوم/أسبوع/شهر)
-    """
-    if df is None or df.empty or len(df) < 2:
+def _last_completed_bar(df: pd.DataFrame, interval: str):
+    """Return the latest bar that is actually closed for the timeframe."""
+    closed = completed_candles(df, interval=interval)
+    if closed.empty:
         return None
-    use = df.iloc[-2]
-    ts = ""
-    try:
-        ts = str(df.index[-2])
-        if isinstance(df.index, pd.DatetimeIndex):
-            ts = str(df.index[-2].to_pydatetime())
-    except Exception:
-        ts = "prev"
-    return {"H": float(use["High"]), "L": float(use["Low"]), "C": float(use["Close"]), "O": float(use["Open"]), "ts": ts}
+    use = closed.iloc[-1]
+    ts = str(closed.index[-1])
+    return {
+        "H": float(use["High"]),
+        "L": float(use["Low"]),
+        "C": float(use["Close"]),
+        "O": float(use["Open"]),
+        "ts": ts,
+    }
 
 
-def _calc_pivots_from_df(df: pd.DataFrame, pivot_type: str):
-    src = _last_completed_bar(df)
+def _calc_pivots_from_df(df: pd.DataFrame, pivot_type: str, interval: str):
+    src = _last_completed_bar(df, interval)
     if not src:
         return {}, None
     H, L, C, O = src["H"], src["L"], src["C"], src["O"]
@@ -427,19 +428,19 @@ def render_classical_analysis(symbol: str, interval: str = "1d"):
     if show_pivots:
         if show_daily:
             d1 = _ensure_ohlcv(_fetch_history(symbol, interval="1d", years=5, period=None))
-            p, src = _calc_pivots_from_df(d1, pivot_type) if not d1.empty else ({}, None)
+            p, src = _calc_pivots_from_df(d1, pivot_type, "1d") if not d1.empty else ({}, None)
             if p and src:
                 pivots_pack.append({"tf": "Daily", "pivots": p, "src": src})
 
         if show_weekly:
             w1 = _ensure_ohlcv(_fetch_history(symbol, interval="1wk", years=10, period=None))
-            p, src = _calc_pivots_from_df(w1, pivot_type) if not w1.empty else ({}, None)
+            p, src = _calc_pivots_from_df(w1, pivot_type, "1wk") if not w1.empty else ({}, None)
             if p and src:
                 pivots_pack.append({"tf": "Weekly", "pivots": p, "src": src})
 
         if show_monthly:
             m1 = _ensure_ohlcv(_fetch_history(symbol, interval="1mo", years=15, period=None))
-            p, src = _calc_pivots_from_df(m1, pivot_type) if not m1.empty else ({}, None)
+            p, src = _calc_pivots_from_df(m1, pivot_type, "1mo") if not m1.empty else ({}, None)
             if p and src:
                 pivots_pack.append({"tf": "Monthly", "pivots": p, "src": src})
 

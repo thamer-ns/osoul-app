@@ -11,6 +11,8 @@ This module serves two purposes:
 from __future__ import annotations
 
 import json
+
+from .json_utils import strict_json_dumps
 from datetime import datetime
 from typing import Any, Dict, Optional, Tuple
 
@@ -331,7 +333,7 @@ def ensure_tables() -> None:
 def upsert_user_rule(rule_id: str, title: str, rule_text: str, parsed_json: Dict[str, Any], enabled: int = 1) -> bool:
     ensure_tables()
     kind = _get_db_kind()
-    payload = json.dumps(parsed_json, ensure_ascii=False)
+    payload = strict_json_dumps(parsed_json)
     now = _now_iso()
 
     if (kind or "").lower() == "postgres":
@@ -383,7 +385,7 @@ def save_advanced_indicators(symbol: str, timeframe: str, indicators: Dict[str, 
     ensure_tables()
     kind = _get_db_kind()
     now = _now_iso()
-    doc = json.dumps(indicators, ensure_ascii=False)
+    doc = strict_json_dumps(indicators)
     key = f"{symbol}:{timeframe}"
 
     if (kind or "").lower() == "postgres":
@@ -467,7 +469,7 @@ def save_outcome(
     now = _now_iso()
     outcome_id = f"{signal_id}:{horizon_days}"
 
-    ctx_json = json.dumps(context or {}, ensure_ascii=False)
+    ctx_json = strict_json_dumps(context or {})
     if (kind or "").lower() == "postgres":
         q = """
         INSERT INTO ai_outcomes (
