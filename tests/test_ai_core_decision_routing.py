@@ -7,7 +7,7 @@ def test_public_report_path_always_passes_through_final_decision_policy(monkeypa
     def fake_lazy_attr(module_name, attr_name):
         if (module_name, attr_name) == (".reporting", "generate_ai_report"):
             return lambda *args, **kwargs: {"status": "ok", "raw_marker": True}
-        if (module_name, attr_name) == (".decision_policy_v3", "enrich_report"):
+        if (module_name, attr_name) == (".decision_policy_v4", "enrich_report"):
             def enrich(report, *, symbol, timeframe):
                 calls.append((report, symbol, timeframe))
                 return {"status": "ok", "routed": True}
