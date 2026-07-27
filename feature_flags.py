@@ -1,55 +1,58 @@
-# feature_flags.py
+"""Compatibility registry for capabilities that are now part of the core product.
+
+These options used to be exposed as experimental session-only switches.  That
+made the interface confusing and could silently disable useful behaviour after
+one click.  The useful capabilities are now always enabled; obsolete switches
+were removed.  The small API remains only for backward-compatible imports.
+"""
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Dict
 
 import streamlit as st
 
-# ============================================================
-# 🧪 Feature Flags (اختيارية)
-# - الهدف: إضافة ميزات بدون التأثير على المستخدم العادي
-# - التخزين: session_state فقط (آمن ولا يغيّر قاعدة البيانات)
-# ============================================================
-
-DEFAULT_FLAGS: Dict[str, bool] = {
-    # Portfolio analytics
-    "enable_xirr": False,
-
-    # Lab / backtester
-    "enable_strategy_notes": False,
-
-    # UI wrappers (Arabic placeholders + expander label)
-    "use_ar_wrappers": False,
-
-    # Compare engines / legacy
-    "enable_engine_compare": False,
-    # Self-learning (signals + outcomes + weights) — safe/bounded
+CORE_CAPABILITIES: Dict[str, bool] = {
+    # Strategy guidance and previous backtest runs are part of the lab.
+    "enable_strategy_notes": True,
+    # Arabic-aware controls are part of the global RTL interface.
+    "use_ar_wrappers": True,
+    # Signal logging is required for outcome evaluation and bounded learning.
     "enable_self_learning": True,
+}
 
+_REMOVED_FLAGS = {
+    "enable_xirr",
+    "enable_engine_compare",
 }
 
 
 def _flags_dict() -> Dict[str, bool]:
-    d = st.session_state.get("feature_flags")
-    if not isinstance(d, dict):
-        d = {}
-        st.session_state["feature_flags"] = d
-    # ensure defaults
-    for k, v in DEFAULT_FLAGS.items():
-        if k not in d:
-            d[k] = bool(v)
-    return d
+    """Return a clean compatibility snapshot with core features forced on."""
+    current = st.session_state.get("feature_flags")
+    data = dict(current) if isinstance(current, dict) else {}
+    for name in _REMOVED_FLAGS:
+        data.pop(name, None)
+    data.update(CORE_CAPABILITIES)
+    st.session_state["feature_flags"] = data
+    return data
 
 
 def get_flag(name: str, default: bool = False) -> bool:
-    d = _flags_dict()
-    return bool(d.get(name, default))
+    if name in CORE_CAPABILITIES:
+        return True
+    if name in _REMOVED_FLAGS:
+        return False
+    return bool(_flags_dict().get(name, default))
 
 
 def set_flag(name: str, value: bool) -> None:
-    d = _flags_dict()
-    d[name] = bool(value)
-    st.session_state["feature_flags"] = d
+    """Retain compatibility without allowing core capabilities to be disabled."""
+    data = _flags_dict()
+    if name in CORE_CAPABILITIES:
+        data[name] = True
+    elif name not in _REMOVED_FLAGS:
+        data[name] = bool(value)
+    st.session_state["feature_flags"] = data
 
 
 def get_all_flags() -> Dict[str, bool]:
