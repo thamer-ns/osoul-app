@@ -1,6 +1,7 @@
 name: Analysis v4 diagnostics
 
 on:
+  pull_request:
   push:
     branches:
       - agent/analysis-center-v4
