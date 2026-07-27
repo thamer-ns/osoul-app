@@ -1,9 +1,9 @@
 """Fast portfolio-page adapter.
 
 The legacy portfolio renderer is feature-rich but used to call market providers
-again every time a user opened the speculation or investment page.  The router
-already supplies a calculated tenant snapshot, so this adapter permanently
-replaces that duplicate network refresh with a local preparation step.
+again every time a user opened the speculation or investment page.  It also ran
+stress tests and rebalancing calculations during every normal rerun.  This
+adapter keeps those features, but moves both costs behind explicit user actions.
 """
 from __future__ import annotations
 
@@ -11,15 +11,28 @@ import threading
 from typing import Any, Dict, Tuple
 
 import pandas as pd
+import streamlit as st
 
 _PATCH_LOCK = threading.RLock()
 _PATCHED = False
+_ORIGINAL_RISK_PANEL = None
 
 
-def _number_series(frame: pd.DataFrame, column: str, default: float = 0.0) -> pd.Series:
+def _number_series(
+    frame: pd.DataFrame,
+    column: str,
+    default: float = 0.0,
+) -> pd.Series:
     if column not in frame.columns:
         frame[column] = default
     return pd.to_numeric(frame[column], errors="coerce").fillna(default)
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return float(default)
 
 
 def prepare_open_positions(
@@ -79,8 +92,86 @@ def prepare_open_positions(
     return frame, {}
 
 
+def _render_lazy_risk_panel(
+    finance: dict,
+    positions: pd.DataFrame,
+    total_market: float,
+) -> None:
+    """Show the inexpensive risk summary first and run stress analysis on demand."""
+    global _ORIGINAL_RISK_PANEL
+
+    advanced_key = "_portfolio_advanced_risk_loaded"
+    if st.session_state.get(advanced_key):
+        if st.button(
+            "إخفاء تحليل المخاطر المتقدم",
+            icon="⚡",
+            use_container_width=True,
+            key="portfolio_hide_advanced_risk",
+        ):
+            st.session_state[advanced_key] = False
+            st.rerun()
+        if callable(_ORIGINAL_RISK_PANEL):
+            _ORIGINAL_RISK_PANEL(finance, positions, total_market)
+        return
+
+    from components import render_kpi, safe_fmt
+    from views import portfolio
+
+    with st.expander("🛡️ ملخص مخاطر المحفظة", expanded=False):
+        cash = _safe_float((finance or {}).get("cash"))
+        portfolio_value = _safe_float(
+            (finance or {}).get("portfolio_value"),
+            cash + total_market,
+        )
+        cash_pct = cash / portfolio_value * 100 if portfolio_value > 0 else 0.0
+        risk_score = None
+        calculator = getattr(portfolio, "calculate_portfolio_risk_score", None)
+        if callable(calculator) and not positions.empty:
+            try:
+                risk_score = _safe_float(calculator(positions, cash_pct))
+            except Exception:
+                risk_score = None
+
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            render_kpi("قيمة المحفظة", safe_fmt(portfolio_value), "blue")
+        with c2:
+            render_kpi("الكاش", safe_fmt(cash), "neutral")
+        with c3:
+            render_kpi(
+                "نسبة الكاش",
+                f"{cash_pct:.1f}%",
+                "success" if cash_pct >= 15 else "danger",
+                "٪",
+            )
+        with c4:
+            render_kpi(
+                "درجة المخاطر",
+                "غير متاح" if risk_score is None else f"{risk_score:.0f}/100",
+                "neutral"
+                if risk_score is None
+                else "danger"
+                if risk_score >= 70
+                else "success",
+            )
+
+        st.caption(
+            "اختبار الضغط وبوابات المخاطر واقتراحات إعادة التوازن لا تعمل "
+            "تلقائيًا، لتجنب إبطاء فتح الصفحة."
+        )
+        if st.button(
+            "تشغيل تحليل المخاطر المتقدم",
+            icon="🧪",
+            type="secondary",
+            use_container_width=True,
+            key="portfolio_load_advanced_risk",
+        ):
+            st.session_state[advanced_key] = True
+            st.rerun()
+
+
 def _install_fast_path() -> None:
-    global _PATCHED
+    global _PATCHED, _ORIGINAL_RISK_PANEL
     if _PATCHED:
         return
     with _PATCH_LOCK:
@@ -89,6 +180,8 @@ def _install_fast_path() -> None:
         from views import portfolio
 
         portfolio._refresh_open_positions = prepare_open_positions
+        _ORIGINAL_RISK_PANEL = portfolio._render_risk_panel
+        portfolio._render_risk_panel = _render_lazy_risk_panel
         _PATCHED = True
 
 
