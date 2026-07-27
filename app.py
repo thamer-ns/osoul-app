@@ -48,8 +48,10 @@ def _apply_global_ui() -> None:
     """Inject one canonical stylesheet and no iframe-based DOM mutators."""
     try:
         from styles import apply_custom_css
+        from ui_shell import apply_rtl_shell
 
         apply_custom_css()
+        apply_rtl_shell()
     except Exception:
         logger.exception("global stylesheet failed")
 
@@ -107,7 +109,7 @@ def main() -> None:
         page_title=app_name,
         page_icon=app_icon if len(app_icon) <= 4 else "📈",
         layout="wide",
-        initial_sidebar_state="expanded",
+        initial_sidebar_state="collapsed",
     )
     _apply_global_ui()
 
