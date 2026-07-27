@@ -17,12 +17,26 @@ from views.utils import clean_symbols, normalize_symbol, safe_status_series
 
 logger = logging.getLogger("osoli.analysis")
 
+TIMEFRAME_OPTIONS = {
+    "1 دقيقة": "1m",
+    "5 دقائق": "5m",
+    "15 دقيقة": "15m",
+    "30 دقيقة": "30m",
+    "ساعة": "1h",
+    "4 ساعات": "4h",
+    "يومي": "1d",
+    "أسبوعي": "1wk",
+    "شهري": "1mo",
+}
+
+# module, renderer, title, receives timeframe
 SECTION_ROUTES = {
-    "🤖 المستشار": ("views.analysis.advisor", "render_advisor_tab", "المستشار"),
-    "💰 التحليل المالي": ("views.analysis.financial", "render_financial_dashboard_ui", "التحليل المالي"),
-    "📈 التحليل الفني": ("views.analysis.technical", "render_technical_tab", "التحليل الفني"),
-    "🏛️ التحليل الكلاسيكي": ("views.analysis.classical", "render_classical_tab", "التحليل الكلاسيكي"),
-    "📝 الأطروحة والخطة": ("views.analysis.thesis", "render_thesis_tab", "الأطروحة"),
+    "🧭 النظرة الموحدة": ("views.analysis.overview", "render_unified_overview", "النظرة الموحدة", True),
+    "🤖 المستشار": ("views.analysis.advisor", "render_advisor_tab", "المستشار", True),
+    "📈 التحليل الفني": ("views.analysis.technical", "render_technical_tab", "التحليل الفني", True),
+    "💰 التحليل المالي": ("views.analysis.financial", "render_financial_dashboard_ui", "التحليل المالي", False),
+    "🏛️ التحليل الكلاسيكي": ("views.analysis.classical", "render_classical_tab", "التحليل الكلاسيكي", False),
+    "📝 الأطروحة والخطة": ("views.analysis.thesis", "render_thesis_tab", "الأطروحة", False),
 }
 
 
@@ -57,6 +71,7 @@ def _price_snapshot(symbol: str) -> dict:
                 "change": change,
                 "source": str(payload.get("source") or "غير معروف"),
                 "fetched_at": str(payload.get("fetched_at") or "—"),
+                "is_stale": bool(payload.get("is_stale", payload.get("price_stale", False))),
             }
     except Exception:
         logger.exception("snapshot failed for %s", normalized)
@@ -76,10 +91,11 @@ def _price_snapshot(symbol: str) -> dict:
                     "change": change,
                     "source": str(lineage.get("source") or attrs.get("source") or "history"),
                     "fetched_at": str(lineage.get("fetched_at") or "—"),
+                    "is_stale": bool(lineage.get("is_stale", False)),
                 }
     except Exception:
         logger.exception("history fallback failed for %s", normalized)
-    return {"price": None, "change": None, "source": "غير متاح", "fetched_at": "—"}
+    return {"price": None, "change": None, "source": "غير متاح", "fetched_at": "—", "is_stale": True}
 
 
 def _company_meta(symbol: str) -> tuple[str, str]:
@@ -130,13 +146,13 @@ def _render_watchlist_action(symbol: str, watchlist: pd.DataFrame) -> None:
     if not watchlist.empty and "symbol" in watchlist.columns:
         existing = {normalize_symbol(value) for value in watchlist["symbol"].dropna().astype(str)}
     if symbol in existing:
-        if st.button("إزالة من قائمة المراقبة", use_container_width=True):
+        if st.button("إزالة من قائمة المراقبة", use_container_width=True, key=f"analysis_watch_remove:{symbol}"):
             if execute_query("DELETE FROM watchlist WHERE symbol=%s", (symbol,)):
                 st.success("تمت الإزالة من قائمة المراقبة")
                 st.cache_data.clear()
                 st.rerun()
             st.error("تعذر إزالة الرمز")
-    elif st.button("إضافة إلى قائمة المراقبة", use_container_width=True):
+    elif st.button("إضافة إلى قائمة المراقبة", use_container_width=True, key=f"analysis_watch_add:{symbol}"):
         if execute_query(
             "INSERT INTO watchlist (symbol, created_at) VALUES (%s,CURRENT_TIMESTAMP) "
             "ON CONFLICT (symbol) DO NOTHING",
@@ -148,13 +164,14 @@ def _render_watchlist_action(symbol: str, watchlist: pd.DataFrame) -> None:
         st.info("الرمز موجود مسبقًا أو تعذر حفظه")
 
 
-def _render_header(symbol: str, name: str, sector: str, trades: pd.DataFrame, watchlist: pd.DataFrame) -> None:
+def _render_header(symbol: str, name: str, sector: str, trades: pd.DataFrame, watchlist: pd.DataFrame, interval: str) -> None:
     snapshot = _price_snapshot(symbol)
     price, change = snapshot.get("price"), snapshot.get("change")
     st.subheader(name or symbol)
+    stale_note = " — السعر قديم" if snapshot.get("is_stale") else ""
     st.caption(
-        f"{symbol} — {sector or 'قطاع غير متاح'} — المصدر: {snapshot.get('source')} — "
-        f"وقت الجلب: {snapshot.get('fetched_at')}"
+        f"{symbol} — {sector or 'قطاع غير متاح'} — الفاصل: {interval} — "
+        f"المصدر: {snapshot.get('source')} — وقت الجلب: {snapshot.get('fetched_at')}{stale_note}"
     )
     positions = pd.DataFrame()
     if isinstance(trades, pd.DataFrame) and not trades.empty:
@@ -175,7 +192,7 @@ def _render_header(symbol: str, name: str, sector: str, trades: pd.DataFrame, wa
     with c3:
         render_kpi("المراكز المفتوحة", int(len(positions)), "blue", "📌")
     with c4:
-        render_kpi("آخر تحديث", datetime.now(timezone.utc).strftime("%H:%M UTC"), "neutral", "🕒")
+        render_kpi("وقت العرض", datetime.now(timezone.utc).strftime("%H:%M UTC"), "neutral", "🕒")
     _render_watchlist_action(symbol, watchlist)
 
 
@@ -204,7 +221,7 @@ def _render_stress_on_demand(finance: dict, trades: pd.DataFrame) -> None:
             st.caption("اختبار تقديري للحساسية وليس توقعًا أو ضمانًا.")
 
 
-def _render_diagnostics(symbol: str) -> None:
+def _render_diagnostics(symbol: str, interval: str) -> None:
     st.subheader("تشخيص بيانات الرمز")
     snapshot = _price_snapshot(symbol)
     if snapshot.get("price") is None:
@@ -212,8 +229,17 @@ def _render_diagnostics(symbol: str) -> None:
     else:
         st.success(f"السعر متاح: {float(snapshot['price']):,.2f} — المصدر: {snapshot.get('source')}")
     try:
-        history = get_chart_history(symbol, years=2, interval="1d")
-        st.metric("عدد الشموع اليومية", len(history) if isinstance(history, pd.DataFrame) else 0)
+        period = "7d" if interval == "1m" else "60d" if interval in {"5m", "15m", "30m"} else "2y" if interval in {"1h", "4h"} else "10y" if interval in {"1wk", "1mo"} else "3y"
+        history = get_chart_history(symbol, period=period, interval=interval)
+        attrs = getattr(history, "attrs", {}) or {} if isinstance(history, pd.DataFrame) else {}
+        lineage = attrs.get("data_lineage") or {}
+        rows = [
+            {"البند": "عدد الشموع", "القيمة": len(history) if isinstance(history, pd.DataFrame) else 0},
+            {"البند": "المصدر", "القيمة": lineage.get("source") or attrs.get("source") or "غير معروف"},
+            {"البند": "وقت الجلب", "القيمة": lineage.get("fetched_at") or "—"},
+            {"البند": "الفاصل", "القيمة": interval},
+        ]
+        render_custom_table(pd.DataFrame(rows))
     except Exception:
         st.warning("تعذر اختبار تاريخ الأسعار.")
 
@@ -224,36 +250,38 @@ def view_analysis(fin):
     watchlist = _watchlist()
 
     st.header("🔬 التحليل الشامل")
-    st.caption("تحميل كسول لكل قسم: لا يتم استيراد أو حساب الأقسام الأخرى قبل اختيارها.")
+    st.caption("ابدأ بالنظرة الموحدة، ثم افتح القسم المتخصص عند الحاجة. الأقسام الثقيلة تعمل عند الطلب فقط.")
     _render_stress_on_demand(finance, trades)
 
     universe = _symbol_universe(trades, watchlist)
+    current_interval = str(st.session_state.get("analysis_active_interval") or "1d")
+    labels = list(TIMEFRAME_OPTIONS)
+    current_label = next((label for label, value in TIMEFRAME_OPTIONS.items() if value == current_interval), "يومي")
     with st.form("analysis_symbol_form"):
-        left, middle, right = st.columns([1.4, 2.2, 1])
-        raw_symbol = left.text_input("رمز جديد", placeholder="1120 أو 1120.SR")
-        selected = middle.selectbox(
-            "من المحفظة وقائمة المراقبة",
-            options=universe or ["—"],
-            disabled=not universe,
-        )
-        submitted = right.form_submit_button("تحليل", type="primary")
+        c1, c2, c3, c4 = st.columns([1.3, 1.8, 1.2, .8])
+        raw_symbol = c1.text_input("رمز جديد", placeholder="1120 أو 1120.SR")
+        selected = c2.selectbox("من المحفظة والمراقبة", options=universe or ["—"], disabled=not universe)
+        timeframe_label = c3.selectbox("الفاصل", options=labels, index=labels.index(current_label))
+        submitted = c4.form_submit_button("تطبيق", type="primary")
 
     if submitted:
-        candidate = raw_symbol.strip() or (selected if selected != "—" else "")
+        candidate = raw_symbol.strip() or (selected if selected != "—" else st.session_state.get("analysis_active_symbol", ""))
         normalized = normalize_symbol(candidate)
         if not normalized or normalized == ".SR":
             st.error("أدخل رمزًا صحيحًا مثل 1120 أو 1120.SR")
         else:
             st.session_state["analysis_active_symbol"] = normalized
+            st.session_state["analysis_active_interval"] = TIMEFRAME_OPTIONS[timeframe_label]
             st.rerun()
 
     symbol = normalize_symbol(st.session_state.get("analysis_active_symbol"))
+    interval = str(st.session_state.get("analysis_active_interval") or "1d")
     if not symbol or symbol == ".SR":
-        st.info("اختر رمزًا لبدء التحليل.")
+        st.info("اختر رمزًا وفاصلًا لبدء التحليل.")
         return
 
     name, sector = _company_meta(symbol)
-    _render_header(symbol, name, sector, trades, watchlist)
+    _render_header(symbol, name, sector, trades, watchlist, interval)
 
     sections = list(SECTION_ROUTES) + ["🩺 تشخيص البيانات"]
     section = st.radio(
@@ -264,7 +292,8 @@ def view_analysis(fin):
         key=f"analysis_section_{symbol}",
     )
     if section == "🩺 تشخيص البيانات":
-        _render_diagnostics(symbol)
+        _render_diagnostics(symbol, interval)
         return
-    module_name, attr_name, title = SECTION_ROUTES[section]
-    _safe_render(title, module_name, attr_name, symbol)
+    module_name, attr_name, title, receives_timeframe = SECTION_ROUTES[section]
+    args = (symbol, interval) if receives_timeframe else (symbol,)
+    _safe_render(title, module_name, attr_name, *args)
