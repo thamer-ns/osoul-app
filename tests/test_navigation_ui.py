@@ -1,20 +1,20 @@
 from __future__ import annotations
 
+import inspect
+
 from views import navbar
 
 
-def test_icon_navigation_covers_every_router_destination():
+def test_icon_navigation_uses_one_analysis_hub_and_no_sidebar():
     expected = {
         "home",
-        "analysis",
+        "insights",
         "spec",
         "invest",
+        "add",
         "sukuk",
         "cash",
-        "backtest",
         "pulse",
-        "signals",
-        "add",
         "tools",
         "settings",
     }
@@ -23,6 +23,20 @@ def test_icon_navigation_covers_every_router_destination():
     assert len(navbar._NAV_KEYS) == len(set(navbar._NAV_KEYS))
     assert navbar._PRIMARY_KEYS[0] == "home"
     assert navbar._ALLOWED == expected | {"update"}
+    assert "analysis" not in navbar._NAV_KEYS
+    assert "signals" not in navbar._NAV_KEYS
+    assert "backtest" not in navbar._NAV_KEYS
+    assert "st.sidebar" not in inspect.getsource(navbar)
+
+
+def test_legacy_analysis_links_resolve_into_the_hub():
+    for legacy in ("analysis", "signals", "backtest"):
+        assert navbar._canonical_page(legacy) == "insights"
+        assert navbar._legacy_section(legacy) == legacy
+        assert legacy in navbar._ROUTABLE
+
+    assert navbar._canonical_page("not-a-page") == "home"
+    assert navbar._display_page("update") == "home"
 
 
 def test_every_navigation_tile_has_a_label_icon_and_help_text():
@@ -31,9 +45,3 @@ def test_every_navigation_tile_has_a_label_icon_and_help_text():
         assert navbar._SHORT_LABEL_BY_KEY[key].strip()
         assert navbar._ICON_BY_KEY[key].strip()
         assert navbar._HELP_BY_KEY[key].strip()
-
-
-def test_transient_update_route_does_not_replace_router_state_with_home():
-    assert navbar._validated_page("update") == "update"
-    assert navbar._display_page("update") == "home"
-    assert navbar._validated_page("not-a-page") == "home"
