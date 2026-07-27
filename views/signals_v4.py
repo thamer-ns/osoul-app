@@ -202,17 +202,31 @@ def view_signals(finance: dict[str, Any] | None = None) -> None:
     if not universe:
         st.info("أضف مركز سهم مفتوح أولًا، أو استخدم النظرة الموحدة لتحليل رمز منفرد.")
         return
-    selected_symbols = st.multiselect("الأسهم", universe, default=universe[: min(8, len(universe))], key="signals_v4_symbols")
+    selected_symbols = st.multiselect(
+        "الأسهم",
+        universe,
+        default=universe[: min(8, len(universe))],
+        key="رموز مركز الإشارات",
+    )
     selected_frames = st.multiselect(
         "الفواصل",
         options=list(TIMEFRAMES),
         default=["15m", "1h", "4h", "1d", "1wk"],
         format_func=lambda value: TIMEFRAMES[value],
-        key="signals_v4_frames",
+        key="فواصل مركز الإشارات",
     )
     c1, c2 = st.columns([3, 1])
-    run = c1.button("تشغيل مسح الإشارات", type="primary", use_container_width=True, key="signals_v4_run")
-    refresh = c2.button("إعادة الحساب", use_container_width=True, key="signals_v4_refresh")
+    run = c1.button(
+        "تشغيل مسح الإشارات",
+        type="primary",
+        use_container_width=True,
+        key="تشغيل مركز الإشارات",
+    )
+    refresh = c2.button(
+        "إعادة الحساب",
+        use_container_width=True,
+        key="تحديث مركز الإشارات",
+    )
     if run or refresh:
         if not selected_symbols or not selected_frames:
             st.warning("اختر سهمًا وفاصلًا واحدًا على الأقل.")
@@ -227,7 +241,7 @@ def view_signals(finance: dict[str, Any] | None = None) -> None:
         "عرض الحالات",
         ["ACTIONABLE", "HEADS_UP", "BLOCKED", "NO_SETUP"],
         default=["ACTIONABLE", "HEADS_UP", "BLOCKED"],
-        key="signals_v4_status_filter",
+        key="حالات مركز الإشارات",
     )
     filtered = [row for row in rows if row["lifecycle"] in lifecycle_filter]
     _render_summary(rows)
