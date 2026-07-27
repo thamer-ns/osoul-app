@@ -21,6 +21,20 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Build temporary full-source audit snapshot
+        run: >-
+          tar --exclude=.git --exclude=.pytest_cache --exclude=.ruff_cache
+          --exclude='**/__pycache__' --exclude=source-audit-snapshot.tar.gz
+          -czf source-audit-snapshot.tar.gz .
+
+      - name: Upload temporary full-source audit snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-audit-snapshot
+          path: source-audit-snapshot.tar.gz
+          if-no-files-found: error
+          retention-days: 2
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
