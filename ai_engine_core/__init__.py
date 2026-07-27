@@ -3,31 +3,27 @@
 """Lightweight package exports with lazy imports.
 
 The public report path always passes through the final decision policy. This
-keeps every presentation layer on one sanitized, close-confirmed and
-risk-integrity-checked decision while preserving lazy imports.
+keeps every presentation layer on one sanitized, close-confirmed,
+independent-school-qualified and risk-integrity-checked decision while
+preserving lazy imports.
 """
 
 from .config import AI_ENGINE_NAME, AI_ENGINE_OK, AI_ENGINE_VERSION
 
 __all__ = [
-    # meta
     "AI_ENGINE_VERSION",
     "AI_ENGINE_NAME",
     "AI_ENGINE_OK",
     "DECISION_ENGINE_VERSION",
-    # main
     "generate_ai_report",
     "generate",
     "generate_report",
     "self_test",
-    # portfolio
     "calculate_portfolio_risk_score",
     "run_stress_test",
     "generate_rebalancing_suggestions",
-    # user rules
     "save_user_rule",
     "load_user_rules",
-    # learning/logging
     "log_ai_signal",
     "update_ai_outcome",
     "learn_from_history",
@@ -53,10 +49,10 @@ def _report_call_context(args, kwargs) -> tuple[str, str]:
 
 
 def generate_ai_report(*args, **kwargs):
-    """Generate once, then enforce one final decision for every consumer."""
+    """Generate once, then enforce one final v4 decision for every consumer."""
     raw_report = _lazy_attr(".reporting", "generate_ai_report")(*args, **kwargs)
     symbol, timeframe = _report_call_context(args, kwargs)
-    return _lazy_attr(".decision_policy_v3", "enrich_report")(
+    return _lazy_attr(".decision_policy_v4", "enrich_report")(
         raw_report,
         symbol=symbol,
         timeframe=timeframe,
@@ -154,12 +150,12 @@ def self_test() -> dict:
 
     report["checks"]["has_generate_ai_report"] = callable(globals().get("generate_ai_report"))
     report["checks"]["has_decision_engine"] = callable(
-        _lazy_attr(".decision_policy_v3", "enrich_report")
+        _lazy_attr(".decision_policy_v4", "enrich_report")
     )
     return report
 
 
 DECISION_ENGINE_VERSION = _lazy_attr(
-    ".decision_policy_v3",
+    ".decision_policy_v4",
     "DECISION_ENGINE_VERSION",
 )
