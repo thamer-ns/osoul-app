@@ -5,14 +5,12 @@ import inspect
 from views import navbar
 
 
-def test_icon_navigation_uses_one_compact_row_and_no_sidebar():
+def test_icon_navigation_uses_compact_hubs_and_no_sidebar():
     expected = {
         "home",
         "insights",
-        "spec",
-        "invest",
+        "portfolios",
         "add",
-        "sukuk",
         "cash",
         "pulse",
         "tools",
@@ -24,19 +22,25 @@ def test_icon_navigation_uses_one_compact_row_and_no_sidebar():
     assert navbar._PRIMARY_KEYS == navbar._NAV_KEYS
     assert navbar._SECONDARY_KEYS == ()
     assert navbar._ALLOWED == expected | {"update"}
-    assert "analysis" not in navbar._NAV_KEYS
-    assert "signals" not in navbar._NAV_KEYS
-    assert "backtest" not in navbar._NAV_KEYS
+    for removed in ("analysis", "signals", "backtest", "spec", "invest", "sukuk"):
+        assert removed not in navbar._NAV_KEYS
     source = inspect.getsource(navbar)
     assert "st.sidebar" not in source
     assert "flex-wrap:nowrap" in source
     assert "st.columns(len(_NAV_KEYS)" in source
 
 
-def test_legacy_analysis_links_resolve_into_the_hub():
+def test_legacy_analysis_links_resolve_into_the_analysis_hub():
     for legacy in ("analysis", "signals", "backtest"):
         assert navbar._canonical_page(legacy) == "insights"
         assert navbar._legacy_section(legacy) == legacy
+        assert legacy in navbar._ROUTABLE
+
+
+def test_legacy_portfolio_links_resolve_into_the_portfolios_hub():
+    for legacy in ("spec", "invest", "sukuk"):
+        assert navbar._canonical_page(legacy) == "portfolios"
+        assert navbar._legacy_portfolio_section(legacy) == legacy
         assert legacy in navbar._ROUTABLE
 
     assert navbar._canonical_page("not-a-page") == "home"
