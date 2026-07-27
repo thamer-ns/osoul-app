@@ -1,16 +1,20 @@
 """Strict JSON helpers for database payloads.
 
 PostgreSQL JSONB rejects JavaScript-style NaN and Infinity values that Python's
-``json.dumps`` emits by default.  Financial/technical payloads must therefore
+``json.dumps`` emits by default. Financial/technical payloads must therefore
 be normalised before persistence rather than silently losing cache records.
 """
 from __future__ import annotations
 
 import json
+import logging
 import math
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
+
+
+logger = logging.getLogger(__name__)
 
 
 def json_safe(value: Any) -> Any:
@@ -28,7 +32,10 @@ def json_safe(value: Any) -> Any:
         try:
             value = value.item()
         except Exception:
-            pass
+            logger.debug(
+                "Unable to convert scalar through item(); preserving original value",
+                exc_info=True,
+            )
     if isinstance(value, float) and not math.isfinite(value):
         return None
     return value
