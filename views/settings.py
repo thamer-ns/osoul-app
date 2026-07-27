@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import os
 
 import streamlit as st
@@ -24,6 +25,66 @@ def _result_message(result) -> tuple[bool, str]:
             return True, " — ".join(details) or "اكتملت العملية"
         return False, str(result.get("reason") or "تعذر تنفيذ العملية")
     return True, "اكتملت العملية"
+
+
+def _session_expiry_label() -> str:
+    try:
+        expires = int(st.session_state.get("auth_exp", 0) or 0)
+        if expires <= 0:
+            return "غير متاح"
+        value = dt.datetime.fromtimestamp(expires, tz=dt.timezone.utc)
+        riyadh = dt.timezone(dt.timedelta(hours=3))
+        return value.astimezone(riyadh).strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return "غير متاح"
+
+
+def _render_account_actions() -> None:
+    """Keep destructive and network actions together inside settings."""
+    with st.expander("👤 الحساب والجلسة", expanded=True):
+        username = str(st.session_state.get("username") or "—")
+        restored = bool(st.session_state.get("auth_restored_from_cookie"))
+        session_source = "كوكي المتصفح" if restored else "تسجيل الدخول الحالي"
+
+        info_left, info_right = st.columns(2)
+        info_left.markdown(f"**المستخدم:** `{username}`")
+        info_right.markdown(f"**انتهاء الجلسة:** `{_session_expiry_label()}`")
+        st.caption(
+            f"مصدر الجلسة: {session_source}. "
+            "تحديث الأسعار يتصل بمصادر السوق عند الطلب فقط."
+        )
+
+        refresh_col, logout_col = st.columns(2, gap="small")
+        if refresh_col.button(
+            "تحديث أسعار المحافظ",
+            icon="🔄",
+            type="primary",
+            use_container_width=True,
+            key="settings_refresh_prices",
+            help="جلب أحدث الأسعار المتاحة ثم تحديث ملخصات المحافظ",
+        ):
+            from views.navbar import navigate_to
+
+            navigate_to("update")
+
+        confirm_logout = logout_col.checkbox(
+            "تأكيد الخروج",
+            value=False,
+            key="settings_confirm_logout",
+        )
+        if logout_col.button(
+            "تسجيل الخروج",
+            icon="🚪",
+            disabled=not confirm_logout,
+            use_container_width=True,
+            key="settings_logout",
+            help="حذف جلسة المتصفح والعودة إلى شاشة الدخول",
+        ):
+            from security import logout_user
+
+            logout_user()
+            st.cache_data.clear()
+            st.rerun()
 
 
 def view_tools():
@@ -260,6 +321,7 @@ def view_settings():
     if tenant is not None:
         st.caption(f"المحفظة النشطة: {tenant.username} — المحفظة الرئيسية")
 
+    _render_account_actions()
     _render_feature_flags()
     _render_theme()
     _render_brand_preview()
