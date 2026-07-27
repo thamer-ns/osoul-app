@@ -129,7 +129,7 @@ def main() -> None:
         st.stop()
 
     try:
-        from persistent_auth_v4 import install_persistent_auth
+        from persistent_auth_v5 import install_persistent_auth
 
         install_persistent_auth()
         from security import login_system
