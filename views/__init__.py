@@ -30,7 +30,7 @@ def _render_page(page: str, finance):
         "insights": ("views.insights", "view_insights", (finance,)),
         "cash": ("views.cash", "view_cash_log", (finance,)),
         "add": ("views.portfolio", "view_add_trade", ()),
-        "tools": ("views.settings", "view_tools", ()),
+        "tools": ("views.tools_core", "view_tools", ()),
         "settings": ("views.settings_core", "view_settings", ()),
     }
     target = routes.get(page)
