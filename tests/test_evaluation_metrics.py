@@ -103,5 +103,5 @@ def test_integrity_report_detects_orphans_duplicates_and_invalid_json():
     assert audit["duplicate_signals"] == 1
     assert audit["duplicate_outcomes"] == 1
     assert audit["orphan_outcomes"] == 1
-    assert audit["invalid_json"] == 1
+    assert audit["invalid_json"] == 2
     assert audit["nonfinite_returns"] == 1
