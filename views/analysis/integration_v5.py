@@ -12,6 +12,7 @@ from ai_engine_core.bot_bridge_v5 import (
     bot_health,
     bridge_configuration,
     forward_compass_payload,
+    sync_bot_events,
 )
 from ai_engine_core.compass_contract import compare_compass_with_report, parse_compass_payload
 from ai_engine_core.external_signal_journal_v5 import (
@@ -42,10 +43,48 @@ _STATUS_LABELS = {
     "CANCELLED": "ملغاة",
     "FAKEOUT": "كسر وهمي",
 }
+_REASON_LABELS = {
+    "duplicate": "الحدث موجود مسبقًا ولم يُنشأ سجل جديد.",
+    "missing_initial_event": "رُفض الحدث لأنه لا توجد خطة NL/NS سابقة بالمستويات نفسها.",
+    "stale_or_out_of_order_event": "رُفض الحدث لأنه أقدم من آخر حدث محفوظ أو يحمل التوقيت نفسه.",
+    "invalid_lifecycle_transition": "رُفض الحدث لأن ترتيب دورة الخطة غير صحيح.",
+    "lifecycle_already_closed": "الخطة منتهية ولا تقبل أحداثًا جديدة.",
+    "active_plan_already_exists": "توجد خطة نشطة بالمستويات نفسها.",
+}
 
 
 def _validated_cache_key(symbol: str, interval: str) -> str:
     return f"validated_external:{symbol}:{interval}"
+
+
+def _sync_once(*, quiet: bool) -> dict[str, Any]:
+    result = sync_bot_events(limit=100)
+    if not quiet:
+        if result.get("ok"):
+            st.success(
+                f"اكتملت المزامنة — جديد: {int(result.get('received') or 0)}، "
+                f"مكرر: {int(result.get('duplicates') or 0)}"
+            )
+        elif result.get("reason") != "sync_not_configured":
+            st.warning("تعذرت مزامنة تحديثات البوت الآن.")
+    return result
+
+
+@st.fragment(run_every="60s")
+def _automatic_sync_fragment() -> None:
+    config = bridge_configuration()
+    if not config.get("sync_configured"):
+        st.caption("المزامنة التلقائية غير مهيأة؛ يلزم SC_BOT_SYNC_TOKEN وSC_BOT_SYNC_SECRET.")
+        return
+    result = _sync_once(quiet=True)
+    if result.get("ok"):
+        received = int(result.get("received") or 0)
+        st.caption(
+            "🔄 مزامنة البوت تعمل كل 60 ثانية أثناء بقاء الصفحة مفتوحة"
+            + (f" — استُقبل {received} تحديث جديد" if received else " — لا تحديثات جديدة")
+        )
+    else:
+        st.caption("⚠️ تعذرت دورة المزامنة التلقائية الأخيرة؛ سيُعاد المحاولة تلقائيًا.")
 
 
 def _render_bridge_status(symbol: str, interval: str) -> None:
@@ -53,24 +92,36 @@ def _render_bridge_status(symbol: str, interval: str) -> None:
     lifecycle = lifecycle_snapshot(symbol, interval)
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        render_kpi("ربط البوت", "مهيأ" if config.get("configured") else "غير مهيأ", "success" if config.get("configured") else "neutral", "🤖")
+        mode = "ثنائي الاتجاه" if config.get("sync_configured") else "إرسال فقط" if config.get("configured") else "غير مهيأ"
+        render_kpi("ربط البوت", mode, "success" if config.get("sync_configured") else "warning" if config.get("configured") else "neutral", "🤖")
     with c2:
         render_kpi("سجل المؤشر", "متاح" if lifecycle.get("available") else "لا أحداث", "blue", "🧭")
     with c3:
         render_kpi("حالة الدورة", _STATUS_LABELS.get(str(lifecycle.get("status")), str(lifecycle.get("status") or "—")), "neutral", "🔄")
     with c4:
         render_kpi("عدد الأحداث", str(lifecycle.get("events") or 0), "neutral", "🗂️")
-    if st.button("اختبار اتصال البوت", use_container_width=True, key=f"bot_health:{_sym_key(symbol)}:{interval}"):
+
+    b1, b2 = st.columns(2)
+    if b1.button("اختبار اتصال البوت", use_container_width=True, key=f"bot_health:{_sym_key(symbol)}:{interval}"):
         with st.spinner("فحص خدمة البوت..."):
             health = bot_health()
         st.session_state[f"bot_health_result:{symbol}"] = health
+    if b2.button("مزامنة الآن", use_container_width=True, disabled=not bool(config.get("sync_configured")), key=f"bot_sync:{_sym_key(symbol)}:{interval}"):
+        with st.spinner("جلب تحديثات دورة الصفقة من البوت..."):
+            _sync_once(quiet=False)
+        st.rerun()
+
     health = st.session_state.get(f"bot_health_result:{symbol}") or {}
     if health:
         if health.get("ok"):
             st.success(f"خدمة البوت تعمل — الإصدار {health.get('version') or 'غير معروف'}")
         else:
             st.warning("خدمة البوت غير متاحة أو لم تُضبط أسرار الربط بعد.")
-    st.caption("أصولي لا يخزن Telegram Bot Token. الربط يتم مع خدمة البوت المستقلة عبر عنوانها وToken الـTradingView فقط.")
+    st.caption(
+        "أصولي لا يخزن Telegram Bot Token. في وضع المزامنة يُستخدم Channel مشفر مشتق من المحفظة، "
+        "ولا تُرسل أرقام المستخدم أو المحفظة إلى البوت."
+    )
+    _automatic_sync_fragment()
 
 
 def _render_parsed(parsed: dict[str, Any], comparison: dict[str, Any] | None = None) -> None:
@@ -85,8 +136,9 @@ def _render_parsed(parsed: dict[str, Any], comparison: dict[str, Any] | None = N
         {"البند": "الوقف", "القيمة": parsed.get("stop")},
         {"البند": "الأهداف", "القيمة": parsed.get("targets")},
         {"البند": "التوافق", "القيمة": parsed.get("confidence")},
-        {"البند": "هندسة الخطة", "القيمة": "صالحة" if geometry.get("valid") else "غير صالحة/غير مطلوبة"},
+        {"البند": "هندسة الخطة", "القيمة": "صالحة" if geometry.get("valid") else "غير مطلوبة للكسر الوهمي"},
         {"البند": "وقت الحدث", "القيمة": parsed.get("event_time")},
+        {"البند": "حدث تاريخي", "القيمة": "نعم" if parsed.get("replay_event") else "لا"},
     ]
     render_custom_table(pd.DataFrame(rows))
     if comparison:
@@ -137,14 +189,19 @@ def _render_ingest(symbol: str, interval: str) -> None:
         parsed = cached.get("parsed") if isinstance(cached.get("parsed"), dict) else None
         if parsed:
             stored = record_external_event(parsed)
-            if stored.get("ok"):
-                st.success("تم حفظ الحدث داخل سجل أصولي المعزول للمستخدم.")
+            if stored.get("ok") and stored.get("created"):
+                st.success("تم حفظ حدث جديد داخل سجل أصولي المعزول للمستخدم.")
+            elif stored.get("ok"):
+                st.info(_REASON_LABELS.get(str(stored.get("reason")), "الحدث موجود مسبقًا."))
             else:
-                st.error("تعذر حفظ الحدث أو أنه غير مدعوم.")
+                st.error(_REASON_LABELS.get(str(stored.get("reason")), "تعذر حفظ الحدث أو أن تسلسله غير صالح."))
             if forward and stored.get("ok"):
                 sent = forward_compass_payload(parsed)
                 if sent.get("ok"):
-                    st.success("تم إرسال الحدث إلى خدمة البوت بنجاح.")
+                    verb = "قَبِل حدثًا جديدًا" if sent.get("created") else "أكد أن الحدث موجود"
+                    st.success(f"البوت {verb} بنجاح.")
+                elif sent.get("reason") == "historical_replay_not_forwarded":
+                    st.warning("حُفظ الحدث التاريخي محليًا، لكنه لم يُرسل إلى البوت الحي.")
                 else:
                     st.warning("حُفظ الحدث في أصولي، لكن خدمة البوت لم تستلمه. راجع إعدادات الربط.")
     cached = st.session_state.get(_validated_cache_key(symbol, interval)) or {}
@@ -155,7 +212,7 @@ def _render_ingest(symbol: str, interval: str) -> None:
 
 
 def _render_journal(symbol: str, interval: str) -> None:
-    st.markdown("#### سجل دورة المؤشر")
+    st.markdown("#### سجل دورة المؤشر والبوت")
     frame = recent_external_events(symbol, interval, limit=100)
     if frame.empty:
         st.info("لا توجد أحداث محفوظة لهذا الرمز والفاصل.")
@@ -179,16 +236,17 @@ def _render_journal(symbol: str, interval: str) -> None:
         "target3": "T3",
         "confidence": "الثقة",
         "geometry_valid": "هندسة صالحة",
+        "remote_event_id": "رقم حدث البوت",
     }
     display = display.rename(columns=rename)
-    columns = [column for column in ["وقت الحدث", "المصدر", "الحدث", "الحالة", "الاتجاه", "سعر الحدث", "الدخول", "الوقف", "T1", "T2", "T3", "الثقة", "هندسة صالحة"] if column in display.columns]
+    columns = [column for column in ["وقت الحدث", "المصدر", "الحدث", "الحالة", "الاتجاه", "سعر الحدث", "الدخول", "الوقف", "T1", "T2", "T3", "الثقة", "هندسة صالحة", "رقم حدث البوت"] if column in display.columns]
     render_custom_table(display[columns])
 
 
 def render_integration_workspace(symbol: str, interval: str = "1d") -> None:
     st.subheader("🔗 المؤشر والبوت داخل أصولي")
     st.caption(
-        "تكامل دائم لدورة أحداث SC-V90 وSC-FXM مع مقارنة قرار أصولي وربط اختياري بخدمة Telegram. "
+        "تكامل مرتب زمنيًا لدورة SC-V90 وSC-FXM مع إرسال اختياري ومزامنة تلقائية لتحديثات البوت. "
         "لا يوجد تنفيذ أوامر تداول."
     )
     _render_bridge_status(symbol, interval)
