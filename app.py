@@ -76,6 +76,7 @@ def _install_runtime_hardening(username: str) -> None:
         install_ai_learning_scope,
         register_ai_tenant_tables,
     )
+    from analysis_routes_v5 import install_analysis_routes
     from analytics_hardening import install_analytics_hardening
     from financial_data_router_v5 import install_financial_data_router
     from market_data_hardening import install_market_data_hardening
@@ -93,6 +94,7 @@ def _install_runtime_hardening(username: str) -> None:
     install_ai_learning_scope()
     install_analytics_hardening()
     install_portfolio_metrics_v2()
+    install_analysis_routes()
 
 
 def _initialize_user_space(username: str) -> bool:
