@@ -162,6 +162,14 @@ def _apply_legacy_destination(value: object) -> None:
 
 
 def sync_page_from_query_params_once() -> None:
+    """Keep browser navigation while honoring one-shot in-app add requests."""
+    pending = str(st.session_state.get("page") or "").strip().lower()
+    if pending in _LEGACY_ADD_ROUTES:
+        _apply_legacy_destination(pending)
+        st.session_state["page"] = "portfolios"
+        _safe_set_query_page("portfolios")
+        return
+
     requested = _safe_get_query_page()
     if not requested:
         return
