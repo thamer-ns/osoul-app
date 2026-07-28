@@ -9,7 +9,6 @@ NAV_ITEMS = [
     ("الرئيسية", "home"),
     ("مركز التحليل", "insights"),
     ("المحافظ", "portfolios"),
-    ("إضافة صفقة", "add"),
     ("السيولة", "cash"),
     ("الأدوات", "tools"),
     ("الإعدادات", "settings"),
@@ -19,7 +18,6 @@ _ICON_BY_KEY = {
     "home": "🏠",
     "insights": "🧠",
     "portfolios": "💼",
-    "add": "➕",
     "cash": "💰",
     "tools": "🛠️",
     "settings": "⚙️",
@@ -30,7 +28,6 @@ _SHORT_LABEL_BY_KEY = {
     "home": "الرئيسية",
     "insights": "التحليل",
     "portfolios": "المحافظ",
-    "add": "إضافة",
     "cash": "السيولة",
     "tools": "الأدوات",
     "settings": "الإعدادات",
@@ -39,8 +36,7 @@ _SHORT_LABEL_BY_KEY = {
 _HELP_BY_KEY = {
     "home": "لوحة أصولي وملخص أسهمي المملوكة",
     "insights": "التحليل والإشارات والاختبار الخلفي في مركز واحد",
-    "portfolios": "المضاربة والاستثمار والصكوك داخل مركز محافظ واحد",
-    "add": "تسجيل صفقة جديدة",
+    "portfolios": "المضاربة والاستثمار والصكوك، والإضافة من داخل كل محفظة",
     "cash": "حركة السيولة والإيداعات والسحوبات",
     "tools": "التقييم والتعلم وأدوات المحفظة",
     "settings": "الإعدادات وتحديث الأسعار وتسجيل الخروج",
@@ -62,12 +58,14 @@ _LEGACY_PORTFOLIO_ROUTES = {
 _LEGACY_HOME_ROUTES = {
     "pulse": "owned_stocks",
 }
+_LEGACY_ADD_ROUTES = {"add"}
 _ALLOWED = set(_NAV_KEYS) | {"update"}
 _ROUTABLE = (
     _ALLOWED
     | set(_LEGACY_ANALYSIS_ROUTES)
     | set(_LEGACY_PORTFOLIO_ROUTES)
     | set(_LEGACY_HOME_ROUTES)
+    | _LEGACY_ADD_ROUTES
 )
 _LABEL_BY_KEY = {key: label for label, key in NAV_ITEMS}
 _LABEL_BY_KEY["update"] = "تحديث الأسعار"
@@ -120,7 +118,7 @@ def _canonical_page(value: object) -> str:
     page = str(value or "home").strip().lower()
     if page in _LEGACY_ANALYSIS_ROUTES:
         return "insights"
-    if page in _LEGACY_PORTFOLIO_ROUTES:
+    if page in _LEGACY_PORTFOLIO_ROUTES or page in _LEGACY_ADD_ROUTES:
         return "portfolios"
     if page in _LEGACY_HOME_ROUTES:
         return "home"
@@ -143,19 +141,35 @@ def _legacy_home_section(value: object) -> Optional[str]:
 
 
 def _apply_legacy_destination(value: object) -> None:
-    analysis_section = _legacy_section(value)
+    page = str(value or "").strip().lower()
+    analysis_section = _legacy_section(page)
     if analysis_section:
         st.session_state["insights_section"] = analysis_section
 
-    portfolio_section = _legacy_portfolio_section(value)
+    portfolio_section = _legacy_portfolio_section(page)
     if portfolio_section:
         st.session_state["portfolios_section"] = portfolio_section
 
-    if _legacy_home_section(value) == "owned_stocks":
+    if page in _LEGACY_ADD_ROUTES:
+        current = str(st.session_state.get("portfolios_section") or "spec").strip().lower()
+        if current not in _LEGACY_PORTFOLIO_ROUTES.values():
+            current = "spec"
+        st.session_state["portfolios_section"] = current
+        st.session_state["_portfolio_add_open_once"] = True
+
+    if _legacy_home_section(page) == "owned_stocks":
         st.session_state["_owned_stocks_open_once"] = True
 
 
 def sync_page_from_query_params_once() -> None:
+    """Keep browser navigation while honoring one-shot in-app add requests."""
+    pending = str(st.session_state.get("page") or "").strip().lower()
+    if pending in _LEGACY_ADD_ROUTES:
+        _apply_legacy_destination(pending)
+        st.session_state["page"] = "portfolios"
+        _safe_set_query_page("portfolios")
+        return
+
     requested = _safe_get_query_page()
     if not requested:
         return
@@ -291,7 +305,7 @@ def _render_compact_navigation(current: str) -> None:
 
 
 def render_navbar() -> None:
-    """Render one single-row navigation bar; owned stocks live on Home."""
+    """Render one single-row navigation bar; asset entry lives in portfolios."""
     sync_page_from_query_params_once()
     raw_page = st.session_state.get("page")
     _apply_legacy_destination(raw_page)

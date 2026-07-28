@@ -6,12 +6,14 @@ from typing import Any, Optional
 
 import streamlit as st
 
+from views.asset_entry import render_embedded_asset_entry
+
 _SECTION_KEYS = ("spec", "invest", "sukuk")
 _SECTION_META = {
     "spec": {
         "label": "محفظة المضاربة",
         "icon": "⚡",
-        "description": "الصفقات القصيرة والمتوسطة، المراكز القائمة، الأرشيف وإدارة البيع",
+        "description": "الصفقات القصيرة والمتوسطة، المراكز القائمة، الأرشيف وإضافة أسهم المضاربة",
         "module": "views.fast_portfolio",
         "renderer": "view_portfolio",
         "args": ("spec",),
@@ -19,7 +21,7 @@ _SECTION_META = {
     "invest": {
         "label": "محفظة الاستثمار",
         "icon": "📈",
-        "description": "المراكز الاستثمارية طويلة الأجل، الأداء، المخاطر والأرشيف",
+        "description": "المراكز الاستثمارية طويلة الأجل، الأداء، المخاطر وإضافة أسهم الاستثمار",
         "module": "views.fast_portfolio",
         "renderer": "view_portfolio",
         "args": ("invest",),
@@ -27,7 +29,7 @@ _SECTION_META = {
     "sukuk": {
         "label": "محفظة الصكوك",
         "icon": "📜",
-        "description": "الصكوك القائمة، التوزيعات، مدة الاحتفاظ والتصفية",
+        "description": "الصكوك القائمة، الإضافة، التوزيعات، مدة الاحتفاظ والتصفية",
         "module": "views.sukuk",
         "renderer": "view_sukuk_portfolio",
         "args": (),
@@ -81,6 +83,7 @@ def _switch_section(section: str) -> None:
     if section not in _SECTION_KEYS:
         section = "spec"
     st.session_state["portfolios_section"] = section
+    st.session_state.pop("_portfolio_add_open_once", None)
     _set_query_section(section)
     st.rerun()
 
@@ -138,6 +141,16 @@ def _inject_hub_css() -> None:
           text-align:center !important;
           white-space:normal !important;
         }
+        .st-key-embedded_asset_entry_spec,
+        .st-key-embedded_asset_entry_invest,
+        .st-key-embedded_asset_entry_sukuk {
+          direction:rtl !important;
+          margin:.1rem 0 .85rem !important;
+          padding:.8rem .9rem !important;
+          border:1px solid rgba(36,87,230,.18) !important;
+          border-radius:16px !important;
+          background:linear-gradient(135deg,rgba(36,87,230,.055),rgba(16,185,129,.035)) !important;
+        }
         @media (max-width:700px) {
           .st-key-osoli_portfolios_hub .os-portfolios-hub-hero {
             align-items:flex-start !important;
@@ -189,7 +202,7 @@ def _render_active_section(section: str, finance: Any) -> None:
 
 
 def view_portfolios(finance: Any) -> None:
-    """Render one portfolio type at a time to keep navigation fast."""
+    """Render one portfolio type and its own asset-entry form at a time."""
     selected = _resolve_section()
     _inject_hub_css()
 
@@ -198,7 +211,7 @@ def view_portfolios(finance: Any) -> None:
             """
             <div class="os-portfolios-hub-hero">
               <div class="os-portfolios-hub-title">💼 المحافظ</div>
-              <div class="os-portfolios-hub-sub">المضاربة والاستثمار والصكوك داخل مركز واحد</div>
+              <div class="os-portfolios-hub-sub">الإضافة والإدارة من داخل محفظة المضاربة أو الاستثمار أو الصكوك</div>
             </div>
             """,
             unsafe_allow_html=True,
@@ -206,4 +219,5 @@ def view_portfolios(finance: Any) -> None:
         _render_section_selector(selected)
         st.caption(str(_SECTION_META[selected]["description"]))
 
+    render_embedded_asset_entry(selected)
     _render_active_section(selected, finance)
