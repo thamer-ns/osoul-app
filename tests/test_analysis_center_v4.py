@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 
+from ai_engine_core.compass_contract import compare_compass_with_report
 from views import insights
 from views.analysis import TIMEFRAME_OPTIONS
 from views.analysis import advisor
@@ -39,7 +40,22 @@ def test_unified_overview_is_explicit_run_and_external_compass_never_overrides()
     assert "تشغيل التحليل الموحد" in source
     assert "if run or refresh" in source
     assert "compare_compass_with_report" in module_source
-    assert "ولا يغيّر قرار أصولي تلقائيًا" in module_source
+
+    comparison = compare_compass_with_report(
+        {
+            "symbol": "1120.SR",
+            "timeframe": "1d",
+            "direction": "buy",
+            "geometry": {"valid": True},
+        },
+        {
+            "symbol": "1120.SR",
+            "direction": "sell",
+            "analysis_contract": {"timeframe": "1d"},
+        },
+    )
+    assert comparison["aligned"] is False
+    assert comparison["decision_effect"] == "none"
 
 
 def test_advisor_route_no_longer_exposes_raw_stack_traces():
