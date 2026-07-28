@@ -16,7 +16,7 @@ import pandas as pd
 
 from ai_engine_core.compass_contract import parse_compass_payload
 from ai_engine_core.json_utils import strict_json_dumps
-from database import execute_query, fetch_df
+from database import execute_query, fetch_table
 from tenant_scope import current_tenant
 
 LOGGER = logging.getLogger(__name__)
@@ -39,8 +39,6 @@ def install_external_signal_journal() -> None:
     global _INSTALLED
     if _INSTALLED:
         return
-    # Adding the table to the runtime tenant registry keeps generic DB helpers
-    # scoped even though this module is installed after tenant initialization.
     try:
         import tenant_scope
 
@@ -120,10 +118,10 @@ def _lifecycle_key(parsed: dict[str, Any]) -> str:
 
 
 def record_external_event(payload: str | bytes | dict[str, Any]) -> dict[str, Any]:
-    install_external_signal_journal()
     tenant = current_tenant()
     if tenant is None:
         return {"ok": False, "reason": "no_active_tenant"}
+    install_external_signal_journal()
     try:
         parsed = parse_compass_payload(payload)
     except ValueError:
@@ -192,34 +190,60 @@ def recent_external_events(
     *,
     limit: int = 50,
 ) -> pd.DataFrame:
-    install_external_signal_journal()
     tenant = current_tenant()
     if tenant is None:
         return pd.DataFrame()
-    clauses = ["user_id=%s", "portfolio_id=%s"]
-    params: list[Any] = [tenant.user_id, tenant.portfolio_id]
-    if symbol:
-        clauses.append("symbol=%s")
-        params.append(_canonical_symbol(symbol))
-    if timeframe:
-        clauses.append("timeframe=%s")
-        params.append(str(timeframe).strip().lower())
-    params.append(max(1, min(500, int(limit))))
-    query = f"""
-    SELECT source,event_code,symbol,timeframe,direction,lifecycle_status,
-           event_time,event_price,entry_price,stop_price,target1,target2,target3,
-           confidence,geometry_valid,payload_json,received_at,lifecycle_key
-    FROM {TABLE}
-    WHERE {' AND '.join(clauses)}
-    ORDER BY event_timestamp_ms DESC, received_at DESC
-    LIMIT %s
-    """
+    install_external_signal_journal()
     try:
-        frame = fetch_df(query, tuple(params))
-        return frame if isinstance(frame, pd.DataFrame) else pd.DataFrame()
+        frame = fetch_table(TABLE)
     except Exception:
         LOGGER.exception("Unable to read external signal journal")
         return pd.DataFrame()
+    if not isinstance(frame, pd.DataFrame) or frame.empty:
+        return pd.DataFrame()
+    filtered = frame.copy()
+    if symbol and "symbol" in filtered.columns:
+        filtered = filtered[
+            filtered["symbol"].astype(str).map(_canonical_symbol)
+            == _canonical_symbol(symbol)
+        ]
+    if timeframe and "timeframe" in filtered.columns:
+        filtered = filtered[
+            filtered["timeframe"].astype(str).str.strip().str.lower()
+            == str(timeframe).strip().lower()
+        ]
+    if "event_timestamp_ms" in filtered.columns:
+        filtered["_order"] = pd.to_numeric(
+            filtered["event_timestamp_ms"], errors="coerce"
+        ).fillna(0)
+    else:
+        filtered["_order"] = pd.to_datetime(
+            filtered.get("received_at"), errors="coerce", utc=True
+        ).astype("int64", errors="ignore")
+    filtered = filtered.sort_values("_order", ascending=False).head(
+        max(1, min(500, int(limit)))
+    )
+    columns = [
+        "source",
+        "event_code",
+        "symbol",
+        "timeframe",
+        "direction",
+        "lifecycle_status",
+        "event_time",
+        "event_price",
+        "entry_price",
+        "stop_price",
+        "target1",
+        "target2",
+        "target3",
+        "confidence",
+        "geometry_valid",
+        "payload_json",
+        "received_at",
+        "lifecycle_key",
+    ]
+    return filtered[[column for column in columns if column in filtered.columns]].reset_index(drop=True)
 
 
 def latest_external_event(
