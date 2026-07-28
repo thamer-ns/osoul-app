@@ -1,0 +1,22 @@
+from __future__ import annotations
+
+import inspect
+
+import app
+import database_pool_hardening_v6 as hardening
+
+
+def test_app_installs_threadsafe_pool_before_database_initialization():
+    source = inspect.getsource(app._init_db_once)
+    install_position = source.index("install_threadsafe_database_pool()")
+    import_position = source.index("from database import init_db")
+    init_position = source.index("init_db()")
+    assert install_position < import_position < init_position
+
+
+def test_hardening_uses_psycopg_threaded_pool_and_serializes_initialization():
+    source = inspect.getsource(hardening)
+    assert "ThreadedConnectionPool" in source
+    assert "SimpleConnectionPool" not in source
+    assert "with _RESOURCE_LOCK" in source
+    assert "database._POOL_IMPLEMENTATION" in source
