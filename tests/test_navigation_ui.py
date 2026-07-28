@@ -10,7 +10,6 @@ def test_icon_navigation_uses_compact_hubs_and_no_sidebar():
         "home",
         "insights",
         "portfolios",
-        "add",
         "cash",
         "tools",
         "settings",
@@ -22,6 +21,7 @@ def test_icon_navigation_uses_compact_hubs_and_no_sidebar():
     assert navbar._SECONDARY_KEYS == ()
     assert navbar._ALLOWED == expected | {"update"}
     for removed in (
+        "add",
         "analysis",
         "signals",
         "backtest",
@@ -49,6 +49,12 @@ def test_legacy_portfolio_links_resolve_into_the_portfolios_hub():
         assert navbar._canonical_page(legacy) == "portfolios"
         assert navbar._legacy_portfolio_section(legacy) == legacy
         assert legacy in navbar._ROUTABLE
+
+
+def test_legacy_add_link_opens_embedded_portfolio_entry():
+    assert navbar._canonical_page("add") == "portfolios"
+    assert "add" in navbar._ROUTABLE
+    assert "add" not in navbar._ALLOWED
 
 
 def test_legacy_pulse_link_opens_owned_stocks_on_home():
