@@ -1,0 +1,74 @@
+[
+  {
+    "name": "stock_intraday_five_minutes",
+    "expected_frame": "5m",
+    "payload": {
+      "v": 1,
+      "s": "SC-V90-I",
+      "e": "NL",
+      "x": "TADAWUL:1120",
+      "y": "stock",
+      "f": "5m",
+      "t": 1760000000000,
+      "p": 100.0,
+      "d": 1,
+      "en": 100.0,
+      "sl": 98.0,
+      "t1": 102.0,
+      "t2": 104.0,
+      "t3": 106.0,
+      "n": 3,
+      "q": 8,
+      "qm": 10,
+      "ct": false
+    }
+  },
+  {
+    "name": "stock_weekly_migration_alias",
+    "expected_frame": "1w",
+    "payload": {
+      "v": 1,
+      "s": "SC-V90-D",
+      "e": "NS",
+      "x": "TADAWUL:1120",
+      "y": "stock",
+      "f": "1wk",
+      "t": 1760000060000,
+      "p": 100.0,
+      "d": -1,
+      "en": 100.0,
+      "sl": 102.0,
+      "t1": 98.0,
+      "t2": 96.0,
+      "t3": 94.0,
+      "n": 3,
+      "q": 7,
+      "qm": 10,
+      "ct": false
+    }
+  },
+  {
+    "name": "forex_numeric_fifteen_minutes",
+    "expected_frame": "15m",
+    "payload": {
+      "v": 1,
+      "s": "SC-FXM-V14",
+      "e": "NL",
+      "x": "OANDA:EURUSD",
+      "y": "forex",
+      "f": "15",
+      "t": 1760000120000,
+      "p": 1.1,
+      "d": 1,
+      "en": 1.1,
+      "sl": 1.095,
+      "t1": 1.105,
+      "t2": 1.11,
+      "t3": 1.115,
+      "n": 3,
+      "q": 9,
+      "qm": 12,
+      "ct": false
+    }
+  }
+]
