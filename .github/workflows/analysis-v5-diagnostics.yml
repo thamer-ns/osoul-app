@@ -1,0 +1,43 @@
+name: Analysis v5 diagnostics
+
+on:
+  pull_request:
+  push:
+    branches:
+      - agent/analysis-data-fusion-v5
+
+permissions:
+  contents: read
+
+jobs:
+  pytest-diagnostics:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run complete tests and preserve output
+        id: tests
+        continue-on-error: true
+        env:
+          OSOUL_ALLOW_EPHEMERAL_AUTH_SECRET: "1"
+          OSOUL_REQUIRE_DB: "0"
+          OSOUL_ALLOW_SQLITE_FALLBACK: "1"
+          SQLITE_PATH: "/tmp/osoul_analysis_v5.db"
+        run: |
+          set -o pipefail
+          pytest -q --tb=long 2>&1 | tee analysis-v5-pytest.log
+      - name: Upload pytest diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: analysis-v5-pytest-diagnostics
+          path: analysis-v5-pytest.log
+          retention-days: 2
+      - name: Fail if tests failed
+        if: steps.tests.outcome == 'failure'
+        run: exit 1
