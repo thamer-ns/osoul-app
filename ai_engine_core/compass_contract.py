@@ -1,19 +1,36 @@
-"""Safe parser for SC-V88 / SC-FXM TradingView webhook evidence.
+"""Strict parser for current SC-V90 / SC-FXM compact events.
 
-The compass is an external evidence source, not an authority that silently
-replaces Osoli's native calculation.  Parsed payloads may be compared with the
-native report and displayed to the user, while the application decision remains
-inside decision_policy_v4.
+External events are comparison evidence only.  This module validates source,
+timeframe, event chronology primitives, instrument compatibility and plan
+geometry before any persistence or forwarding occurs.
 """
 from __future__ import annotations
 
 import json
 import math
+import re
+import time
 from datetime import datetime, timezone
+from itertools import pairwise
 from typing import Any
+
+from .timeframe_contract import canonical_timeframe, timeframe_minutes
 
 COMPASS_SCHEMA_VERSION = 1
 _MAX_PAYLOAD_CHARS = 16_384
+_CURRENT_SOURCES = frozenset({"SC-V90-I", "SC-V90-D", "SC-FXM-V14"})
+_LEGACY_SOURCES = frozenset({"SC-V88-I", "SC-V88-D", "SC-FXM-V12", "SC-V84-I", "SC-V84-D", "SC-FXM-V8"})
+_ALLOWED_SOURCES = _CURRENT_SOURCES | _LEGACY_SOURCES
+_STOCK_TYPES = frozenset({"stock", "fund", "dr"})
+_OTHER_TYPES = frozenset({"forex", "index", "futures", "cfd", "crypto", "bond", "commodity", "spot"})
+_EVENT_ALIASES = {
+    "ENTRY_LONG": "NL", "NEW_LONG": "NL", "LONG": "NL",
+    "ENTRY_SHORT": "NS", "NEW_SHORT": "NS", "SHORT": "NS",
+    "TARGET_1": "T1", "TARGET_2": "T2", "TARGET_3": "T3",
+    "STOP": "SL", "STOP_LOSS": "SL", "CANCEL": "C", "FAKEOUT": "FO",
+}
+_ALLOWED_EVENTS = frozenset({"NL", "NS", "T1", "T2", "T3", "SL", "C", "FO"})
+_TARGET_RANK = {"T1": 1, "T2": 2, "T3": 3}
 
 
 def _finite(value: Any, *, required: bool = False) -> float | None:
@@ -42,52 +59,78 @@ def _integer(value: Any, *, minimum: int, maximum: int, name: str) -> int:
 
 def _text(value: Any, *, name: str, maximum: int = 120) -> str:
     text = str(value or "").strip()
-    if not text:
-        raise ValueError(f"{name} مطلوب")
-    if len(text) > maximum or any(ord(char) < 32 for char in text):
+    if not text or len(text) > maximum or any(ord(char) < 32 or ord(char) == 127 for char in text):
         raise ValueError(f"{name} غير صالح")
     return text
 
 
-def _normalise_timeframe(value: str) -> str:
-    raw = value.strip().lower()
-    aliases = {
-        "1": "1m", "1m": "1m", "5": "5m", "5m": "5m",
-        "15": "15m", "15m": "15m", "30": "30m", "30m": "30m",
-        "60": "1h", "60m": "1h", "1h": "1h", "240": "4h", "4h": "4h",
-        "d": "1d", "1d": "1d", "w": "1wk", "1w": "1wk", "1wk": "1wk",
-        "m": "1mo", "1mo": "1mo",
-    }
-    return aliases.get(raw, raw)
+def _event(value: Any) -> str:
+    raw = _text(value, name="رمز الحدث", maximum=40).upper()
+    event = _EVENT_ALIASES.get(raw, raw)
+    if event not in _ALLOWED_EVENTS:
+        raise ValueError("حدث SC غير مدعوم")
+    return event
 
 
-def _geometry(direction: int, entry: float | None, stop: float | None, targets: list[float | None]) -> dict[str, Any]:
+def _source(value: Any) -> str:
+    source = _text(value, name="المصدر", maximum=40).upper()
+    if source not in _ALLOWED_SOURCES:
+        raise ValueError("مصدر المؤشر غير معتمد")
+    return source
+
+
+def _symbol(value: Any) -> str:
+    symbol = _text(value, name="الرمز", maximum=80).upper()
+    if re.fullmatch(r"[A-Z0-9.^=_:/-]{1,80}", symbol) is None:
+        raise ValueError("الرمز غير صالح")
+    return symbol
+
+
+def _geometry(direction: int, entry: float | None, stop: float | None, targets: list[float | None], target_count: int) -> dict[str, Any]:
     issues: list[str] = []
-    ratios: list[float | None] = []
-    if direction == 0:
-        return {"valid": entry is None and stop is None, "issues": [] if entry is None and stop is None else ["خطة محايدة تحتوي مستويات اتجاهية"], "target_r": []}
+    if direction not in (-1, 1):
+        return {"valid": False, "issues": ["الاتجاه مطلوب للخطة"], "target_r": []}
     if entry is None or stop is None or entry <= 0 or stop <= 0:
         return {"valid": False, "issues": ["الدخول أو الوقف مفقود"], "target_r": []}
-    if (direction > 0 and stop >= entry) or (direction < 0 and stop <= entry):
-        issues.append("الوقف في الجهة الخاطئة")
+    active = targets[:target_count]
+    if any(value is None or value <= 0 for value in active):
+        return {"valid": False, "issues": ["الأهداف المعلنة غير مكتملة"], "target_r": []}
+    numeric_targets = [float(value) for value in active if value is not None]
     risk = abs(entry - stop)
-    previous = 0.0
-    for index, target in enumerate(targets, start=1):
-        if target is None:
-            ratios.append(None)
-            continue
-        if target <= 0 or (direction > 0 and target <= entry) or (direction < 0 and target >= entry):
-            issues.append(f"الهدف {index} في الجهة الخاطئة")
-        ratio = abs(target - entry) / risk if risk > 0 else 0.0
-        ratios.append(round(ratio, 3))
-        if ratio <= previous:
-            issues.append("الأهداف غير مرتبة")
-        previous = ratio
+    if risk <= 0:
+        issues.append("مسافة الوقف صفرية")
+    if direction > 0:
+        if stop >= entry:
+            issues.append("وقف الصفقة الصاعدة يجب أن يكون تحت الدخول")
+        if not all(target > entry for target in numeric_targets):
+            issues.append("أهداف الصفقة الصاعدة يجب أن تكون فوق الدخول")
+        if any(right <= left for left, right in pairwise(numeric_targets)):
+            issues.append("أهداف الصفقة الصاعدة غير مرتبة")
+    else:
+        if stop <= entry:
+            issues.append("وقف الصفقة الهابطة يجب أن يكون فوق الدخول")
+        if not all(target < entry for target in numeric_targets):
+            issues.append("أهداف الصفقة الهابطة يجب أن تكون تحت الدخول")
+        if any(right >= left for left, right in pairwise(numeric_targets)):
+            issues.append("أهداف الصفقة الهابطة غير مرتبة")
+    ratios = [round(abs(target - entry) / risk, 3) if risk > 0 else None for target in numeric_targets]
     return {"valid": not issues, "issues": issues, "target_r": ratios, "risk_per_unit": round(risk, 8)}
 
 
+def _validate_source_context(source: str, asset_type: str, timeframe: str) -> None:
+    minutes = timeframe_minutes(timeframe)
+    if source.endswith("-I"):
+        if asset_type not in _STOCK_TYPES or minutes >= 1_440:
+            raise ValueError("نسخة الأسهم اللحظية تتطلب سهمًا وفاصلًا أقل من اليومي")
+    elif source.endswith("-D"):
+        if asset_type not in _STOCK_TYPES or not 1_440 <= minutes <= 3 * 43_200:
+            raise ValueError("نسخة الأسهم اليومية تتطلب فاصلًا من اليومي إلى ثلاثة أشهر")
+    elif source.startswith("SC-FXM"):
+        if asset_type not in _OTHER_TYPES or minutes > 1_440:
+            raise ValueError("نسخة الأسواق الأخرى تتطلب أصلًا مدعومًا وفاصلًا حتى اليومي")
+
+
 def parse_compass_payload(payload: str | bytes | dict[str, Any]) -> dict[str, Any]:
-    """Validate and normalize one compact TradingView alert payload."""
     if isinstance(payload, bytes):
         if len(payload) > _MAX_PAYLOAD_CHARS:
             raise ValueError("حجم الرسالة أكبر من المسموح")
@@ -107,37 +150,57 @@ def parse_compass_payload(payload: str | bytes | dict[str, Any]) -> dict[str, An
     else:
         raise ValueError("نوع الرسالة غير مدعوم")
 
-    version = _integer(raw.get("v", 1), minimum=1, maximum=COMPASS_SCHEMA_VERSION, name="الإصدار")
-    source = _text(raw.get("s"), name="المصدر", maximum=40)
-    event = _text(raw.get("e"), name="رمز الحدث", maximum=80)
-    symbol = _text(raw.get("x"), name="الرمز", maximum=80).upper()
-    asset_type = _text(raw.get("y", "unknown"), name="نوع الأصل", maximum=30).lower()
-    timeframe = _normalise_timeframe(_text(raw.get("f"), name="الفاصل", maximum=12))
-    timestamp_ms = _integer(raw.get("t"), minimum=1, maximum=9_999_999_999_999, name="وقت الحدث")
-    direction = _integer(raw.get("d", 0), minimum=-1, maximum=1, name="الاتجاه")
-    event_price = _finite(raw.get("p"), required=True)
-    entry = _finite(raw.get("en"))
-    stop = _finite(raw.get("sl"))
-    targets = [_finite(raw.get(key)) for key in ("t1", "t2", "t3")]
-    target_count = _integer(raw.get("n", sum(value is not None for value in targets)), minimum=0, maximum=3, name="عدد الأهداف")
-    score = _integer(raw.get("q", 0), minimum=0, maximum=1_000_000, name="درجة التوافق")
-    score_maximum = _integer(raw.get("qm", 0), minimum=0, maximum=1_000_000, name="أقصى درجة")
-    counter_trend = bool(raw.get("ct", False))
+    required_keys = {"v", "s", "e", "x", "y", "f", "t", "p", "d", "en", "sl", "t1", "t2", "t3", "n", "q", "qm", "ct"}
+    missing = sorted(key for key in required_keys if key not in raw)
+    if missing:
+        raise ValueError("عقد SC ناقص: " + ",".join(missing))
 
-    if event_price is None or event_price <= 0:
-        raise ValueError("سعر الحدث يجب أن يكون موجبًا")
-    present_targets = sum(value is not None for value in targets)
-    if present_targets != target_count:
-        raise ValueError("عدد الأهداف لا يطابق المستويات المرسلة")
-    if score_maximum and score > score_maximum:
+    version = _integer(raw["v"], minimum=1, maximum=COMPASS_SCHEMA_VERSION, name="الإصدار")
+    source = _source(raw["s"])
+    event = _event(raw["e"])
+    symbol = _symbol(raw["x"])
+    asset_type = _text(raw["y"], name="نوع الأصل", maximum=30).lower()
+    timeframe = canonical_timeframe(raw["f"])
+    timestamp_ms = _integer(raw["t"], minimum=946_684_800_000, maximum=9_999_999_999_999, name="وقت الحدث")
+    now_ms = int(time.time() * 1000)
+    if timestamp_ms > now_ms + 5 * 60_000:
+        raise ValueError("وقت الحدث في المستقبل")
+    direction = _integer(raw["d"], minimum=-1, maximum=1, name="الاتجاه")
+    event_price = _finite(raw["p"], required=True)
+    entry = _finite(raw["en"])
+    stop = _finite(raw["sl"])
+    targets = [_finite(raw[key]) for key in ("t1", "t2", "t3")]
+    target_count = _integer(raw["n"], minimum=1, maximum=3, name="عدد الأهداف")
+    score = _integer(raw["q"], minimum=0, maximum=100_000, name="درجة التوافق")
+    score_maximum = _integer(raw["qm"], minimum=1, maximum=100_000, name="أقصى درجة")
+    counter_trend = bool(raw["ct"])
+
+    if event_price is None or event_price <= 0 or event_price > 1_000_000_000:
+        raise ValueError("سعر الحدث غير صالح")
+    if score > score_maximum:
         raise ValueError("درجة التوافق أعلى من الحد الأقصى")
+    if event == "NL" and direction != 1:
+        raise ValueError("NL يتطلب اتجاهًا صاعدًا")
+    if event == "NS" and direction != -1:
+        raise ValueError("NS يتطلب اتجاهًا هابطًا")
+    if event != "FO" and direction not in (-1, 1):
+        raise ValueError("الحدث يتطلب اتجاهًا صريحًا")
+    rank = _TARGET_RANK.get(event)
+    if rank is not None and rank > target_count:
+        raise ValueError("حدث الهدف يتجاوز عدد الأهداف المعلن")
+    if sum(value is not None for value in targets) != target_count:
+        raise ValueError("عدد الأهداف لا يطابق المستويات المرسلة")
 
-    geometry = _geometry(direction, entry, stop, targets)
-    confidence = round(score / score_maximum * 100.0, 2) if score_maximum > 0 else None
+    _validate_source_context(source, asset_type, timeframe)
+    geometry = _geometry(direction, entry, stop, targets, target_count)
+    if event != "FO" and not geometry["valid"]:
+        raise ValueError("هندسة الخطة غير صالحة")
+    confidence = round(score / score_maximum * 100.0, 2)
     event_time = datetime.fromtimestamp(timestamp_ms / 1000.0, tz=timezone.utc)
     return {
         "schema_version": version,
         "source": source,
+        "source_generation": "current" if source in _CURRENT_SOURCES else "legacy",
         "event": event,
         "symbol": symbol,
         "asset_type": asset_type,
@@ -161,13 +224,18 @@ def parse_compass_payload(payload: str | bytes | dict[str, Any]) -> dict[str, An
 
 
 def compare_compass_with_report(compass: dict[str, Any], report: dict[str, Any]) -> dict[str, Any]:
-    """Compare external compass evidence with Osoli without changing either."""
     native_direction = str(report.get("direction") or "neutral").lower()
     external_direction = str(compass.get("direction") or "neutral").lower()
-    same_symbol = str(compass.get("symbol") or "").split(":")[-1].replace(".SR", "") == str(report.get("symbol") or "").split(":")[-1].replace(".SR", "") if report.get("symbol") else True
-    same_frame = _normalise_timeframe(str(compass.get("timeframe") or "")) == _normalise_timeframe(str((report.get("analysis_contract") or {}).get("timeframe") or (report.get("engine_meta") or {}).get("interval_used") or ""))
+    external_symbol = str(compass.get("symbol") or "").split(":")[-1].replace(".SR", "")
+    native_symbol = str(report.get("symbol") or "").split(":")[-1].replace(".SR", "")
+    same_symbol = external_symbol == native_symbol if native_symbol else True
+    native_frame_raw = (report.get("analysis_contract") or {}).get("timeframe") or (report.get("engine_meta") or {}).get("interval_used") or ""
+    try:
+        same_frame = canonical_timeframe(compass.get("timeframe")) == canonical_timeframe(native_frame_raw)
+    except ValueError:
+        same_frame = False
     aligned = native_direction == external_direction and native_direction in {"buy", "sell"}
-    conflicts = []
+    conflicts: list[str] = []
     if not same_symbol:
         conflicts.append("الرمز لا يطابق التحليل الحالي")
     if not same_frame:
