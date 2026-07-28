@@ -2,10 +2,10 @@
 
 """Lightweight package exports with lazy imports.
 
-The public report path always passes through the final decision policy. This
-keeps every presentation layer on one sanitized, close-confirmed,
-independent-school-qualified and risk-integrity-checked decision while
-preserving lazy imports.
+The public report path installs the full-timeframe routing policy, generates the
+raw report once, then passes it through decision policy v5.  Every presentation
+therefore receives the same close-confirmed SC-V90 patterns, independent-school
+qualification, plan geometry, provider lineage and external lifecycle context.
 """
 
 from .config import AI_ENGINE_NAME, AI_ENGINE_OK, AI_ENGINE_VERSION
@@ -49,10 +49,11 @@ def _report_call_context(args, kwargs) -> tuple[str, str]:
 
 
 def generate_ai_report(*args, **kwargs):
-    """Generate once, then enforce one final v4 decision for every consumer."""
+    """Generate once, then enforce the final v5 decision for every consumer."""
+    _lazy_attr(".reporting_policy_v5", "install_reporting_policy")()
     raw_report = _lazy_attr(".reporting", "generate_ai_report")(*args, **kwargs)
     symbol, timeframe = _report_call_context(args, kwargs)
-    return _lazy_attr(".decision_policy_v4", "enrich_report")(
+    return _lazy_attr(".decision_policy_v5", "enrich_report")(
         raw_report,
         symbol=symbol,
         timeframe=timeframe,
@@ -150,12 +151,18 @@ def self_test() -> dict:
 
     report["checks"]["has_generate_ai_report"] = callable(globals().get("generate_ai_report"))
     report["checks"]["has_decision_engine"] = callable(
-        _lazy_attr(".decision_policy_v4", "enrich_report")
+        _lazy_attr(".decision_policy_v5", "enrich_report")
+    )
+    report["checks"]["has_breakout_engine"] = callable(
+        _lazy_attr(".breakout_patterns_v90", "analyze_breakout_patterns")
+    )
+    report["checks"]["full_timeframe_routing"] = callable(
+        _lazy_attr(".reporting_policy_v5", "timeframe_to_interval")
     )
     return report
 
 
 DECISION_ENGINE_VERSION = _lazy_attr(
-    ".decision_policy_v4",
+    ".decision_policy_v5",
     "DECISION_ENGINE_VERSION",
 )

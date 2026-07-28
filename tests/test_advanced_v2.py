@@ -46,8 +46,8 @@ def test_rsi_handles_monotonic_and_flat_series():
 def test_timeframe_history_periods_are_sufficient():
     from views.analysis.technical import period_for_interval
 
-    assert period_for_interval("1d") == "3y"
-    assert period_for_interval("1wk") == "10y"
+    assert period_for_interval("1d") == "5y"
+    assert period_for_interval("1wk") == "15y"
     assert period_for_interval("1mo") == "max"
     assert period_for_interval("5m") == "60d"
 

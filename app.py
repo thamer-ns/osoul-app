@@ -68,21 +68,33 @@ def _render_authenticated_header() -> None:
 
 
 def _install_runtime_hardening(username: str) -> None:
+    from ai_engine_core.external_signal_journal_v5 import (
+        install_external_signal_journal,
+    )
+    from ai_engine_core.reporting_policy_v5 import install_reporting_policy
     from ai_tenant_hardening import (
         install_ai_learning_scope,
         register_ai_tenant_tables,
     )
+    from analysis_routes_v5 import install_analysis_routes
     from analytics_hardening import install_analytics_hardening
+    from financial_data_router_v5 import install_financial_data_router
     from market_data_hardening import install_market_data_hardening
+    from market_data_router_v5 import install_market_data_router
     from portfolio_metrics_v2 import install_portfolio_metrics_v2
     from tenant_scope import install_tenant_scope
 
     register_ai_tenant_tables()
     install_tenant_scope(username)
-    install_ai_learning_scope()
     install_market_data_hardening()
+    install_market_data_router()
+    install_financial_data_router()
+    install_reporting_policy()
+    install_external_signal_journal()
+    install_ai_learning_scope()
     install_analytics_hardening()
     install_portfolio_metrics_v2()
+    install_analysis_routes()
 
 
 def _initialize_user_space(username: str) -> bool:

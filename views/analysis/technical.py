@@ -1,4 +1,4 @@
-"""Technical-analysis UI with lazy execution and close-confirmed signals."""
+"""Technical-analysis UI with provider fusion and SC-V90 patterns."""
 from __future__ import annotations
 
 import logging
@@ -7,6 +7,7 @@ from typing import Any, Dict
 import pandas as pd
 import streamlit as st
 
+from ai_engine_core.breakout_patterns_v90 import analyze_breakout_patterns
 from candle_confirmation import completed_candles
 from components import render_custom_table
 from market_data import get_chart_history
@@ -37,11 +38,12 @@ def period_for_interval(interval: str) -> str:
         "30m": "60d",
         "60m": "2y",
         "1h": "2y",
-        "1d": "3y",
-        "1wk": "10y",
-        "1w": "10y",
+        "4h": "5y",
+        "1d": "5y",
+        "1wk": "15y",
+        "1w": "15y",
         "1mo": "max",
-    }.get(value, "3y")
+    }.get(value, "5y")
 
 
 @st.cache_data(ttl=180, max_entries=128, show_spinner=False)
@@ -59,6 +61,14 @@ def _advanced_pack_cached(symbol: str, interval: str, period: str) -> dict:
     if frame.empty:
         return {}
     return compute_advanced_technical_pack(frame, symbol=symbol, timeframe=interval)
+
+
+@st.cache_data(ttl=300, max_entries=128, show_spinner=False)
+def _breakout_pack_cached(symbol: str, interval: str, period: str) -> dict:
+    frame = _history_cached(symbol, interval, period)
+    if frame.empty:
+        return {}
+    return analyze_breakout_patterns(frame, symbol=symbol, timeframe=interval)
 
 
 def _quality(df: pd.DataFrame, interval: str) -> Dict[str, Any]:
@@ -81,7 +91,12 @@ def _quality(df: pd.DataFrame, interval: str) -> Dict[str, Any]:
     null_ratio = float(df[available].isna().mean().mean()) if available else 1.0
     if null_ratio > 0.01:
         issues.append(f"نسبة قيم ناقصة {null_ratio * 100:.1f}%")
+    attrs = getattr(df, "attrs", {}) or {}
+    lineage = attrs.get("data_lineage") if isinstance(attrs.get("data_lineage"), dict) else {}
+    provider_score = lineage.get("quality_score")
     score = max(0, 100 - len(issues) * 15 - int(null_ratio * 100))
+    if isinstance(provider_score, (int, float)):
+        score = min(score, int(provider_score))
     return {
         "ok": not issues,
         "score": score,
@@ -91,12 +106,35 @@ def _quality(df: pd.DataFrame, interval: str) -> Dict[str, Any]:
     }
 
 
-def _source_info(df: pd.DataFrame) -> tuple[str, str]:
+def _source_info(df: pd.DataFrame) -> tuple[str, str, dict[str, Any]]:
     attrs = getattr(df, "attrs", {}) or {}
-    lineage = attrs.get("data_lineage") or {}
+    lineage = attrs.get("data_lineage") if isinstance(attrs.get("data_lineage"), dict) else {}
     source = str(lineage.get("source") or attrs.get("source") or "غير معروف")
     fetched_at = str(lineage.get("fetched_at") or "—")
-    return source, fetched_at
+    return source, fetched_at, lineage
+
+
+def _render_provider_lineage(lineage: dict[str, Any]) -> None:
+    attempts = list(lineage.get("provider_attempts") or [])
+    with st.expander("مصادر البيانات ومحاولات الجلب", expanded=False):
+        if not attempts:
+            st.caption("لا توجد تفاصيل محاولات من طبقة الدمج الحالية.")
+            return
+        rows = []
+        for item in attempts:
+            rows.append(
+                {
+                    "المزود": item.get("provider"),
+                    "النتيجة": "نجح" if item.get("ok") else "لم يُستخدم",
+                    "الرمز المحلول": item.get("resolved_symbol") or "—",
+                    "الشموع": item.get("rows") or 0,
+                    "الجودة": item.get("quality_score"),
+                    "الزمن ms": item.get("elapsed_ms"),
+                    "السبب": item.get("reason") or "—",
+                }
+            )
+        render_custom_table(pd.DataFrame(rows))
+        st.caption("يُستخدم أول مزود يجتاز فحص OHLCV؛ Yahoo والمصادر القديمة تبقى حلًا أخيرًا.")
 
 
 def _render_signal_table(signals: list[dict]) -> None:
@@ -107,14 +145,18 @@ def _render_signal_table(signals: list[dict]) -> None:
     labels = {
         "type": "النوع",
         "kind": "الإشارة",
+        "direction": "الاتجاه",
         "price": "السعر",
         "level": "المستوى",
+        "stop_reference": "مرجع الوقف",
+        "measured_target": "الهدف المقاس",
         "reason": "السبب",
         "volume_confirmed": "تأكيد الحجم",
+        "confirmed_on_close": "مؤكد بالإغلاق",
     }
     config = []
     for column in frame.columns:
-        kind = "money" if column in {"price", "level"} else "bool" if column == "volume_confirmed" else "text"
+        kind = "money" if column in {"price", "level", "stop_reference", "measured_target"} else "bool" if column in {"volume_confirmed", "confirmed_on_close"} else "text"
         config.append((column, labels.get(column, column), kind))
     render_custom_table(frame, config)
 
@@ -187,6 +229,51 @@ def _render_advanced(df: pd.DataFrame, symbol: str, interval: str, period: str) 
     _save_pack_once(pack, symbol, interval, closed)
 
 
+def _render_breakouts(symbol: str, interval: str, period: str) -> None:
+    with st.spinner("تحليل نماذج الاختراق SC-V90 من الشموع المكتملة..."):
+        pack = _breakout_pack_cached(symbol, interval, period)
+    if not pack or not pack.get("ok"):
+        st.warning("تعذر حساب نماذج الاختراق على هذا الفاصل.")
+        for error in (pack or {}).get("errors") or []:
+            st.caption(str(error))
+        return
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("الاتجاه", _direction_ar(pack.get("bias")))
+    c2.metric("درجة النموذج", f"{_sf(pack.get('direction_score')):+.1f}")
+    c3.metric("نماذج مؤكدة", int((pack.get("features") or {}).get("breakout_confirmed_count") or 0))
+    c4.metric("تحت التكوين", int((pack.get("features") or {}).get("breakout_forming_count") or 0))
+    st.info(str(pack.get("summary") or "لا يوجد ملخص"))
+    volume = pack.get("volume_policy") if isinstance(pack.get("volume_policy"), dict) else {}
+    st.caption(
+        "سياسة الحجم: "
+        + ("إلزامي وموثوق" if volume.get("mode") == "required" and volume.get("trusted") else "اختياري/غير مركزي")
+        + f" — RVOL: {_sf(volume.get('relative_volume')):.2f}"
+    )
+    _render_signal_table(pack.get("signals") or [])
+    patterns = pd.DataFrame(pack.get("patterns") or [])
+    if not patterns.empty:
+        display = patterns.rename(
+            columns={
+                "name": "النموذج",
+                "status": "الحالة",
+                "direction": "الاتجاه",
+                "confidence": "الثقة",
+                "boundary": "حد التنفيذ",
+                "stop_reference": "مرجع الوقف",
+                "measured_target": "الهدف المقاس",
+                "reason": "السبب",
+                "detected_at": "شمعة الكشف",
+            }
+        )
+        if "الاتجاه" in display.columns:
+            display["الاتجاه"] = display["الاتجاه"].map({1: "صاعد", -1: "هابط"})
+        if "الحالة" in display.columns:
+            display["الحالة"] = display["الحالة"].map({"CONFIRMED": "مؤكد", "FORMING": "تحت التكوين"})
+        columns = [column for column in ["النموذج", "الحالة", "الاتجاه", "الثقة", "حد التنفيذ", "مرجع الوقف", "الهدف المقاس", "السبب", "شمعة الكشف"] if column in display.columns]
+        render_custom_table(display[columns])
+    st.caption("النموذج لا يصبح دخولًا بمجرد ظهوره؛ يلزم إغلاق خارج الحد ثم اجتياز توافق المدارس وهندسة المخاطرة في القرار الموحد.")
+
+
 def _render_chart(symbol: str, interval: str, period: str, df: pd.DataFrame) -> None:
     try:
         from charts import render_technical_chart
@@ -211,7 +298,7 @@ def view_technical(symbol: str, interval: str = "1d"):
         df = pd.DataFrame()
 
     quality = _quality(df, interval)
-    source, fetched_at = _source_info(df) if not df.empty else ("غير متاح", "—")
+    source, fetched_at, lineage = _source_info(df) if not df.empty else ("غير متاح", "—", {})
     q1, q2, q3, q4 = st.columns(4)
     with q1:
         st.metric("جودة البيانات", f"{quality['score']}/100")
@@ -239,16 +326,19 @@ def view_technical(symbol: str, interval: str = "1d"):
         with st.expander("ملاحظات جودة البيانات"):
             for issue in quality["issues"]:
                 st.write(f"- {issue}")
+    _render_provider_lineage(lineage)
 
     mode = st.radio(
         "طريقة العرض",
-        ["الرسم الفني", "المؤشرات المتقدمة"],
+        ["الرسم الفني", "نماذج الاختراق SC-V90", "المؤشرات المتقدمة"],
         horizontal=True,
         label_visibility="collapsed",
         key=f"technical_mode:{symbol}:{interval}",
     )
     if mode == "الرسم الفني":
         _render_chart(symbol, interval, period, df)
+    elif mode == "نماذج الاختراق SC-V90":
+        _render_breakouts(symbol, interval, period)
     else:
         _render_advanced(df, symbol, interval, period)
 
