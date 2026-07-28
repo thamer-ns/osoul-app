@@ -35,6 +35,10 @@ def _load_app_config() -> Tuple[str, str]:
 @st.cache_resource(show_spinner=False)
 def _init_db_once() -> tuple[bool, str]:
     try:
+        from database_pool_hardening_v6 import install_threadsafe_database_pool
+
+        # Must run before init_db obtains the first process-global connection.
+        install_threadsafe_database_pool()
         from database import init_db
 
         init_db()
