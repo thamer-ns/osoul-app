@@ -16,7 +16,7 @@ def test_app_installs_threadsafe_pool_before_database_initialization():
 
 def test_hardening_uses_psycopg_threaded_pool_and_serializes_initialization():
     source = inspect.getsource(hardening)
-    assert "ThreadedConnectionPool" in source
-    assert "SimpleConnectionPool" not in source
+    assert "from psycopg2.pool import ThreadedConnectionPool" in source
+    assert "from psycopg2.pool import SimpleConnectionPool" not in source
     assert "with _RESOURCE_LOCK" in source
     assert "database._POOL_IMPLEMENTATION" in source
