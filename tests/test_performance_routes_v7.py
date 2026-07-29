@@ -17,11 +17,12 @@ def test_performance_runtime_installs_after_router_and_before_analysis_context()
     assert router < runtime < context
 
 
-def test_ai_reports_use_one_analysis_context():
+def test_ai_reports_use_one_analysis_context_for_real_generator():
     source = inspect.getsource(ai_engine_core.generate_ai_report)
     assert "generate_with_context" in source
-    assert "raw_generator" in source
-    assert "performance" in source
+    assert "report_generator" in source
+    assert 'startswith("ai_engine_core")' in source
+    assert "do not\n        # trigger market I/O" in source
 
 
 def test_deep_financial_dashboard_is_opt_in_fragment():
