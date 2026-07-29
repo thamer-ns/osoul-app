@@ -14,7 +14,7 @@ PAGES_REQUIRING_PORTFOLIO = {
 
 
 def _portfolio_cache_key(user_id: int, portfolio_id: int) -> str:
-    """Return a tenant-isolated key without issuing database polling queries."""
+    """Return a tenant-isolated key without database polling queries."""
     return f"u{int(user_id)}:p{int(portfolio_id)}"
 
 
@@ -26,7 +26,11 @@ def _load_attr(module_name: str, attr_name: str):
 def _render_page(page: str, finance):
     routes = {
         "home": ("views.home", "view_home", (finance,)),
-        "portfolios": ("views.portfolios", "view_portfolios", (finance,)),
+        "portfolios": (
+            "views.portfolios",
+            "view_portfolios",
+            (finance,),
+        ),
         "insights": ("views.insights", "view_insights", (finance,)),
         "cash": ("views.cash", "view_cash_log", (finance,)),
         "tools": ("views.tools_core", "view_tools", ()),
@@ -37,6 +41,14 @@ def _render_page(page: str, finance):
         _load_attr("views.navbar", "navigate_to")("home")
         return
     module_name, attr_name, args = target
+    if page == "insights":
+        insights = importlib.import_module(module_name)
+        insights._SECTION_META["analysis"]["module"] = (
+            "views.analysis_fast"
+        )
+        renderer = getattr(insights, attr_name)
+        renderer(*args)
+        return
     _load_attr(module_name, attr_name)(*args)
 
 
@@ -64,9 +76,14 @@ def router():
         if tenant is None:
             st.error("تعذر تحديد المحفظة النشطة بأمان.")
             st.stop()
-        cache_key = _portfolio_cache_key(tenant.user_id, tenant.portfolio_id)
+        cache_key = _portfolio_cache_key(
+            tenant.user_id,
+            tenant.portfolio_id,
+        )
         with st.spinner("جارٍ تحميل بيانات المحفظة..."):
-            finance = calculate_portfolio_metrics(cache_key=cache_key)
+            finance = calculate_portfolio_metrics(
+                cache_key=cache_key,
+            )
         if isinstance(finance, dict):
             finance["_cache_key"] = cache_key
 
