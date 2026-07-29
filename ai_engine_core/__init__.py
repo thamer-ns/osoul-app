@@ -47,40 +47,27 @@ def generate_ai_report(*args, **kwargs):
 
     symbol, timeframe = _report_call_context(args, kwargs)
     refresh = bool(kwargs.pop("refresh", False))
+    report_generator = _lazy_attr(".reporting", "generate_ai_report")
 
-    def raw_generator(resolved_symbol: str, *, timeframe: str):
-        return _lazy_attr(".reporting", "generate_ai_report")(
-            resolved_symbol,
-            timeframe=timeframe,
+    if str(getattr(report_generator, "__module__", "")).startswith(
+        "ai_engine_core"
+    ):
+        raw_report, _context = generate_with_context(
+            report_generator,
+            symbol,
+            timeframe,
+            refresh=refresh,
         )
+    else:
+        # Injected/test generators preserve their exact contract and do not
+        # trigger market I/O merely because they were injected.
+        raw_report = report_generator(symbol, timeframe=timeframe)
 
-    raw_report, _context = generate_with_context(
-        raw_generator,
-        symbol,
-        timeframe,
-        refresh=refresh,
-    )
-    enriched = _lazy_attr(".decision_policy_v5", "enrich_report")(
+    return _lazy_attr(".decision_policy_v5", "enrich_report")(
         raw_report,
         symbol=symbol,
         timeframe=timeframe,
     )
-    if isinstance(enriched, dict) and isinstance(raw_report, dict):
-        enriched.setdefault("performance", raw_report.get("performance") or {})
-        raw_meta = raw_report.get("engine_meta")
-        if isinstance(raw_meta, dict):
-            meta = enriched.get("engine_meta")
-            if not isinstance(meta, dict):
-                meta = {}
-            meta.update(
-                {
-                    key: value
-                    for key, value in raw_meta.items()
-                    if key in {"performance", "analysis_context"}
-                }
-            )
-            enriched["engine_meta"] = meta
-    return enriched
 
 
 def calculate_portfolio_risk_score(*args, **kwargs):
