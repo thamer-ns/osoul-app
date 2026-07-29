@@ -1,9 +1,9 @@
 """Authenticated Osoli ↔ market-bot bridge.
 
-Osoli never stores Telegram credentials.  A user action still controls outbound
-forwarding, while bot lifecycle updates are pulled automatically through an
-opaque per-portfolio HMAC channel.  Raw user and portfolio identifiers are never
-sent to the bot and sync tokens are sent in headers rather than URL paths.
+Outbound forwarding remains an explicit user action.  Lifecycle updates are
+pulled through an opaque per-portfolio HMAC channel.  Production bot URLs must
+use HTTPS, and a malformed or locally rejected remote event is quarantined so
+it cannot block every later cursor item.
 """
 from __future__ import annotations
 
@@ -26,13 +26,16 @@ except Exception:  # pragma: no cover
 
 from ai_engine_core.bot_sync_state_v6 import load_cursor, save_cursor
 from ai_engine_core.compass_contract import parse_compass_payload, to_bot_wire_payload
-from ai_engine_core.external_signal_journal_v5 import record_external_event
+from ai_engine_core.external_signal_journal_v5 import (
+    quarantine_remote_event,
+    record_external_event,
+)
 from tenant_scope import current_tenant
 
 LOGGER = logging.getLogger(__name__)
-_ALLOWED_SCHEMES = {"https", "http"}
 _SYNC_TOKEN_HEADER = "X-Osoli-Sync-Token"
 _SYNC_CHANNEL_HEADER = "X-Osoli-Sync-Channel"
+_LOCAL_HTTP_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
 
 def _secret(name: str) -> str:
@@ -46,16 +49,24 @@ def _secret(name: str) -> str:
     return str(os.getenv(name, "") or "").strip()
 
 
+def _truthy(value: Any) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _base_url() -> str:
     raw = _secret("SC_BOT_BASE_URL").rstrip("/")
     if not raw:
         return ""
     parsed = urlparse(raw)
-    if parsed.scheme not in _ALLOWED_SCHEMES or not parsed.netloc:
+    if not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment:
         return ""
-    if parsed.username or parsed.password or parsed.query or parsed.fragment:
-        return ""
-    return raw
+    host = str(parsed.hostname or "").lower()
+    if parsed.scheme == "https":
+        return raw
+    allow_insecure = _truthy(_secret("OSOUL_ALLOW_INSECURE_BOT_HTTP"))
+    if parsed.scheme == "http" and (host in _LOCAL_HTTP_HOSTS or allow_insecure):
+        return raw
+    return ""
 
 
 def _sync_channel() -> str:
@@ -63,14 +74,14 @@ def _sync_channel() -> str:
     secret = _secret("SC_BOT_SYNC_SECRET")
     if tenant is None or len(secret) < 32:
         return ""
-    message = f"osoli-sync-v6:{tenant.user_id}:{tenant.portfolio_id}".encode("utf-8")
+    message = f"osoli-sync-v7:{tenant.user_id}:{tenant.portfolio_id}".encode("utf-8")
     return hmac.new(secret.encode("utf-8"), message, hashlib.sha256).hexdigest()
 
 
 def _sync_headers() -> dict[str, str]:
     token = _secret("SC_BOT_SYNC_TOKEN")
     channel = _sync_channel()
-    if not token or not channel:
+    if len(token) < 32 or not channel:
         return {}
     return {_SYNC_TOKEN_HEADER: token, _SYNC_CHANNEL_HEADER: channel}
 
@@ -79,22 +90,28 @@ def bridge_configuration() -> dict[str, Any]:
     base = _base_url()
     sync_headers = _sync_headers()
     legacy_token = _secret("SC_BOT_TRADINGVIEW_TOKEN")
+    parsed = urlparse(base) if base else None
     return {
         "configured": bool(base and (sync_headers or legacy_token)),
         "base_url_configured": bool(base),
+        "secure_transport": bool(parsed and parsed.scheme == "https"),
         "legacy_forward_token_configured": bool(legacy_token),
         "sync_configured": bool(base and sync_headers),
-        "sync_token_configured": bool(_secret("SC_BOT_SYNC_TOKEN")),
+        "sync_token_configured": len(_secret("SC_BOT_SYNC_TOKEN")) >= 32,
         "sync_secret_configured": len(_secret("SC_BOT_SYNC_SECRET")) >= 32,
         "telegram_credentials_stored_in_osoli": False,
-        "forwarding_mode": "explicit_send_with_automatic_tenant_pull" if sync_headers else "legacy_explicit_only",
+        "forwarding_mode": (
+            "explicit_send_with_automatic_tenant_pull"
+            if sync_headers
+            else "legacy_explicit_only"
+        ),
     }
 
 
 def bot_health() -> dict[str, Any]:
     base = _base_url()
     if not base or requests is None:
-        return {"ok": False, "reason": "not_configured"}
+        return {"ok": False, "reason": "not_configured_or_insecure_url"}
     try:
         response = requests.get(f"{base}/health", timeout=8)
         if response.status_code != 200:
@@ -119,7 +136,7 @@ def bot_health() -> dict[str, Any]:
 def forward_compass_payload(payload: str | bytes | dict[str, Any]) -> dict[str, Any]:
     base = _base_url()
     if not base or requests is None:
-        return {"ok": False, "reason": "bridge_not_configured"}
+        return {"ok": False, "reason": "bridge_not_configured_or_insecure_url"}
     try:
         parsed = parse_compass_payload(payload)
     except ValueError:
@@ -148,7 +165,7 @@ def forward_compass_payload(payload: str | bytes | dict[str, Any]) -> dict[str, 
             mode = "legacy_forward"
         else:
             return {"ok": False, "reason": "bridge_not_configured"}
-        if response.status_code != 200:
+        if response.status_code not in {200, 201}:
             return {"ok": False, "reason": f"http_{response.status_code}"}
         result = response.json()
         if not isinstance(result, dict) or not bool(result.get("ok")):
@@ -157,12 +174,30 @@ def forward_compass_payload(payload: str | bytes | dict[str, Any]) -> dict[str, 
             "ok": True,
             "created": bool(result.get("created")),
             "event_id": result.get("event_id"),
+            "plan_id": result.get("plan_id"),
             "market": result.get("market"),
             "mode": mode,
         }
     except Exception:
         LOGGER.info("Bot forwarding failed", exc_info=True)
         return {"ok": False, "reason": "unreachable"}
+
+
+def _quarantine(
+    channel: str,
+    remote_id: int,
+    item: Any,
+    reason: str,
+) -> bool:
+    result = quarantine_remote_event(channel, remote_id, item, reason)
+    if not result.get("ok"):
+        LOGGER.error(
+            "Unable to quarantine bot event %s after rejection: %s",
+            remote_id,
+            result.get("reason"),
+        )
+        return False
+    return True
 
 
 def sync_bot_events(*, limit: int = 100) -> dict[str, Any]:
@@ -192,47 +227,77 @@ def sync_bot_events(*, limit: int = 100) -> dict[str, Any]:
 
     imported = 0
     duplicates = 0
-    rejected = 0
-    last_contiguous = cursor
-    for item in sorted(events, key=lambda value: int((value or {}).get("id") or 0)):
-        if not isinstance(item, dict):
-            rejected += 1
+    quarantined = 0
+    protocol_errors = 0
+    last_processed = cursor
+    sortable = [item for item in events if isinstance(item, dict)]
+    if len(sortable) != len(events):
+        protocol_errors += len(events) - len(sortable)
+    for item in sorted(sortable, key=lambda value: int(value.get("id") or 0)):
+        try:
+            remote_id = int(item.get("id") or 0)
+        except (TypeError, ValueError, OverflowError):
+            protocol_errors += 1
             break
-        remote_id = int(item.get("id") or 0)
+        if remote_id <= 0:
+            protocol_errors += 1
+            break
+        if remote_id <= last_processed:
+            duplicates += 1
+            continue
         payload = item.get("payload")
-        if remote_id <= last_contiguous or not isinstance(payload, dict):
-            rejected += 1
-            break
+        if not isinstance(payload, dict):
+            if not _quarantine(channel, remote_id, item, "invalid_remote_payload"):
+                protocol_errors += 1
+                break
+            quarantined += 1
+            last_processed = remote_id
+            continue
         stored = record_external_event(
             payload,
             remote_event_id=remote_id,
             remote_channel=channel,
         )
         if not stored.get("ok"):
-            LOGGER.warning("Bot event %s rejected by local lifecycle: %s", remote_id, stored.get("reason"))
-            rejected += 1
-            break
+            reason = str(stored.get("reason") or "local_lifecycle_rejection")
+            LOGGER.warning("Bot event %s quarantined by local lifecycle: %s", remote_id, reason)
+            if not _quarantine(channel, remote_id, item, reason):
+                protocol_errors += 1
+                break
+            quarantined += 1
+            last_processed = remote_id
+            continue
         if stored.get("created"):
             imported += 1
         else:
             duplicates += 1
-        last_contiguous = remote_id
+        last_processed = remote_id
 
-    if last_contiguous > cursor and not save_cursor(channel, last_contiguous):
+    if last_processed > cursor and not save_cursor(channel, last_processed):
         return {
             "ok": False,
             "reason": "cursor_write_failed",
             "received": imported,
             "duplicates": duplicates,
-            "rejected": rejected,
+            "quarantined": quarantined,
+            "rejected": protocol_errors,
+            "cursor": cursor,
         }
+    ok = protocol_errors == 0
+    if not ok:
+        reason = "protocol_error"
+    elif quarantined:
+        reason = "completed_with_quarantine"
+    else:
+        reason = None
     return {
-        "ok": rejected == 0,
-        "reason": None if rejected == 0 else "event_rejected",
+        "ok": ok,
+        "reason": reason,
         "received": imported,
         "duplicates": duplicates,
-        "rejected": rejected,
-        "cursor": last_contiguous,
+        "quarantined": quarantined,
+        "rejected": protocol_errors,
+        "cursor": last_processed,
         "has_more": bool(body.get("has_more")) if isinstance(body, dict) else False,
     }
 
