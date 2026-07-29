@@ -20,3 +20,11 @@ def test_hardening_uses_psycopg_threaded_pool_and_serializes_initialization():
     assert "from psycopg2.pool import SimpleConnectionPool" not in source
     assert "with _RESOURCE_LOCK" in source
     assert "database._POOL_IMPLEMENTATION" in source
+    assert "OSOUL_DB_POOL_MIN" in source
+    assert "OSOUL_DB_POOL_MAX" in source
+    assert "pool.putconn(conn, close=closed)" in source
+    assert '"pool_type": "ThreadedConnectionPool"' in source
+
+
+def test_pool_defaults_are_sized_for_multiple_streamlit_sessions():
+    assert hardening._bounded_int("MISSING_POOL_SETTING", 10, 1, 50) == 10
