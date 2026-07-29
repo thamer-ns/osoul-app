@@ -36,7 +36,22 @@ def test_sync_channel_is_opaque_and_does_not_send_raw_tenant_ids(monkeypatch):
     assert "456" not in channel
 
 
-def test_sync_pulls_events_in_order_and_advances_only_contiguous_cursor(monkeypatch):
+def test_public_bot_url_requires_https_but_local_development_http_is_allowed(monkeypatch):
+    values = {
+        "SC_BOT_BASE_URL": "http://bot.example",
+        "OSOUL_ALLOW_INSECURE_BOT_HTTP": "0",
+    }
+    monkeypatch.setattr(bridge, "_secret", lambda name: values.get(name, ""))
+    assert bridge._base_url() == ""
+
+    values["SC_BOT_BASE_URL"] = "http://localhost:8000"
+    assert bridge._base_url() == "http://localhost:8000"
+
+    values["SC_BOT_BASE_URL"] = "https://bot.example"
+    assert bridge._base_url() == "https://bot.example"
+
+
+def test_sync_pulls_events_in_order_and_advances_cursor(monkeypatch):
     saved = []
     recorded = []
     events = [
@@ -66,13 +81,18 @@ def test_sync_pulls_events_in_order_and_advances_only_contiguous_cursor(monkeypa
     )
     monkeypatch.setattr(bridge, "_sync_channel", lambda: "a" * 64)
     monkeypatch.setattr(bridge, "load_cursor", lambda channel: 10)
-    monkeypatch.setattr(bridge, "save_cursor", lambda channel, cursor: saved.append((channel, cursor)) or True)
+    monkeypatch.setattr(
+        bridge,
+        "save_cursor",
+        lambda channel, cursor: saved.append((channel, cursor)) or True,
+    )
 
     def fake_record(payload, *, remote_event_id, remote_channel):
         recorded.append((payload["e"], remote_event_id, remote_channel))
         return {"ok": True, "created": True}
 
     monkeypatch.setattr(bridge, "record_external_event", fake_record)
+    monkeypatch.setattr(bridge, "quarantine_remote_event", lambda *args: {"ok": True})
 
     result = bridge.sync_bot_events(limit=100)
 
@@ -81,6 +101,7 @@ def test_sync_pulls_events_in_order_and_advances_only_contiguous_cursor(monkeypa
         "reason": None,
         "received": 2,
         "duplicates": 0,
+        "quarantined": 0,
         "rejected": 0,
         "cursor": 12,
         "has_more": False,
@@ -89,8 +110,9 @@ def test_sync_pulls_events_in_order_and_advances_only_contiguous_cursor(monkeypa
     assert saved == [("a" * 64, 12)]
 
 
-def test_sync_stops_before_advancing_past_a_rejected_event(monkeypatch):
+def test_rejected_event_is_quarantined_and_does_not_block_later_events(monkeypatch):
     saved = []
+    quarantined = []
 
     class _Requests:
         @staticmethod
@@ -100,6 +122,7 @@ def test_sync_stops_before_advancing_past_a_rejected_event(monkeypatch):
                     "events": [
                         {"id": 21, "payload": {"e": "NL"}},
                         {"id": 22, "payload": {"e": "T3"}},
+                        {"id": 23, "payload": {"e": "T1"}},
                     ],
                     "has_more": False,
                 }
@@ -110,17 +133,35 @@ def test_sync_stops_before_advancing_past_a_rejected_event(monkeypatch):
     monkeypatch.setattr(bridge, "_sync_headers", lambda: {"token": "configured"})
     monkeypatch.setattr(bridge, "_sync_channel", lambda: "b" * 64)
     monkeypatch.setattr(bridge, "load_cursor", lambda channel: 20)
-    monkeypatch.setattr(bridge, "save_cursor", lambda channel, cursor: saved.append(cursor) or True)
+    monkeypatch.setattr(
+        bridge,
+        "save_cursor",
+        lambda channel, cursor: saved.append(cursor) or True,
+    )
 
     def fake_record(payload, **kwargs):
-        return {"ok": payload["e"] != "T3", "created": payload["e"] == "NL", "reason": "invalid_lifecycle_transition"}
+        if payload["e"] == "T3":
+            return {
+                "ok": False,
+                "created": False,
+                "reason": "invalid_lifecycle_transition",
+            }
+        return {"ok": True, "created": True}
+
+    def fake_quarantine(channel, remote_id, item, reason):
+        quarantined.append((channel, remote_id, reason))
+        return {"ok": True, "created": True}
 
     monkeypatch.setattr(bridge, "record_external_event", fake_record)
+    monkeypatch.setattr(bridge, "quarantine_remote_event", fake_quarantine)
 
     result = bridge.sync_bot_events()
 
-    assert result["ok"] is False
-    assert result["received"] == 1
-    assert result["rejected"] == 1
-    assert result["cursor"] == 21
-    assert saved == [21]
+    assert result["ok"] is True
+    assert result["reason"] == "completed_with_quarantine"
+    assert result["received"] == 2
+    assert result["quarantined"] == 1
+    assert result["rejected"] == 0
+    assert result["cursor"] == 23
+    assert saved == [23]
+    assert quarantined == [("b" * 64, 22, "invalid_lifecycle_transition")]
