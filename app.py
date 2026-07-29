@@ -14,7 +14,10 @@ try:
 
     load_dotenv()
 except Exception:
-    logging.getLogger(__name__).debug("Best-effort operation failed", exc_info=True)
+    logging.getLogger(__name__).debug(
+        "Best-effort operation failed",
+        exc_info=True,
+    )
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
@@ -35,7 +38,9 @@ def _load_app_config() -> Tuple[str, str]:
 @st.cache_resource(show_spinner=False)
 def _init_db_once() -> tuple[bool, str]:
     try:
-        from database_pool_hardening_v6 import install_threadsafe_database_pool
+        from database_pool_hardening_v6 import (
+            install_threadsafe_database_pool,
+        )
 
         # Must run before init_db obtains the first process-global connection.
         install_threadsafe_database_pool()
@@ -49,7 +54,7 @@ def _init_db_once() -> tuple[bool, str]:
 
 
 def _apply_global_ui() -> None:
-    """Inject the visual theme, RTL shell, and final responsive density layer."""
+    """Inject the visual theme, RTL shell, and responsive density layer."""
     try:
         from styles import apply_custom_css
         from ui_polish import apply_ui_polish
@@ -66,7 +71,10 @@ def _render_authenticated_header() -> None:
     try:
         from components import render_app_header
 
-        render_app_header("أصولي", "منصة الذكاء الكمي وإدارة المحافظ")
+        render_app_header(
+            "أصولي",
+            "منصة الذكاء الكمي وإدارة المحافظ",
+        )
     except Exception:
         logger.exception("header rendering failed")
 
@@ -80,20 +88,28 @@ def _install_runtime_hardening(username: str) -> None:
         install_ai_learning_scope,
         register_ai_tenant_tables,
     )
+    from analysis_context_v7 import install_analysis_context
     from analysis_routes_v5 import install_analysis_routes
     from analytics_hardening import install_analytics_hardening
+    from chart_performance_v7 import install_chart_performance
     from financial_data_router_v5 import install_financial_data_router
     from market_data_hardening import install_market_data_hardening
     from market_data_router_v5 import install_market_data_router
+    from performance_runtime_v7 import install_performance_runtime
     from portfolio_metrics_v2 import install_portfolio_metrics_v2
     from tenant_scope import install_tenant_scope
 
+    # Tenant scope comes first. Provider fusion is then installed once, followed
+    # by the bounded cache/context layer before any analysis view is imported.
     register_ai_tenant_tables()
     install_tenant_scope(username)
     install_market_data_hardening()
     install_market_data_router()
     install_financial_data_router()
     install_reporting_policy()
+    install_performance_runtime()
+    install_analysis_context()
+    install_chart_performance()
     install_external_signal_journal()
     install_ai_learning_scope()
     install_analytics_hardening()
@@ -130,12 +146,18 @@ def main() -> None:
 
     ok, _ = _init_db_once()
     if not ok:
-        st.error("تعذر الاتصال بقاعدة البيانات. راجع DATABASE_URL في Secrets.")
+        st.error(
+            "تعذر الاتصال بقاعدة البيانات. راجع DATABASE_URL في Secrets."
+        )
         st.stop()
 
     try:
-        from database_security_hardening import install_database_security_hardening
-        from database_write_hardening import install_database_write_hardening
+        from database_security_hardening import (
+            install_database_security_hardening,
+        )
+        from database_write_hardening import (
+            install_database_write_hardening,
+        )
 
         install_database_security_hardening()
         install_database_write_hardening()
@@ -161,8 +183,15 @@ def main() -> None:
     username = str(st.session_state.get("username") or "").strip()
     if not username or not _initialize_user_space(username):
         st.error("تعذر تهيئة مساحة بيانات المستخدم بأمان.")
-        st.caption("تم منع فتح البيانات احترازيًا. أعد المحاولة بعد تحديث التطبيق.")
-        if st.button("إعادة المحاولة", type="primary", use_container_width=True):
+        st.caption(
+            "تم منع فتح البيانات احترازيًا. "
+            "أعد المحاولة بعد تحديث التطبيق."
+        )
+        if st.button(
+            "إعادة المحاولة",
+            type="primary",
+            use_container_width=True,
+        ):
             st.session_state.pop("_tenant_init_failed", None)
             st.rerun()
         st.stop()
@@ -171,7 +200,8 @@ def main() -> None:
 
     if st.session_state.get("_tenant_unclaimed_legacy"):
         st.warning(
-            "توجد بيانات قديمة غير مرتبطة بمستخدم، ولم تُنسب تلقائيًا لأن قاعدة البيانات تحتوي أكثر من حساب. "
+            "توجد بيانات قديمة غير مرتبطة بمستخدم، ولم تُنسب تلقائيًا "
+            "لأن قاعدة البيانات تحتوي أكثر من حساب. "
             "راجع ترحيل البيانات قبل الاعتماد عليها."
         )
 
