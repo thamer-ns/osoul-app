@@ -1,13 +1,5 @@
 # ai_engine_core/__init__.py
-
-"""Lightweight package exports with lazy imports.
-
-The public report path installs the full-timeframe routing policy, generates the
-raw report once, then passes it through decision policy v5.  Every presentation
-therefore receives the same close-confirmed SC-V90 patterns, independent-school
-qualification, plan geometry, provider lineage and external lifecycle context.
-"""
-
+"""Lightweight package exports with one cached analysis context per report."""
 from .config import AI_ENGINE_NAME, AI_ENGINE_OK, AI_ENGINE_VERSION
 
 __all__ = [
@@ -49,19 +41,53 @@ def _report_call_context(args, kwargs) -> tuple[str, str]:
 
 
 def generate_ai_report(*args, **kwargs):
-    """Generate once, then enforce the final v5 decision for every consumer."""
+    """Build market data once, reuse it, then enforce the final v5 decision."""
     _lazy_attr(".reporting_policy_v5", "install_reporting_policy")()
-    raw_report = _lazy_attr(".reporting", "generate_ai_report")(*args, **kwargs)
+    from analysis_context_v7 import generate_with_context
+
     symbol, timeframe = _report_call_context(args, kwargs)
-    return _lazy_attr(".decision_policy_v5", "enrich_report")(
+    refresh = bool(kwargs.pop("refresh", False))
+
+    def raw_generator(resolved_symbol: str, *, timeframe: str):
+        return _lazy_attr(".reporting", "generate_ai_report")(
+            resolved_symbol,
+            timeframe=timeframe,
+        )
+
+    raw_report, _context = generate_with_context(
+        raw_generator,
+        symbol,
+        timeframe,
+        refresh=refresh,
+    )
+    enriched = _lazy_attr(".decision_policy_v5", "enrich_report")(
         raw_report,
         symbol=symbol,
         timeframe=timeframe,
     )
+    if isinstance(enriched, dict) and isinstance(raw_report, dict):
+        enriched.setdefault("performance", raw_report.get("performance") or {})
+        raw_meta = raw_report.get("engine_meta")
+        if isinstance(raw_meta, dict):
+            meta = enriched.get("engine_meta")
+            if not isinstance(meta, dict):
+                meta = {}
+            meta.update(
+                {
+                    key: value
+                    for key, value in raw_meta.items()
+                    if key in {"performance", "analysis_context"}
+                }
+            )
+            enriched["engine_meta"] = meta
+    return enriched
 
 
 def calculate_portfolio_risk_score(*args, **kwargs):
-    return _lazy_attr(".portfolio", "calculate_portfolio_risk_score")(*args, **kwargs)
+    return _lazy_attr(".portfolio", "calculate_portfolio_risk_score")(
+        *args,
+        **kwargs,
+    )
 
 
 def run_stress_test(*args, **kwargs):
@@ -69,7 +95,10 @@ def run_stress_test(*args, **kwargs):
 
 
 def generate_rebalancing_suggestions(*args, **kwargs):
-    return _lazy_attr(".portfolio", "generate_rebalancing_suggestions")(*args, **kwargs)
+    return _lazy_attr(
+        ".portfolio",
+        "generate_rebalancing_suggestions",
+    )(*args, **kwargs)
 
 
 def save_user_rule(*args, **kwargs):
@@ -90,11 +119,17 @@ def log_ai_signal(*args, **kwargs):
 
 
 def update_ai_outcome(*args, **kwargs):
-    return _lazy_attr(".logging_learning", "update_ai_outcome")(*args, **kwargs)
+    return _lazy_attr(".logging_learning", "update_ai_outcome")(
+        *args,
+        **kwargs,
+    )
 
 
 def learn_from_history(*args, **kwargs):
-    return _lazy_attr(".logging_learning", "learn_from_history")(*args, **kwargs)
+    return _lazy_attr(".logging_learning", "learn_from_history")(
+        *args,
+        **kwargs,
+    )
 
 
 def _get_weight(*args, **kwargs):
@@ -124,10 +159,14 @@ def self_test() -> dict:
         from .db import _safe_import_db
 
         execute_query, fetch_table = _safe_import_db()
-        report["checks"]["db_available"] = bool(execute_query and fetch_table)
+        report["checks"]["db_available"] = bool(
+            execute_query and fetch_table
+        )
     except Exception:
         report["checks"]["db_available"] = False
-        report["checks"]["db_error"] = "database capability unavailable"
+        report["checks"]["db_error"] = (
+            "database capability unavailable"
+        )
 
     try:
         from market_data import get_chart_history  # noqa: F401
@@ -135,21 +174,32 @@ def self_test() -> dict:
         report["checks"]["market_data_ok"] = True
     except Exception:
         report["checks"]["market_data_ok"] = False
-        report["checks"]["market_data_error"] = "market data capability unavailable"
+        report["checks"]["market_data_error"] = (
+            "market data capability unavailable"
+        )
         report["ok"] = False
         report["reason"] = "market_data missing get_chart_history"
 
     try:
-        from financial_analysis import get_advanced_fundamental_ratios  # noqa: F401
+        from financial_analysis import (  # noqa: F401
+            get_advanced_fundamental_ratios,
+        )
 
         report["checks"]["fundamental_ok"] = True
     except Exception:
         report["checks"]["fundamental_ok"] = False
-        report["checks"]["fundamental_error"] = "fundamental capability unavailable"
+        report["checks"]["fundamental_error"] = (
+            "fundamental capability unavailable"
+        )
         if report["reason"] is None:
-            report["reason"] = "financial_analysis missing get_advanced_fundamental_ratios"
+            report["reason"] = (
+                "financial_analysis missing "
+                "get_advanced_fundamental_ratios"
+            )
 
-    report["checks"]["has_generate_ai_report"] = callable(globals().get("generate_ai_report"))
+    report["checks"]["has_generate_ai_report"] = callable(
+        globals().get("generate_ai_report")
+    )
     report["checks"]["has_decision_engine"] = callable(
         _lazy_attr(".decision_policy_v5", "enrich_report")
     )
@@ -159,6 +209,7 @@ def self_test() -> dict:
     report["checks"]["full_timeframe_routing"] = callable(
         _lazy_attr(".reporting_policy_v5", "timeframe_to_interval")
     )
+    report["checks"]["analysis_context_v7"] = True
     return report
 
 
