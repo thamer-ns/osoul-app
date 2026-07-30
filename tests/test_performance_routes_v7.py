@@ -23,7 +23,8 @@ def test_ai_reports_use_one_analysis_context_for_real_generator():
     assert "report_generator" in source
     assert "startswith(" in source
     assert "ai_engine_core" in source
-    assert "trigger market I/O" in source
+    assert "Build market data once" in source
+    assert "decision_policy_v6" in source
 
 
 def test_deep_financial_dashboard_is_opt_in_fragment():
