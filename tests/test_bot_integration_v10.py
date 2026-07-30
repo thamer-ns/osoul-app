@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import inspect
-from types import SimpleNamespace
 
 import analysis_routes_v5 as routes
 import bot_contract_runtime_v10 as contract_runtime
