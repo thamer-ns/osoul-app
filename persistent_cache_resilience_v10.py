@@ -1,6 +1,6 @@
 """Fail-open installer for the optional persistent public-market cache.
 
-The process cache and bounded providers are the correctness path.  PostgreSQL or
+The process cache and bounded providers are the correctness path. PostgreSQL or
 SQLite persistence only accelerates cold starts, so a migration/permission error
 must never prevent an authenticated Osoli session from opening.
 """
@@ -64,7 +64,9 @@ def install_persistent_cache_resilience_v10() -> None:
     with _LOCK:
         if _INSTALLED:
             return
-        cache.install_persistent_market_cache = _guarded_install
+        # Deliberate runtime patch: sc_runtime_v8 imports this symbol after the
+        # guard is installed, so all later cache attempts inherit fail-open behavior.
+        cache.install_persistent_market_cache = _guarded_install  # type: ignore[assignment]
         _INSTALLED = True
 
 
