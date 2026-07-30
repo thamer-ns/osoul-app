@@ -5,8 +5,24 @@ import logging
 from typing import Any
 
 from ai_engine_core import bot_bridge_v5 as bridge
+from bot_contract_runtime_v10 import EXPECTED_CONTRACT
 
 LOGGER = logging.getLogger(__name__)
+_FRAME_ALIASES = {
+    "60m": "1h",
+    "60min": "1h",
+    "240m": "4h",
+    "1wk": "1w",
+    "week": "1w",
+    "weekly": "1w",
+    "month": "1mo",
+    "monthly": "1mo",
+}
+
+
+def _canonical_frame(value: str) -> str:
+    raw = str(value or "1d").strip().lower()
+    return _FRAME_ALIASES.get(raw, raw)
 
 
 def request_bot_analysis(symbol: str, timeframe: str) -> dict[str, Any]:
@@ -14,25 +30,44 @@ def request_bot_analysis(symbol: str, timeframe: str) -> dict[str, Any]:
     headers = bridge._sync_headers()  # noqa: SLF001
     if not base or not headers or bridge.requests is None:
         return {"ok": False, "reason": "sync_not_configured"}
+    requested_frame = _canonical_frame(timeframe)
     try:
         response = bridge.requests.post(
             f"{base}/integrations/osoli/analysis",
             headers=headers,
             json={
                 "symbol": str(symbol or "").strip().upper(),
-                "frame": str(timeframe or "1d").strip().lower(),
+                "frame": requested_frame,
             },
-            timeout=8.5,
+            timeout=(1.5, 9.0),
         )
         if response.status_code != 200:
-            return {
-                "ok": False,
-                "reason": f"http_{response.status_code}",
-            }
+            reason = {
+                503: "market_data_unavailable",
+                504: "analysis_deadline_exceeded",
+            }.get(response.status_code, f"http_{response.status_code}")
+            return {"ok": False, "reason": reason}
         payload = response.json()
         if not isinstance(payload, dict) or not payload.get("ok"):
             return {"ok": False, "reason": "invalid_response"}
+        if str(payload.get("contract") or "") != EXPECTED_CONTRACT:
+            return {"ok": False, "reason": "contract_mismatch"}
+        if payload.get("tenant_ids_received") is not False:
+            return {"ok": False, "reason": "unsafe_contract_flags"}
+        frame = payload.get("frame")
+        if not isinstance(frame, dict):
+            return {"ok": False, "reason": "invalid_frame_payload"}
+        if _canonical_frame(str(frame.get("frame_key") or "")) != requested_frame:
+            return {"ok": False, "reason": "frame_mismatch"}
+        runtime = payload.get("runtime")
+        if not isinstance(runtime, dict) or runtime.get("installed") is not True:
+            return {"ok": False, "reason": "runtime_not_installed"}
+        if str(runtime.get("feature_version") or "") != "55.0":
+            return {"ok": False, "reason": "feature_version_mismatch"}
         return payload
+    except ValueError:
+        LOGGER.info("Remote bot analysis returned invalid JSON", exc_info=True)
+        return {"ok": False, "reason": "invalid_response"}
     except Exception:
         LOGGER.info("Remote bot analysis failed", exc_info=True)
         return {"ok": False, "reason": "unreachable"}
