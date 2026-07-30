@@ -10,16 +10,11 @@ def install_analysis_routes() -> None:
         return
 
     # Install before importing the analysis package. Several views import market
-    # and bot functions directly, so the bounded providers and report hook must
-    # already be active when those modules bind their globals.
-    from bounded_twelvedata_v9 import install_bounded_twelvedata_v9
-    from sc_runtime_v8 import install_sc_runtime_v8
+    # and bot functions directly, so the bounded providers, background persistence
+    # and SC-V91 gate must be active when those modules bind their globals.
+    from sc_runtime_v9 import install_sc_runtime_v9
 
-    # Twelve Data's legacy helper can retry SDK + HTTP paths for much longer than
-    # an interactive request. Replace only its adapters with one bounded HTTP
-    # request before V8 captures the provider adapter table.
-    install_bounded_twelvedata_v9()
-    install_sc_runtime_v8()
+    install_sc_runtime_v9()
 
     import views
     from global_bot_sync_v8 import render_global_bot_sync
