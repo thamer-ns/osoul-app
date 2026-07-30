@@ -1,4 +1,4 @@
-"""SC-V90/SC-FXM and Telegram market-bot integration workspace."""
+"""SC-V92.5/SC-FXM-V16 and Telegram market-bot integration workspace."""
 from __future__ import annotations
 
 import json
@@ -33,6 +33,7 @@ _EVENT_LABELS = {
     "SL": "وقف مؤكد بالإغلاق",
     "C": "إلغاء الخطة",
     "FO": "كسر وهمي مؤكد",
+    "AMB": "نتيجة ملتبسة داخل الشمعة",
 }
 _STATUS_LABELS = {
     "ACTIVE": "نشطة",
@@ -42,6 +43,7 @@ _STATUS_LABELS = {
     "STOPPED": "توقفت",
     "CANCELLED": "ملغاة",
     "FAKEOUT": "كسر وهمي",
+    "AMBIGUOUS": "ملتبسة",
 }
 _REASON_LABELS = {
     "duplicate": "الحدث موجود مسبقًا ولم يُنشأ سجل جديد.",
@@ -121,6 +123,9 @@ def _render_bridge_status(symbol: str, interval: str) -> None:
         "أصولي لا يخزن Telegram Bot Token. في وضع المزامنة يُستخدم Channel مشفر مشتق من المحفظة، "
         "ولا تُرسل أرقام المستخدم أو المحفظة إلى البوت."
     )
+    st.caption(
+        "السعر المباشر سياق لحظي فقط؛ تأكيد الاختراق والوقف ودورة الخطة يبقى من إغلاق شمعة مكتملة."
+    )
     _automatic_sync_fragment()
 
 
@@ -154,7 +159,7 @@ def _validate_payload(text: str, symbol: str, interval: str) -> dict[str, Any] |
         parsed = parse_compass_payload(text)
     except ValueError:
         LOGGER.info("Invalid integration payload rejected", exc_info=True)
-        st.error("JSON غير صالح أو لا يطابق عقد SC-V90/SC-FXM الموحد.")
+        st.error("JSON غير صالح أو لا يطابق عقد SC-V92.5/SC-FXM-V16 الموحد.")
         return None
     report = _generate_ai_report_flex(symbol, timeframe=interval)
     comparison = compare_compass_with_report(parsed, report if isinstance(report, dict) else {})
@@ -166,14 +171,14 @@ def _validate_payload(text: str, symbol: str, interval: str) -> dict[str, Any] |
 def _render_ingest(symbol: str, interval: str) -> None:
     st.markdown("#### إدخال حدث من TradingView")
     st.caption(
-        "الصق نص JSON الناتج من alert() في SC-V90-I أو SC-V90-D أو SC-FXM-V14. "
+        "الصق نص JSON الناتج من alert() في SC-V92-I أو SC-V92-D أو SC-FXM-V16. "
         "لا تلصق رابط Webhook أو أي Token."
     )
     text = st.text_area(
         "JSON الحدث",
         height=190,
         key=f"external_payload:{_sym_key(symbol)}:{interval}",
-        placeholder='{"v":1,"s":"SC-V90-D","e":"NL",...}',
+        placeholder='{"v":1,"s":"SC-V92-D","e":"NL",...}',
     )
     c1, c2, c3 = st.columns(3)
     validate = c1.button("تدقيق ومقارنة", type="primary", use_container_width=True, key=f"validate_external:{symbol}:{interval}")
@@ -246,8 +251,8 @@ def _render_journal(symbol: str, interval: str) -> None:
 def render_integration_workspace(symbol: str, interval: str = "1d") -> None:
     st.subheader("🔗 المؤشر والبوت داخل أصولي")
     st.caption(
-        "تكامل مرتب زمنيًا لدورة SC-V90 وSC-FXM مع إرسال اختياري ومزامنة تلقائية لتحديثات البوت. "
-        "لا يوجد تنفيذ أوامر تداول."
+        "تكامل مرتب زمنيًا لدورة SC-V92.5 وSC-FXM-V16 مع إرسال اختياري ومزامنة تلقائية "
+        "لتحديثات البوت. لا يوجد تنفيذ أوامر تداول."
     )
     _render_bridge_status(symbol, interval)
     tab1, tab2 = st.tabs(["إدخال ومقارنة", "سجل الأحداث"])
