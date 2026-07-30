@@ -38,8 +38,14 @@ def install_analysis_routes() -> None:
     install_bot_contract_runtime_v10()
 
     import views
+    from ai_engine_core import bot_bridge_v5 as bridge
     from global_bot_sync_v8 import render_global_bot_sync
     from views import analysis
+    from views.analysis import integration_v5 as integration_view
+
+    # integration_v5 imports bot_health directly. Rebind it after installing the
+    # V55 probe so a previously imported view cannot retain the obsolete V54 check.
+    integration_view.bot_health = bridge.bot_health
 
     original_router = views.router
     if not getattr(original_router, "_osoli_global_bot_sync_v8", False):
