@@ -22,6 +22,32 @@ def _bounded_int(name: str, default: int, minimum: int, maximum: int) -> int:
     return max(minimum, min(maximum, value))
 
 
+def _prepare_postgres_connection(conn: Any) -> Any:
+    """Return a clean read-write connection before application code uses it.
+
+    Supavisor/pgbouncer sessions can retain transaction characteristics from a
+    previous borrower or from connection-string options.  A pooled connection
+    that starts its next transaction as read-only makes even idempotent schema
+    checks fail with ``cannot execute CREATE TABLE in a read-only transaction``.
+    Roll back any leftover transaction and make Psycopg start every subsequent
+    transaction explicitly as READ WRITE.
+    """
+    if not conn or bool(getattr(conn, "closed", 0)):
+        raise RuntimeError("PostgreSQL pool returned a closed connection")
+
+    # A connection may be returned while PostgreSQL still considers it inside an
+    # aborted/read-only transaction.  Reset that state before changing defaults.
+    conn.rollback()
+
+    set_session = getattr(conn, "set_session", None)
+    if callable(set_session):
+        set_session(readonly=False, autocommit=False)
+    else:  # pragma: no cover - compatibility with simple test/dummy drivers
+        setattr(conn, "readonly", False)
+        setattr(conn, "autocommit", False)
+    return conn
+
+
 def install_threadsafe_database_pool() -> None:
     global _INSTALLED, _POOL_MIN, _POOL_MAX
     if _INSTALLED:
@@ -72,20 +98,47 @@ def install_threadsafe_database_pool() -> None:
             with _RESOURCE_LOCK:
                 return original_pool_factory(*args, **kwargs)
 
-        def get_connection_threadsafe(*args: Any, **kwargs: Any):
-            conn, kind = original_get_connection(*args, **kwargs)
-            if kind != "postgres" or not getattr(conn, "closed", 0):
-                return conn, kind
+        def _discard(conn: Any) -> None:
             pool = get_connection_pool_threadsafe()
             if pool is not None:
                 try:
                     pool.putconn(conn, close=True)
+                    return
                 except Exception:
-                    LOGGER.warning("Unable to discard closed pooled connection", exc_info=True)
-            conn, kind = original_get_connection(*args, **kwargs)
-            if kind == "postgres" and getattr(conn, "closed", 0):
-                raise RuntimeError("PostgreSQL pool returned a closed connection")
-            return conn, kind
+                    LOGGER.warning(
+                        "Unable to discard invalid pooled connection",
+                        exc_info=True,
+                    )
+            try:
+                conn.close()
+            except Exception:
+                LOGGER.debug("Unable to close invalid PostgreSQL connection", exc_info=True)
+
+        def get_connection_threadsafe(*args: Any, **kwargs: Any):
+            last_error: Exception | None = None
+            for _attempt in range(2):
+                conn, kind = original_get_connection(*args, **kwargs)
+                if kind != "postgres":
+                    return conn, kind
+                if bool(getattr(conn, "closed", 0)):
+                    last_error = RuntimeError(
+                        "PostgreSQL pool returned a closed connection"
+                    )
+                    _discard(conn)
+                    continue
+                try:
+                    return _prepare_postgres_connection(conn), kind
+                except Exception as exc:
+                    last_error = exc
+                    LOGGER.warning(
+                        "Unable to reset pooled PostgreSQL connection to read-write; "
+                        "discarding it",
+                        exc_info=True,
+                    )
+                    _discard(conn)
+            raise RuntimeError(
+                "PostgreSQL pool could not provide a clean read-write connection"
+            ) from last_error
 
         def put_connection_threadsafe(conn: Any, kind: str):
             if not conn:
@@ -122,6 +175,7 @@ def install_threadsafe_database_pool() -> None:
                     "pool_type": "ThreadedConnectionPool",
                     "pool_min": _POOL_MIN,
                     "pool_max": _POOL_MAX,
+                    "pool_checkout_read_write_reset": True,
                 }
             )
             return result
@@ -132,6 +186,7 @@ def install_threadsafe_database_pool() -> None:
         database.db_healthcheck = db_healthcheck_threadsafe
 
         if callable(original_engine_factory):
+
             def get_engine_threadsafe(*args: Any, **kwargs: Any):
                 with _RESOURCE_LOCK:
                     return original_engine_factory(*args, **kwargs)
@@ -141,6 +196,7 @@ def install_threadsafe_database_pool() -> None:
         database._POOL_IMPLEMENTATION = "ThreadedConnectionPool"  # noqa: SLF001
         database._POOL_MIN_CONFIGURED = _POOL_MIN  # noqa: SLF001
         database._POOL_MAX_CONFIGURED = _POOL_MAX  # noqa: SLF001
+        database._POOL_READ_WRITE_RESET = True  # noqa: SLF001
         _INSTALLED = True
 
 
@@ -154,6 +210,9 @@ def pool_hardening_status() -> dict[str, Any]:
             "factory": getattr(getattr(database, "SimpleConnectionPool", None), "__name__", None),
             "minconn": getattr(database, "_POOL_MIN_CONFIGURED", _POOL_MIN),
             "maxconn": getattr(database, "_POOL_MAX_CONFIGURED", _POOL_MAX),
+            "checkout_read_write_reset": bool(
+                getattr(database, "_POOL_READ_WRITE_RESET", False)
+            ),
         }
     except Exception:
         return {
@@ -162,7 +221,12 @@ def pool_hardening_status() -> dict[str, Any]:
             "factory": None,
             "minconn": None,
             "maxconn": None,
+            "checkout_read_write_reset": False,
         }
 
 
-__all__ = ["install_threadsafe_database_pool", "pool_hardening_status"]
+__all__ = [
+    "_prepare_postgres_connection",
+    "install_threadsafe_database_pool",
+    "pool_hardening_status",
+]
