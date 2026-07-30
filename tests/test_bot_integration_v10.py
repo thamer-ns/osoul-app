@@ -25,6 +25,38 @@ def test_optional_persistent_cache_failure_never_blocks_runtime(monkeypatch):
     assert status["fail_open"] is True
 
 
+def test_unavailable_cache_short_circuits_all_database_operations(monkeypatch):
+    calls: list[str] = []
+
+    def fail_install() -> None:
+        raise PermissionError("optional cache unavailable")
+
+    def touched(*args, **kwargs):
+        _ = args, kwargs
+        calls.append("called")
+        raise AssertionError("persistent operation must be short-circuited")
+
+    monkeypatch.setattr(cache_resilience, "_ORIGINAL_INSTALL", fail_install)
+    monkeypatch.setattr(cache_resilience, "_ORIGINAL_SAVE_HISTORY", touched)
+    monkeypatch.setattr(cache_resilience, "_ORIGINAL_LOAD_HISTORY", touched)
+    monkeypatch.setattr(cache_resilience, "_ORIGINAL_SAVE_QUOTE", touched)
+    monkeypatch.setattr(cache_resilience, "_ORIGINAL_LOAD_QUOTE", touched)
+    monkeypatch.setattr(cache_resilience, "_ORIGINAL_PRUNE", touched)
+    monkeypatch.setattr(cache_resilience, "_AVAILABLE", None)
+    monkeypatch.setattr(cache_resilience, "_LAST_ERROR", "")
+    monkeypatch.setattr(cache_resilience, "_NEXT_RETRY", 0.0)
+
+    assert cache_resilience._safe_save_history() is False
+    assert cache_resilience._safe_load_history() is None
+    assert cache_resilience._safe_save_quote() is False
+    assert cache_resilience._safe_load_quote() is None
+    cache_resilience._safe_prune()
+
+    assert calls == []
+    status = cache_resilience.runtime_status()
+    assert status["short_circuit_unavailable_operations"] is True
+
+
 def test_cache_resilience_installs_before_sc_runtime_and_contract_after():
     source = inspect.getsource(routes)
 
