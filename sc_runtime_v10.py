@@ -7,7 +7,10 @@ import threading
 import time
 from typing import Any
 
-from ai_engine_core.sc_feature_pack_v925 import SC_FEATURE_VERSION, build_sc_feature_pack
+from ai_engine_core.sc_feature_pack_v925 import (
+    SC_FEATURE_VERSION,
+    build_sc_feature_pack,
+)
 from sc_runtime_v9 import install_sc_runtime_v9
 from sc_runtime_v9 import runtime_status as _runtime_status_v9
 
@@ -18,27 +21,86 @@ _INSTALLED = False
 def _asset_context(symbol: str) -> tuple[str, str]:
     raw = str(symbol or "").strip().upper()
     compact = raw.replace("/", "").replace("-", "")
-    if raw.endswith(".SR") or raw.isdigit() or raw in {"TASI", "^TASI", "^TASI.SR"}:
+    if raw.endswith(".SR") or raw.isdigit() or raw in {
+        "TASI",
+        "^TASI",
+        "^TASI.SR",
+    }:
         return ("index", "SAUDI") if "TASI" in raw else ("stock", "SAUDI")
     if raw.endswith("=F"):
         return "future", "GLOBAL"
     if raw.startswith("^"):
         return "index", "GLOBAL"
-    if re.fullmatch(r"(BTC|ETH|SOL|XRP|BNB|ADA|DOGE|AVAX|DOT|LINK)(USD|USDT)", compact):
+    if re.fullmatch(
+        r"(BTC|ETH|SOL|XRP|BNB|ADA|DOGE|AVAX|DOT|LINK)(USD|USDT)",
+        compact,
+    ):
         return "crypto", "CRYPTO"
-    currencies = {"USD", "EUR", "GBP", "JPY", "CHF", "AUD", "CAD", "NZD", "SAR", "CNY", "HKD"}
-    if len(compact) == 6 and compact[:3] in currencies and compact[3:] in currencies:
+    currencies = {
+        "USD",
+        "EUR",
+        "GBP",
+        "JPY",
+        "CHF",
+        "AUD",
+        "CAD",
+        "NZD",
+        "SAR",
+        "CNY",
+        "HKD",
+    }
+    if (
+        len(compact) == 6
+        and compact[:3] in currencies
+        and compact[3:] in currencies
+    ):
         return "forex", "FOREX"
     return "stock", "US"
+
+
+def _install_compass_sources() -> None:
+    from ai_engine_core import compass_contract as contract
+
+    contract.CURRENT_STOCK_SOURCES = frozenset({"SC-V92-I", "SC-V92-D"})
+    contract.LEGACY_STOCK_SOURCES = frozenset(
+        {"SC-V90-I", "SC-V90-D", "SC-V84-I", "SC-V84-D"}
+    )
+    contract.CURRENT_OTHER_SOURCES = frozenset({"SC-FXM-V16"})
+    contract.LEGACY_OTHER_SOURCES = frozenset(
+        {"SC-FXM-V14", "SC-FXM-V8"}
+    )
+    contract.INTRADAY_STOCK_SOURCES = frozenset(
+        {"SC-V92-I", "SC-V90-I", "SC-V84-I"}
+    )
+    contract.DAILY_STOCK_SOURCES = frozenset(
+        {"SC-V92-D", "SC-V90-D", "SC-V84-D"}
+    )
+    contract.OTHER_SOURCES = (
+        contract.CURRENT_OTHER_SOURCES | contract.LEGACY_OTHER_SOURCES
+    )
+    contract.STRICT_SOURCES = (
+        contract.CURRENT_STOCK_SOURCES
+        | contract.LEGACY_STOCK_SOURCES
+        | contract.CURRENT_OTHER_SOURCES
+        | contract.LEGACY_OTHER_SOURCES
+    )
 
 
 def _install_feature_contract() -> None:
     import sc_runtime_v8 as runtime_v8
 
-    def append_feature_pack(report: dict[str, Any], context: Any) -> dict[str, Any]:
+    def append_feature_pack(
+        report: dict[str, Any],
+        context: Any,
+    ) -> dict[str, Any]:
         started = time.perf_counter()
         asset_class, market = _asset_context(str(context.symbol))
-        pack = build_sc_feature_pack(context.closed_history, context.interval, asset_class, market)
+        pack = build_sc_feature_pack(
+            context.closed_history,
+            context.interval,
+            asset_class,
+            market,
+        )
         report["sc_feature_pack"] = pack
         engine_meta = report.get("engine_meta")
         if not isinstance(engine_meta, dict):
@@ -57,23 +119,49 @@ def _install_feature_contract() -> None:
             features = {}
         if pack.get("ok"):
             sr = pack.get("sr") if isinstance(pack.get("sr"), dict) else {}
-            support = sr.get("support") if isinstance(sr.get("support"), dict) else {}
-            resistance = sr.get("resistance") if isinstance(sr.get("resistance"), dict) else {}
-            risk_plan = pack.get("risk_plan") if isinstance(pack.get("risk_plan"), dict) else {}
-            veto = pack.get("opposition_veto") if isinstance(pack.get("opposition_veto"), dict) else {}
+            support = (
+                sr.get("support")
+                if isinstance(sr.get("support"), dict)
+                else {}
+            )
+            resistance = (
+                sr.get("resistance")
+                if isinstance(sr.get("resistance"), dict)
+                else {}
+            )
+            risk_plan = (
+                pack.get("risk_plan")
+                if isinstance(pack.get("risk_plan"), dict)
+                else {}
+            )
+            veto = (
+                pack.get("opposition_veto")
+                if isinstance(pack.get("opposition_veto"), dict)
+                else {}
+            )
             features.update(
                 {
                     "sc_direction": int(pack.get("direction") or 0),
-                    "sc_event_direction": int(pack.get("event_direction") or 0),
+                    "sc_event_direction": int(
+                        pack.get("event_direction") or 0
+                    ),
                     "sc_confidence": int(pack.get("confidence") or 0),
                     "sc_qualified": int(bool(pack.get("qualified"))),
                     "sc_support_cluster": support.get("level"),
-                    "sc_support_touches": int(support.get("touches") or 0),
+                    "sc_support_touches": int(
+                        support.get("touches") or 0
+                    ),
                     "sc_resistance_cluster": resistance.get("level"),
-                    "sc_resistance_touches": int(resistance.get("touches") or 0),
+                    "sc_resistance_touches": int(
+                        resistance.get("touches") or 0
+                    ),
                     "sc_opposition_veto": int(bool(veto.get("blocked"))),
-                    "sc_target_count": int(risk_plan.get("target_count") or 0),
-                    "sc_short_plan": int(bool(risk_plan.get("short_plan"))),
+                    "sc_target_count": int(
+                        risk_plan.get("target_count") or 0
+                    ),
+                    "sc_short_plan": int(
+                        bool(risk_plan.get("short_plan"))
+                    ),
                 }
             )
         report["features"] = features
@@ -83,7 +171,9 @@ def _install_feature_contract() -> None:
             "direction": int(pack.get("direction") or 0),
             "event": pack.get("event_code"),
             "confidence": int(pack.get("confidence") or 0),
-            "opposition_veto": bool((pack.get("opposition_veto") or {}).get("blocked")),
+            "opposition_veto": bool(
+                (pack.get("opposition_veto") or {}).get("blocked")
+            ),
             "priority": list(pack.get("priority_order") or []),
         }
         try:
@@ -118,6 +208,11 @@ def runtime_status() -> dict[str, Any]:
             "cluster_opposition_veto": True,
             "close_confirmed_role_reversal": True,
             "independent_target_pivots": True,
+            "current_indicator_sources": [
+                "SC-V92-I",
+                "SC-V92-D",
+                "SC-FXM-V16",
+            ],
         }
     )
     return status
@@ -131,6 +226,7 @@ def install_sc_runtime_v10() -> None:
         if _INSTALLED:
             return
         install_sc_runtime_v9()
+        _install_compass_sources()
         _install_feature_contract()
         _INSTALLED = True
 
