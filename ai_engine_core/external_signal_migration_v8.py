@@ -3,8 +3,8 @@
 The V7 tables became authoritative for lifecycle reads. Existing V6 events must
 therefore be copied before the next T1/SL/C event is validated, otherwise an
 active plan looks as though its initial NL/NS never existed. This module runs
-only for the authenticated tenant, preserves event identities and rebuilds state
-from the newest V7 row after the copy.
+only for the authenticated tenant, preserves event identities, recomputes V7
+plan identities, and rebuilds state from the newest V7 row after the copy.
 """
 from __future__ import annotations
 
@@ -91,6 +91,36 @@ def _marker_exists(
     return cursor.fetchone() is not None
 
 
+def _direction_identity(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if text in {"1", "buy", "long", "bull", "bullish"}:
+        return "buy"
+    if text in {"-1", "sell", "short", "bear", "bearish"}:
+        return "sell"
+    return text or "neutral"
+
+
+def _v7_plan_key(item: dict[str, Any], symbol: str, timeframe: str) -> str:
+    """Rebuild plan identity using V7's canonical numeric formatting.
+
+    V6 used ``str(float)`` while V7 uses ``.12g``. Preserving a V6 hash would
+    reject a later T1/SL/C for integer-valued levels such as ``100.0`` because
+    V7 correctly identifies the same value as ``100``.
+    """
+    targets = [item.get("target1"), item.get("target2"), item.get("target3")]
+    return journal._plan_key(  # noqa: SLF001
+        {
+            "source": str(item.get("source") or ""),
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "direction": _direction_identity(item.get("direction")),
+            "entry": item.get("entry_price"),
+            "stop": item.get("stop_price"),
+            "targets": targets,
+        }
+    )
+
+
 def migrate_current_tenant_v6_to_v7() -> dict[str, Any]:
     """Copy legacy rows and rebuild V7 state for the authenticated tenant."""
     tenant = current_tenant()
@@ -165,6 +195,7 @@ def migrate_current_tenant_v6_to_v7() -> dict[str, Any]:
                 symbol = journal._canonical_symbol(item.get("symbol"))  # noqa: SLF001
                 timeframe = normalise_timeframe(item.get("timeframe"))
                 scope_key = journal._scope_key(*key, symbol, timeframe)  # noqa: SLF001
+                plan_key = _v7_plan_key(item, symbol, timeframe)
                 cursor.execute(
                     insert_query,
                     (
@@ -172,13 +203,13 @@ def migrate_current_tenant_v6_to_v7() -> dict[str, Any]:
                         key[0],
                         key[1],
                         scope_key,
-                        item.get("plan_key"),
+                        plan_key,
                         item.get("source"),
                         item.get("event_code"),
                         int(item.get("event_rank") or 0),
                         symbol,
                         timeframe,
-                        item.get("direction"),
+                        _direction_identity(item.get("direction")),
                         item.get("lifecycle_status"),
                         item.get("event_time"),
                         int(item.get("event_timestamp_ms") or 0),
@@ -259,5 +290,6 @@ __all__ = [
     "LEGACY_TABLE",
     "MIGRATION_NAME",
     "MIGRATION_TABLE",
+    "_v7_plan_key",
     "migrate_current_tenant_v6_to_v7",
 ]
