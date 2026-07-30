@@ -25,6 +25,14 @@ def install_analysis_routes() -> None:
 
     install_sc_runtime_v9()
 
+    # V14 owns the final source boundary: one HTTP attempt within the remaining
+    # deadline, UTC-normalized intraday candles, per-symbol quote single-flight,
+    # and corrected financial cash-flow aliases. Install it after V9 has bound all
+    # adapters and before any view imports market functions by value.
+    from market_data_integrity_v14 import install_market_data_integrity_v14
+
+    install_market_data_integrity_v14()
+
     # Verify the exact V56 bot runtime rather than accepting a reachable service
     # that lacks failure single-flight or finite stale-data safeguards.
     from bot_contract_runtime_v10 import install_bot_contract_runtime_v10
