@@ -26,6 +26,17 @@ def install_analysis_routes() -> None:
 
     install_market_data_integrity_v14()
 
+    # Live quotes are installed after all deadline, timestamp and parallel-refresh
+    # guards. They update current context only; technical confirmation continues
+    # to use completed candles from SC-V92.5/SC-FXM-V16.
+    from live_market_runtime_v15 import install_live_market_runtime_v15
+
+    install_live_market_runtime_v15()
+
+    from live_market_report_v15 import install_live_market_report_v15
+
+    install_live_market_report_v15()
+
     from bot_contract_runtime_v10 import install_bot_contract_runtime_v10
 
     install_bot_contract_runtime_v10()
