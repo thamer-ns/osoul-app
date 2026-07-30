@@ -9,6 +9,15 @@ def install_analysis_routes() -> None:
     if _INSTALLED:
         return
 
+    # The persistent database snapshot is only a cold-start accelerator. Patch
+    # its installer before importing V8 so a cache migration/permission failure
+    # cannot prevent the authenticated application from opening.
+    from persistent_cache_resilience_v10 import (
+        install_persistent_cache_resilience_v10,
+    )
+
+    install_persistent_cache_resilience_v10()
+
     # Install before importing the analysis package. Several views import market
     # and bot functions directly, so the bounded providers and report hook must
     # already be active when those modules bind their globals.
@@ -20,6 +29,13 @@ def install_analysis_routes() -> None:
     # request before V8 captures the provider adapter table.
     install_bounded_twelvedata_v9()
     install_sc_runtime_v8()
+
+    # V8's first contract probe targeted the V54 status endpoint. Replace it with
+    # authoritative V55 runtime discovery so Osoli verifies that remote analysis
+    # and the SC runtime are actually installed, not merely that sync is reachable.
+    from bot_contract_runtime_v10 import install_bot_contract_runtime_v10
+
+    install_bot_contract_runtime_v10()
 
     import views
     from global_bot_sync_v8 import render_global_bot_sync
