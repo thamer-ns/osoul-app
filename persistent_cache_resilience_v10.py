@@ -7,6 +7,7 @@ must never prevent an authenticated Osoli session from opening.
 from __future__ import annotations
 
 import logging
+import sys
 import threading
 import time
 from typing import Any
@@ -64,9 +65,12 @@ def install_persistent_cache_resilience_v10() -> None:
     with _LOCK:
         if _INSTALLED:
             return
-        # Deliberate runtime patch: sc_runtime_v8 imports this symbol after the
-        # guard is installed, so all later cache attempts inherit fail-open behavior.
+        # Deliberate runtime patch: sc_runtime_v8 normally imports this symbol
+        # afterward. Patch its already-bound global too for test/reload paths.
         cache.install_persistent_market_cache = _guarded_install  # type: ignore[assignment]
+        loaded_runtime = sys.modules.get("sc_runtime_v8")
+        if loaded_runtime is not None:
+            setattr(loaded_runtime, "install_persistent_market_cache", _guarded_install)
         _INSTALLED = True
 
 
