@@ -9,11 +9,11 @@ from typing import Any
 import pandas as pd
 
 from performance_runtime_v7 import (
-    peek_cached_history,
     peek_cached_quote,
     record_phase,
     warm_quote_cache,
 )
+from sc_runtime_v9 import peek_latest_cached_history
 
 LOGGER = logging.getLogger(__name__)
 _INSTALL_LOCK = threading.RLock()
@@ -29,11 +29,11 @@ def _number(value: Any) -> float | None:
 
 
 def _from_history(symbol: str) -> dict[str, Any]:
-    frame = peek_cached_history(
+    # Reuse any compatible daily frame instead of missing a loaded 5y/2y entry
+    # because the old header requested one exact synthetic period key.
+    frame = peek_latest_cached_history(
         symbol,
-        period="5d",
         interval="1d",
-        years=5,
         allow_stale=True,
     )
     if not isinstance(frame, pd.DataFrame) or frame.empty or "Close" not in frame:
@@ -50,13 +50,14 @@ def _from_history(symbol: str) -> dict[str, Any]:
     )
     attrs = dict(getattr(frame, "attrs", {}) or {})
     lineage = dict(attrs.get("data_lineage") or {})
+    stale = bool(lineage.get("is_stale", True))
     return {
         "price": price,
         "change": change,
         "source": str(lineage.get("source") or attrs.get("source") or "history"),
         "fetched_at": str(lineage.get("fetched_at") or "—"),
-        "is_stale": True,
-        "refreshing": True,
+        "is_stale": stale,
+        "refreshing": stale,
     }
 
 
@@ -171,7 +172,7 @@ def install_analysis_header_performance(module: Any) -> None:
             original_safe_render(title, module_name, attr_name, *args)
 
         module._safe_render = safe_render
-        module._analysis_header_performance_v7_installed = True
+        module._analysis_header_performance_v9_installed = True
         _INSTALLED_MODULES.add(module_id)
 
 

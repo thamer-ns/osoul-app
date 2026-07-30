@@ -10,6 +10,7 @@ import bounded_twelvedata_v9 as bounded
 import market_providers_v5 as providers
 import persistent_market_cache_v8 as persistent
 import sc_runtime_v8 as runtime
+import sc_runtime_v9 as runtime_v9
 
 
 def test_provider_rank_preserves_configured_order_before_observations(monkeypatch):
@@ -69,10 +70,12 @@ def test_runtime_has_independent_pools_and_updates_router_imports():
     assert runtime._QUOTE_DEADLINE < 3.0
 
 
-def test_bounded_twelvedata_installs_before_v8_runtime():
-    source = inspect.getsource(routes)
+def test_bounded_twelvedata_installs_before_v8_inside_v9_runtime():
+    route_source = inspect.getsource(routes)
+    runtime_source = inspect.getsource(runtime_v9.install_sc_runtime_v9)
 
-    assert source.index("install_bounded_twelvedata_v9()") < source.index(
+    assert "install_sc_runtime_v9()" in route_source
+    assert runtime_source.index("install_bounded_twelvedata_v9()") < runtime_source.index(
         "install_sc_runtime_v8()"
     )
 

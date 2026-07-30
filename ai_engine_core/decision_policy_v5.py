@@ -1,9 +1,9 @@
-"""Final Osoli decision policy v5.
+"""Final Osoli decision policy v5.1.
 
-V5 augments the raw report with the Python SC-V90 breakout engine *before* the
-proven v4 qualification and geometry gates run.  It then attaches provider
+V5.1 augments the raw report with the Python SC-V91 breakout engine before the
+proven v4 qualification and geometry gates run. It then attaches provider
 lineage, financial source quality and the latest validated indicator/bot event
-as explainable context.  External events never override the native decision.
+as explainable context. External events never override the native decision.
 """
 from __future__ import annotations
 
@@ -15,15 +15,15 @@ from typing import Any
 
 import pandas as pd
 
-from .breakout_patterns_v90 import ENGINE_VERSION as BREAKOUT_VERSION
-from .breakout_patterns_v90 import analyze_breakout_patterns
+from .breakout_patterns_v91 import ENGINE_VERSION as BREAKOUT_VERSION
+from .breakout_patterns_v91 import analyze_breakout_patterns
 from .compass_contract import compare_compass_with_report
 from .decision_policy_v4 import enrich_report as _v4_enrich_report
 from .reporting_policy_v5 import timeframe_to_interval
 
 LOGGER = logging.getLogger(__name__)
-DECISION_ENGINE_VERSION = "5.0"
-ANALYSIS_CONTRACT_VERSION = "5.0"
+DECISION_ENGINE_VERSION = "5.1"
+ANALYSIS_CONTRACT_VERSION = "5.1"
 
 
 def _finite(value: Any, default: float = 0.0) -> float:
@@ -49,9 +49,14 @@ def _augment_breakouts(
     try:
         from market_data import get_chart_history
 
-        frame = get_chart_history(symbol, period=None, interval=interval, years=15 if interval in {"1wk", "1mo"} else 5)
+        frame = get_chart_history(
+            symbol,
+            period=None,
+            interval=interval,
+            years=15 if interval in {"1wk", "1mo"} else 5,
+        )
     except Exception:
-        LOGGER.exception("Unable to fetch candles for SC-V90 engine")
+        LOGGER.exception("Unable to fetch candles for SC-V91 engine")
         frame = pd.DataFrame()
     breakout = analyze_breakout_patterns(
         frame if isinstance(frame, pd.DataFrame) else pd.DataFrame(),
@@ -75,7 +80,7 @@ def _augment_breakouts(
     for signal in breakout.get("signals") or []:
         events.append(
             {
-                "type": "SC-V90",
+                "type": "SC-V91",
                 "event": signal.get("kind"),
                 "direction": signal.get("direction"),
                 "level": signal.get("level"),
@@ -84,20 +89,37 @@ def _augment_breakouts(
         )
     output["signal_events"] = events[:20]
 
-    confirmed_count = int((breakout.get("features") or {}).get("breakout_confirmed_count") or 0)
+    confirmed_count = int(
+        (breakout.get("features") or {}).get("breakout_confirmed_count") or 0
+    )
     score = _finite(breakout.get("direction_score"))
-    delta = max(-2.5, min(2.5, score / 100.0 * min(2.5, confirmed_count * 1.25)))
+    delta = max(
+        -2.5,
+        min(2.5, score / 100.0 * min(2.5, confirmed_count * 1.25)),
+    )
     output["tech_score"] = _finite(output.get("tech_score")) + delta
-    output["total_score"] = _finite(output.get("tech_score")) + _finite(output.get("fund_score"))
+    output["total_score"] = _finite(output.get("tech_score")) + _finite(
+        output.get("fund_score")
+    )
     output["breakout_score_delta"] = round(delta, 3)
     return output
 
 
-def _attach_external_context(report: dict[str, Any], symbol: str, timeframe: str) -> None:
+def _attach_external_context(
+    report: dict[str, Any],
+    symbol: str,
+    timeframe: str,
+) -> None:
     try:
-        from .external_signal_journal_v5 import latest_external_event, lifecycle_snapshot
+        from .external_signal_journal_v5 import (
+            latest_external_event,
+            lifecycle_snapshot,
+        )
 
-        interval = str((report.get("analysis_contract") or {}).get("timeframe") or timeframe).lower()
+        interval = str(
+            (report.get("analysis_contract") or {}).get("timeframe")
+            or timeframe
+        ).lower()
         snapshot = lifecycle_snapshot(symbol, interval)
         report["external_signal_lifecycle"] = snapshot
         row = latest_external_event(symbol, interval)
@@ -108,7 +130,10 @@ def _attach_external_context(report: dict[str, Any], symbol: str, timeframe: str
             report["external_signal_latest"] = parsed
     except Exception:
         LOGGER.debug("External signal context unavailable", exc_info=True)
-        report.setdefault("external_signal_lifecycle", {"available": False, "events": 0})
+        report.setdefault(
+            "external_signal_lifecycle",
+            {"available": False, "events": 0},
+        )
 
 
 def _attach_financial_lineage(report: dict[str, Any], symbol: str) -> None:
@@ -116,7 +141,11 @@ def _attach_financial_lineage(report: dict[str, Any], symbol: str) -> None:
         from financial_analysis.store import get_stored_financials_df
 
         frame = get_stored_financials_df(symbol, "Annual")
-        attrs = dict(getattr(frame, "attrs", {}) or {}) if isinstance(frame, pd.DataFrame) else {}
+        attrs = (
+            dict(getattr(frame, "attrs", {}) or {})
+            if isinstance(frame, pd.DataFrame)
+            else {}
+        )
         lineage = dict(attrs.get("financial_lineage") or {})
         if lineage:
             report["financial_data_lineage"] = lineage
@@ -125,18 +154,42 @@ def _attach_financial_lineage(report: dict[str, Any], symbol: str) -> None:
 
 
 def _data_reliability(report: dict[str, Any]) -> dict[str, Any]:
-    meta = report.get("engine_meta") if isinstance(report.get("engine_meta"), dict) else {}
-    price_lineage = meta.get("data_lineage") if isinstance(meta.get("data_lineage"), dict) else {}
-    financial_lineage = report.get("financial_data_lineage") if isinstance(report.get("financial_data_lineage"), dict) else {}
-    price_score = int(_finite(price_lineage.get("quality_score"), 75 if price_lineage.get("source") else 35))
-    financial_quality = financial_lineage.get("quality") if isinstance(financial_lineage.get("quality"), dict) else {}
+    meta = (
+        report.get("engine_meta")
+        if isinstance(report.get("engine_meta"), dict)
+        else {}
+    )
+    price_lineage = (
+        meta.get("data_lineage")
+        if isinstance(meta.get("data_lineage"), dict)
+        else {}
+    )
+    financial_lineage = (
+        report.get("financial_data_lineage")
+        if isinstance(report.get("financial_data_lineage"), dict)
+        else {}
+    )
+    price_score = int(
+        _finite(
+            price_lineage.get("quality_score"),
+            75 if price_lineage.get("source") else 35,
+        )
+    )
+    financial_quality = (
+        financial_lineage.get("quality")
+        if isinstance(financial_lineage.get("quality"), dict)
+        else {}
+    )
     financial_score = int(_finite(financial_quality.get("score"), 0))
     fund_reasons = list(report.get("fund_reasons") or [])
     financial_available = bool(financial_lineage) or bool(fund_reasons)
     weights = [(price_score, 0.65)]
     if financial_available:
         weights.append((financial_score, 0.35))
-    combined = round(sum(value * weight for value, weight in weights) / sum(weight for _, weight in weights))
+    combined = round(
+        sum(value * weight for value, weight in weights)
+        / sum(weight for _, weight in weights)
+    )
     issues: list[str] = []
     if price_score < 60:
         issues.append("جودة بيانات السعر منخفضة")
@@ -156,25 +209,50 @@ def _data_reliability(report: dict[str, Any]) -> dict[str, Any]:
 
 
 def _advisor_intelligence(report: dict[str, Any]) -> dict[str, Any]:
-    breakout = report.get("breakout_engine") if isinstance(report.get("breakout_engine"), dict) else {}
-    external = report.get("external_signal_comparison") if isinstance(report.get("external_signal_comparison"), dict) else {}
-    lifecycle = report.get("external_signal_lifecycle") if isinstance(report.get("external_signal_lifecycle"), dict) else {}
-    reliability = report.get("data_reliability") if isinstance(report.get("data_reliability"), dict) else {}
+    breakout = (
+        report.get("breakout_engine")
+        if isinstance(report.get("breakout_engine"), dict)
+        else {}
+    )
+    external = (
+        report.get("external_signal_comparison")
+        if isinstance(report.get("external_signal_comparison"), dict)
+        else {}
+    )
+    lifecycle = (
+        report.get("external_signal_lifecycle")
+        if isinstance(report.get("external_signal_lifecycle"), dict)
+        else {}
+    )
+    reliability = (
+        report.get("data_reliability")
+        if isinstance(report.get("data_reliability"), dict)
+        else {}
+    )
     insights: list[str] = []
     cautions: list[str] = []
-    confirmed = int((breakout.get("features") or {}).get("breakout_confirmed_count") or 0)
-    forming = int((breakout.get("features") or {}).get("breakout_forming_count") or 0)
+    confirmed = int(
+        (breakout.get("features") or {}).get("breakout_confirmed_count") or 0
+    )
+    forming = int(
+        (breakout.get("features") or {}).get("breakout_forming_count") or 0
+    )
     if confirmed:
-        insights.append(f"محرك SC-V90 داخل أصولي أكد {confirmed} نموذج على إغلاق الشمعة")
+        insights.append(
+            f"محرك SC-V91 داخل أصولي أكد {confirmed} نموذج على إغلاق الشمعة"
+        )
     elif forming:
-        insights.append(f"يوجد {forming} نموذج اختراق تحت التكوين ولم يتحول إلى دخول")
+        insights.append(
+            f"يوجد {forming} نموذج اختراق تحت التكوين ولم يتحول إلى دخول"
+        )
     if external.get("aligned"):
         insights.append("آخر حدث من المؤشر والبوت متوافق مع اتجاه أصولي")
     for conflict in external.get("conflicts") or []:
         cautions.append(str(conflict))
     if lifecycle.get("available"):
         insights.append(
-            f"دورة المؤشر الخارجية: {lifecycle.get('status')} — الحدث {lifecycle.get('event')}"
+            f"دورة المؤشر الخارجية: {lifecycle.get('status')} — "
+            f"الحدث {lifecycle.get('event')}"
         )
     cautions.extend(str(item) for item in reliability.get("issues") or [])
     return {
@@ -188,11 +266,22 @@ def _advisor_intelligence(report: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def enrich_report(report: Any, *, symbol: str = "", timeframe: str = "1D") -> dict[str, Any]:
+def enrich_report(
+    report: Any,
+    *,
+    symbol: str = "",
+    timeframe: str = "1D",
+) -> dict[str, Any]:
     raw = report if isinstance(report, dict) else {}
     augmented = _augment_breakouts(raw, symbol=symbol, timeframe=timeframe)
-    enriched = _v4_enrich_report(augmented, symbol=symbol, timeframe=timeframe)
-    if str(enriched.get("status") or "").lower() == "error" or enriched.get("error"):
+    enriched = _v4_enrich_report(
+        augmented,
+        symbol=symbol,
+        timeframe=timeframe,
+    )
+    if str(enriched.get("status") or "").lower() == "error" or enriched.get(
+        "error"
+    ):
         return enriched
 
     _attach_external_context(enriched, symbol, timeframe)
@@ -208,7 +297,7 @@ def enrich_report(report: Any, *, symbol: str = "", timeframe: str = "1D") -> di
             "breakout_engine": BREAKOUT_VERSION,
             "indicator_integration": "persistent_lifecycle_compare_only",
             "bot_integration": "explicit_secure_forwarding",
-            "provider_fusion": "5.0",
+            "provider_fusion": "9.0",
             "external_evidence_policy": "compare_never_override_automatically",
         }
     )
@@ -218,7 +307,9 @@ def enrich_report(report: Any, *, symbol: str = "", timeframe: str = "1D") -> di
         decision["version"] = DECISION_ENGINE_VERSION
         decision["breakout_engine"] = enriched.get("breakout_engine")
         decision["data_reliability"] = enriched.get("data_reliability")
-        decision["external_signal_comparison"] = enriched.get("external_signal_comparison")
+        decision["external_signal_comparison"] = enriched.get(
+            "external_signal_comparison"
+        )
     meta = dict(enriched.get("engine_meta") or {})
     meta["decision_engine_version"] = DECISION_ENGINE_VERSION
     meta["analysis_contract_version"] = ANALYSIS_CONTRACT_VERSION

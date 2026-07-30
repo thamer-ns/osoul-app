@@ -10,7 +10,8 @@ from typing import Any
 from ai_engine_core import bot_bridge_v5 as bridge
 
 LOGGER = logging.getLogger(__name__)
-EXPECTED_CONTRACT = "SC-V90-v1-plan-isolation-v55"
+EXPECTED_CONTRACT = "SC-V90-v1-plan-isolation-v56"
+EXPECTED_RUNTIME_VERSION = "56.0"
 _LOCK = threading.RLock()
 _INSTALLED = False
 _CACHE: dict[str, Any] = {"at": 0.0, "value": {}}
@@ -59,8 +60,21 @@ def _probe_runtime() -> dict[str, Any]:
     tenant_safe = body.get("tenant_ids_received") is False
     token_safe = body.get("token_in_url") is False
     installed = runtime.get("installed") is True
+    runtime_version = str(runtime.get("runtime_version") or "")
+    failure_single_flight = runtime.get("failure_single_flight") is True
+    stale_bounded = runtime.get("stale_fallback_age_bounded") is True
     contract_ok = contract == EXPECTED_CONTRACT
-    ok = bool(contract_ok and remote_analysis and tenant_safe and token_safe and installed)
+    runtime_ok = runtime_version == EXPECTED_RUNTIME_VERSION
+    ok = bool(
+        contract_ok
+        and remote_analysis
+        and tenant_safe
+        and token_safe
+        and installed
+        and runtime_ok
+        and failure_single_flight
+        and stale_bounded
+    )
     reason = None
     if not contract_ok:
         reason = "contract_mismatch"
@@ -70,6 +84,12 @@ def _probe_runtime() -> dict[str, Any]:
         reason = "unsafe_contract_flags"
     elif not installed:
         reason = "runtime_not_installed"
+    elif not runtime_ok:
+        reason = "runtime_version_mismatch"
+    elif not failure_single_flight:
+        reason = "failure_single_flight_missing"
+    elif not stale_bounded:
+        reason = "stale_fallback_unbounded"
     return {
         "ok": ok,
         "reason": reason,
@@ -85,7 +105,10 @@ def _probe_runtime() -> dict[str, Any]:
         "app_version": body.get("app_version"),
         "analysis_deadline_seconds": body.get("analysis_deadline_seconds"),
         "feature_version": runtime.get("feature_version"),
+        "runtime_version": runtime_version or None,
         "runtime_installed": installed,
+        "failure_single_flight": failure_single_flight,
+        "stale_fallback_age_bounded": stale_bounded,
         "endpoint": "/integrations/osoli/runtime",
     }
 
@@ -116,6 +139,7 @@ def runtime_status() -> dict[str, Any]:
         return {
             "installed": _INSTALLED,
             "expected_contract": EXPECTED_CONTRACT,
+            "expected_runtime_version": EXPECTED_RUNTIME_VERSION,
             "cache_seconds": _CACHE_SECONDS,
             "cached": bool(_CACHE["value"]),
         }
@@ -134,6 +158,7 @@ def install_bot_contract_runtime_v10() -> None:
 
 __all__ = [
     "EXPECTED_CONTRACT",
+    "EXPECTED_RUNTIME_VERSION",
     "install_bot_contract_runtime_v10",
     "runtime_status",
 ]

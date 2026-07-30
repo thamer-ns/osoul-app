@@ -10,29 +10,23 @@ def install_analysis_routes() -> None:
         return
 
     # The persistent database snapshot is only a cold-start accelerator. Patch
-    # its installer before importing V8 so a cache migration/permission failure
-    # cannot prevent the authenticated application from opening.
+    # every optional persistence operation before the runtime imports it so a
+    # migration/permission failure cannot block the authenticated application.
     from persistent_cache_resilience_v10 import (
         install_persistent_cache_resilience_v10,
     )
 
     install_persistent_cache_resilience_v10()
 
-    # Install before importing the analysis package. Several views import market
-    # and bot functions directly, so the bounded providers and report hook must
-    # already be active when those modules bind their globals.
-    from bounded_twelvedata_v9 import install_bounded_twelvedata_v9
-    from sc_runtime_v8 import install_sc_runtime_v8
+    # V9 installs bounded providers, one reusable analysis context, corrected
+    # mixed quote batches, background-only persistence and the SC-V91 volume gate
+    # before analysis views bind direct function imports.
+    from sc_runtime_v9 import install_sc_runtime_v9
 
-    # Twelve Data's legacy helper can retry SDK + HTTP paths for much longer than
-    # an interactive request. Replace only its adapters with one bounded HTTP
-    # request before V8 captures the provider adapter table.
-    install_bounded_twelvedata_v9()
-    install_sc_runtime_v8()
+    install_sc_runtime_v9()
 
-    # V8's first contract probe targeted the V54 status endpoint. Replace it with
-    # authoritative V55 runtime discovery so Osoli verifies that remote analysis
-    # and the SC runtime are actually installed, not merely that sync is reachable.
+    # Verify the exact V56 bot runtime rather than accepting a reachable service
+    # that lacks failure single-flight or finite stale-data safeguards.
     from bot_contract_runtime_v10 import install_bot_contract_runtime_v10
 
     install_bot_contract_runtime_v10()
@@ -44,7 +38,7 @@ def install_analysis_routes() -> None:
     from views.analysis import integration_v5 as integration_view
 
     # integration_v5 imports bot_health directly. Rebind it after installing the
-    # V55 probe so a previously imported view cannot retain the obsolete V54 check.
+    # V56 probe so a previously imported view cannot retain an obsolete check.
     integration_view.bot_health = bridge.bot_health
 
     original_router = views.router

@@ -1,9 +1,9 @@
 """Authenticated Osoli ↔ market-bot bridge.
 
-Outbound forwarding remains an explicit user action.  Lifecycle updates are
-pulled through an opaque per-portfolio HMAC channel.  Production bot URLs must
-use HTTPS, and a malformed or locally rejected remote event is quarantined so
-it cannot block every later cursor item.
+Outbound forwarding remains an explicit user action. Lifecycle updates are
+pulled through a stable opaque per-portfolio HMAC channel. Production bot URLs
+must use HTTPS, and malformed or locally rejected remote events are quarantined
+without allowing one bad record to crash Streamlit synchronization.
 """
 from __future__ import annotations
 
@@ -74,7 +74,9 @@ def _sync_channel() -> str:
     secret = _secret("SC_BOT_SYNC_SECRET")
     if tenant is None or len(secret) < 32:
         return ""
-    message = f"osoli-sync-v7:{tenant.user_id}:{tenant.portfolio_id}".encode("utf-8")
+    # This namespace identifies the durable queue. It must not change with a
+    # software release, otherwise queued events and active plans disappear.
+    message = f"osoli-sync-v6:{tenant.user_id}:{tenant.portfolio_id}".encode("utf-8")
     return hmac.new(secret.encode("utf-8"), message, hashlib.sha256).hexdigest()
 
 
@@ -99,6 +101,7 @@ def bridge_configuration() -> dict[str, Any]:
         "sync_configured": bool(base and sync_headers),
         "sync_token_configured": len(_secret("SC_BOT_SYNC_TOKEN")) >= 32,
         "sync_secret_configured": len(_secret("SC_BOT_SYNC_SECRET")) >= 32,
+        "sync_channel_contract": "stable-v6",
         "telegram_credentials_stored_in_osoli": False,
         "forwarding_mode": (
             "explicit_send_with_automatic_tenant_pull"
@@ -133,12 +136,22 @@ def bot_health() -> dict[str, Any]:
         return {"ok": False, "reason": "unreachable"}
 
 
+def _wire_input(payload: str | bytes | dict[str, Any]) -> str | bytes | dict[str, Any]:
+    if not isinstance(payload, dict):
+        return payload
+    if any(key in payload for key in ("s", "e", "sy", "tf", "p")):
+        return payload
+    if payload.get("source") and payload.get("event"):
+        return to_bot_wire_payload(payload)
+    return payload
+
+
 def forward_compass_payload(payload: str | bytes | dict[str, Any]) -> dict[str, Any]:
     base = _base_url()
     if not base or requests is None:
         return {"ok": False, "reason": "bridge_not_configured_or_insecure_url"}
     try:
-        parsed = parse_compass_payload(payload)
+        parsed = parse_compass_payload(_wire_input(payload))
     except ValueError:
         LOGGER.info("Rejected invalid payload before bot forwarding", exc_info=True)
         return {"ok": False, "reason": "invalid_payload"}
@@ -183,12 +196,7 @@ def forward_compass_payload(payload: str | bytes | dict[str, Any]) -> dict[str, 
         return {"ok": False, "reason": "unreachable"}
 
 
-def _quarantine(
-    channel: str,
-    remote_id: int,
-    item: Any,
-    reason: str,
-) -> bool:
+def _quarantine(channel: str, remote_id: int, item: Any, reason: str) -> bool:
     result = quarantine_remote_event(channel, remote_id, item, reason)
     if not result.get("ok"):
         LOGGER.error(
@@ -198,6 +206,26 @@ def _quarantine(
         )
         return False
     return True
+
+
+def _validated_remote_events(events: list[Any]) -> tuple[list[tuple[int, dict[str, Any]]], int]:
+    valid: list[tuple[int, dict[str, Any]]] = []
+    rejected = 0
+    for item in events:
+        if not isinstance(item, dict):
+            rejected += 1
+            continue
+        try:
+            remote_id = int(item.get("id"))
+        except (TypeError, ValueError, OverflowError):
+            rejected += 1
+            continue
+        if remote_id <= 0:
+            rejected += 1
+            continue
+        valid.append((remote_id, item))
+    valid.sort(key=lambda pair: pair[0])
+    return valid, rejected
 
 
 def sync_bot_events(*, limit: int = 100) -> dict[str, Any]:
@@ -228,20 +256,9 @@ def sync_bot_events(*, limit: int = 100) -> dict[str, Any]:
     imported = 0
     duplicates = 0
     quarantined = 0
-    protocol_errors = 0
+    ordered, protocol_errors = _validated_remote_events(events)
     last_processed = cursor
-    sortable = [item for item in events if isinstance(item, dict)]
-    if len(sortable) != len(events):
-        protocol_errors += len(events) - len(sortable)
-    for item in sorted(sortable, key=lambda value: int(value.get("id") or 0)):
-        try:
-            remote_id = int(item.get("id") or 0)
-        except (TypeError, ValueError, OverflowError):
-            protocol_errors += 1
-            break
-        if remote_id <= 0:
-            protocol_errors += 1
-            break
+    for remote_id, item in ordered:
         if remote_id <= last_processed:
             duplicates += 1
             continue
@@ -284,12 +301,9 @@ def sync_bot_events(*, limit: int = 100) -> dict[str, Any]:
             "cursor": cursor,
         }
     ok = protocol_errors == 0
-    if not ok:
-        reason = "protocol_error"
-    elif quarantined:
-        reason = "completed_with_quarantine"
-    else:
-        reason = None
+    reason = (
+        "protocol_error" if not ok else "completed_with_quarantine" if quarantined else None
+    )
     return {
         "ok": ok,
         "reason": reason,
