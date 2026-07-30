@@ -1,11 +1,13 @@
 """Osoli Streamlit entry point."""
 from __future__ import annotations
 
+import importlib
 import logging
 import os
 import sys
 import time
-from typing import Tuple
+from collections.abc import Callable
+from typing import Any, Tuple
 
 import streamlit as st
 
@@ -79,42 +81,148 @@ def _render_authenticated_header() -> None:
         logger.exception("header rendering failed")
 
 
-def _install_runtime_hardening(username: str) -> None:
-    from ai_engine_core.external_signal_journal_v5 import (
-        install_external_signal_journal,
-    )
-    from ai_engine_core.reporting_policy_v5 import install_reporting_policy
-    from ai_tenant_hardening import (
-        install_ai_learning_scope,
-        register_ai_tenant_tables,
-    )
-    from analysis_context_v7 import install_analysis_context
-    from analysis_routes_v5 import install_analysis_routes
-    from analytics_hardening import install_analytics_hardening
-    from chart_performance_v7 import install_chart_performance
-    from financial_data_router_v5 import install_financial_data_router
-    from market_data_hardening import install_market_data_hardening
-    from market_data_router_v5 import install_market_data_router
-    from performance_runtime_v7 import install_performance_runtime
-    from portfolio_metrics_v2 import install_portfolio_metrics_v2
-    from tenant_scope import install_tenant_scope
+def _invoke_runtime(module_name: str, function_name: str, *args: Any) -> Any:
+    module = importlib.import_module(module_name)
+    function = getattr(module, function_name)
+    return function(*args)
 
-    # Tenant scope comes first. Provider fusion is then installed once, followed
-    # by the bounded cache/context layer before any analysis view is imported.
-    register_ai_tenant_tables()
-    install_tenant_scope(username)
-    install_market_data_hardening()
-    install_market_data_router()
-    install_financial_data_router()
-    install_reporting_policy()
-    install_performance_runtime()
-    install_analysis_context()
-    install_chart_performance()
-    install_external_signal_journal()
-    install_ai_learning_scope()
-    install_analytics_hardening()
-    install_portfolio_metrics_v2()
-    install_analysis_routes()
+
+def _runtime_failures() -> list[str]:
+    raw = st.session_state.get("_runtime_optional_failures") or []
+    return [str(item) for item in raw if str(item).strip()]
+
+
+def _set_optional_failure(stage: str, failed: bool) -> None:
+    failures = _runtime_failures()
+    if failed and stage not in failures:
+        failures.append(stage)
+    if not failed:
+        failures = [item for item in failures if item != stage]
+    st.session_state["_runtime_optional_failures"] = failures
+
+
+def _run_runtime_stage(
+    stage: str,
+    operation: Callable[[], Any],
+    *,
+    critical: bool,
+) -> bool:
+    """Run one bootstrap stage and isolate non-security feature failures."""
+    try:
+        operation()
+    except Exception:
+        logger.exception("runtime bootstrap stage failed: %s", stage)
+        if critical:
+            st.session_state["_tenant_init_stage"] = stage
+            raise
+        _set_optional_failure(stage, True)
+        return False
+    _set_optional_failure(stage, False)
+    return True
+
+
+def _install_runtime_hardening(username: str) -> None:
+    # Only the verified tenant context and learning isolation are allowed to block
+    # authenticated data access. Provider, chart, bot and presentation upgrades
+    # are feature layers; a failure there must degrade the feature, not expose or
+    # hide the user's entire portfolio.
+    st.session_state["_runtime_optional_failures"] = []
+
+    _run_runtime_stage(
+        "ai_tenant_tables",
+        lambda: _invoke_runtime(
+            "ai_tenant_hardening",
+            "register_ai_tenant_tables",
+        ),
+        critical=False,
+    )
+    _run_runtime_stage(
+        "tenant_scope",
+        lambda: _invoke_runtime(
+            "tenant_scope",
+            "install_tenant_scope",
+            username,
+        ),
+        critical=True,
+    )
+
+    optional_stages: tuple[tuple[str, str, str], ...] = (
+        (
+            "market_data_hardening",
+            "market_data_hardening",
+            "install_market_data_hardening",
+        ),
+        (
+            "market_data_router",
+            "market_data_router_v5",
+            "install_market_data_router",
+        ),
+        (
+            "financial_data_router",
+            "financial_data_router_v5",
+            "install_financial_data_router",
+        ),
+        (
+            "reporting_policy",
+            "ai_engine_core.reporting_policy_v5",
+            "install_reporting_policy",
+        ),
+        (
+            "performance_runtime",
+            "performance_runtime_v7",
+            "install_performance_runtime",
+        ),
+        (
+            "analysis_context",
+            "analysis_context_v7",
+            "install_analysis_context",
+        ),
+        (
+            "chart_performance",
+            "chart_performance_v7",
+            "install_chart_performance",
+        ),
+        (
+            "external_signal_journal",
+            "ai_engine_core.external_signal_journal_v5",
+            "install_external_signal_journal",
+        ),
+        (
+            "analytics_hardening",
+            "analytics_hardening",
+            "install_analytics_hardening",
+        ),
+        (
+            "portfolio_metrics",
+            "portfolio_metrics_v2",
+            "install_portfolio_metrics_v2",
+        ),
+        (
+            "analysis_routes",
+            "analysis_routes_v5",
+            "install_analysis_routes",
+        ),
+    )
+    for stage, module_name, function_name in optional_stages:
+        _run_runtime_stage(
+            stage,
+            lambda module_name=module_name, function_name=function_name: _invoke_runtime(
+                module_name,
+                function_name,
+            ),
+            critical=False,
+        )
+
+    # Learned weights are shared process state unless the tenant prefix is active,
+    # so this stage remains security-critical even though other AI features degrade.
+    _run_runtime_stage(
+        "ai_learning_scope",
+        lambda: _invoke_runtime(
+            "ai_tenant_hardening",
+            "install_ai_learning_scope",
+        ),
+        critical=True,
+    )
 
 
 def _initialize_user_space(username: str) -> bool:
@@ -122,6 +230,7 @@ def _initialize_user_space(username: str) -> bool:
         try:
             _install_runtime_hardening(username)
             st.session_state.pop("_tenant_init_failed", None)
+            st.session_state.pop("_tenant_init_stage", None)
             return True
         except Exception:
             logger.exception(
@@ -183,9 +292,10 @@ def main() -> None:
     username = str(st.session_state.get("username") or "").strip()
     if not username or not _initialize_user_space(username):
         st.error("تعذر تهيئة مساحة بيانات المستخدم بأمان.")
+        stage = str(st.session_state.get("_tenant_init_stage") or "tenant_unknown")
         st.caption(
             "تم منع فتح البيانات احترازيًا. "
-            "أعد المحاولة بعد تحديث التطبيق."
+            f"أعد المحاولة بعد تحديث التطبيق. رمز التشخيص: {stage}"
         )
         if st.button(
             "إعادة المحاولة",
@@ -193,10 +303,19 @@ def main() -> None:
             use_container_width=True,
         ):
             st.session_state.pop("_tenant_init_failed", None)
+            st.session_state.pop("_tenant_init_stage", None)
             st.rerun()
         st.stop()
 
     _render_authenticated_header()
+
+    optional_failures = _runtime_failures()
+    if optional_failures:
+        st.warning(
+            "تم تشغيل أصولي في الوضع الآمن. بيانات المستخدم معزولة، "
+            "لكن بعض إضافات التحليل أو الربط متوقفة مؤقتًا."
+        )
+        st.caption("رموز المزايا المتأثرة: " + "، ".join(optional_failures))
 
     if st.session_state.get("_tenant_unclaimed_legacy"):
         st.warning(

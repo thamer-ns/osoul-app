@@ -11,9 +11,9 @@ from views.analysis import financial_v5
 
 def test_performance_runtime_installs_after_router_and_before_analysis_context():
     source = inspect.getsource(app._install_runtime_hardening)
-    router = source.index("install_market_data_router()")
-    runtime = source.index("install_performance_runtime()")
-    context = source.index("install_analysis_context()")
+    router = source.index('"market_data_router"')
+    runtime = source.index('"performance_runtime"')
+    context = source.index('"analysis_context"')
     assert router < runtime < context
 
 
