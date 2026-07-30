@@ -5,7 +5,10 @@ import logging
 from typing import Any
 
 from ai_engine_core import bot_bridge_v5 as bridge
-from bot_contract_runtime_v10 import EXPECTED_CONTRACT
+from bot_contract_runtime_v10 import (
+    EXPECTED_CONTRACT,
+    EXPECTED_RUNTIME_VERSION,
+)
 
 LOGGER = logging.getLogger(__name__)
 _FRAME_ALIASES = {
@@ -64,6 +67,12 @@ def request_bot_analysis(symbol: str, timeframe: str) -> dict[str, Any]:
             return {"ok": False, "reason": "runtime_not_installed"}
         if str(runtime.get("feature_version") or "") != "55.0":
             return {"ok": False, "reason": "feature_version_mismatch"}
+        if str(runtime.get("runtime_version") or "") != EXPECTED_RUNTIME_VERSION:
+            return {"ok": False, "reason": "runtime_version_mismatch"}
+        if runtime.get("failure_single_flight") is not True:
+            return {"ok": False, "reason": "failure_single_flight_missing"}
+        if runtime.get("stale_fallback_age_bounded") is not True:
+            return {"ok": False, "reason": "stale_fallback_unbounded"}
         return payload
     except ValueError:
         LOGGER.info("Remote bot analysis returned invalid JSON", exc_info=True)
