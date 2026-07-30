@@ -38,7 +38,7 @@ def test_deep_financial_dashboard_is_opt_in_fragment():
 def test_analysis_header_does_not_require_live_network_before_render():
     source = inspect.getsource(header)
     assert "peek_cached_quote" in source
-    assert "peek_cached_history" in source
+    assert "peek_latest_cached_history" in source
     assert "warm_quote_cache" in source
     assert "fetch_batch_data" not in source
 
