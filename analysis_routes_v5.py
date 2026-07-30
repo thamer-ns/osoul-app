@@ -33,6 +33,10 @@ def install_analysis_routes() -> None:
 
     install_live_market_runtime_v15()
 
+    from live_market_report_v15 import install_live_market_report_v15
+
+    install_live_market_report_v15()
+
     from bot_contract_runtime_v10 import install_bot_contract_runtime_v10
 
     install_bot_contract_runtime_v10()
