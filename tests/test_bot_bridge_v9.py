@@ -75,5 +75,5 @@ def test_normalized_payload_is_converted_back_to_compact_wire():
     assert isinstance(wire, dict)
     assert wire["s"] == "SC-V90-D"
     assert wire["e"] == "NL"
-    assert wire["tf"] == "1d"
+    assert wire["f"] == "1d"
     assert "source" not in wire
