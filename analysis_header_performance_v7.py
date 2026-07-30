@@ -9,11 +9,11 @@ from typing import Any
 import pandas as pd
 
 from performance_runtime_v7 import (
-    peek_cached_history,
     peek_cached_quote,
     record_phase,
     warm_quote_cache,
 )
+from sc_runtime_v9 import peek_latest_cached_history
 
 LOGGER = logging.getLogger(__name__)
 _INSTALL_LOCK = threading.RLock()
@@ -29,11 +29,12 @@ def _number(value: Any) -> float | None:
 
 
 def _from_history(symbol: str) -> dict[str, Any]:
-    frame = peek_cached_history(
+    # The report cache key contains period and years. Header requests should reuse
+    # any compatible daily frame instead of missing a loaded 5y/2y entry merely
+    # because the old lookup asked for the exact synthetic key "5d + years=5".
+    frame = peek_latest_cached_history(
         symbol,
-        period="5d",
         interval="1d",
-        years=5,
         allow_stale=True,
     )
     if not isinstance(frame, pd.DataFrame) or frame.empty or "Close" not in frame:
@@ -55,8 +56,8 @@ def _from_history(symbol: str) -> dict[str, Any]:
         "change": change,
         "source": str(lineage.get("source") or attrs.get("source") or "history"),
         "fetched_at": str(lineage.get("fetched_at") or "—"),
-        "is_stale": True,
-        "refreshing": True,
+        "is_stale": bool(lineage.get("is_stale", True)),
+        "refreshing": bool(lineage.get("is_stale", True)),
     }
 
 
@@ -171,7 +172,7 @@ def install_analysis_header_performance(module: Any) -> None:
             original_safe_render(title, module_name, attr_name, *args)
 
         module._safe_render = safe_render
-        module._analysis_header_performance_v7_installed = True
+        module._analysis_header_performance_v9_installed = True
         _INSTALLED_MODULES.add(module_id)
 
 
