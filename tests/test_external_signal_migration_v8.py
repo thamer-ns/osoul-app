@@ -79,7 +79,7 @@ def test_v6_active_plan_is_migrated_with_v7_state(monkeypatch, tmp_path):
             "event-1",
             7,
             11,
-            "plan-1",
+            "legacy-plan-key-with-100.0-formatting",
             "SC-V90-D",
             "NL",
             0,
@@ -106,6 +106,20 @@ def test_v6_active_plan_is_migrated_with_v7_state(monkeypatch, tmp_path):
     conn.commit()
     conn.close()
 
+    expected_plan_key = migration._v7_plan_key(
+        {
+            "source": "SC-V90-D",
+            "direction": "buy",
+            "entry_price": 100.0,
+            "stop_price": 98.0,
+            "target1": 102.0,
+            "target2": 104.0,
+            "target3": 106.0,
+        },
+        "1120",
+        "1d",
+    )
+
     implementation.install_external_signal_journal()
     result = migration.migrate_current_tenant_v6_to_v7()
 
@@ -114,7 +128,7 @@ def test_v6_active_plan_is_migrated_with_v7_state(monkeypatch, tmp_path):
 
     conn = sqlite3.connect(path)
     event = conn.execute(
-        "SELECT event_key,scope_key,symbol,timeframe,lifecycle_status "
+        "SELECT event_key,scope_key,plan_key,symbol,timeframe,lifecycle_status "
         "FROM external_analysis_events_v7"
     ).fetchone()
     state = conn.execute(
@@ -129,6 +143,7 @@ def test_v6_active_plan_is_migrated_with_v7_state(monkeypatch, tmp_path):
     assert event is not None
     assert event[0] == "event-1"
     assert len(event[1]) == 64
-    assert event[2:] == ("1120", "1d", "ACTIVE")
-    assert state == ("plan-1", "ACTIVE", "NL")
+    assert event[2] == expected_plan_key
+    assert event[3:] == ("1120", "1d", "ACTIVE")
+    assert state == (expected_plan_key, "ACTIVE", "NL")
     assert marker == (1,)
