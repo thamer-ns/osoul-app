@@ -16,7 +16,19 @@ def install_analysis_routes() -> None:
 
     install_sc_runtime_v8()
 
+    import views
+    from global_bot_sync_v8 import render_global_bot_sync
     from views import analysis
+
+    original_router = views.router
+    if not getattr(original_router, "_osoli_global_bot_sync_v8", False):
+
+        def router_with_bot_sync() -> None:
+            render_global_bot_sync()
+            original_router()
+
+        router_with_bot_sync._osoli_global_bot_sync_v8 = True  # type: ignore[attr-defined]
+        views.router = router_with_bot_sync
 
     analysis.SECTION_ROUTES["💰 التحليل المالي"] = (
         "views.analysis.financial_v5",
