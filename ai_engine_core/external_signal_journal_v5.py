@@ -1,10 +1,9 @@
 """Backward-compatible import path for the atomic tenant journal V7.
 
-Every public operation first runs the idempotent tenant migration so a T1/SL/C
-arriving after deployment can still extend an NL/NS that was stored by V6.
-Normalized in-memory dictionaries are converted back to the compact SC wire
-contract before validation; this also keeps the Streamlit integration safe when
-it reuses an already parsed payload.
+Every public operation checks the idempotent tenant migration so a T1/SL/C can
+extend an NL/NS stored by V6. A migration outage does not block application
+startup or read-only pages, but lifecycle writes fail closed until state is safe.
+Normalized dictionaries are converted back to the compact SC wire contract.
 """
 from __future__ import annotations
 
@@ -56,11 +55,26 @@ def _wire_payload(payload: str | bytes | dict[str, Any]) -> str | bytes | dict[s
     return payload
 
 
-def install_external_signal_journal() -> None:
+def _prepare() -> dict[str, Any]:
     _impl.install_external_signal_journal()
-    result = migrate_current_tenant_v6_to_v7()
-    if not result.get("ok") and result.get("reason") != "no_active_tenant":
-        raise RuntimeError("تعذر ترحيل سجل المؤشر السابق بأمان")
+    return migrate_current_tenant_v6_to_v7()
+
+
+def install_external_signal_journal() -> None:
+    # Installation remains fail-open for authenticated application startup. The
+    # write APIs below still reject lifecycle changes when migration is unsafe.
+    _prepare()
+
+
+def _migration_write_error(result: dict[str, Any]) -> dict[str, Any] | None:
+    if result.get("ok") or result.get("reason") == "no_active_tenant":
+        return None
+    return {
+        "ok": False,
+        "created": False,
+        "reason": "legacy_migration_unavailable",
+        "migration_reason": result.get("reason"),
+    }
 
 
 def record_external_event(
@@ -69,7 +83,10 @@ def record_external_event(
     remote_event_id: int | None = None,
     remote_channel: str | None = None,
 ) -> dict[str, Any]:
-    install_external_signal_journal()
+    migration = _prepare()
+    blocked = _migration_write_error(migration)
+    if blocked is not None:
+        return blocked
     return _impl.record_external_event(
         _wire_payload(payload),
         remote_event_id=remote_event_id,
@@ -83,7 +100,10 @@ def quarantine_remote_event(
     payload: Any,
     reason: str,
 ) -> dict[str, Any]:
-    install_external_signal_journal()
+    migration = _prepare()
+    blocked = _migration_write_error(migration)
+    if blocked is not None:
+        return blocked
     return _impl.quarantine_remote_event(
         remote_channel,
         remote_event_id,
@@ -93,18 +113,22 @@ def quarantine_remote_event(
 
 
 def latest_external_event(symbol: str, timeframe: str) -> dict[str, Any] | None:
-    install_external_signal_journal()
+    _prepare()
     return _impl.latest_external_event(symbol, timeframe)
 
 
 def latest_remote_cursor(remote_channel: str) -> int:
-    install_external_signal_journal()
+    _prepare()
     return _impl.latest_remote_cursor(remote_channel)
 
 
 def lifecycle_snapshot(symbol: str, timeframe: str) -> dict[str, Any]:
-    install_external_signal_journal()
-    return _impl.lifecycle_snapshot(symbol, timeframe)
+    migration = _prepare()
+    snapshot = _impl.lifecycle_snapshot(symbol, timeframe)
+    if not migration.get("ok") and migration.get("reason") != "no_active_tenant":
+        snapshot = dict(snapshot)
+        snapshot["migration_warning"] = migration.get("reason")
+    return snapshot
 
 
 def recent_external_events(
@@ -113,12 +137,12 @@ def recent_external_events(
     *,
     limit: int = 100,
 ) -> pd.DataFrame:
-    install_external_signal_journal()
+    _prepare()
     return _impl.recent_external_events(symbol, timeframe, limit=limit)
 
 
 def recent_quarantined_events(*, limit: int = 100) -> pd.DataFrame:
-    install_external_signal_journal()
+    _prepare()
     return _impl.recent_quarantined_events(limit=limit)
 
 
