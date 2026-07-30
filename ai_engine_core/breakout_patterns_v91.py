@@ -19,10 +19,15 @@ _ORIGINAL_ANALYZE = _v90.analyze_breakout_patterns
 
 def _rebuild(result: dict[str, Any]) -> dict[str, Any]:
     output = copy.deepcopy(result)
-    patterns = [item for item in output.get("patterns") or [] if isinstance(item, dict)]
+    patterns = [
+        item for item in output.get("patterns") or [] if isinstance(item, dict)
+    ]
     confirmed = [item for item in patterns if item.get("status") == "CONFIRMED"]
     forming = [item for item in patterns if item.get("status") == "FORMING"]
-    signed = sum(int(item.get("direction") or 0) * int(item.get("confidence") or 0) for item in confirmed)
+    signed = sum(
+        int(item.get("direction") or 0) * int(item.get("confidence") or 0)
+        for item in confirmed
+    )
     if not confirmed:
         signed = sum(
             int(item.get("direction") or 0)
@@ -32,33 +37,46 @@ def _rebuild(result: dict[str, Any]) -> dict[str, Any]:
         )
     denominator = (
         sum(int(item.get("confidence") or 0) for item in confirmed)
-        or sum(int(item.get("confidence") or 0) * 0.25 for item in forming[:2])
+        or sum(
+            int(item.get("confidence") or 0) * 0.25
+            for item in forming[:2]
+        )
         or 1.0
     )
     score = max(-100.0, min(100.0, signed / denominator * 100.0))
     output["direction_score"] = round(score, 2)
-    output["bias"] = "bullish" if score >= 20 else "bearish" if score <= -20 else "neutral"
+    output["bias"] = (
+        "bullish" if score >= 20 else "bearish" if score <= -20 else "neutral"
+    )
     output["confidence"] = max(
         (int(item.get("confidence") or 0) for item in confirmed),
-        default=max((int(item.get("confidence") or 0) for item in forming), default=0),
+        default=max(
+            (int(item.get("confidence") or 0) for item in forming),
+            default=0,
+        ),
     )
-    output["signals"] = [
-        {
-            "type": "SC-V91",
-            "kind": item.get("name"),
-            "direction": "buy" if int(item.get("direction") or 0) > 0 else "sell",
-            "price": None,
-            "level": item.get("boundary"),
-            "stop_reference": item.get("stop_reference"),
-            "measured_target": item.get("measured_target"),
-            "reason": item.get("reason"),
-            "volume_confirmed": item.get("volume_confirmed"),
-            "confirmed_on_close": True,
-        }
+
+    confirmed_keys = {
+        (
+            str(item.get("name") or ""),
+            "buy" if int(item.get("direction") or 0) > 0 else "sell",
+        )
         for item in confirmed
-    ]
+    }
+    signals: list[dict[str, Any]] = []
+    for raw in output.get("signals") or []:
+        if not isinstance(raw, dict):
+            continue
+        key = (str(raw.get("kind") or ""), str(raw.get("direction") or ""))
+        if key not in confirmed_keys:
+            continue
+        signal = copy.deepcopy(raw)
+        signal["type"] = "SC-V91"
+        signals.append(signal)
+    output["signals"] = signals
     output["evidence"] = [
-        f"{item.get('name')}: {item.get('reason')} ({int(item.get('confidence') or 0)}/100)"
+        f"{item.get('name')}: {item.get('reason')} "
+        f"({int(item.get('confidence') or 0)}/100)"
         for item in patterns[:8]
     ]
     features = {
@@ -72,12 +90,18 @@ def _rebuild(result: dict[str, Any]) -> dict[str, Any]:
             "breakout_confirmed_count": len(confirmed),
             "breakout_forming_count": len(forming),
             "breakout_direction_score": round(score, 3),
-            "breakout_bullish": int(any(int(item.get("direction") or 0) > 0 for item in confirmed)),
-            "breakout_bearish": int(any(int(item.get("direction") or 0) < 0 for item in confirmed)),
+            "breakout_bullish": int(
+                any(int(item.get("direction") or 0) > 0 for item in confirmed)
+            ),
+            "breakout_bearish": int(
+                any(int(item.get("direction") or 0) < 0 for item in confirmed)
+            ),
         }
     )
     for item in patterns:
-        features[f"pattern_{item.get('pattern_id')}_{str(item.get('status') or '').lower()}"] = 1
+        features[
+            f"pattern_{item.get('pattern_id')}_{str(item.get('status') or '').lower()}"
+        ] = 1
     output["features"] = features
     output["summary"] = (
         f"{len(confirmed)} نموذج اختراق مؤكد و{len(forming)} نموذج تحت التكوين"
@@ -88,7 +112,9 @@ def _rebuild(result: dict[str, Any]) -> dict[str, Any]:
     output["risk_reference"] = (
         {
             "pattern": primary.get("name"),
-            "direction": "buy" if int(primary.get("direction") or 0) > 0 else "sell",
+            "direction": (
+                "buy" if int(primary.get("direction") or 0) > 0 else "sell"
+            ),
             "boundary": primary.get("boundary"),
             "stop_reference": primary.get("stop_reference"),
             "measured_target": primary.get("measured_target"),
@@ -111,7 +137,11 @@ def analyze_breakout_patterns(
     if not isinstance(result, dict) or not result.get("ok"):
         return result
     output = copy.deepcopy(result)
-    policy = output.get("volume_policy") if isinstance(output.get("volume_policy"), dict) else {}
+    policy = (
+        output.get("volume_policy")
+        if isinstance(output.get("volume_policy"), dict)
+        else {}
+    )
     if policy.get("mode") != "required":
         output["version"] = ENGINE_VERSION
         return output
