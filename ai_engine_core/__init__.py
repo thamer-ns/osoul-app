@@ -42,6 +42,12 @@ def _report_call_context(args, kwargs) -> tuple[str, str]:
 
 def generate_ai_report(*args, **kwargs):
     """Build market data once, reuse it, then enforce the final v5 decision."""
+    # Some workers and tests call this package directly without entering app.py.
+    # Install the same bounded providers/context/runtime before reporting imports
+    # bind any direct market-data functions.
+    from sc_runtime_v9 import install_sc_runtime_v9
+
+    install_sc_runtime_v9()
     _lazy_attr(".reporting_policy_v5", "install_reporting_policy")()
     from analysis_context_v7 import generate_with_context
 
@@ -191,12 +197,12 @@ def self_test() -> dict:
         _lazy_attr(".decision_policy_v5", "enrich_report")
     )
     report["checks"]["has_breakout_engine"] = callable(
-        _lazy_attr(".breakout_patterns_v90", "analyze_breakout_patterns")
+        _lazy_attr(".breakout_patterns_v91", "analyze_breakout_patterns")
     )
     report["checks"]["full_timeframe_routing"] = callable(
         _lazy_attr(".reporting_policy_v5", "timeframe_to_interval")
     )
-    report["checks"]["analysis_context_v7"] = True
+    report["checks"]["analysis_context_v9"] = True
     return report
 
 
