@@ -36,6 +36,12 @@ def install_analysis_routes() -> None:
         "التحليل المالي متعدد المصادر",
         False,
     )
+    analysis.SECTION_ROUTES["🤖 تحليل البوت"] = (
+        "views.analysis.bot_remote_v8",
+        "render_bot_remote_analysis",
+        "تحليل محرك البوت المرتبط",
+        True,
+    )
     _INSTALLED = True
 
 
