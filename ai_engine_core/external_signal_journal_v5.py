@@ -1,12 +1,14 @@
 """Backward-compatible import path for the atomic tenant journal V7.
 
 Every public operation checks the idempotent tenant migration so a T1/SL/C can
-extend an NL/NS stored by V6. A migration outage does not block application
-startup or read-only pages, but lifecycle writes fail closed until state is safe.
+extend an NL/NS stored by V6. Journal installation and legacy migration are
+optional at application startup: read-only pages remain available when their
+DDL is temporarily unavailable, while lifecycle writes continue to fail closed.
 Normalized dictionaries are converted back to the compact SC wire contract.
 """
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import pandas as pd
@@ -14,6 +16,8 @@ import pandas as pd
 from . import external_signal_journal_v7 as _impl
 from .compass_contract import to_bot_wire_payload
 from .external_signal_migration_v8 import migrate_current_tenant_v6_to_v7
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _validate_transition(
@@ -55,19 +59,35 @@ def _wire_payload(payload: str | bytes | dict[str, Any]) -> str | bytes | dict[s
     return payload
 
 
+def _failure(reason: str) -> dict[str, Any]:
+    return {"ok": False, "reason": reason, "migrated": 0}
+
+
 def _prepare() -> dict[str, Any]:
-    _impl.install_external_signal_journal()
-    return migrate_current_tenant_v6_to_v7()
+    """Prepare the journal without allowing optional DDL to block app startup."""
+    try:
+        _impl.install_external_signal_journal()
+    except Exception:
+        LOGGER.exception("External journal V7 installation unavailable")
+        return _failure("journal_install_failed")
+    try:
+        result = migrate_current_tenant_v6_to_v7()
+    except Exception:
+        LOGGER.exception("External journal V6-to-V7 migration unavailable")
+        return _failure("migration_failed")
+    if not isinstance(result, dict):
+        return _failure("migration_invalid_result")
+    return result
 
 
 def install_external_signal_journal() -> None:
-    # Installation remains fail-open for authenticated application startup. The
-    # write APIs below still reject lifecycle changes when migration is unsafe.
+    # Deliberately ignore the status here. The authenticated application may open
+    # in safe read-only mode; write APIs below still reject unsafe lifecycle work.
     _prepare()
 
 
 def _migration_write_error(result: dict[str, Any]) -> dict[str, Any] | None:
-    if result.get("ok") or result.get("reason") == "no_active_tenant":
+    if result.get("ok"):
         return None
     return {
         "ok": False,
@@ -75,6 +95,13 @@ def _migration_write_error(result: dict[str, Any]) -> dict[str, Any] | None:
         "reason": "legacy_migration_unavailable",
         "migration_reason": result.get("reason"),
     }
+
+
+def _empty_frame(reason: str | None) -> pd.DataFrame:
+    frame = pd.DataFrame()
+    if reason:
+        frame.attrs["journal_unavailable_reason"] = reason
+    return frame
 
 
 def record_external_event(
@@ -113,22 +140,30 @@ def quarantine_remote_event(
 
 
 def latest_external_event(symbol: str, timeframe: str) -> dict[str, Any] | None:
-    _prepare()
+    prepared = _prepare()
+    if not prepared.get("ok"):
+        return None
     return _impl.latest_external_event(symbol, timeframe)
 
 
 def latest_remote_cursor(remote_channel: str) -> int:
-    _prepare()
+    prepared = _prepare()
+    if not prepared.get("ok"):
+        return 0
     return _impl.latest_remote_cursor(remote_channel)
 
 
 def lifecycle_snapshot(symbol: str, timeframe: str) -> dict[str, Any]:
     migration = _prepare()
+    if not migration.get("ok"):
+        return {
+            "available": False,
+            "events": 0,
+            "status": None,
+            "migration_warning": migration.get("reason"),
+        }
     snapshot = _impl.lifecycle_snapshot(symbol, timeframe)
-    if not migration.get("ok") and migration.get("reason") != "no_active_tenant":
-        snapshot = dict(snapshot)
-        snapshot["migration_warning"] = migration.get("reason")
-    return snapshot
+    return snapshot if isinstance(snapshot, dict) else {"available": False, "events": 0}
 
 
 def recent_external_events(
@@ -137,12 +172,16 @@ def recent_external_events(
     *,
     limit: int = 100,
 ) -> pd.DataFrame:
-    _prepare()
+    prepared = _prepare()
+    if not prepared.get("ok"):
+        return _empty_frame(str(prepared.get("reason") or "journal_unavailable"))
     return _impl.recent_external_events(symbol, timeframe, limit=limit)
 
 
 def recent_quarantined_events(*, limit: int = 100) -> pd.DataFrame:
-    _prepare()
+    prepared = _prepare()
+    if not prepared.get("ok"):
+        return _empty_frame(str(prepared.get("reason") or "journal_unavailable"))
     return _impl.recent_quarantined_events(limit=limit)
 
 
