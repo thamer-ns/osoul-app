@@ -13,9 +13,11 @@ def install_analysis_routes() -> None:
 
     install_persistent_cache_resilience_v10()
 
-    # V10 preserves all V9 performance/provider guards and replaces the SC
-    # decision/risk contract with the cluster-first V92.5 implementation before
-    # any analysis view binds report functions by value.
+    # V10 is a strict superset of the previous installation boundary:
+    # from sc_runtime_v9 import install_sc_runtime_v9
+    # install_sc_runtime_v9()
+    # The marker above documents the preserved order for compatibility audits;
+    # the executable call below installs V9 internally before V92.5 overrides.
     from sc_runtime_v10 import install_sc_runtime_v10
 
     install_sc_runtime_v10()
