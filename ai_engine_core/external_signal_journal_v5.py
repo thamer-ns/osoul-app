@@ -1,4 +1,11 @@
-"""Backward-compatible import path for the atomic tenant journal v7."""
+"""Backward-compatible import path for the atomic tenant journal V7.
+
+Every public operation first runs the idempotent tenant migration so a T1/SL/C
+arriving after deployment can still extend an NL/NS that was stored by V6.
+Normalized in-memory dictionaries are converted back to the compact SC wire
+contract before validation; this also keeps the Streamlit integration safe when
+it reuses an already parsed payload.
+"""
 from __future__ import annotations
 
 from typing import Any
@@ -6,6 +13,8 @@ from typing import Any
 import pandas as pd
 
 from . import external_signal_journal_v7 as _impl
+from .compass_contract import to_bot_wire_payload
+from .external_signal_migration_v8 import migrate_current_tenant_v6_to_v7
 
 
 def _validate_transition(
@@ -36,18 +45,87 @@ def _validate_transition(
 
 _impl._validate_transition = _validate_transition  # noqa: SLF001
 
+
+def _wire_payload(payload: str | bytes | dict[str, Any]) -> str | bytes | dict[str, Any]:
+    if not isinstance(payload, dict):
+        return payload
+    if any(key in payload for key in ("s", "e", "sy", "tf", "p")):
+        return payload
+    if payload.get("source") and payload.get("event"):
+        return to_bot_wire_payload(payload)
+    return payload
+
+
+def install_external_signal_journal() -> None:
+    _impl.install_external_signal_journal()
+    result = migrate_current_tenant_v6_to_v7()
+    if not result.get("ok") and result.get("reason") != "no_active_tenant":
+        raise RuntimeError("تعذر ترحيل سجل المؤشر السابق بأمان")
+
+
+def record_external_event(
+    payload: str | bytes | dict[str, Any],
+    *,
+    remote_event_id: int | None = None,
+    remote_channel: str | None = None,
+) -> dict[str, Any]:
+    install_external_signal_journal()
+    return _impl.record_external_event(
+        _wire_payload(payload),
+        remote_event_id=remote_event_id,
+        remote_channel=remote_channel,
+    )
+
+
+def quarantine_remote_event(
+    remote_channel: str,
+    remote_event_id: int,
+    payload: Any,
+    reason: str,
+) -> dict[str, Any]:
+    install_external_signal_journal()
+    return _impl.quarantine_remote_event(
+        remote_channel,
+        remote_event_id,
+        payload,
+        reason,
+    )
+
+
+def latest_external_event(symbol: str, timeframe: str) -> dict[str, Any] | None:
+    install_external_signal_journal()
+    return _impl.latest_external_event(symbol, timeframe)
+
+
+def latest_remote_cursor(remote_channel: str) -> int:
+    install_external_signal_journal()
+    return _impl.latest_remote_cursor(remote_channel)
+
+
+def lifecycle_snapshot(symbol: str, timeframe: str) -> dict[str, Any]:
+    install_external_signal_journal()
+    return _impl.lifecycle_snapshot(symbol, timeframe)
+
+
+def recent_external_events(
+    symbol: str | None = None,
+    timeframe: str | None = None,
+    *,
+    limit: int = 100,
+) -> pd.DataFrame:
+    install_external_signal_journal()
+    return _impl.recent_external_events(symbol, timeframe, limit=limit)
+
+
+def recent_quarantined_events(*, limit: int = 100) -> pd.DataFrame:
+    install_external_signal_journal()
+    return _impl.recent_quarantined_events(limit=limit)
+
+
 JournalStateError = _impl.JournalStateError
 QUARANTINE_TABLE = _impl.QUARANTINE_TABLE
 STATE_TABLE = _impl.STATE_TABLE
 TABLE = _impl.TABLE
-install_external_signal_journal = _impl.install_external_signal_journal
-latest_external_event = _impl.latest_external_event
-latest_remote_cursor = _impl.latest_remote_cursor
-lifecycle_snapshot = _impl.lifecycle_snapshot
-quarantine_remote_event = _impl.quarantine_remote_event
-recent_external_events = _impl.recent_external_events
-recent_quarantined_events = _impl.recent_quarantined_events
-record_external_event = _impl.record_external_event
 
 __all__ = [
     "JournalStateError",
