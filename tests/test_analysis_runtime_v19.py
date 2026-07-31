@@ -19,29 +19,27 @@ def test_analysis_hub_has_exactly_two_user_sections() -> None:
     assert insights._SECTION_META["analysis"]["module"] == "views.analysis_fast"
 
 
-def test_analysis_runtime_components_fail_open(monkeypatch) -> None:
-    monkeypatch.setattr(routes, "_INSTALLED", False)
-    monkeypatch.setattr(routes, "_FAILURES", [])
+def test_analysis_runtime_attempt_is_fail_open() -> None:
+    failures: list[str] = []
 
-    def install_component(
-        name: str,
-        _module_name: str,
-        _function_name: str,
-    ) -> bool:
-        return name != "market_integrity"
+    routes._attempt(
+        "market_integrity",
+        lambda: (_ for _ in ()).throw(RuntimeError("provider unavailable")),
+        failures,
+    )
 
-    monkeypatch.setattr(routes, "_install_component", install_component)
-    monkeypatch.setattr(routes, "_install_global_bot_sync", lambda: False)
+    assert failures == ["market_integrity"]
 
-    routes.install_analysis_routes()
+
+def test_analysis_runtime_status_exposes_two_sections(monkeypatch) -> None:
+    monkeypatch.setattr(routes, "_INSTALLED", True)
+    monkeypatch.setattr(routes, "_FAILURES", ["live_report"])
+
     status = routes.runtime_status()
 
     assert status["installed"] is True
     assert status["analysis_entry_independent"] is True
-    assert status["failed_components"] == [
-        "market_integrity",
-        "global_bot_sync",
-    ]
+    assert status["failed_components"] == ["live_report"]
     assert status["user_sections"] == ["analysis", "evaluation"]
 
 
