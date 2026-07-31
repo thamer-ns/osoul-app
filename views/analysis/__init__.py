@@ -1,4 +1,4 @@
-"""Simple entry point for the practical analysis workspace."""
+"""Stable entry point for the comprehensive analysis workspace."""
 from __future__ import annotations
 
 import logging
@@ -7,7 +7,6 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
-from components import render_kpi
 from data_source import get_company_details
 from database import execute_query, fetch_table
 from market_data import fetch_batch_data, get_chart_history, get_ticker_symbol
@@ -42,6 +41,7 @@ def _company_details(symbol: str) -> Any:
 
 @st.cache_data(ttl=90, max_entries=256, show_spinner=False)
 def _price_snapshot(symbol: str) -> dict[str, Any]:
+    """Return a quote without allowing provider failure to remove analysis UI."""
     normalized = get_ticker_symbol(symbol) or normalize_symbol(symbol)
     try:
         batch = fetch_batch_data([normalized]) or {}
@@ -67,7 +67,7 @@ def _price_snapshot(symbol: str) -> dict[str, Any]:
                 ),
             }
     except Exception:
-        logger.exception("snapshot failed for %s", normalized)
+        logger.exception("Live analysis snapshot failed for %s", normalized)
 
     try:
         history = get_chart_history(normalized, period="5d", interval="1d")
@@ -99,7 +99,7 @@ def _price_snapshot(symbol: str) -> dict[str, Any]:
                     "is_stale": bool(lineage.get("is_stale", False)),
                 }
     except Exception:
-        logger.exception("history fallback failed for %s", normalized)
+        logger.exception("Analysis history quote fallback failed for %s", normalized)
     return {
         "price": None,
         "change": None,
@@ -124,7 +124,7 @@ def _company_meta(symbol: str) -> tuple[str, str]:
         if info:
             return str(info), ""
     except Exception:
-        logger.exception("company metadata failed for %s", symbol)
+        logger.exception("Company metadata failed for %s", symbol)
     return symbol, ""
 
 
@@ -133,7 +133,7 @@ def _watchlist() -> pd.DataFrame:
         value = fetch_table("watchlist")
         return value if isinstance(value, pd.DataFrame) else pd.DataFrame()
     except Exception:
-        logger.exception("watchlist load failed")
+        logger.exception("Analysis watchlist load failed")
         return pd.DataFrame()
 
 
@@ -157,46 +157,48 @@ def _open_positions(symbol: str, trades: pd.DataFrame) -> pd.DataFrame:
     return trades[(normalized == symbol) & (status == "open")]
 
 
-def _render_watchlist_action(
-    symbol: str,
-    watchlist: pd.DataFrame,
-) -> None:
-    existing = set()
-    if not watchlist.empty and "symbol" in watchlist.columns:
-        existing = {
-            normalize_symbol(value)
-            for value in watchlist["symbol"].dropna().astype(str)
-        }
-    if symbol in existing:
+def _render_watchlist_action(symbol: str, watchlist: pd.DataFrame) -> None:
+    try:
+        existing = set()
+        if not watchlist.empty and "symbol" in watchlist.columns:
+            existing = {
+                normalize_symbol(value)
+                for value in watchlist["symbol"].dropna().astype(str)
+            }
+        if symbol in existing:
+            if st.button(
+                "إزالة من المراقبة",
+                use_container_width=True,
+                key=f"analysis_watch_remove:{symbol}",
+            ):
+                if execute_query(
+                    "DELETE FROM watchlist WHERE symbol=%s",
+                    (symbol,),
+                ):
+                    st.success("تمت الإزالة من قائمة المراقبة")
+                    st.cache_data.clear()
+                    st.rerun()
+                st.error("تعذر إزالة الرمز")
+            return
         if st.button(
-            "إزالة من المراقبة",
+            "إضافة للمراقبة",
             use_container_width=True,
-            key=f"analysis_watch_remove:{symbol}",
+            key=f"analysis_watch_add:{symbol}",
         ):
-            if execute_query("DELETE FROM watchlist WHERE symbol=%s", (symbol,)):
-                st.success("تمت الإزالة من قائمة المراقبة")
+            saved = execute_query(
+                "INSERT INTO watchlist (symbol, created_at) "
+                "VALUES (%s,CURRENT_TIMESTAMP) "
+                "ON CONFLICT (symbol) DO NOTHING",
+                (symbol,),
+            )
+            if saved:
+                st.success("تمت الإضافة إلى قائمة المراقبة")
                 st.cache_data.clear()
                 st.rerun()
-            else:
-                st.error("تعذر إزالة الرمز")
-        return
-    if st.button(
-        "إضافة للمراقبة",
-        use_container_width=True,
-        key=f"analysis_watch_add:{symbol}",
-    ):
-        saved = execute_query(
-            "INSERT INTO watchlist (symbol, created_at) "
-            "VALUES (%s,CURRENT_TIMESTAMP) "
-            "ON CONFLICT (symbol) DO NOTHING",
-            (symbol,),
-        )
-        if saved:
-            st.success("تمت الإضافة إلى قائمة المراقبة")
-            st.cache_data.clear()
-            st.rerun()
-        else:
             st.info("الرمز موجود مسبقًا أو تعذر حفظه")
+    except Exception:
+        logger.exception("Analysis watchlist action failed")
+        st.warning("تعذر تحديث قائمة المراقبة، والتحليل ما زال متاحًا.")
 
 
 def _render_header(
@@ -207,9 +209,19 @@ def _render_header(
     watchlist: pd.DataFrame,
     interval: str,
 ) -> None:
-    snapshot = _price_snapshot(symbol)
-    price = snapshot.get("price")
-    change = snapshot.get("change")
+    try:
+        snapshot = _price_snapshot(symbol)
+    except Exception:
+        logger.exception("Analysis header quote failed")
+        snapshot = {
+            "price": None,
+            "change": None,
+            "source": "غير متاح",
+            "fetched_at": "—",
+            "is_stale": True,
+        }
+    price = _number(snapshot.get("price"), None)
+    change = _number(snapshot.get("change"), None)
     positions = _open_positions(symbol, trades)
 
     st.subheader(name or symbol)
@@ -219,60 +231,38 @@ def _render_header(
         f"المصدر {snapshot.get('source')} — {snapshot.get('fetched_at')}{stale}"
     )
     c1, c2, c3, c4 = st.columns([1, 1, 1, 0.8])
-    with c1:
-        render_kpi(
-            "السعر الحالي",
-            "—" if price is None else f"{float(price):,.2f}",
-            "neutral",
-            "💵",
-        )
-    with c2:
-        render_kpi(
-            "التغير اليومي",
-            "—" if change is None else f"{float(change):+.2f}%",
-            "neutral"
-            if change is None
-            else "success"
-            if change >= 0
-            else "danger",
-            "📈",
-        )
-    with c3:
-        render_kpi(
-            "مركز مفتوح",
-            "نعم" if not positions.empty else "لا",
-            "blue" if not positions.empty else "neutral",
-            "📌",
-        )
+    c1.metric("السعر الحالي", "—" if price is None else f"{price:,.2f}")
+    c2.metric(
+        "التغير اليومي",
+        "—" if change is None else f"{change:+.2f}%",
+    )
+    c3.metric("مركز مفتوح", "نعم" if not positions.empty else "لا")
     with c4:
         _render_watchlist_action(symbol, watchlist)
 
 
 def _run_from_form(symbol: str, interval: str) -> bool:
-    try:
-        from .workspace_v18 import _generate
+    from .workspace_v20 import _generate
 
-        with st.spinner("جاري تحليل الاتجاه والخطة والمخاطر..."):
-            _generate(symbol, interval, refresh=True)
-        return True
-    except Exception:
-        logger.exception("analysis form run failed")
-        st.error("تعذر إكمال التحليل الآن. حاول مرة أخرى بعد قليل.")
-        return False
+    with st.spinner("جاري تحليل الاتجاه والخطة والمخاطر..."):
+        payload = _generate(symbol, interval, refresh=True)
+    report = payload.get("report") if isinstance(payload, dict) else None
+    return isinstance(report, dict) and bool(report)
 
 
 def view_analysis(fin: dict[str, Any] | None) -> None:
-    finance = fin or {}
+    """Render the only comprehensive-analysis page used by the application."""
+    finance = fin if isinstance(fin, dict) else {}
     trades = finance.get("all_trades")
     if not isinstance(trades, pd.DataFrame):
         trades = pd.DataFrame()
     watchlist = _watchlist()
     universe = _symbol_universe(trades, watchlist)
 
-    st.header("📊 تحليل السهم")
+    st.header("📊 التحليل الشامل")
     st.caption(
-        "اختر الرمز والفاصل؛ ستحصل على اتجاه صعود أو هبوط، دخول، وقف، "
-        "أهداف، ثم رأي مستشار عملي."
+        "اختر الرمز والفاصل؛ يعرض النظام الصعود والهبوط والدخول والوقف "
+        "والأهداف ورأي المستشار في الصفحة نفسها."
     )
 
     current_symbol = normalize_symbol(
@@ -293,9 +283,9 @@ def view_analysis(fin: dict[str, Any] | None) -> None:
     with st.form("analysis_symbol_form"):
         c1, c2, c3 = st.columns([2.2, 1.2, 0.8])
         raw_symbol = c1.text_input(
-            "رمز السهم",
+            "رمز السهم أو الأصل",
             value=current_symbol,
-            placeholder="مثال: 2222 أو AAPL",
+            placeholder="مثال: 2222 أو AAPL أو BTCUSD",
         )
         timeframe_label = c2.selectbox(
             "الفاصل",
@@ -314,13 +304,16 @@ def view_analysis(fin: dict[str, Any] | None) -> None:
     if submitted:
         symbol = normalize_symbol(raw_symbol)
         if not symbol or symbol == ".SR":
-            st.error("أدخل رمزًا صحيحًا مثل 2222 أو 2222.SR أو AAPL")
+            st.error("أدخل رمزًا صحيحًا مثل 2222 أو AAPL أو BTCUSD")
         else:
             interval = TIMEFRAME_OPTIONS[timeframe_label]
             st.session_state["analysis_active_symbol"] = symbol
             st.session_state["analysis_active_interval"] = interval
-            if _run_from_form(symbol, interval):
-                st.rerun()
+            try:
+                _run_from_form(symbol, interval)
+            except Exception:
+                logger.exception("Analysis form execution failed")
+            st.rerun()
 
     symbol = normalize_symbol(
         st.session_state.get("analysis_active_symbol")
@@ -329,20 +322,25 @@ def view_analysis(fin: dict[str, Any] | None) -> None:
         st.session_state.get("analysis_active_interval") or "1d"
     )
     if not symbol or symbol == ".SR":
-        st.info("اكتب رمز السهم واختر الفاصل ثم اضغط «تحليل».")
+        st.info("اكتب الرمز واختر الفاصل ثم اضغط «تحليل».")
         return
 
     name, sector = _company_meta(symbol)
-    _render_header(symbol, name, sector, trades, watchlist, interval)
+    try:
+        _render_header(symbol, name, sector, trades, watchlist, interval)
+    except Exception:
+        logger.exception("Analysis header presentation failed")
+        st.subheader(name or symbol)
+        st.caption(f"{symbol} — الفاصل {interval}")
 
     try:
-        from .workspace_v18 import render_decision_workspace
+        from .workspace_v20 import render_decision_workspace
 
         render_decision_workspace(symbol, interval, finance)
     except Exception:
-        logger.exception("practical analysis workspace failed")
-        st.error("تعذر تشغيل التحليل الآن.")
-        st.caption("تم تسجيل الخطأ لدى الخادم دون عرض معلومات تقنية حساسة.")
+        logger.exception("Comprehensive analysis workspace failed")
+        st.error("تعذر تشغيل التحليل الشامل الآن.")
+        st.caption("رمز التشخيص: analysis_workspace")
 
 
 __all__ = ["TIMEFRAME_OPTIONS", "view_analysis"]

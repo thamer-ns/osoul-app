@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib
+from typing import Any
 
 import streamlit as st
 
@@ -18,19 +19,15 @@ def _portfolio_cache_key(user_id: int, portfolio_id: int) -> str:
     return f"u{int(user_id)}:p{int(portfolio_id)}"
 
 
-def _load_attr(module_name: str, attr_name: str):
+def _load_attr(module_name: str, attr_name: str) -> Any:
     module = importlib.import_module(module_name)
     return getattr(module, attr_name)
 
 
-def _render_page(page: str, finance):
+def _render_page(page: str, finance: Any) -> None:
     routes = {
         "home": ("views.home", "view_home", (finance,)),
-        "portfolios": (
-            "views.portfolios",
-            "view_portfolios",
-            (finance,),
-        ),
+        "portfolios": ("views.portfolios", "view_portfolios", (finance,)),
         "insights": ("views.insights", "view_insights", (finance,)),
         "cash": ("views.cash", "view_cash_log", (finance,)),
         "tools": ("views.tools_core", "view_tools", ()),
@@ -41,18 +38,13 @@ def _render_page(page: str, finance):
         _load_attr("views.navbar", "navigate_to")("home")
         return
     module_name, attr_name, args = target
-    if page == "insights":
-        insights = importlib.import_module(module_name)
-        insights._SECTION_META["analysis"]["module"] = (
-            "views.analysis_fast"
-        )
-        renderer = getattr(insights, attr_name)
-        renderer(*args)
-        return
-    _load_attr(module_name, attr_name)(*args)
+    renderer = _load_attr(module_name, attr_name)
+    if not callable(renderer):
+        raise TypeError(f"Page renderer is not callable: {module_name}.{attr_name}")
+    renderer(*args)
 
 
-def router():
+def router() -> None:
     if "page" not in st.session_state:
         st.session_state.page = "home"
 
@@ -81,9 +73,7 @@ def router():
             tenant.portfolio_id,
         )
         with st.spinner("جارٍ تحميل بيانات المحفظة..."):
-            finance = calculate_portfolio_metrics(
-                cache_key=cache_key,
-            )
+            finance = calculate_portfolio_metrics(cache_key=cache_key)
         if isinstance(finance, dict):
             finance["_cache_key"] = cache_key
 
