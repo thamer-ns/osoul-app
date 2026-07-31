@@ -248,6 +248,19 @@ def _render_header(
         _render_watchlist_action(symbol, watchlist)
 
 
+def _run_from_form(symbol: str, interval: str) -> bool:
+    try:
+        from .workspace_v18 import _generate
+
+        with st.spinner("جاري تحليل الاتجاه والخطة والمخاطر..."):
+            _generate(symbol, interval, refresh=True)
+        return True
+    except Exception:
+        logger.exception("analysis form run failed")
+        st.error("تعذر إكمال التحليل الآن. حاول مرة أخرى بعد قليل.")
+        return False
+
+
 def view_analysis(fin: dict[str, Any] | None) -> None:
     finance = fin or {}
     trades = finance.get("all_trades")
@@ -296,21 +309,18 @@ def view_analysis(fin: dict[str, Any] | None) -> None:
         )
 
     if universe:
-        st.caption(
-            "رموزك السريعة: " + "، ".join(universe[:8])
-        )
+        st.caption("رموزك السريعة: " + "، ".join(universe[:8]))
 
     if submitted:
         symbol = normalize_symbol(raw_symbol)
         if not symbol or symbol == ".SR":
             st.error("أدخل رمزًا صحيحًا مثل 2222 أو 2222.SR أو AAPL")
         else:
+            interval = TIMEFRAME_OPTIONS[timeframe_label]
             st.session_state["analysis_active_symbol"] = symbol
-            st.session_state["analysis_active_interval"] = (
-                TIMEFRAME_OPTIONS[timeframe_label]
-            )
-            st.session_state["analysis_workspace_v18_autorun"] = True
-            st.rerun()
+            st.session_state["analysis_active_interval"] = interval
+            if _run_from_form(symbol, interval):
+                st.rerun()
 
     symbol = normalize_symbol(
         st.session_state.get("analysis_active_symbol")
