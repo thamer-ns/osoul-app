@@ -111,13 +111,27 @@ def _patch_bridge(monkeypatch, requests_object: object) -> None:
     monkeypatch.setattr(bridge, "requests", requests_object)
 
 
+def _live_runtime_values() -> dict:
+    return {
+        "runtime_version": "59.0",
+        "stale_fallback_age_bounded": True,
+        "delay_status_is_tristate": True,
+        "closed_candle_confirmation_unchanged": True,
+    }
+
+
 def _runtime_values(*, installed: bool = True) -> dict:
     return {
         "installed": installed,
-        "feature_version": "55.0",
+        "feature_version": contract_runtime.EXPECTED_FEATURE_VERSION,
         "runtime_version": contract_runtime.EXPECTED_RUNTIME_VERSION,
+        "indicator_contract": contract_runtime.EXPECTED_INDICATOR_CONTRACT,
         "failure_single_flight": True,
         "stale_fallback_age_bounded": True,
+        "live_quote_overlay": True,
+        "live_quote_changes_signal": False,
+        "closed_candle_confirmation_unchanged": True,
+        "live_quote_context": _live_runtime_values(),
     }
 
 
@@ -137,7 +151,7 @@ def _runtime_body(*, installed: bool = True, contract: str | None = None) -> dic
     }
 
 
-def test_runtime_probe_requires_live_v56_engine(monkeypatch):
+def test_runtime_probe_requires_live_v59_engine(monkeypatch):
     requests_object = _RuntimeRequests(_runtime_body())
     _patch_bridge(monkeypatch, requests_object)
 
@@ -148,8 +162,11 @@ def test_runtime_probe_requires_live_v56_engine(monkeypatch):
     assert result["remote_analysis"] is True
     assert result["runtime_installed"] is True
     assert result["runtime_version"] == contract_runtime.EXPECTED_RUNTIME_VERSION
+    assert result["feature_version"] == contract_runtime.EXPECTED_FEATURE_VERSION
+    assert result["indicator_contract"] == contract_runtime.EXPECTED_INDICATOR_CONTRACT
     assert result["failure_single_flight"] is True
     assert result["stale_fallback_age_bounded"] is True
+    assert all(result["capability_checks"].values())
     assert result["endpoint"] == "/integrations/osoli/runtime"
     assert len(requests_object.calls) == 1
 
@@ -163,14 +180,26 @@ def test_runtime_probe_rejects_uninstalled_wrong_or_unsafe_runtime(monkeypatch):
     assert contract_runtime._probe_runtime()["reason"] == "contract_mismatch"
 
     wrong_runtime = _runtime_body()
-    wrong_runtime["runtime"]["runtime_version"] = "55.0"
+    wrong_runtime["runtime"]["runtime_version"] = "58.0"
     requests_object.body = wrong_runtime
     assert contract_runtime._probe_runtime()["reason"] == "runtime_version_mismatch"
 
     unsafe_stale = _runtime_body()
-    unsafe_stale["runtime"]["stale_fallback_age_bounded"] = False
+    unsafe_stale["runtime"]["live_quote_context"][
+        "stale_fallback_age_bounded"
+    ] = False
     requests_object.body = unsafe_stale
-    assert contract_runtime._probe_runtime()["reason"] == "stale_fallback_unbounded"
+    assert contract_runtime._probe_runtime()["reason"] == "live_quote_stale_unbounded"
+
+    unsafe_delay = _runtime_body()
+    unsafe_delay["runtime"]["live_quote_context"][
+        "delay_status_is_tristate"
+    ] = False
+    requests_object.body = unsafe_delay
+    assert (
+        contract_runtime._probe_runtime()["reason"]
+        == "live_quote_delay_unknown_unsafe"
+    )
 
 
 def _analysis_body(frame_key: str = "1d") -> dict:
@@ -183,11 +212,17 @@ def _analysis_body(frame_key: str = "1d") -> dict:
             "plan_valid": False,
             "targets": [],
         },
+        "live_quote_context": {
+            "changes_signal": False,
+            "closed_candle_confirmation": True,
+        },
         "runtime": _runtime_values(),
     }
 
 
-def test_remote_analysis_validates_contract_runtime_and_frame(monkeypatch):
+def test_remote_analysis_validates_contract_runtime_frame_and_live_safety(
+    monkeypatch,
+):
     requests_object = _AnalysisRequests(_analysis_body("1d"))
     _patch_bridge(monkeypatch, requests_object)
 
@@ -210,9 +245,14 @@ def test_remote_analysis_validates_contract_runtime_and_frame(monkeypatch):
     assert request_bot_analysis("AAPL", "1d")["reason"] == "runtime_not_installed"
 
     wrong_runtime = _analysis_body("1d")
-    wrong_runtime["runtime"]["runtime_version"] = "55.0"
+    wrong_runtime["runtime"]["runtime_version"] = "58.0"
     requests_object.body = wrong_runtime
     assert request_bot_analysis("AAPL", "1d")["reason"] == "runtime_version_mismatch"
+
+    unsafe_live = _analysis_body("1d")
+    unsafe_live["live_quote_context"]["changes_signal"] = True
+    requests_object.body = unsafe_live
+    assert request_bot_analysis("AAPL", "1d")["reason"] == "live_quote_may_change_signal"
 
 
 def test_remote_analysis_maps_server_deadlines(monkeypatch):
