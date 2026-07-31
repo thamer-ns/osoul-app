@@ -13,9 +13,12 @@ def install_analysis_routes() -> None:
 
     install_persistent_cache_resilience_v10()
 
-    from sc_runtime_v10 import install_sc_runtime_v10
+    # Preserve the proven V9 installation boundary and ordering. The current
+    # SC-V92.5 overlays remain installed inside that chain before V17 attaches
+    # the live-price sidecar.
+    from sc_runtime_v9 import install_sc_runtime_v9
 
-    install_sc_runtime_v10()
+    install_sc_runtime_v9()
 
     from market_data_integrity_v14 import install_market_data_integrity_v14
 
