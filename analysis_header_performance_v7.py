@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import logging
 import threading
-from datetime import datetime, timezone
-from typing import Any
+import time
+from typing import Any, Callable
 
 import pandas as pd
 
@@ -28,37 +28,63 @@ def _number(value: Any) -> float | None:
     return number if number > 0 else None
 
 
-def _from_history(symbol: str) -> dict[str, Any]:
-    # Reuse any compatible daily frame instead of missing a loaded 5y/2y entry
-    # because the old header requested one exact synthetic period key.
-    frame = peek_latest_cached_history(
-        symbol,
-        interval="1d",
-        allow_stale=True,
-    )
-    if not isinstance(frame, pd.DataFrame) or frame.empty or "Close" not in frame:
-        return {}
-    close = pd.to_numeric(frame["Close"], errors="coerce").dropna()
-    if close.empty:
-        return {}
-    price = float(close.iloc[-1])
-    previous = float(close.iloc[-2]) if len(close) > 1 else None
-    change = (
-        (price / previous - 1.0) * 100.0
-        if previous is not None and previous > 0
-        else None
-    )
-    attrs = dict(getattr(frame, "attrs", {}) or {})
-    lineage = dict(attrs.get("data_lineage") or {})
-    stale = bool(lineage.get("is_stale", True))
+def _empty_quote() -> dict[str, Any]:
     return {
-        "price": price,
-        "change": change,
-        "source": str(lineage.get("source") or attrs.get("source") or "history"),
-        "fetched_at": str(lineage.get("fetched_at") or "—"),
-        "is_stale": stale,
-        "refreshing": stale,
+        "price": None,
+        "change": None,
+        "source": "تحديث بالخلفية",
+        "fetched_at": "—",
+        "is_stale": True,
+        "refreshing": True,
     }
+
+
+def _from_history(symbol: str) -> dict[str, Any]:
+    try:
+        frame = peek_latest_cached_history(
+            symbol,
+            interval="1d",
+            allow_stale=True,
+        )
+        if (
+            not isinstance(frame, pd.DataFrame)
+            or frame.empty
+            or "Close" not in frame
+        ):
+            return {}
+        close = pd.to_numeric(frame["Close"], errors="coerce").dropna()
+        if close.empty:
+            return {}
+        price = float(close.iloc[-1])
+        previous = float(close.iloc[-2]) if len(close) > 1 else None
+        change = (
+            (price / previous - 1.0) * 100.0
+            if previous is not None and previous > 0
+            else None
+        )
+        attrs = dict(getattr(frame, "attrs", {}) or {})
+        lineage = dict(attrs.get("data_lineage") or {})
+        stale = bool(lineage.get("is_stale", True))
+        return {
+            "price": price,
+            "change": change,
+            "source": str(
+                lineage.get("source") or attrs.get("source") or "history"
+            ),
+            "fetched_at": str(lineage.get("fetched_at") or "—"),
+            "is_stale": stale,
+            "refreshing": stale,
+        }
+    except Exception:
+        LOGGER.debug("Cached analysis history lookup failed", exc_info=True)
+        return {}
+
+
+def _warm_safely(symbol: str) -> None:
+    try:
+        warm_quote_cache(symbol)
+    except Exception:
+        LOGGER.debug("Analysis quote background warm failed", exc_info=True)
 
 
 def _install_optional_legacy_renderer(module: Any) -> None:
@@ -107,17 +133,43 @@ def _install_optional_legacy_renderer(module: Any) -> None:
 
                 target._render_chart = render_chart
             except Exception:
-                LOGGER.debug(
-                    "Technical chart reuse patch deferred",
-                    exc_info=True,
-                )
+                LOGGER.debug("Technical chart reuse patch deferred", exc_info=True)
         original_safe_render(title, module_name, attr_name, *args)
 
     module._safe_render = safe_render
 
 
+def _normalize_symbol(module: Any, symbol: str) -> str:
+    for name in ("get_ticker_symbol", "normalize_symbol"):
+        normalizer = getattr(module, name, None)
+        if not callable(normalizer):
+            continue
+        try:
+            value = normalizer(symbol)
+        except Exception:
+            LOGGER.debug("Analysis symbol normalizer failed: %s", name, exc_info=True)
+            continue
+        if value:
+            return str(value)
+    return str(symbol or "").strip().upper()
+
+
+def _fallback_quote(
+    original: Callable[[str], Any] | None,
+    symbol: str,
+) -> dict[str, Any]:
+    if callable(original):
+        try:
+            value = original(symbol)
+            if isinstance(value, dict):
+                return value
+        except Exception:
+            LOGGER.exception("Original analysis quote provider failed")
+    return _empty_quote()
+
+
 def install_analysis_header_performance(module: Any) -> None:
-    """Replace blocking header data for both legacy and V18 workspaces."""
+    """Add cache acceleration without making the analysis page depend on it."""
     module_id = id(module)
     if module_id in _INSTALLED_MODULES:
         return
@@ -125,65 +177,64 @@ def install_analysis_header_performance(module: Any) -> None:
         if module_id in _INSTALLED_MODULES:
             return
 
-        if not callable(getattr(module, "get_ticker_symbol", None)):
-            raise RuntimeError("analysis module lacks ticker normalization")
-        if not callable(getattr(module, "normalize_symbol", None)):
-            raise RuntimeError("analysis module lacks symbol normalization")
+        original_snapshot = getattr(module, "_price_snapshot", None)
+        original_snapshot = original_snapshot if callable(original_snapshot) else None
 
         def price_snapshot(symbol: str) -> dict[str, Any]:
-            started = datetime.now(timezone.utc)
-            normalized = (
-                module.get_ticker_symbol(symbol)
-                or module.normalize_symbol(symbol)
-                or str(symbol)
-            )
-            payload = peek_cached_quote(normalized, allow_stale=True)
-            price = _number(payload.get("price")) if payload else None
-            previous = (
-                _number(payload.get("prev_close", payload.get("previous_close")))
-                if payload
-                else None
-            )
-            if price is not None:
-                change = (
-                    (price / previous - 1.0) * 100.0
-                    if previous is not None and previous > 0
-                    else payload.get("change_pct")
+            started = time.perf_counter()
+            normalized = _normalize_symbol(module, symbol)
+            try:
+                payload = peek_cached_quote(normalized, allow_stale=True) or {}
+                price = _number(payload.get("price"))
+                previous = _number(
+                    payload.get("prev_close", payload.get("previous_close"))
                 )
-                result = {
-                    "price": price,
-                    "change": change,
-                    "source": str(payload.get("source") or "cache"),
-                    "fetched_at": str(payload.get("fetched_at") or "—"),
-                    "is_stale": bool(payload.get("is_stale")),
-                    "refreshing": bool(payload.get("is_stale")),
-                }
-            else:
-                result = _from_history(normalized) or {
-                    "price": None,
-                    "change": None,
-                    "source": "تحديث بالخلفية",
-                    "fetched_at": "—",
-                    "is_stale": True,
-                    "refreshing": True,
-                }
+                if price is not None:
+                    change = (
+                        (price / previous - 1.0) * 100.0
+                        if previous is not None and previous > 0
+                        else payload.get("change_pct")
+                    )
+                    result = {
+                        "price": price,
+                        "change": change,
+                        "source": str(payload.get("source") or "cache"),
+                        "fetched_at": str(payload.get("fetched_at") or "—"),
+                        "is_stale": bool(payload.get("is_stale")),
+                        "refreshing": bool(payload.get("is_stale")),
+                    }
+                else:
+                    result = _from_history(normalized)
+                    if not result:
+                        result = _fallback_quote(original_snapshot, symbol)
+            except Exception:
+                LOGGER.exception("Accelerated analysis quote failed; using fallback")
+                result = _fallback_quote(original_snapshot, symbol)
 
             if result.get("refreshing"):
-                threading.Thread(
-                    target=warm_quote_cache,
-                    args=(normalized,),
-                    daemon=True,
-                    name=f"osoli-quote-warm-{normalized[:20]}",
-                ).start()
-            elapsed = (
-                datetime.now(timezone.utc) - started
-            ).total_seconds() * 1000.0
-            record_phase(normalized, "quote", "header_quote_ms", elapsed)
-            return result
+                try:
+                    threading.Thread(
+                        target=_warm_safely,
+                        args=(normalized,),
+                        daemon=True,
+                        name=f"osoli-quote-warm-{normalized[:20]}",
+                    ).start()
+                except Exception:
+                    LOGGER.debug("Unable to start quote warm thread", exc_info=True)
+            try:
+                record_phase(
+                    normalized,
+                    "quote",
+                    "header_quote_ms",
+                    (time.perf_counter() - started) * 1000.0,
+                )
+            except Exception:
+                LOGGER.debug("Unable to record analysis quote timing", exc_info=True)
+            return result if isinstance(result, dict) else _empty_quote()
 
         module._price_snapshot = price_snapshot
         _install_optional_legacy_renderer(module)
-        module._analysis_header_performance_v10_installed = True
+        module._analysis_header_performance_v11_installed = True
         _INSTALLED_MODULES.add(module_id)
 
 
