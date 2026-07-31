@@ -38,18 +38,21 @@ def _load_app_config() -> Tuple[str, str]:
 
 
 @st.cache_resource(show_spinner=False)
-def _init_db_once() -> tuple[bool, str]:
+def _init_db_once() -> bool:
+    """Initialize once after success; exceptions are intentionally not cached."""
+    from database_pool_hardening_v6 import install_threadsafe_database_pool
+
+    # Must run before init_db obtains the first process-global connection.
+    install_threadsafe_database_pool()
+    from database import init_db
+
+    init_db()
+    return True
+
+
+def _initialize_database() -> tuple[bool, str]:
     try:
-        from database_pool_hardening_v6 import (
-            install_threadsafe_database_pool,
-        )
-
-        # Must run before init_db obtains the first process-global connection.
-        install_threadsafe_database_pool()
-        from database import init_db
-
-        init_db()
-        return True, ""
+        return bool(_init_db_once()), ""
     except Exception as exc:
         logger.exception("database initialization failed")
         return False, str(exc)
@@ -253,11 +256,23 @@ def main() -> None:
     )
     _apply_global_ui()
 
-    ok, _ = _init_db_once()
+    ok, db_error = _initialize_database()
     if not ok:
         st.error(
             "تعذر الاتصال بقاعدة البيانات. راجع DATABASE_URL في Secrets."
         )
+        st.caption(
+            "فشل الاتصال الحالي لن يُحفظ في الكاش؛ يمكن إعادة المحاولة دون "
+            "إعادة تشغيل التطبيق بالكامل."
+        )
+        if st.button(
+            "إعادة محاولة قاعدة البيانات",
+            type="primary",
+            use_container_width=True,
+        ):
+            _init_db_once.clear()
+            st.rerun()
+        logger.error("database unavailable: %s", db_error[:300])
         st.stop()
 
     try:
