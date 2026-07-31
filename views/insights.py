@@ -11,7 +11,7 @@ _SECTION_META = {
     "analysis": {
         "label": "التحليل الشامل",
         "icon": "📊",
-        "description": "قرار موحد ومدارس مستقلة ومالي وفني وكلاسيكي وخطة",
+        "description": "اتجاه صاعد أو هابط، خطة دخول ووقف وأهداف، ومستشار عملي في شاشة واحدة",
         "module": "views.analysis",
         "renderer": "view_analysis",
     },

@@ -61,14 +61,74 @@ def _from_history(symbol: str) -> dict[str, Any]:
     }
 
 
+def _install_optional_legacy_renderer(module: Any) -> None:
+    """Patch the retired technical-tab renderer only when it still exists."""
+    original_safe_render = getattr(module, "_safe_render", None)
+    if not callable(original_safe_render):
+        return
+
+    def safe_render(
+        title: str,
+        module_name: str,
+        attr_name: str,
+        *args: Any,
+    ) -> None:
+        if module_name == "views.analysis.technical":
+            try:
+                target = __import__(module_name, fromlist=["*"])
+                from chart_performance_v7 import render_chart_from_frame
+
+                def render_chart(
+                    symbol: str,
+                    interval: str,
+                    period: str,
+                    frame: pd.DataFrame,
+                ) -> None:
+                    try:
+                        render_chart_from_frame(
+                            symbol,
+                            frame,
+                            period=period,
+                            interval=interval,
+                        )
+                    except Exception:
+                        LOGGER.exception("Cached technical chart failed")
+                        if not frame.empty:
+                            target.st.dataframe(
+                                frame.tail(30),
+                                use_container_width=True,
+                            )
+                        else:
+                            target.st.warning("تعذر عرض الشارت")
+                    target.st.caption(
+                        "الاختراق أو الكسر لا يُعتمد إلا بعد إغلاق "
+                        "الشمعة على الفاصل المحدد."
+                    )
+
+                target._render_chart = render_chart
+            except Exception:
+                LOGGER.debug(
+                    "Technical chart reuse patch deferred",
+                    exc_info=True,
+                )
+        original_safe_render(title, module_name, attr_name, *args)
+
+    module._safe_render = safe_render
+
+
 def install_analysis_header_performance(module: Any) -> None:
-    """Replace blocking header data and pass the loaded frame to the chart."""
+    """Replace blocking header data for both legacy and V18 workspaces."""
     module_id = id(module)
     if module_id in _INSTALLED_MODULES:
         return
     with _INSTALL_LOCK:
         if module_id in _INSTALLED_MODULES:
             return
+
+        if not callable(getattr(module, "get_ticker_symbol", None)):
+            raise RuntimeError("analysis module lacks ticker normalization")
+        if not callable(getattr(module, "normalize_symbol", None)):
+            raise RuntimeError("analysis module lacks symbol normalization")
 
         def price_snapshot(symbol: str) -> dict[str, Any]:
             started = datetime.now(timezone.utc)
@@ -122,57 +182,8 @@ def install_analysis_header_performance(module: Any) -> None:
             return result
 
         module._price_snapshot = price_snapshot
-
-        original_safe_render = module._safe_render
-
-        def safe_render(
-            title: str,
-            module_name: str,
-            attr_name: str,
-            *args: Any,
-        ) -> None:
-            if module_name == "views.analysis.technical":
-                try:
-                    target = __import__(module_name, fromlist=["*"])
-                    from chart_performance_v7 import render_chart_from_frame
-
-                    def render_chart(
-                        symbol: str,
-                        interval: str,
-                        period: str,
-                        frame: pd.DataFrame,
-                    ) -> None:
-                        try:
-                            render_chart_from_frame(
-                                symbol,
-                                frame,
-                                period=period,
-                                interval=interval,
-                            )
-                        except Exception:
-                            LOGGER.exception("Cached technical chart failed")
-                            if not frame.empty:
-                                target.st.dataframe(
-                                    frame.tail(30),
-                                    use_container_width=True,
-                                )
-                            else:
-                                target.st.warning("تعذر عرض الشارت")
-                        target.st.caption(
-                            "الاختراق أو الكسر لا يُعتمد إلا بعد إغلاق "
-                            "الشمعة على الفاصل المحدد."
-                        )
-
-                    target._render_chart = render_chart
-                except Exception:
-                    LOGGER.debug(
-                        "Technical chart reuse patch deferred",
-                        exc_info=True,
-                    )
-            original_safe_render(title, module_name, attr_name, *args)
-
-        module._safe_render = safe_render
-        module._analysis_header_performance_v9_installed = True
+        _install_optional_legacy_renderer(module)
+        module._analysis_header_performance_v10_installed = True
         _INSTALLED_MODULES.add(module_id)
 
 

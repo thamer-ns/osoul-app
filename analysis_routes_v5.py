@@ -1,7 +1,39 @@
 """Runtime route upgrades for fast SC-aware analysis presentations."""
 from __future__ import annotations
 
+from collections.abc import MutableMapping
+from typing import Any
+
 _INSTALLED = False
+
+
+def _install_legacy_section_routes(analysis: Any) -> None:
+    """Upgrade the retired tab workspace only when it is actually present.
+
+    V18 replaced ``SECTION_ROUTES`` with one practical decision workspace. A
+    hard reference to the removed mapping made the optional ``analysis_routes``
+    bootstrap fail and forced the whole application into safe mode. Keeping the
+    legacy mutation behind capability detection supports warm processes during
+    a deployment while allowing the current workspace to load normally.
+    """
+    routes = getattr(analysis, "SECTION_ROUTES", None)
+    if not isinstance(routes, MutableMapping):
+        if not callable(getattr(analysis, "view_analysis", None)):
+            raise RuntimeError("analysis workspace has no callable entry point")
+        return
+
+    routes["💰 التحليل المالي"] = (
+        "views.analysis.financial_v5",
+        "render_financial_dashboard_ui",
+        "التحليل المالي متعدد المصادر",
+        False,
+    )
+    routes["🤖 تحليل البوت"] = (
+        "views.analysis.bot_remote_v8",
+        "render_bot_remote_analysis",
+        "تحليل محرك البوت المرتبط",
+        True,
+    )
 
 
 def install_analysis_routes() -> None:
@@ -56,18 +88,7 @@ def install_analysis_routes() -> None:
         router_with_bot_sync._osoli_global_bot_sync_v8 = True  # type: ignore[attr-defined]
         views.router = router_with_bot_sync
 
-    analysis.SECTION_ROUTES["💰 التحليل المالي"] = (
-        "views.analysis.financial_v5",
-        "render_financial_dashboard_ui",
-        "التحليل المالي متعدد المصادر",
-        False,
-    )
-    analysis.SECTION_ROUTES["🤖 تحليل البوت"] = (
-        "views.analysis.bot_remote_v8",
-        "render_bot_remote_analysis",
-        "تحليل محرك البوت المرتبط",
-        True,
-    )
+    _install_legacy_section_routes(analysis)
     _INSTALLED = True
 
 
