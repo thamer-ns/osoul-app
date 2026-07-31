@@ -20,8 +20,8 @@ def test_analysis_hub_has_exactly_two_user_sections() -> None:
 
 
 def test_analysis_runtime_components_fail_open(monkeypatch) -> None:
-    routes._INSTALLED = False
-    routes._FAILURES = []
+    monkeypatch.setattr(routes, "_INSTALLED", False)
+    monkeypatch.setattr(routes, "_FAILURES", [])
 
     def install_component(
         name: str,
@@ -59,7 +59,7 @@ def test_header_acceleration_falls_back_when_cache_raises(monkeypatch) -> None:
             }
         ),
     )
-    header._INSTALLED_MODULES.clear()
+    monkeypatch.setattr(header, "_INSTALLED_MODULES", set())
     monkeypatch.setattr(
         header,
         "peek_cached_quote",
