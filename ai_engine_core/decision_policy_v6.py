@@ -1,8 +1,8 @@
 """Final Osoli decision policy aligned with SC-V92.5 / SC-FXM-V16.
 
-The native Osoli schools remain the authority. This layer applies the Pine
-contract as a hard execution consistency gate and, only when directions align,
-uses the same cluster-first stop/target geometry in the public plan.
+The native Osoli schools remain the authority.  The current SC feature pack is a
+hard execution consistency gate and, only when directions align, supplies the
+cluster-first stop/target geometry.
 """
 from __future__ import annotations
 
@@ -10,10 +10,18 @@ import copy
 import math
 from typing import Any
 
+from .decision_policy_v4 import enrich_report as _v4_enrich_report
+from .decision_policy_v5 import (
+    _advisor_intelligence,
+    _attach_external_context,
+    _attach_financial_lineage,
+    _data_reliability,
+)
 from .decision_policy_v5 import enrich_report as _v5_enrich_report
 
 DECISION_ENGINE_VERSION = "6.0"
 ANALYSIS_CONTRACT_VERSION = "6.0"
+_CURRENT_INDICATOR_CONTRACT = "SC-V92.5/SC-FXM-V16"
 
 
 def _finite(value: Any) -> float | None:
@@ -24,12 +32,64 @@ def _finite(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
+def _current_pack(report: Any) -> dict[str, Any]:
+    if not isinstance(report, dict):
+        return {}
+    value = report.get("sc_feature_pack")
+    pack = value if isinstance(value, dict) else {}
+    return (
+        pack
+        if pack.get("ok")
+        and str(pack.get("indicator_contract") or "")
+        == _CURRENT_INDICATOR_CONTRACT
+        else {}
+    )
+
+
+def _base_enrich(
+    report: Any,
+    *,
+    symbol: str,
+    timeframe: str,
+) -> dict[str, Any]:
+    """Run one decision path, never SC-V91 and SC-V92.5 on the same report."""
+    if not _current_pack(report):
+        # Compatibility path for old/imported raw reports that do not yet carry
+        # the current feature pack.
+        return _v5_enrich_report(report, symbol=symbol, timeframe=timeframe)
+
+    # V5 used to fetch candles again, run SC-V91 and alter the technical score
+    # before V92.5 applied its final gate.  The current report already contains
+    # the authoritative completed-candle pack, so run the proven V4 qualification
+    # directly and preserve only V5's useful context/lineage presentation.
+    enriched = _v4_enrich_report(report, symbol=symbol, timeframe=timeframe)
+    if str(enriched.get("status") or "").lower() == "error" or enriched.get(
+        "error"
+    ):
+        return enriched
+    _attach_external_context(enriched, symbol, timeframe)
+    _attach_financial_lineage(enriched, symbol)
+    enriched["data_reliability"] = _data_reliability(enriched)
+    enriched["advisor_intelligence"] = _advisor_intelligence(enriched)
+    meta = dict(enriched.get("engine_meta") or {})
+    meta["legacy_sc_v91_skipped"] = True
+    meta["legacy_sc_v91_reason"] = "superseded_by_sc_v925_feature_pack"
+    enriched["engine_meta"] = meta
+    return enriched
+
+
 def _native_direction(report: dict[str, Any]) -> int:
     candidates = [
         report.get("direction"),
-        (report.get("risk_plan") or {}).get("direction") if isinstance(report.get("risk_plan"), dict) else None,
-        (report.get("decision_engine") or {}).get("direction") if isinstance(report.get("decision_engine"), dict) else None,
-        (report.get("school_consensus") or {}).get("direction") if isinstance(report.get("school_consensus"), dict) else None,
+        (report.get("risk_plan") or {}).get("direction")
+        if isinstance(report.get("risk_plan"), dict)
+        else None,
+        (report.get("decision_engine") or {}).get("direction")
+        if isinstance(report.get("decision_engine"), dict)
+        else None,
+        (report.get("school_consensus") or {}).get("direction")
+        if isinstance(report.get("school_consensus"), dict)
+        else None,
     ]
     for value in candidates:
         if isinstance(value, (int, float)) and int(value) in {-1, 1}:
@@ -69,21 +129,38 @@ def _sc_geometry(plan: dict[str, Any]) -> dict[str, Any]:
     entry = _finite(plan.get("entry"))
     stop = _finite(plan.get("stop"))
     targets = [_finite(value) for value in plan.get("targets") or []]
-    direction = 1 if entry is not None and stop is not None and stop < entry else -1 if entry is not None and stop is not None and stop > entry else 0
+    direction = (
+        1
+        if entry is not None and stop is not None and stop < entry
+        else -1
+        if entry is not None and stop is not None and stop > entry
+        else 0
+    )
     issues: list[str] = []
     ratios: list[float] = []
     if entry is None or stop is None or direction == 0:
         issues.append("خطة SC تفتقد دخولًا أو وقفًا صحيحًا")
-        return {"valid": False, "complete": False, "issues": issues, "target_r": []}
+        return {
+            "valid": False,
+            "complete": False,
+            "issues": issues,
+            "target_r": [],
+        }
     risk = abs(entry - stop)
     for index, target in enumerate(targets, start=1):
-        if target is None or (direction > 0 and target <= entry) or (direction < 0 and target >= entry):
+        if target is None or (
+            direction > 0 and target <= entry
+        ) or (
+            direction < 0 and target >= entry
+        ):
             issues.append(f"هدف SC رقم {index} في جهة غير صحيحة")
             continue
         ratios.append(round(abs(target - entry) / risk, 3))
     if len(targets) not in {1, 2, 3}:
         issues.append("عدد أهداف SC يجب أن يكون بين 1 و3")
-    if ratios and ratios[0] < (0.75 if plan.get("short_plan") else 1.0) - 1e-9:
+    if ratios and ratios[0] < (
+        0.75 if plan.get("short_plan") else 1.0
+    ) - 1e-9:
         issues.append("العائد الأول أقل من حد خطة SC")
     return {
         "valid": not issues,
@@ -99,7 +176,11 @@ def _sc_geometry(plan: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _apply_sc_plan(report: dict[str, Any], sc_plan: dict[str, Any], direction: int) -> None:
+def _apply_sc_plan(
+    report: dict[str, Any],
+    sc_plan: dict[str, Any],
+    direction: int,
+) -> None:
     targets = [_finite(item) for item in sc_plan.get("targets") or []]
     targets = [item for item in targets if item is not None]
     plan = report.get("risk_plan")
@@ -120,7 +201,9 @@ def _apply_sc_plan(report: dict[str, Any], sc_plan: dict[str, Any], direction: i
             "risk_atr": sc_plan.get("risk_atr"),
             "first_rr": sc_plan.get("first_rr"),
             "method": sc_plan.get("method"),
-            "post_target1_trail": copy.deepcopy(sc_plan.get("post_target1_trail") or {}),
+            "post_target1_trail": copy.deepcopy(
+                sc_plan.get("post_target1_trail") or {}
+            ),
             "status": report.get("lifecycle_status"),
         }
     )
@@ -138,13 +221,16 @@ def enrich_report(
     symbol: str = "",
     timeframe: str = "1D",
 ) -> dict[str, Any]:
-    enriched = _v5_enrich_report(report, symbol=symbol, timeframe=timeframe)
-    if str(enriched.get("status") or "").lower() == "error" or enriched.get("error"):
+    enriched = _base_enrich(report, symbol=symbol, timeframe=timeframe)
+    if str(enriched.get("status") or "").lower() == "error" or enriched.get(
+        "error"
+    ):
         return enriched
-    pack = enriched.get("sc_feature_pack") if isinstance(enriched.get("sc_feature_pack"), dict) else {}
+    pack_value = enriched.get("sc_feature_pack")
+    pack = pack_value if isinstance(pack_value, dict) else {}
     decision_summary: dict[str, Any] = {
         "available": bool(pack.get("ok")),
-        "contract": "SC-V92.5/SC-FXM-V16",
+        "contract": _CURRENT_INDICATOR_CONTRACT,
         "native_decision_authority": True,
         "plan_replaced": False,
         "blocker": "",
@@ -152,22 +238,36 @@ def enrich_report(
     if pack.get("ok"):
         native = _native_direction(enriched)
         sc_direction = int(pack.get("direction") or 0)
-        veto = pack.get("opposition_veto") if isinstance(pack.get("opposition_veto"), dict) else {}
-        sc_plan = pack.get("risk_plan") if isinstance(pack.get("risk_plan"), dict) else {}
+        veto_value = pack.get("opposition_veto")
+        veto = veto_value if isinstance(veto_value, dict) else {}
+        plan_value = pack.get("risk_plan")
+        sc_plan = plan_value if isinstance(plan_value, dict) else {}
         lifecycle = str(enriched.get("lifecycle_status") or "")
         blocker = ""
         if lifecycle == "ACTIONABLE" and veto.get("blocked"):
-            blocker = "كلاستر دعم/مقاومة مؤكد يعارض الخطة حتى كسره بإغلاق وتحول دوره"
+            blocker = (
+                "كلاستر دعم/مقاومة مؤكد يعارض الخطة حتى كسره "
+                "بإغلاق وتحول دوره"
+            )
         elif lifecycle == "ACTIONABLE" and not pack.get("qualified"):
             blocker = "لم يكتمل توافق SC‑V92.5 على إغلاق الشمعة"
-        elif lifecycle == "ACTIONABLE" and native and sc_direction and native != sc_direction:
+        elif (
+            lifecycle == "ACTIONABLE"
+            and native
+            and sc_direction
+            and native != sc_direction
+        ):
             blocker = "اتجاه أصولي يخالف اتجاه SC‑V92.5 المؤكد"
         elif lifecycle == "ACTIONABLE" and not sc_plan.get("valid"):
             blocker = "هندسة SC‑V92.5 للوقف والأهداف غير قابلة للتنفيذ"
         if blocker:
             _downgrade(enriched, blocker)
             decision_summary["blocker"] = blocker
-        elif lifecycle == "ACTIONABLE" and native == sc_direction and sc_plan.get("valid"):
+        elif (
+            lifecycle == "ACTIONABLE"
+            and native == sc_direction
+            and sc_plan.get("valid")
+        ):
             _apply_sc_plan(enriched, sc_plan, native)
             decision_summary["plan_replaced"] = True
         decision_summary.update(
@@ -187,13 +287,16 @@ def enrich_report(
         {
             "schema_version": ANALYSIS_CONTRACT_VERSION,
             "decision_version": DECISION_ENGINE_VERSION,
-            "indicator_contract": "SC-V92.5/SC-FXM-V16",
-            "level_priority": "sr_cluster_then_confirmed_pivot_then_secondary",
+            "indicator_contract": _CURRENT_INDICATOR_CONTRACT,
+            "level_priority": (
+                "sr_cluster_then_confirmed_pivot_then_secondary"
+            ),
             "break_confirmation": "closed_candle",
             "role_reversal_failure": "close_back_through_cluster",
             "target_count": "one_to_three",
             "cluster_opposition_veto": True,
             "higher_timeframe_source": "last_completed_bar",
+            "legacy_sc_v91_decision_influence": False,
         }
     )
     enriched["analysis_contract"] = contract
@@ -204,9 +307,13 @@ def enrich_report(
     meta = dict(enriched.get("engine_meta") or {})
     meta["decision_engine_version"] = DECISION_ENGINE_VERSION
     meta["analysis_contract_version"] = ANALYSIS_CONTRACT_VERSION
-    meta["sc_indicator_contract"] = "SC-V92.5/SC-FXM-V16"
+    meta["sc_indicator_contract"] = _CURRENT_INDICATOR_CONTRACT
     enriched["engine_meta"] = meta
     return enriched
 
 
-__all__ = ["ANALYSIS_CONTRACT_VERSION", "DECISION_ENGINE_VERSION", "enrich_report"]
+__all__ = [
+    "ANALYSIS_CONTRACT_VERSION",
+    "DECISION_ENGINE_VERSION",
+    "enrich_report",
+]

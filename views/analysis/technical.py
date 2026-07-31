@@ -1,4 +1,4 @@
-"""Technical-analysis UI with provider fusion and SC-V90 patterns."""
+"""Technical-analysis UI using the current SC-V92.5 closed-candle contract."""
 from __future__ import annotations
 
 import logging
@@ -7,7 +7,7 @@ from typing import Any, Dict
 import pandas as pd
 import streamlit as st
 
-from ai_engine_core.breakout_patterns_v90 import analyze_breakout_patterns
+from ai_engine_core.sc_feature_pack_v925 import build_sc_feature_pack
 from candle_confirmation import completed_candles
 from components import render_custom_table
 from market_data import get_chart_history
@@ -19,12 +19,17 @@ logger = logging.getLogger("osoli.analysis.technical")
 def _sf(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)
-    except Exception:
+    except (TypeError, ValueError, OverflowError):
         return float(default)
 
 
-def _direction_ar(bias: str) -> str:
-    return {"bullish": "إيجابي", "bearish": "سلبي", "neutral": "محايد"}.get(str(bias), "محايد")
+def _direction_ar(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if value == 1 or text in {"bullish", "buy", "long", "صاعد"}:
+        return "صاعد"
+    if value == -1 or text in {"bearish", "sell", "short", "هابط"}:
+        return "هابط"
+    return "محايد"
 
 
 def period_for_interval(interval: str) -> str:
@@ -60,15 +65,30 @@ def _advanced_pack_cached(symbol: str, interval: str, period: str) -> dict:
     )
     if frame.empty:
         return {}
-    return compute_advanced_technical_pack(frame, symbol=symbol, timeframe=interval)
+    return compute_advanced_technical_pack(
+        frame,
+        symbol=symbol,
+        timeframe=interval,
+    )
 
 
-@st.cache_data(ttl=300, max_entries=128, show_spinner=False)
-def _breakout_pack_cached(symbol: str, interval: str, period: str) -> dict:
-    frame = _history_cached(symbol, interval, period)
+@st.cache_data(ttl=180, max_entries=128, show_spinner=False)
+def _sc_pack_cached(symbol: str, interval: str, period: str) -> dict:
+    frame = completed_candles(
+        _history_cached(symbol, interval, period),
+        interval=interval,
+    )
     if frame.empty:
         return {}
-    return analyze_breakout_patterns(frame, symbol=symbol, timeframe=interval)
+    normalized = str(symbol or "").upper()
+    market = "SAUDI" if normalized.endswith(".SR") or normalized.isdigit() else ""
+    asset_class = "stock"
+    return build_sc_feature_pack(
+        frame,
+        interval=interval,
+        asset_class=asset_class,
+        market=market,
+    )
 
 
 def _quality(df: pd.DataFrame, interval: str) -> Dict[str, Any]:
@@ -80,11 +100,21 @@ def _quality(df: pd.DataFrame, interval: str) -> Dict[str, Any]:
     if missing:
         issues.append("أعمدة ناقصة: " + ", ".join(missing))
     if {"High", "Low"}.issubset(df.columns):
-        bad = int((pd.to_numeric(df["High"], errors="coerce") < pd.to_numeric(df["Low"], errors="coerce")).sum())
+        high = pd.to_numeric(df["High"], errors="coerce")
+        low = pd.to_numeric(df["Low"], errors="coerce")
+        bad = int((high < low).sum())
         if bad:
             issues.append(f"{bad} شموع فيها أعلى أقل من أدنى")
     normalized = str(interval or "1d").lower()
-    minimum = 60 if normalized == "1mo" else 156 if normalized in {"1wk", "1w"} else 200 if normalized == "1d" else 120
+    minimum = (
+        60
+        if normalized == "1mo"
+        else 156
+        if normalized in {"1wk", "1w"}
+        else 200
+        if normalized == "1d"
+        else 120
+    )
     if len(df) < minimum:
         issues.append(f"عدد الشموع أقل من الحد المفضل ({minimum})")
     available = [column for column in required if column in df.columns]
@@ -92,7 +122,11 @@ def _quality(df: pd.DataFrame, interval: str) -> Dict[str, Any]:
     if null_ratio > 0.01:
         issues.append(f"نسبة قيم ناقصة {null_ratio * 100:.1f}%")
     attrs = getattr(df, "attrs", {}) or {}
-    lineage = attrs.get("data_lineage") if isinstance(attrs.get("data_lineage"), dict) else {}
+    lineage = (
+        attrs.get("data_lineage")
+        if isinstance(attrs.get("data_lineage"), dict)
+        else {}
+    )
     provider_score = lineage.get("quality_score")
     score = max(0, 100 - len(issues) * 15 - int(null_ratio * 100))
     if isinstance(provider_score, (int, float)):
@@ -108,7 +142,11 @@ def _quality(df: pd.DataFrame, interval: str) -> Dict[str, Any]:
 
 def _source_info(df: pd.DataFrame) -> tuple[str, str, dict[str, Any]]:
     attrs = getattr(df, "attrs", {}) or {}
-    lineage = attrs.get("data_lineage") if isinstance(attrs.get("data_lineage"), dict) else {}
+    lineage = (
+        attrs.get("data_lineage")
+        if isinstance(attrs.get("data_lineage"), dict)
+        else {}
+    )
     source = str(lineage.get("source") or attrs.get("source") or "غير معروف")
     fetched_at = str(lineage.get("fetched_at") or "—")
     return source, fetched_at, lineage
@@ -120,21 +158,22 @@ def _render_provider_lineage(lineage: dict[str, Any]) -> None:
         if not attempts:
             st.caption("لا توجد تفاصيل محاولات من طبقة الدمج الحالية.")
             return
-        rows = []
-        for item in attempts:
-            rows.append(
-                {
-                    "المزود": item.get("provider"),
-                    "النتيجة": "نجح" if item.get("ok") else "لم يُستخدم",
-                    "الرمز المحلول": item.get("resolved_symbol") or "—",
-                    "الشموع": item.get("rows") or 0,
-                    "الجودة": item.get("quality_score"),
-                    "الزمن ms": item.get("elapsed_ms"),
-                    "السبب": item.get("reason") or "—",
-                }
-            )
+        rows = [
+            {
+                "المزود": item.get("provider"),
+                "النتيجة": "نجح" if item.get("ok") else "لم يُستخدم",
+                "الرمز المحلول": item.get("resolved_symbol") or "—",
+                "الشموع": item.get("rows") or 0,
+                "الجودة": item.get("quality_score"),
+                "الزمن ms": item.get("elapsed_ms"),
+                "السبب": item.get("reason") or "—",
+            }
+            for item in attempts
+        ]
         render_custom_table(pd.DataFrame(rows))
-        st.caption("يُستخدم أول مزود يجتاز فحص OHLCV؛ Yahoo والمصادر القديمة تبقى حلًا أخيرًا.")
+        st.caption(
+            "يُستخدم أول مزود يجتاز فحص OHLCV؛ المصادر المؤجلة تبقى حلًا أخيرًا."
+        )
 
 
 def _render_signal_table(signals: list[dict]) -> None:
@@ -145,18 +184,24 @@ def _render_signal_table(signals: list[dict]) -> None:
     labels = {
         "type": "النوع",
         "kind": "الإشارة",
+        "code": "الحدث",
         "direction": "الاتجاه",
         "price": "السعر",
         "level": "المستوى",
-        "stop_reference": "مرجع الوقف",
-        "measured_target": "الهدف المقاس",
+        "source": "المرجع",
+        "trigger": "التأكيد",
         "reason": "السبب",
-        "volume_confirmed": "تأكيد الحجم",
         "confirmed_on_close": "مؤكد بالإغلاق",
     }
     config = []
     for column in frame.columns:
-        kind = "money" if column in {"price", "level", "stop_reference", "measured_target"} else "bool" if column in {"volume_confirmed", "confirmed_on_close"} else "text"
+        kind = (
+            "money"
+            if column in {"price", "level"}
+            else "bool"
+            if column == "confirmed_on_close"
+            else "text"
+        )
         config.append((column, labels.get(column, column), kind))
     render_custom_table(frame, config)
 
@@ -170,20 +215,36 @@ def _render_indicator(title: str, result: Dict[str, Any]) -> None:
             st.metric("الثقة", f"{_sf(result.get('confidence')):.0f}%")
         with c3:
             st.info(str(result.get("summary") or "لا يوجد ملخص"))
-        st.caption(f"درجة الاتجاه: {_sf(result.get('direction_score')):+.1f}/100 — التأكيد: إغلاق الشمعة")
+        st.caption(
+            f"درجة الاتجاه: {_sf(result.get('direction_score')):+.1f}/100 — "
+            "التأكيد: إغلاق الشمعة"
+        )
         for item in result.get("evidence") or []:
             st.write(f"- {item}")
         _render_signal_table(result.get("signals") or [])
         features = result.get("features") or {}
         if features:
-            rows = pd.DataFrame([{"البند": key, "القيمة": value} for key, value in features.items()])
-            render_custom_table(rows, [("البند", "البند", "text"), ("القيمة", "القيمة", "auto")])
+            rows = pd.DataFrame(
+                [
+                    {"البند": key, "القيمة": value}
+                    for key, value in features.items()
+                ]
+            )
+            render_custom_table(
+                rows,
+                [("البند", "البند", "text"), ("القيمة", "القيمة", "auto")],
+            )
         errors = (result.get("errors") or []) + (result.get("warnings") or [])
         if errors:
             st.warning(" — ".join(str(item) for item in errors))
 
 
-def _save_pack_once(pack: dict, symbol: str, interval: str, df: pd.DataFrame) -> None:
+def _save_pack_once(
+    pack: dict,
+    symbol: str,
+    interval: str,
+    df: pd.DataFrame,
+) -> None:
     if not pack or df.empty:
         return
     latest = str(df.index[-1])
@@ -193,13 +254,22 @@ def _save_pack_once(pack: dict, symbol: str, interval: str, df: pd.DataFrame) ->
     try:
         from ai_engine_core.db import save_advanced_indicators
 
-        if save_advanced_indicators(symbol=symbol, timeframe=interval, indicators=pack):
+        if save_advanced_indicators(
+            symbol=symbol,
+            timeframe=interval,
+            indicators=pack,
+        ):
             st.session_state[key] = True
     except Exception:
         logger.debug("advanced indicator persistence skipped", exc_info=True)
 
 
-def _render_advanced(df: pd.DataFrame, symbol: str, interval: str, period: str) -> None:
+def _render_advanced(
+    df: pd.DataFrame,
+    symbol: str,
+    interval: str,
+    period: str,
+) -> None:
     if df.empty:
         st.warning("لا توجد بيانات كافية لحساب المؤشرات المتقدمة")
         return
@@ -218,63 +288,122 @@ def _render_advanced(df: pd.DataFrame, symbol: str, interval: str, period: str) 
     with c3:
         st.metric("ثقة الأدلة", f"{_sf(pack.get('confidence')):.0f}%")
     with c4:
-        st.metric("اتفاق المؤشرات", f"{_sf((pack.get('features') or {}).get('agreement')) * 100:.0f}%")
+        st.metric(
+            "اتفاق المؤشرات",
+            f"{_sf((pack.get('features') or {}).get('agreement')) * 100:.0f}%",
+        )
     st.info(str(pack.get("summary") or "النتيجة غير متاحة"))
-    st.caption("درجة الاتجاه سالبة للهبوط وموجبة للصعود؛ الثقة تقيس جودة الأدلة ولا تعني شراءً بمفردها.")
+    st.caption(
+        "المؤشرات المساندة لا تنشئ خطة وحدها؛ عقد SC والبنية والوقف "
+        "والأهداف هي بوابة التنفيذ."
+    )
     _render_signal_table(pack.get("signals") or [])
     _render_indicator("1) RLS المتكيف", pack.get("rls_forecast") or {})
     _render_indicator("2) RSI الموزون بالتقلب", pack.get("chaos_wrsi") or {})
-    _render_indicator("3) شرائح الحجم السعري", pack.get("volume_profile_clusters") or {})
-    _render_indicator("4) اختراق وكسر خطوط الاتجاه", pack.get("trendline_breakout") or {})
+    _render_indicator(
+        "3) شرائح الحجم السعري",
+        pack.get("volume_profile_clusters") or {},
+    )
+    _render_indicator(
+        "4) اختراق وكسر خطوط الاتجاه",
+        pack.get("trendline_breakout") or {},
+    )
     _save_pack_once(pack, symbol, interval, closed)
 
 
-def _render_breakouts(symbol: str, interval: str, period: str) -> None:
-    with st.spinner("تحليل نماذج الاختراق SC-V90 من الشموع المكتملة..."):
-        pack = _breakout_pack_cached(symbol, interval, period)
+def _render_sc_contract(symbol: str, interval: str, period: str) -> None:
+    with st.spinner("تحليل عقد SC‑V92.5 من الشموع المكتملة..."):
+        pack = _sc_pack_cached(symbol, interval, period)
     if not pack or not pack.get("ok"):
-        st.warning("تعذر حساب نماذج الاختراق على هذا الفاصل.")
-        for error in (pack or {}).get("errors") or []:
-            st.caption(str(error))
+        st.warning("تعذر بناء عقد SC‑V92.5 على هذا الفاصل.")
+        if pack.get("reason"):
+            st.caption(
+                f"السبب: {pack.get('reason')} — المتوفر: {pack.get('have', '—')} "
+                f"— المطلوب: {pack.get('need', '—')}"
+            )
         return
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("الاتجاه", _direction_ar(pack.get("bias")))
-    c2.metric("درجة النموذج", f"{_sf(pack.get('direction_score')):+.1f}")
-    c3.metric("نماذج مؤكدة", int((pack.get("features") or {}).get("breakout_confirmed_count") or 0))
-    c4.metric("تحت التكوين", int((pack.get("features") or {}).get("breakout_forming_count") or 0))
-    st.info(str(pack.get("summary") or "لا يوجد ملخص"))
-    volume = pack.get("volume_policy") if isinstance(pack.get("volume_policy"), dict) else {}
-    st.caption(
-        "سياسة الحجم: "
-        + ("إلزامي وموثوق" if volume.get("mode") == "required" and volume.get("trusted") else "اختياري/غير مركزي")
-        + f" — RVOL: {_sf(volume.get('relative_volume')):.2f}"
+
+    plan = pack.get("risk_plan") if isinstance(pack.get("risk_plan"), dict) else {}
+    veto = (
+        pack.get("opposition_veto")
+        if isinstance(pack.get("opposition_veto"), dict)
+        else {}
     )
-    _render_signal_table(pack.get("signals") or [])
-    patterns = pd.DataFrame(pack.get("patterns") or [])
-    if not patterns.empty:
-        display = patterns.rename(
-            columns={
-                "name": "النموذج",
-                "status": "الحالة",
-                "direction": "الاتجاه",
-                "confidence": "الثقة",
-                "boundary": "حد التنفيذ",
-                "stop_reference": "مرجع الوقف",
-                "measured_target": "الهدف المقاس",
-                "reason": "السبب",
-                "detected_at": "شمعة الكشف",
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("اتجاه SC", _direction_ar(pack.get("direction")))
+    c2.metric("الثقة", f"{int(pack.get('confidence') or 0)}%")
+    c3.metric("الحدث", str(pack.get("event_code") or "NONE"))
+    c4.metric("الخطة", "صالحة" if plan.get("valid") else "مراقبة")
+
+    st.caption(
+        "الأولوية: كلاستر الدعم/المقاومة ← Pivot مؤكد ← الأدوات الثانوية. "
+        "كل الكسر والوقف وتحوّل الدور يعتمد إغلاق الشمعة."
+    )
+    if veto.get("blocked"):
+        st.warning(str(veto.get("reason") or "كلاستر مقابل يمنع الخطة"))
+    elif pack.get("qualified"):
+        st.success("اكتمل توافق عقد SC وهندسة المخاطرة على آخر إغلاق.")
+    else:
+        st.info("القراءة تحت المراقبة ولم تتحول إلى خطة تنفيذ مكتملة.")
+
+    sr = pack.get("sr") if isinstance(pack.get("sr"), dict) else {}
+    sr_rows = []
+    for label, value in (
+        ("الدعم", sr.get("support")),
+        ("المقاومة", sr.get("resistance")),
+    ):
+        row = value if isinstance(value, dict) else {}
+        sr_rows.append(
+            {
+                "النوع": label,
+                "المستوى": row.get("level"),
+                "الحد الأدنى": row.get("low"),
+                "الحد الأعلى": row.get("high"),
+                "اللمسات": row.get("touches"),
+                "العمر بالشموع": row.get("age_bars"),
             }
         )
-        if "الاتجاه" in display.columns:
-            display["الاتجاه"] = display["الاتجاه"].map({1: "صاعد", -1: "هابط"})
-        if "الحالة" in display.columns:
-            display["الحالة"] = display["الحالة"].map({"CONFIRMED": "مؤكد", "FORMING": "تحت التكوين"})
-        columns = [column for column in ["النموذج", "الحالة", "الاتجاه", "الثقة", "حد التنفيذ", "مرجع الوقف", "الهدف المقاس", "السبب", "شمعة الكشف"] if column in display.columns]
-        render_custom_table(display[columns])
-    st.caption("النموذج لا يصبح دخولًا بمجرد ظهوره؛ يلزم إغلاق خارج الحد ثم اجتياز توافق المدارس وهندسة المخاطرة في القرار الموحد.")
+    render_custom_table(pd.DataFrame(sr_rows))
+
+    event_rows = list(pack.get("event_candidates") or [])
+    if event_rows:
+        st.markdown("**الأحداث المرشحة المرتبة**")
+        _render_signal_table(event_rows)
+
+    if plan.get("valid"):
+        targets = list(plan.get("targets") or [])
+        plan_rows = [
+            {"البند": "الدخول", "القيمة": plan.get("entry"), "المصدر": "إغلاق الزناد"},
+            {"البند": "الوقف", "القيمة": plan.get("stop"), "المصدر": plan.get("stop_source")},
+        ]
+        sources = list(plan.get("target_sources") or [])
+        for index, target in enumerate(targets, start=1):
+            plan_rows.append(
+                {
+                    "البند": f"T{index}",
+                    "القيمة": target,
+                    "المصدر": sources[index - 1] if index <= len(sources) else "—",
+                }
+            )
+        render_custom_table(pd.DataFrame(plan_rows))
+        st.caption(
+            f"المخاطرة: {_sf(plan.get('risk_atr')):.2f} ATR — "
+            f"العائد الأول: {_sf(plan.get('first_rr')):.2f}R — "
+            "بعد T1 يستخدم ATR(22) × 3 ولا يوسّع الوقف."
+        )
+
+    for reason in pack.get("reasons") or []:
+        st.write(f"- {reason}")
+    if pack.get("warnings"):
+        st.warning(" — ".join(str(item) for item in pack["warnings"]))
 
 
-def _render_chart(symbol: str, interval: str, period: str, df: pd.DataFrame) -> None:
+def _render_chart(
+    symbol: str,
+    interval: str,
+    period: str,
+    df: pd.DataFrame,
+) -> None:
     try:
         from charts import render_technical_chart
 
@@ -285,7 +414,9 @@ def _render_chart(symbol: str, interval: str, period: str, df: pd.DataFrame) -> 
             st.dataframe(df.tail(30), use_container_width=True)
         else:
             st.warning("تعذر عرض الشارت")
-    st.caption("الاختراق أو الكسر لا يُعتمد إلا بعد إغلاق الشمعة على الفاصل المحدد.")
+    st.caption(
+        "الاختراق أو الكسر لا يُعتمد إلا بعد إغلاق الشمعة على الفاصل المحدد."
+    )
 
 
 def view_technical(symbol: str, interval: str = "1d"):
@@ -298,7 +429,9 @@ def view_technical(symbol: str, interval: str = "1d"):
         df = pd.DataFrame()
 
     quality = _quality(df, interval)
-    source, fetched_at, lineage = _source_info(df) if not df.empty else ("غير متاح", "—", {})
+    source, fetched_at, lineage = (
+        _source_info(df) if not df.empty else ("غير متاح", "—", {})
+    )
     q1, q2, q3, q4 = st.columns(4)
     with q1:
         st.metric("جودة البيانات", f"{quality['score']}/100")
@@ -308,10 +441,14 @@ def view_technical(symbol: str, interval: str = "1d"):
         st.metric("المصدر", source)
     with q4:
         st.metric("الفاصل", interval)
-    closed_for_analysis = completed_candles(df, interval=interval) if not df.empty else pd.DataFrame()
-    last_closed = str(closed_for_analysis.index[-1]) if not closed_for_analysis.empty else "—"
+    closed = (
+        completed_candles(df, interval=interval)
+        if not df.empty
+        else pd.DataFrame()
+    )
+    last_closed = str(closed.index[-1]) if not closed.empty else "—"
     excluded = int(
-        (getattr(closed_for_analysis, "attrs", {}) or {})
+        (getattr(closed, "attrs", {}) or {})
         .get("candle_confirmation", {})
         .get("excluded_incomplete_bars", 0)
         or 0
@@ -321,7 +458,10 @@ def view_technical(symbol: str, interval: str = "1d"):
         f"آخر إغلاق معتمد: {last_closed} — وقت الجلب: {fetched_at}"
     )
     if excluded:
-        st.info("الشمعة الحية ظاهرة في الرسم فقط، ومستبعدة من المؤشرات والقرار حتى الإغلاق.")
+        st.info(
+            "الشمعة الحية ظاهرة في الرسم فقط، ومستبعدة من المؤشرات والقرار "
+            "حتى الإغلاق."
+        )
     if quality.get("issues"):
         with st.expander("ملاحظات جودة البيانات"):
             for issue in quality["issues"]:
@@ -330,15 +470,15 @@ def view_technical(symbol: str, interval: str = "1d"):
 
     mode = st.radio(
         "طريقة العرض",
-        ["الرسم الفني", "نماذج الاختراق SC-V90", "المؤشرات المتقدمة"],
+        ["الرسم الفني", "عقد SC‑V92.5", "المؤشرات المتقدمة"],
         horizontal=True,
         label_visibility="collapsed",
         key=f"technical_mode:{symbol}:{interval}",
     )
     if mode == "الرسم الفني":
         _render_chart(symbol, interval, period, df)
-    elif mode == "نماذج الاختراق SC-V90":
-        _render_breakouts(symbol, interval, period)
+    elif mode == "عقد SC‑V92.5":
+        _render_sc_contract(symbol, interval, period)
     else:
         _render_advanced(df, symbol, interval, period)
 
