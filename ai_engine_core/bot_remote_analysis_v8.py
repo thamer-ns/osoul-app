@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any
 
 from ai_engine_core import bot_bridge_v5 as bridge
@@ -30,6 +31,13 @@ def _canonical_frame(value: str) -> str:
     return _FRAME_ALIASES.get(raw, raw)
 
 
+def _same_price(left: Any, right: Any) -> bool:
+    try:
+        return math.isclose(float(left), float(right), rel_tol=1e-10, abs_tol=1e-10)
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
 def _runtime_is_compatible(runtime: dict[str, Any]) -> str | None:
     if runtime.get("installed") is not True:
         return "runtime_not_installed"
@@ -49,6 +57,8 @@ def _runtime_is_compatible(runtime: dict[str, Any]) -> str | None:
         return "live_quote_may_change_signal"
     if runtime.get("closed_candle_confirmation_unchanged") is not True:
         return "closed_candle_guard_missing"
+    if runtime.get("closed_price_preserved") is not True:
+        return "closed_price_may_be_overwritten"
     live = (
         runtime.get("live_quote_context")
         if isinstance(runtime.get("live_quote_context"), dict)
@@ -58,6 +68,12 @@ def _runtime_is_compatible(runtime: dict[str, Any]) -> str | None:
         return "live_quote_stale_unbounded"
     if live.get("delay_status_is_tristate") is not True:
         return "live_quote_delay_unknown_unsafe"
+    if live.get("closed_price_preserved") is not True:
+        return "closed_price_may_be_overwritten"
+    if live.get("live_price_persisted_as_analysis_price") is not False:
+        return "live_price_persistence_unsafe"
+    if live.get("source_spread_label_correct") is not True:
+        return "source_comparison_semantics_unsafe"
     return None
 
 
@@ -95,6 +111,9 @@ def request_bot_analysis(symbol: str, timeframe: str) -> dict[str, Any]:
             return {"ok": False, "reason": "invalid_frame_payload"}
         if _canonical_frame(str(frame.get("frame_key") or "")) != requested_frame:
             return {"ok": False, "reason": "frame_mismatch"}
+        closed_price = frame.get("closed_candle_price")
+        if not _same_price(frame.get("price"), closed_price):
+            return {"ok": False, "reason": "closed_price_mismatch"}
         runtime = payload.get("runtime")
         if not isinstance(runtime, dict):
             return {"ok": False, "reason": "runtime_not_installed"}
@@ -108,6 +127,10 @@ def request_bot_analysis(symbol: str, timeframe: str) -> dict[str, Any]:
             return {"ok": False, "reason": "live_quote_may_change_signal"}
         if live_context.get("closed_candle_confirmation") is not True:
             return {"ok": False, "reason": "closed_candle_guard_missing"}
+        if live_context.get("closed_candle_price_preserved") is not True:
+            return {"ok": False, "reason": "closed_price_may_be_overwritten"}
+        if not _same_price(live_context.get("closed_candle_price"), closed_price):
+            return {"ok": False, "reason": "closed_price_mismatch"}
         return payload
     except ValueError:
         LOGGER.info("Remote bot analysis returned invalid JSON", exc_info=True)
