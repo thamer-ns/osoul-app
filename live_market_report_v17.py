@@ -16,10 +16,11 @@ from live_market_ui_v17 import install_live_market_ui_v17
 
 _LOCK = threading.RLock()
 _INSTALLED = False
+_BASE_PUBLIC_QUOTE = previous._public_quote  # noqa: SLF001
 
 
 def _public_quote(payload: dict[str, Any]) -> dict[str, Any]:
-    base = previous._public_quote(payload)  # noqa: SLF001
+    base = _BASE_PUBLIC_QUOTE(payload)
     for name in (
         "source_spread_pct",
         "source_agreement_pct_semantics",
