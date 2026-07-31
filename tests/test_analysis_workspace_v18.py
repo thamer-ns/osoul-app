@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import inspect
+
 import pandas as pd
 
-from views.analysis.workspace_v18 import (
+from views.analysis.workspace_v20 import (
     _advisor_action,
     _decision,
     _levels,
     _position_size,
     _targets,
+    render_decision_workspace,
 )
 
 
@@ -91,3 +94,10 @@ def test_position_size_is_capped_by_risk_and_concentration() -> None:
     assert size["risk_per_unit"] == 2.0
     assert size["units"] == 200
     assert size["position_value"] == 20_000.0
+
+
+def test_current_workspace_has_no_nested_mode_tabs() -> None:
+    source = inspect.getsource(render_decision_workspace)
+    assert "st.radio" not in source
+    assert "_render_advisor" in source
+    assert "_render_plan" in source
