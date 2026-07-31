@@ -13,29 +13,26 @@ def install_analysis_routes() -> None:
 
     install_persistent_cache_resilience_v10()
 
-    # V10 is a strict superset of the previous installation boundary:
-    # from sc_runtime_v9 import install_sc_runtime_v9
-    # install_sc_runtime_v9()
-    # The marker above documents the preserved order for compatibility audits;
-    # the executable call below installs V9 internally before V92.5 overrides.
-    from sc_runtime_v10 import install_sc_runtime_v10
+    # Preserve the proven V9 installation boundary and ordering. The current
+    # SC-V92.5 overlays remain installed inside that chain before V17 attaches
+    # the live-price sidecar.
+    from sc_runtime_v9 import install_sc_runtime_v9
 
-    install_sc_runtime_v10()
+    install_sc_runtime_v9()
 
     from market_data_integrity_v14 import install_market_data_integrity_v14
 
     install_market_data_integrity_v14()
 
-    # Live quotes are installed after all deadline, timestamp and parallel-refresh
-    # guards. They update current context only; technical confirmation continues
-    # to use completed candles from SC-V92.5/SC-FXM-V16.
-    from live_market_runtime_v15 import install_live_market_runtime_v15
+    # V17 keeps the completed-candle price immutable and exposes SAHMK/Twelve
+    # Data as a separate live sidecar with correct spread semantics.
+    from live_market_runtime_v17 import install_live_market_runtime_v17
 
-    install_live_market_runtime_v15()
+    install_live_market_runtime_v17()
 
-    from live_market_report_v15 import install_live_market_report_v15
+    from live_market_report_v17 import install_live_market_report_v17
 
-    install_live_market_report_v15()
+    install_live_market_report_v17()
 
     from bot_contract_runtime_v10 import install_bot_contract_runtime_v10
 

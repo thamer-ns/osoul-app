@@ -10,8 +10,8 @@ from typing import Any
 from ai_engine_core import bot_bridge_v5 as bridge
 
 LOGGER = logging.getLogger(__name__)
-EXPECTED_CONTRACT = "SC-V92.5-v1-plan-isolation-v59"
-EXPECTED_RUNTIME_VERSION = "59.0"
+EXPECTED_CONTRACT = "SC-V92.5-v1-plan-isolation-v61"
+EXPECTED_RUNTIME_VERSION = "61.0"
 EXPECTED_FEATURE_VERSION = "58.0"
 EXPECTED_INDICATOR_CONTRACT = "SC-V92.5/SC-FXM-V16"
 _LOCK = threading.RLock()
@@ -78,8 +78,14 @@ def _probe_runtime() -> dict[str, Any]:
         runtime.get("closed_candle_confirmation_unchanged") is True
         and live.get("closed_candle_confirmation_unchanged") is True
     )
+    closed_price_safe = (
+        runtime.get("closed_price_preserved") is True
+        and live.get("closed_price_preserved") is True
+        and live.get("live_price_persisted_as_analysis_price") is False
+    )
     live_stale_bounded = live.get("stale_fallback_age_bounded") is True
     delay_tristate = live.get("delay_status_is_tristate") is True
+    spread_semantics = live.get("source_spread_label_correct") is True
 
     checks = {
         "contract": contract == EXPECTED_CONTRACT,
@@ -95,8 +101,10 @@ def _probe_runtime() -> dict[str, Any]:
         "live_quote_overlay": live_overlay,
         "live_quote_signal_safe": live_signal_safe,
         "closed_candle_confirmation": closed_candle_safe,
+        "closed_price_preserved": closed_price_safe,
         "live_quote_stale_bounded": live_stale_bounded,
         "delay_status_tristate": delay_tristate,
+        "source_spread_semantics": spread_semantics,
     }
     reason_map = {
         "contract": "contract_mismatch",
@@ -112,8 +120,10 @@ def _probe_runtime() -> dict[str, Any]:
         "live_quote_overlay": "live_quote_overlay_missing",
         "live_quote_signal_safe": "live_quote_may_change_signal",
         "closed_candle_confirmation": "closed_candle_guard_missing",
+        "closed_price_preserved": "closed_price_may_be_overwritten",
         "live_quote_stale_bounded": "live_quote_stale_unbounded",
         "delay_status_tristate": "live_quote_delay_unknown_unsafe",
+        "source_spread_semantics": "source_comparison_semantics_unsafe",
     }
     failed = next((name for name, passed in checks.items() if not passed), None)
     reason = reason_map.get(failed) if failed else None
@@ -137,6 +147,7 @@ def _probe_runtime() -> dict[str, Any]:
         "indicator_contract": indicator_contract or None,
         "failure_single_flight": failure_single_flight,
         "stale_fallback_age_bounded": stale_bounded,
+        "closed_price_preserved": closed_price_safe,
         "live_quote_context": copy.deepcopy(live),
         "capability_checks": checks,
         "endpoint": "/integrations/osoli/runtime",

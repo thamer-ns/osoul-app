@@ -113,10 +113,13 @@ def _patch_bridge(monkeypatch, requests_object: object) -> None:
 
 def _live_runtime_values() -> dict:
     return {
-        "runtime_version": "59.0",
+        "runtime_version": "61.0",
         "stale_fallback_age_bounded": True,
         "delay_status_is_tristate": True,
         "closed_candle_confirmation_unchanged": True,
+        "closed_price_preserved": True,
+        "live_price_persisted_as_analysis_price": False,
+        "source_spread_label_correct": True,
     }
 
 
@@ -131,6 +134,7 @@ def _runtime_values(*, installed: bool = True) -> dict:
         "live_quote_overlay": True,
         "live_quote_changes_signal": False,
         "closed_candle_confirmation_unchanged": True,
+        "closed_price_preserved": True,
         "live_quote_context": _live_runtime_values(),
     }
 
@@ -151,7 +155,7 @@ def _runtime_body(*, installed: bool = True, contract: str | None = None) -> dic
     }
 
 
-def test_runtime_probe_requires_live_v59_engine(monkeypatch):
+def test_runtime_probe_requires_live_v61_engine(monkeypatch):
     requests_object = _RuntimeRequests(_runtime_body())
     _patch_bridge(monkeypatch, requests_object)
 
@@ -166,6 +170,7 @@ def test_runtime_probe_requires_live_v59_engine(monkeypatch):
     assert result["indicator_contract"] == contract_runtime.EXPECTED_INDICATOR_CONTRACT
     assert result["failure_single_flight"] is True
     assert result["stale_fallback_age_bounded"] is True
+    assert result["closed_price_preserved"] is True
     assert all(result["capability_checks"].values())
     assert result["endpoint"] == "/integrations/osoli/runtime"
     assert len(requests_object.calls) == 1
@@ -201,20 +206,36 @@ def test_runtime_probe_rejects_uninstalled_wrong_or_unsafe_runtime(monkeypatch):
         == "live_quote_delay_unknown_unsafe"
     )
 
+    unsafe_price = _runtime_body()
+    unsafe_price["runtime"]["live_quote_context"][
+        "live_price_persisted_as_analysis_price"
+    ] = True
+    requests_object.body = unsafe_price
+    assert (
+        contract_runtime._probe_runtime()["reason"]
+        == "closed_price_may_be_overwritten"
+    )
+
 
 def _analysis_body(frame_key: str = "1d") -> dict:
+    closed_price = 26.48
     return {
         "ok": True,
         "contract": contract_runtime.EXPECTED_CONTRACT,
         "tenant_ids_received": False,
         "frame": {
             "frame_key": frame_key,
+            "price": closed_price,
+            "closed_candle_price": closed_price,
             "plan_valid": False,
             "targets": [],
         },
         "live_quote_context": {
+            "price": 26.55,
             "changes_signal": False,
             "closed_candle_confirmation": True,
+            "closed_candle_price_preserved": True,
+            "closed_candle_price": closed_price,
         },
         "runtime": _runtime_values(),
     }
@@ -253,6 +274,11 @@ def test_remote_analysis_validates_contract_runtime_frame_and_live_safety(
     unsafe_live["live_quote_context"]["changes_signal"] = True
     requests_object.body = unsafe_live
     assert request_bot_analysis("AAPL", "1d")["reason"] == "live_quote_may_change_signal"
+
+    mismatched_price = _analysis_body("1d")
+    mismatched_price["frame"]["closed_candle_price"] = 26.40
+    requests_object.body = mismatched_price
+    assert request_bot_analysis("AAPL", "1d")["reason"] == "closed_price_mismatch"
 
 
 def test_remote_analysis_maps_server_deadlines(monkeypatch):
