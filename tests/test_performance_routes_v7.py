@@ -3,9 +3,10 @@ from __future__ import annotations
 import inspect
 
 import ai_engine_core
+import analysis_header_performance_v7 as header
 import app
 import views
-import analysis_header_performance_v7 as header
+from views import insights
 from views.analysis import financial_v5
 
 
@@ -46,4 +47,5 @@ def test_analysis_header_does_not_require_live_network_before_render():
 
 def test_insights_route_uses_performance_wrapper():
     source = inspect.getsource(views._render_page)
-    assert '"views.analysis_fast"' in source
+    assert '"views.insights"' in source
+    assert insights._SECTION_META["analysis"]["module"] == "views.analysis_fast"
