@@ -97,13 +97,57 @@ def test_fast_wrapper_calls_current_entry_without_legacy_routes(monkeypatch) -> 
     assert calls == [module, finance]
 
 
-def test_generation_failure_is_contained(monkeypatch) -> None:
+def _fake_streamlit_state(monkeypatch) -> None:
     fake_st = SimpleNamespace(session_state={})
     monkeypatch.setattr(workspace_v18, "st", fake_st)
     monkeypatch.setattr(workspace_v20, "st", fake_st)
+
+
+def test_engine_report_passes_real_refresh_to_analysis_context(monkeypatch) -> None:
+    calls: list[tuple[str, str, bool]] = []
+
+    def generate(symbol: str, *, timeframe: str, refresh: bool):
+        calls.append((symbol, timeframe, refresh))
+        return {"ok": True}
+
+    monkeypatch.setattr(workspace_v20, "_generate_engine_report", generate)
+
+    report = workspace_v20._engine_report("2222.SR", "1d", refresh=True)
+
+    assert report["ok"] is True
+    assert calls == [("2222.SR", "1D", True)]
+
+
+def test_transient_history_miss_retries_once_without_second_refresh(
+    monkeypatch,
+) -> None:
+    _fake_streamlit_state(monkeypatch)
+    calls: list[bool] = []
+
+    def generate(_symbol: str, _interval: str, *, refresh: bool):
+        calls.append(refresh)
+        if len(calls) == 1:
+            return {
+                "ok": False,
+                "status": "error",
+                "error": "no_data_within_budget",
+                "diagnostic_code": "analysis_history_unavailable",
+            }
+        return {"ok": True, "status": "ok", "direction": 0}
+
+    monkeypatch.setattr(workspace_v20, "_engine_report", generate)
+
+    payload = workspace_v20._generate("2222.SR", "1d", refresh=True)
+
+    assert calls == [True, False]
+    assert payload["report"]["ok"] is True
+
+
+def test_generation_failure_is_contained(monkeypatch) -> None:
+    _fake_streamlit_state(monkeypatch)
     monkeypatch.setattr(
         workspace_v20,
-        "_generate_ai_report_flex",
+        "_engine_report",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             RuntimeError("provider outage")
         ),
