@@ -121,6 +121,80 @@ def _copy_context(value: AnalysisContext) -> AnalysisContext:
     )
 
 
+def _compatible_cached_history(symbol: str, interval: str) -> pd.DataFrame:
+    """Reuse a valid hot-cache frame even when its requested period differs."""
+    try:
+        from sc_runtime_v9 import peek_latest_cached_history
+
+        value = peek_latest_cached_history(
+            symbol,
+            interval=interval,
+            allow_stale=True,
+        )
+        if isinstance(value, pd.DataFrame) and not value.empty:
+            record_phase(symbol, interval, "compatible_history_cache_hit", 1.0)
+            return value
+    except Exception:
+        LOGGER.debug("Compatible history cache lookup failed", exc_info=True)
+    return pd.DataFrame()
+
+
+def _seed_history_cache(
+    symbol: str,
+    period: str,
+    interval: str,
+    frame: pd.DataFrame,
+) -> None:
+    if not isinstance(frame, pd.DataFrame) or frame.empty:
+        return
+    try:
+        import performance_runtime_v7 as runtime
+
+        key = runtime._history_key(  # noqa: SLF001
+            symbol,
+            period,
+            interval,
+            5,
+        )
+        runtime._history_saver(key, frame)  # noqa: SLF001
+    except Exception:
+        LOGGER.debug("Unable to seed rescued analysis history", exc_info=True)
+
+
+def _rescue_history(
+    symbol: str,
+    period: str,
+    interval: str,
+) -> pd.DataFrame:
+    """Use one independent bounded Yahoo Chart request after routed failure."""
+    from analysis_history_rescue_v21 import fetch_yahoo_history_rescue
+
+    started = time.perf_counter()
+    frame, diagnostic = fetch_yahoo_history_rescue(
+        symbol,
+        period=period,
+        interval=interval,
+    )
+    elapsed = (time.perf_counter() - started) * 1000.0
+    record_phase(symbol, interval, "history_rescue_ms", elapsed)
+    record_phase(
+        symbol,
+        interval,
+        "history_rescue_ok",
+        1.0 if not frame.empty else 0.0,
+    )
+    if frame.empty:
+        LOGGER.warning(
+            "Analysis history rescue failed for %s %s: %s",
+            symbol,
+            interval,
+            diagnostic.get("reason") or "unknown",
+        )
+        return pd.DataFrame()
+    _seed_history_cache(symbol, period, interval, frame)
+    return frame
+
+
 def build_analysis_context(
     symbol: str,
     timeframe: str = "1D",
@@ -149,6 +223,11 @@ def build_analysis_context(
     history = history if isinstance(history, pd.DataFrame) else pd.DataFrame()
     history_ms = (time.perf_counter() - started) * 1000.0
     record_phase(normalized, interval, "history_fetch_ms", history_ms)
+
+    if history.empty:
+        history = _compatible_cached_history(normalized, interval)
+    if history.empty:
+        history = _rescue_history(normalized, period, interval)
 
     if history.empty:
         return AnalysisContext(
@@ -288,9 +367,11 @@ def generate_with_context(
                 "symbol": context.symbol,
                 "timeframe": timeframe,
                 "error": "no_data_within_budget",
+                "diagnostic_code": "analysis_history_unavailable",
+                "retryable": True,
                 "message": (
-                    "لم تصل بيانات كافية ضمن مهلة العرض. "
-                    "تم بدء تحديث البيانات وسيستخدم أصولي آخر نسخة محفوظة عند توفرها."
+                    "تعذر جلب شموع تاريخية كافية من المصادر الحالية. "
+                    "لم تُنشأ صفقة أو توصية ناقصة، ويمكن إعادة المحاولة."
                 ),
                 "performance": performance_trace(
                     context.symbol,
@@ -309,6 +390,10 @@ def generate_with_context(
     engine_meta = report.get("engine_meta")
     if not isinstance(engine_meta, dict):
         engine_meta = {}
+    lineage = dict(
+        (getattr(context.history, "attrs", {}) or {}).get("data_lineage")
+        or {}
+    )
     engine_meta["performance"] = timings
     engine_meta["analysis_context"] = {
         "fingerprint": context.fingerprint,
@@ -317,6 +402,12 @@ def generate_with_context(
         "window_limit": analysis_row_limit(context.interval),
         "history_reused": True,
         "indicators_reused": True,
+        "history_source": str(
+            lineage.get("source")
+            or getattr(context.history, "attrs", {}).get("source")
+            or "unknown"
+        ),
+        "cold_start_rescue": bool(lineage.get("cold_start_rescue")),
     }
     report["engine_meta"] = engine_meta
     return report, context

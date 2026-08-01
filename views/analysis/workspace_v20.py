@@ -7,7 +7,8 @@ from typing import Any, Callable
 
 import streamlit as st
 
-from views.shared import _generate_ai_report_flex, _sym_key
+from ai_engine_core import generate_ai_report as _generate_engine_report
+from views.shared import _ai_timeframe_normalize, _sym_key
 
 from .workspace_v18 import (
     _advisor_action,
@@ -30,6 +31,28 @@ from .workspace_v18 import (
 LOGGER = logging.getLogger(__name__)
 
 
+def _engine_report(
+    symbol: str,
+    interval: str,
+    *,
+    refresh: bool,
+) -> dict[str, Any]:
+    value = _generate_engine_report(
+        symbol,
+        timeframe=_ai_timeframe_normalize(interval),
+        refresh=refresh,
+    )
+    return value if isinstance(value, dict) else {}
+
+
+def _transient_history_failure(report: dict[str, Any]) -> bool:
+    return bool(
+        str(report.get("error") or "").strip() == "no_data_within_budget"
+        or str(report.get("diagnostic_code") or "").strip()
+        == "analysis_history_unavailable"
+    )
+
+
 def _generate(
     symbol: str,
     interval: str,
@@ -46,13 +69,24 @@ def _generate(
 
     generated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
     try:
-        raw_report = _generate_ai_report_flex(symbol, timeframe=interval)
-        report = raw_report if isinstance(raw_report, dict) else {
-            "ok": False,
-            "status": "error",
-            "message": "أعاد محرك التحليل نتيجة غير صالحة.",
-            "diagnostic_code": "analysis_invalid_payload",
-        }
+        report = _engine_report(symbol, interval, refresh=refresh)
+        # A cold routed request may finish just after the interactive budget.
+        # Retry once against the same in-flight/cache state before reporting a
+        # failure to the user.  The second pass does not clear the context.
+        if _transient_history_failure(report):
+            LOGGER.info(
+                "Retrying transient analysis-history miss for %s %s",
+                symbol,
+                interval,
+            )
+            report = _engine_report(symbol, interval, refresh=False)
+        if not report:
+            report = {
+                "ok": False,
+                "status": "error",
+                "message": "أعاد محرك التحليل نتيجة غير صالحة.",
+                "diagnostic_code": "analysis_invalid_payload",
+            }
     except Exception:
         LOGGER.exception("Comprehensive analysis generation failed")
         report = {
