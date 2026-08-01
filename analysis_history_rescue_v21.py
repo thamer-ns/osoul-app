@@ -8,7 +8,6 @@ and returns an auditable frame without changing live-price priority.
 from __future__ import annotations
 
 import logging
-import math
 import re
 import threading
 import time
@@ -16,6 +15,7 @@ from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import quote
 
+import numpy as np
 import pandas as pd
 
 try:
@@ -149,19 +149,25 @@ def _parse(payload: Any) -> tuple[pd.DataFrame, str]:
         return pd.DataFrame(), "missing_ohlcv"
 
     size = len(timestamps)
-    index = pd.to_datetime(
-        pd.to_numeric(pd.Series(timestamps), errors="coerce"),
-        unit="s",
-        utc=True,
-        errors="coerce",
+    index = pd.DatetimeIndex(
+        pd.to_datetime(
+            pd.to_numeric(pd.Series(timestamps), errors="coerce"),
+            unit="s",
+            utc=True,
+            errors="coerce",
+        )
     )
+    # Use positional arrays. Passing integer-indexed Series with a DatetimeIndex
+    # makes pandas align labels and silently converts every OHLCV value to NaN.
     frame = pd.DataFrame(
         {
-            "Open": _finite_series(row.get("open"), size),
-            "High": _finite_series(row.get("high"), size),
-            "Low": _finite_series(row.get("low"), size),
-            "Close": _finite_series(row.get("close"), size),
-            "Volume": _finite_series(row.get("volume"), size).fillna(0.0),
+            "Open": _finite_series(row.get("open"), size).to_numpy(),
+            "High": _finite_series(row.get("high"), size).to_numpy(),
+            "Low": _finite_series(row.get("low"), size).to_numpy(),
+            "Close": _finite_series(row.get("close"), size).to_numpy(),
+            "Volume": _finite_series(row.get("volume"), size)
+            .fillna(0.0)
+            .to_numpy(),
         },
         index=index,
     )
@@ -171,15 +177,19 @@ def _parse(payload: Any) -> tuple[pd.DataFrame, str]:
     if frame.empty:
         return pd.DataFrame(), "empty_after_normalization"
 
-    finite = frame[["Open", "High", "Low", "Close"]].applymap(
-        lambda value: math.isfinite(float(value)) and float(value) > 0
+    prices = frame[["Open", "High", "Low", "Close"]].apply(
+        pd.to_numeric,
+        errors="coerce",
     )
-    frame = frame[finite.all(axis=1)]
+    finite = np.isfinite(prices.to_numpy()).all(axis=1)
+    positive = (prices > 0).all(axis=1).to_numpy()
+    volume = pd.to_numeric(frame["Volume"], errors="coerce")
+    valid_volume = np.isfinite(volume.to_numpy()) & (volume.to_numpy() >= 0)
+    frame = frame[finite & positive & valid_volume]
     geometry = (
         (frame["High"] >= frame[["Open", "Close"]].max(axis=1))
         & (frame["Low"] <= frame[["Open", "Close"]].min(axis=1))
         & (frame["High"] >= frame["Low"])
-        & (frame["Volume"] >= 0)
     )
     frame = frame[geometry]
     return (frame, "") if not frame.empty else (pd.DataFrame(), "invalid_geometry")
