@@ -1,8 +1,8 @@
-"""Final Osoli decision policy aligned with SC-V92.5 / SC-FXM-V16.
+"""Final Osoli decision policy aligned with SC-V94.7 / SC-FXM-V18.8.
 
-The native Osoli schools remain the authority.  The current SC feature pack is a
-hard execution consistency gate and, only when directions align, supplies the
-cluster-first stop/target geometry.
+Osoli's native schools remain the decision authority.  The current SC feature
+pack is the execution-consistency gate and supplies side-safe cluster-first
+stop/target geometry only when directions agree.
 """
 from __future__ import annotations
 
@@ -18,10 +18,11 @@ from .decision_policy_v5 import (
     _data_reliability,
 )
 from .decision_policy_v5 import enrich_report as _v5_enrich_report
+from .sc_feature_pack_v925 import SC_INDICATOR_CONTRACT
 
-DECISION_ENGINE_VERSION = "6.0"
-ANALYSIS_CONTRACT_VERSION = "6.0"
-_CURRENT_INDICATOR_CONTRACT = "SC-V92.5/SC-FXM-V16"
+DECISION_ENGINE_VERSION = "6.1"
+ANALYSIS_CONTRACT_VERSION = "6.1"
+_CURRENT_INDICATOR_CONTRACT = SC_INDICATOR_CONTRACT
 
 
 def _finite(value: Any) -> float | None:
@@ -52,16 +53,10 @@ def _base_enrich(
     symbol: str,
     timeframe: str,
 ) -> dict[str, Any]:
-    """Run one decision path, never SC-V91 and SC-V92.5 on the same report."""
+    """Run one decision path; do not mix old and current SC contracts."""
     if not _current_pack(report):
-        # Compatibility path for old/imported raw reports that do not yet carry
-        # the current feature pack.
         return _v5_enrich_report(report, symbol=symbol, timeframe=timeframe)
 
-    # V5 used to fetch candles again, run SC-V91 and alter the technical score
-    # before V92.5 applied its final gate.  The current report already contains
-    # the authoritative completed-candle pack, so run the proven V4 qualification
-    # directly and preserve only V5's useful context/lineage presentation.
     enriched = _v4_enrich_report(report, symbol=symbol, timeframe=timeframe)
     if str(enriched.get("status") or "").lower() == "error" or enriched.get(
         "error"
@@ -73,7 +68,7 @@ def _base_enrich(
     enriched["advisor_intelligence"] = _advisor_intelligence(enriched)
     meta = dict(enriched.get("engine_meta") or {})
     meta["legacy_sc_v91_skipped"] = True
-    meta["legacy_sc_v91_reason"] = "superseded_by_sc_v925_feature_pack"
+    meta["legacy_sc_v91_reason"] = "superseded_by_sc_v947_feature_pack"
     enriched["engine_meta"] = meta
     return enriched
 
@@ -107,7 +102,7 @@ def _downgrade(report: dict[str, Any], reason: str) -> None:
         return
     report["lifecycle_status"] = "HEADS_UP"
     report["analysis_stage"] = "قرب الدخول"
-    report["recommendation"] = "👀 مراقبة — تعارض مع عقد SC‑V92.5"
+    report["recommendation"] = "👀 مراقبة — تعارض مع عقد SC‑V94.7"
     report["color"] = "#f59e0b"
     plan = report.get("risk_plan")
     if isinstance(plan, dict):
@@ -215,6 +210,16 @@ def _apply_sc_plan(
         decision["risk_plan"] = copy.deepcopy(plan)
 
 
+def _support_resistance_integrity(pack: dict[str, Any]) -> tuple[bool, str]:
+    integrity = pack.get("integrity")
+    if not isinstance(integrity, dict):
+        return False, "عقد SC لا يحتوي فحص سلامة المستويات"
+    if not integrity.get("ok"):
+        issues = ", ".join(str(item) for item in integrity.get("issues") or [])
+        return False, f"فشل فحص سلامة الدعم والمقاومة: {issues or 'غير محدد'}"
+    return True, ""
+
+
 def enrich_report(
     report: Any,
     *,
@@ -243,23 +248,26 @@ def enrich_report(
         plan_value = pack.get("risk_plan")
         sc_plan = plan_value if isinstance(plan_value, dict) else {}
         lifecycle = str(enriched.get("lifecycle_status") or "")
+        integrity_ok, integrity_reason = _support_resistance_integrity(pack)
         blocker = ""
-        if lifecycle == "ACTIONABLE" and veto.get("blocked"):
+        if lifecycle == "ACTIONABLE" and not integrity_ok:
+            blocker = integrity_reason
+        elif lifecycle == "ACTIONABLE" and veto.get("blocked"):
             blocker = (
-                "كلاستر دعم/مقاومة مؤكد يعارض الخطة حتى كسره "
+                "كلاستر دعم/مقاومة حالي يعارض الخطة حتى كسره "
                 "بإغلاق وتحول دوره"
             )
         elif lifecycle == "ACTIONABLE" and not pack.get("qualified"):
-            blocker = "لم يكتمل توافق SC‑V92.5 على إغلاق الشمعة"
+            blocker = "لم يكتمل توافق SC‑V94.7 على إغلاق الشمعة"
         elif (
             lifecycle == "ACTIONABLE"
             and native
             and sc_direction
             and native != sc_direction
         ):
-            blocker = "اتجاه أصولي يخالف اتجاه SC‑V92.5 المؤكد"
+            blocker = "اتجاه أصولي يخالف اتجاه SC‑V94.7 المؤكد"
         elif lifecycle == "ACTIONABLE" and not sc_plan.get("valid"):
-            blocker = "هندسة SC‑V92.5 للوقف والأهداف غير قابلة للتنفيذ"
+            blocker = "هندسة SC‑V94.7 للوقف والأهداف غير قابلة للتنفيذ"
         if blocker:
             _downgrade(enriched, blocker)
             decision_summary["blocker"] = blocker
@@ -267,6 +275,7 @@ def enrich_report(
             lifecycle == "ACTIONABLE"
             and native == sc_direction
             and sc_plan.get("valid")
+            and integrity_ok
         ):
             _apply_sc_plan(enriched, sc_plan, native)
             decision_summary["plan_replaced"] = True
@@ -278,10 +287,13 @@ def enrich_report(
                 "event": pack.get("event_code"),
                 "confidence": int(pack.get("confidence") or 0),
                 "opposition_veto": bool(veto.get("blocked")),
+                "integrity_ok": integrity_ok,
                 "priority": list(pack.get("priority_order") or []),
             }
         )
-    enriched["sc_v925_decision"] = decision_summary
+    # New key plus the old alias so deployed views/tests do not break.
+    enriched["sc_v947_decision"] = decision_summary
+    enriched["sc_v925_decision"] = copy.deepcopy(decision_summary)
     contract = dict(enriched.get("analysis_contract") or {})
     contract.update(
         {
@@ -289,8 +301,11 @@ def enrich_report(
             "decision_version": DECISION_ENGINE_VERSION,
             "indicator_contract": _CURRENT_INDICATOR_CONTRACT,
             "level_priority": (
-                "sr_cluster_then_confirmed_pivot_then_secondary"
+                "current_role_sr_cluster_then_confirmed_pivot_then_secondary"
             ),
+            "support_definition": "nearest_valid_level_below_closed_price",
+            "resistance_definition": "nearest_valid_level_above_closed_price",
+            "role_reversal": "broken_resistance_becomes_support_and_inverse",
             "break_confirmation": "closed_candle",
             "role_reversal_failure": "close_back_through_cluster",
             "target_count": "one_to_three",
@@ -303,6 +318,7 @@ def enrich_report(
     decision = enriched.get("decision_engine")
     if isinstance(decision, dict):
         decision["version"] = DECISION_ENGINE_VERSION
+        decision["sc_v947"] = copy.deepcopy(decision_summary)
         decision["sc_v925"] = copy.deepcopy(decision_summary)
     meta = dict(enriched.get("engine_meta") or {})
     meta["decision_engine_version"] = DECISION_ENGINE_VERSION
