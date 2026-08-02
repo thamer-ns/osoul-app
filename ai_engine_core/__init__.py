@@ -30,6 +30,42 @@ def _lazy_attr(module_name: str, attr_name: str):
     return getattr(module, attr_name)
 
 
+def _install_current_compass_sources() -> None:
+    """Accept V94.7/V18.8 alerts without dropping historical contracts."""
+    from . import compass_contract as contract
+
+    contract.CURRENT_STOCK_SOURCES = frozenset({"SC-V94.7-I", "SC-V94.7-D"})
+    contract.LEGACY_STOCK_SOURCES = frozenset(
+        {
+            "SC-V92-I",
+            "SC-V92-D",
+            "SC-V90-I",
+            "SC-V90-D",
+            "SC-V84-I",
+            "SC-V84-D",
+        }
+    )
+    contract.CURRENT_OTHER_SOURCES = frozenset({"SC-FXM-V18.8"})
+    contract.LEGACY_OTHER_SOURCES = frozenset(
+        {"SC-FXM-V16", "SC-FXM-V14", "SC-FXM-V8"}
+    )
+    contract.INTRADAY_STOCK_SOURCES = frozenset(
+        {"SC-V94.7-I", "SC-V92-I", "SC-V90-I", "SC-V84-I"}
+    )
+    contract.DAILY_STOCK_SOURCES = frozenset(
+        {"SC-V94.7-D", "SC-V92-D", "SC-V90-D", "SC-V84-D"}
+    )
+    contract.OTHER_SOURCES = (
+        contract.CURRENT_OTHER_SOURCES | contract.LEGACY_OTHER_SOURCES
+    )
+    contract.STRICT_SOURCES = (
+        contract.CURRENT_STOCK_SOURCES
+        | contract.LEGACY_STOCK_SOURCES
+        | contract.CURRENT_OTHER_SOURCES
+        | contract.LEGACY_OTHER_SOURCES
+    )
+
+
 def _report_call_context(args, kwargs) -> tuple[str, str]:
     symbol = kwargs.get("symbol")
     timeframe = kwargs.get("timeframe")
@@ -41,7 +77,7 @@ def _report_call_context(args, kwargs) -> tuple[str, str]:
 
 
 def generate_ai_report(*args, **kwargs):
-    """Build market data once, then enforce the final SC-V92.5 decision."""
+    """Build market data once, then enforce the final SC-V94.7 decision."""
     from sc_runtime_v10 import install_sc_runtime_v10
 
     install_sc_runtime_v10()
@@ -52,7 +88,9 @@ def generate_ai_report(*args, **kwargs):
     refresh = bool(kwargs.pop("refresh", False))
     report_generator = _lazy_attr(".reporting", "generate_ai_report")
 
-    if str(getattr(report_generator, "__module__", "")).startswith("ai_engine_core"):
+    if str(getattr(report_generator, "__module__", "")).startswith(
+        "ai_engine_core"
+    ):
         raw_report, _context = generate_with_context(
             report_generator,
             symbol,
@@ -70,7 +108,9 @@ def generate_ai_report(*args, **kwargs):
 
 
 def calculate_portfolio_risk_score(*args, **kwargs):
-    return _lazy_attr(".portfolio", "calculate_portfolio_risk_score")(*args, **kwargs)
+    return _lazy_attr(".portfolio", "calculate_portfolio_risk_score")(
+        *args, **kwargs
+    )
 
 
 def run_stress_test(*args, **kwargs):
@@ -78,7 +118,9 @@ def run_stress_test(*args, **kwargs):
 
 
 def generate_rebalancing_suggestions(*args, **kwargs):
-    return _lazy_attr(".portfolio", "generate_rebalancing_suggestions")(*args, **kwargs)
+    return _lazy_attr(
+        ".portfolio", "generate_rebalancing_suggestions"
+    )(*args, **kwargs)
 
 
 def save_user_rule(*args, **kwargs):
@@ -143,27 +185,51 @@ def self_test() -> dict:
         report["checks"]["market_data_ok"] = True
     except Exception:
         report["checks"]["market_data_ok"] = False
-        report["checks"]["market_data_error"] = "market data capability unavailable"
+        report["checks"]["market_data_error"] = (
+            "market data capability unavailable"
+        )
         report["ok"] = False
         report["reason"] = "market_data missing get_chart_history"
 
     try:
-        from financial_analysis import get_advanced_fundamental_ratios  # noqa: F401
+        from financial_analysis import (  # noqa: F401
+            get_advanced_fundamental_ratios,
+        )
 
         report["checks"]["fundamental_ok"] = True
     except Exception:
         report["checks"]["fundamental_ok"] = False
-        report["checks"]["fundamental_error"] = "fundamental capability unavailable"
+        report["checks"]["fundamental_error"] = (
+            "fundamental capability unavailable"
+        )
         if report["reason"] is None:
-            report["reason"] = "financial_analysis missing get_advanced_fundamental_ratios"
+            report["reason"] = (
+                "financial_analysis missing get_advanced_fundamental_ratios"
+            )
 
-    report["checks"]["has_generate_ai_report"] = callable(globals().get("generate_ai_report"))
-    report["checks"]["has_decision_engine"] = callable(_lazy_attr(".decision_policy_v6", "enrich_report"))
-    report["checks"]["has_breakout_engine"] = callable(_lazy_attr(".breakout_patterns_v91", "analyze_breakout_patterns"))
-    report["checks"]["has_sc_v925_contract"] = callable(_lazy_attr(".sc_feature_pack_v925", "build_sc_feature_pack"))
-    report["checks"]["full_timeframe_routing"] = callable(_lazy_attr(".reporting_policy_v5", "timeframe_to_interval"))
+    report["checks"]["has_generate_ai_report"] = callable(
+        globals().get("generate_ai_report")
+    )
+    report["checks"]["has_decision_engine"] = callable(
+        _lazy_attr(".decision_policy_v6", "enrich_report")
+    )
+    report["checks"]["has_breakout_engine"] = callable(
+        _lazy_attr(".breakout_patterns_v91", "analyze_breakout_patterns")
+    )
+    report["checks"]["has_sc_v947_contract"] = callable(
+        _lazy_attr(".sc_feature_pack_v925", "build_sc_feature_pack")
+    )
+    report["checks"]["has_sc_v925_contract"] = report["checks"][
+        "has_sc_v947_contract"
+    ]
+    report["checks"]["full_timeframe_routing"] = callable(
+        _lazy_attr(".reporting_policy_v5", "timeframe_to_interval")
+    )
     report["checks"]["analysis_context_v10"] = True
     return report
 
 
-DECISION_ENGINE_VERSION = _lazy_attr(".decision_policy_v6", "DECISION_ENGINE_VERSION")
+_install_current_compass_sources()
+DECISION_ENGINE_VERSION = _lazy_attr(
+    ".decision_policy_v6", "DECISION_ENGINE_VERSION"
+)
