@@ -100,11 +100,14 @@ def _install_side_safe_legacy_sr() -> None:
             score += 1; features["near_support"] = 1; observations.append("🧩 قرب دعم حالي أسفل السعر")
         if nearest_resistance is not None and nearest_resistance-close <= near_distance:
             score -= 1; features["near_resistance"] = 1; observations.append("🧩 قرب مقاومة حالية أعلى السعر")
-        if len(frame) >= 3:
-            prior_supports, _ = _side_safe_zones(frame.iloc[:-1], lookback=220, max_levels=8)
-            prior_close = float(close_series.iloc[-2])
-            prior_support = max((value for value in prior_supports if value < prior_close), default=None)
-            if prior_support is not None and float(close_series.iloc[-2]) < prior_support and float(close_series.iloc[-1]) < prior_support:
+        # Freeze the level set before both confirmation closes. Building it from
+        # frame[:-1] already reclassifies the broken support and makes the test
+        # impossible by construction.
+        if len(frame) >= 4:
+            historical_supports, _ = _side_safe_zones(frame.iloc[:-2], lookback=220, max_levels=8)
+            reference_close = float(close_series.iloc[-3])
+            broken_support = max((value for value in historical_supports if value < reference_close), default=None)
+            if broken_support is not None and float(close_series.iloc[-2]) < broken_support and float(close_series.iloc[-1]) < broken_support:
                 score -= 2; features["broke_support_confirm"] = 1; observations.append("🧨 كسر دعم مؤكد بإغلاقين؛ تحول إلى مقاومة")
         return score, observations, features
 
