@@ -23,6 +23,10 @@ from .sc_feature_pack_v925 import SC_INDICATOR_CONTRACT
 DECISION_ENGINE_VERSION = "6.1"
 ANALYSIS_CONTRACT_VERSION = "6.1"
 _CURRENT_INDICATOR_CONTRACT = SC_INDICATOR_CONTRACT
+_COMPATIBLE_INDICATOR_CONTRACTS = {
+    SC_INDICATOR_CONTRACT,
+    "SC-V92.5/SC-FXM-V16",
+}
 
 
 def _finite(value: Any) -> float | None:
@@ -42,7 +46,7 @@ def _current_pack(report: Any) -> dict[str, Any]:
         pack
         if pack.get("ok")
         and str(pack.get("indicator_contract") or "")
-        == _CURRENT_INDICATOR_CONTRACT
+        in _COMPATIBLE_INDICATOR_CONTRACTS
         else {}
     )
 
@@ -291,7 +295,6 @@ def enrich_report(
                 "priority": list(pack.get("priority_order") or []),
             }
         )
-    # New key plus the old alias so deployed views/tests do not break.
     enriched["sc_v947_decision"] = decision_summary
     enriched["sc_v925_decision"] = copy.deepcopy(decision_summary)
     contract = dict(enriched.get("analysis_contract") or {})
